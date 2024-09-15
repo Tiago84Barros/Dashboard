@@ -15,17 +15,6 @@ def load_data():
     
 indicadores = load_data()
 
-# Verificar e ajustar o nome da coluna de data
-if 'Data' not in indicadores.columns:
-    if 'data' in indicadores.columns:
-        indicadores.rename(columns={'data': 'Data'}, inplace=True)
-    else:
-        st.error('A coluna de data não foi encontrada no DataFrame.')
-        st.stop()
-
-# Garantir que a coluna 'Data' é do tipo datetime
-indicadores['Data'] = pd.to_datetime(indicadores['Data'])
-
 st.title('Dashboard de Indicadores Financeiros')
 
 st.subheader('Tabela de Indicadores')
