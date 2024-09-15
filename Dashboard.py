@@ -7,6 +7,18 @@ import numpy as np
 # Definir o layout da página
 st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
 
+# Inserir estilo CSS para fundo branco
+st.markdown(
+    """
+    <style>
+    .main {
+        background-color: white;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 # Sidebar com ícones de navegação
 with st.sidebar:
     #st.image("logo.png", width=150)
