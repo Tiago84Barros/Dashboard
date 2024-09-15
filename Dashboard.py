@@ -139,8 +139,6 @@ indicadores_formatado = format_dataframe(indicadores.copy())
 col1, col2 = st.columns([4, 1])
 with col1:
     ticket = st.text_input("Buscar por Ticket")
-with col2:
-    st.button("Gerar Relatório")
 
 # Verificar se o ticket foi inserido
 if ticket:
@@ -155,7 +153,7 @@ if ticket:
         with col2:
             st.image(logo_url, width=150)  # Mostrar o logotipo
     else:
-        st.error("Empresa não encontrada. Verifique o ticket inserido.")
+        st.error(f"Empresa não encontrada. Verifique o ticket inserido.")
 
 # Mostrar Métricas Resumidas
 st.markdown("## Visão Geral (CAGR)")
