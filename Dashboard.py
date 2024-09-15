@@ -150,7 +150,7 @@ with col4:
 
 # Gráfico de Receita Líquida e Lucro Líquido
 st.markdown("### Receita e Lucro Líquido")
-df_melted = indicadores.melt(id_vars=['Data'], value_vars=['Receita Liquida', 'Lucro Liquido'],
+df_melted = indicadores.melt(id_vars=['Data'], value_vars=['Receita_Liquida', 'Lucro_Liquido'],
                              var_name='Indicador', value_name='Valor')
 
 fig = px.line(df_melted, x='Data', y='Valor', color='Indicador',
