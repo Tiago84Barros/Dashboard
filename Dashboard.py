@@ -6,12 +6,8 @@ import plotly.express as px
 def load_data():
     # Carregar o DataFrame a partir do arquivo local
     df = pd.read_csv('indicadores', index_col=False)
-
     # Substituir espaços nos nomes das colunas por underlines
     df.columns = df.columns.str.replace(' ', '_')
-
-    # Garantir que a coluna 'Data' é do tipo datetime
-    df['Data'] = pd.to_datetime(df['Data'])
     
 indicadores = load_data()
 
