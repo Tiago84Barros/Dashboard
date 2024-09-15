@@ -4,14 +4,24 @@ import plotly.express as px
 from sklearn.linear_model import LinearRegression
 import numpy as np
 
-# Função para buscar informações da empresa usando o ticket
+# Função para carregar logotipos locais
+def get_local_logo(ticker):
+    logo_path = f"logos/{ticker}.png"  # Substitua pela pasta onde seus logotipos estão armazenados
+    if os.path.exists(logo_path):
+        return logo_path
+    return None
+
+# Função para buscar informações da empresa usando yfinance
 def get_company_info(ticker):
-    ticker = f'{ticker}.SA'
     try:
+        # Adicionar ".SA" para tickers da B3 (bolsa brasileira) se não estiver presente
+        if not ticker.endswith(".SA"):
+            ticker += ".SA"
+        
         # Usar yfinance para pegar informações básicas da empresa
         company = yf.Ticker(ticker)
         info = company.info
-        return info['longName'], info['website']  # Retorna o nome da empresa e o site (para o logo)
+        return info['longName'], info.get('website')  # Retorna o nome da empresa e o site (para o logo)
     except:
         return None, None
 
@@ -116,21 +126,24 @@ for column in indicadores.columns:
 
 # Função para formatar colunas monetárias e porcentagens
 def format_dataframe(df):
-    # Definir colunas monetárias e de porcentagem
-    col_monetarias = ['Receita_Líquida', 'Lucro_Líquido', 'Dividendos', 'Divida_Líquida']
-    col_porcentagem = ['Margem_Líquida', 'ROE', 'Índice_Endividamento', 'IPCA']
+    col_monetarias = ['Receita_Liquida', 'Ativo_Circulante', 'Passivo_Circulante', 'Capital_de_Giro', 'patrimonio_liquido', 'lucro_operacional', 'Lucro_Líquido', 'Dividendos', 'Divida_Líquida', 'balanca_comercial']
+    col_porcentagem = ['Margem_Líquida', 'ROE', 'indice_endividamento', 'selic', 'ipca', 'icc']
     
-    # Formatar colunas monetárias como R$
+    # Formatando colunas monetárias manualmente (R$)
     for col in col_monetarias:
         if col in df.columns:
-            df[col] = df[col].apply(lambda x: f"R${x:,.2f}")
+            df[col] = pd.to_numeric(df[col], errors='coerce')  # Garantir que está em formato numérico
+            df[col] = df[col].apply(lambda x: f"R${x:,.2f}" if pd.notnull(x) else x)
     
-    # Formatar colunas de porcentagem como %
+    # Formatando colunas de porcentagem manualmente (%)
     for col in col_porcentagem:
         if col in df.columns:
-            df[col] = df[col].apply(lambda x: f"{x:.2f}%")
+            df[col] = pd.to_numeric(df[col], errors='coerce')  # Garantir que está em formato numérico
+            df[col] = df[col].apply(lambda x: f"{x:.2f}%" if pd.notnull(x) else x)
     
     return df
+
+indicadores_formatado = format_dataframe(indicadores.copy())
 
 # Aplicar formatação na tabela de indicadores
 indicadores_formatado = format_dataframe(indicadores.copy())
