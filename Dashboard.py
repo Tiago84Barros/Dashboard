@@ -64,8 +64,8 @@ with st.sidebar:
 def load_data():
     # Carregar o DataFrame a partir do arquivo local
     df = pd.read_csv('indicadores', index_col=False)
-    # Converter a coluna 'Data' para datetime
-    df['Data'] = pd.to_datetime(df['Data'], errors='coerce')  # Se houver valores inválidos, eles serão convertidos para NaT (Not a Time)
+    # Converter a coluna 'Data' para datetime e extrair apenas o ano
+    df['Data'] = pd.to_datetime(df['Data'], errors='coerce').dt.year  # Extrair somente o ano
     # Substituir espaços nos nomes das colunas por underlines
     df.columns = df.columns.str.replace(' ', '_')
     # Retornar o DataFrame
