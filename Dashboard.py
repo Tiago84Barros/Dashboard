@@ -7,17 +7,47 @@ import numpy as np
 # Definir o layout da página
 st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
 
-# Inserir estilo CSS para fundo branco
-st.markdown(
-    """
+# Estilo CSS para replicar o layout
+st.markdown("""
     <style>
+    /* Fundo branco para a página */
     .main {
+        background-color: #F5F5F5;
+        padding: 0px;
+    }
+    
+    /* Estilo para a barra lateral */
+    .css-1544g2n {
+        background-color: #F5F5F5;
+    }
+    
+    /* Ajuste do fundo dos blocos de métricas */
+    div[data-testid="metric-container"] {
         background-color: white;
+        border: 1px solid #e6e6e6;
+        padding: 5% 5% 5% 10%;
+        border-radius: 10px;
+        box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
+    }
+    
+    /* Cor do texto para as métricas */
+    div[data-testid="metric-container"] > label {
+        color: #8A2BE2;
+        font-size: 18px;
+    }
+
+    /* Cores das porcentagens positivas e negativas */
+    div[data-testid="metric-container"] > div > p {
+        color: green;
+        font-size: 18px;
+    }
+
+    /* Barra de progresso (cor personalizada) */
+    .stProgress > div > div > div > div {
+        background-color: #1E90FF;
     }
     </style>
-    """,
-    unsafe_allow_html=True
-)
+    """, unsafe_allow_html=True)
 
 # Sidebar com ícones de navegação
 with st.sidebar:
