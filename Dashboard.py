@@ -186,15 +186,30 @@ with col4:
     st.metric(label="CAGR Dívida Líquida", value=f"{cagrs['Divida_Líquida']:.2%}")
 
 
-# Gráfico de Receita Líquida e Lucro Líquido
-st.markdown("### Receita e Lucro Líquido")
-df_melted = indicadores.melt(id_vars=['Data'], value_vars=['Receita_Liquida', 'Lucro_Líquido'],
-                             var_name='Indicador', value_name='Valor')
+# Seletor para escolher quais variáveis visualizar no gráfico
+st.markdown("### Selecione os Indicadores para Visualizar no Gráfico")
+variaveis_disponiveis = [col for col in indicadores.columns if col != 'Data']
+variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_disponiveis, default=['Receita Liquida', 'Lucro Liquido'])
 
-fig = px.line(df_melted, x='Data', y='Valor', color='Indicador',
-              title='Evolução da Receita e Lucro Líquido', markers=True)
+# Gráfico de indicadores selecionados
+if variaveis_selecionadas:
+    df_melted = indicadores.melt(id_vars=['Data'], value_vars=variaveis_selecionadas,
+                                 var_name='Indicador', value_name='Valor')
 
-st.plotly_chart(fig, use_container_width=True)
+    fig = px.line(df_melted, x='Data', y='Valor', color='Indicador',
+                  title='Evolução dos Indicadores Selecionados', markers=True)
+
+    fig.update_traces(line=dict(width=3))
+    fig.update_layout(xaxis_title='Ano', yaxis_title='Valor',
+                      plot_bgcolor='white', 
+                      paper_bgcolor='#F5F5F5',
+                      font=dict(color='#333333'),
+                      title_font=dict(color='#8A2BE2'),
+                      legend_title_text='Indicadores')
+
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
 
 # Indicadores Categoriais (exemplo de blocos à direita)
 col1, col2, col3 = st.columns(3)
