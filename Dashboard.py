@@ -4,7 +4,7 @@ import plotly.express as px
 from sklearn.linear_model import LinearRegression
 import numpy as np
 
-# Função para carregar logotipos locais
+# Função para carregar logotipos locais ___________________________________________________________________________________________________________________________________________
 def get_local_logo(ticker):
     logo_path = f"logos/{ticker}.png"  # Substitua pela pasta onde seus logotipos estão armazenados
     if os.path.exists(logo_path):
@@ -25,7 +25,7 @@ def get_company_info(ticker):
     except:
         return None, None
 
-# Definir o layout da página
+# Definir o layout da página ___________________________________________________________________________________________________________________________________________________________--
 st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
 
 # # Estilo CSS para replicar o layout
@@ -70,7 +70,7 @@ st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
 #     </style>
 #     """, unsafe_allow_html=True)
 
-# Sidebar com ícones de navegação
+# Sidebar com ícones de navegação __________________________________________________________________________________________________________________________________________________________
 with st.sidebar:
     #st.image("logo.png", width=150)
     st.markdown("# Início")
@@ -81,6 +81,7 @@ with st.sidebar:
     st.markdown("### Ajuda")
     st.markdown("### Sair")
 
+# carregando o banco de dados _____________________________________________________________________________________________________________________________________________________________
 @st.cache_data
 def load_data():
     # Carregar o DataFrame a partir do arquivo local
@@ -103,7 +104,7 @@ def load_data():
     
 indicadores = load_data()
 
-# Função para calcular o crescimento médio (CAGR)
+# Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________
 def calculate_cagr(df, column):
     initial_value = df.iloc[0][column]
     final_value = df.iloc[-1][column]
@@ -124,7 +125,7 @@ for column in indicadores.columns:
         cagr = calculate_cagr(indicadores, column)
         cagrs[column] = cagr
 
-# Função para formatar colunas monetárias e porcentagens
+# Função para formatar colunas monetárias e porcentagens _________________________________________________________________________________________________________________________________________
 def format_dataframe(df):
     col_monetarias = ['Close', 'LPA', 'Receita_Liquida', 'Ativo_Circulante', 'Passivo_Circulante', 'Capital_de_Giro', 'patrimonio_liquido', 
                       'lucro_operacional', 'Lucro_Líquido', 'Dividendos', 'Divida_Líquida', 'balanca_comercial', 'cambio']
@@ -147,7 +148,7 @@ def format_dataframe(df):
 # Aplicar formatação na tabela de indicadores
 indicadores_formatado = format_dataframe(indicadores.copy())
 
-# Barra superior (simulação)
+# Barra superior (simulação) buscando a logo das empresas ____________________________________________________________________________________________________________________________________________
 col1, col2 = st.columns([4, 1])
 with col1:
     ticket = st.text_input("Buscar por Ticket")
@@ -167,7 +168,7 @@ if ticket:
     else:
         st.error(f"Empresa não encontrada. Verifique o ticket inserido.")
 
-# Mostrar Métricas Resumidas
+# Mostrar Métricas Resumidas ____________________________________________________________________________________________________________________________________________________________________________
 st.markdown("## Visão Geral (CAGR)")
 col1, col2, col3, col4 = st.columns(4)
 
@@ -184,7 +185,7 @@ with col4:
     st.metric(label="CAGR Dívida Líquida", value=f"{cagrs['Divida_Líquida']:.2%}")
 
 
-# Seletor para escolher quais variáveis visualizar no gráfico
+# Seletor para escolher quais variáveis visualizar no gráfico _______________________________________________________________________________________________________________________________________
 st.markdown("### Selecione os Indicadores para Visualizar no Gráfico")
 variaveis_disponiveis = [col for col in indicadores.columns if col != 'Data']
 variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_disponiveis, default=['Receita_Liquida', 'Lucro_Líquido'])
@@ -199,7 +200,7 @@ if variaveis_selecionadas:
 
     fig.update_traces(line=dict(width=3))
     fig.update_layout(xaxis_title='Ano', yaxis_title='Valor',
-                      plot_bgcolor='white', 
+                      plot_bgcolor='black', 
                       paper_bgcolor='#F5F5F5',
                       font=dict(color='#333333'),
                       title_font=dict(color='#8A2BE2'),
@@ -209,7 +210,7 @@ if variaveis_selecionadas:
 else:
     st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
 
-# Indicadores Categoriais (exemplo de blocos à direita)
+# Indicadores Categoriais (exemplo de blocos à direita) ____________________________________________________________________________________________________________________________________________
 col1, col2, col3 = st.columns(3)
 
 with col1:
