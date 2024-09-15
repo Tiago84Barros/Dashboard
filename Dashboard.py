@@ -156,15 +156,6 @@ df_melted = indicadores.melt(id_vars=['Data'], value_vars=['Receita_Liquida', 'L
 fig = px.line(df_melted, x='Data', y='Valor', color='Indicador',
               title='Evolução da Receita e Lucro Líquido', markers=True)
 
-# Personalizar o gráfico com cores temáticas
-fig.update_traces(line=dict(width=3))
-fig.update_layout(xaxis_title='Ano', yaxis_title='Valor',
-                  plot_bgcolor='white', 
-                  paper_bgcolor='#F5F5F5',
-                  font=dict(color='#333333'),
-                  title_font=dict(color='#8A2BE2'),
-                  legend_title_text='Indicadores')
-
 st.plotly_chart(fig, use_container_width=True)
 
 # Indicadores Categoriais (exemplo de blocos à direita)
