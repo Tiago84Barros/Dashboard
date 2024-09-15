@@ -9,7 +9,7 @@ st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
 
 # Sidebar com ícones de navegação
 with st.sidebar:
-    st.image("logo.png", width=150)
+    #st.image("logo.png", width=150)
     st.markdown("# Início")
     st.markdown("## Transações")
     st.markdown("## Pagamentos")
