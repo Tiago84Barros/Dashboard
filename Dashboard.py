@@ -5,10 +5,20 @@ import plotly.express as px
 @st.cache_data
 def load_data():
     # Carregar o DataFrame a partir do arquivo local
-    df = pd.read_csv('indicadores.csv')  # Para arquivos CSV
-    # Se necessário, fazer qualquer pré-processamento nos dados aqui
-    return df
+    df = pd.read_csv('indicadores.csv', index_col=False)
 
+    # Substituir espaços nos nomes das colunas por underlines
+    df.columns = df.columns.str.replace(' ', '_')
+
+    # Renomear a coluna 'index' para 'Data'
+    if 'index' in df.columns:
+        df.rename(columns={'index': 'Data'}, inplace=True)
+    else:
+        st.error('A coluna de data não foi encontrada no DataFrame.')
+        st.stop()
+
+    # Garantir que a coluna 'Data' é do tipo datetime
+    df['Data'] = pd.to_datetime(df['Data'])
 indicadores = load_data()
 
 # Verificar e ajustar o nome da coluna de data
