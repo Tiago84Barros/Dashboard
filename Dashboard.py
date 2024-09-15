@@ -7,47 +7,47 @@ import numpy as np
 # Definir o layout da página
 st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
 
-# Estilo CSS para replicar o layout
-st.markdown("""
-    <style>
-    /* Fundo branco para a página */
-    .main {
-        background-color: #F5F5F5;
-        padding: 0px;
-    }
+# # Estilo CSS para replicar o layout
+# st.markdown("""
+#     <style>
+#     /* Fundo branco para a página */
+#     .main {
+#         background-color: #F5F5F5;
+#         padding: 0px;
+#     }
     
-    /* Estilo para a barra lateral */
-    .css-1544g2n {
-        background-color: #F5F5F5;
-    }
+#     /* Estilo para a barra lateral */
+#     .css-1544g2n {
+#         background-color: #F5F5F5;
+#     }
     
-    /* Ajuste do fundo dos blocos de métricas */
-    div[data-testid="metric-container"] {
-        background-color: white;
-        border: 1px solid #e6e6e6;
-        padding: 5% 5% 5% 10%;
-        border-radius: 10px;
-        box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
-    }
+#     /* Ajuste do fundo dos blocos de métricas */
+#     div[data-testid="metric-container"] {
+#         background-color: white;
+#         border: 1px solid #e6e6e6;
+#         padding: 5% 5% 5% 10%;
+#         border-radius: 10px;
+#         box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
+#     }
     
-    /* Cor do texto para as métricas */
-    div[data-testid="metric-container"] > label {
-        color: #8A2BE2;
-        font-size: 18px;
-    }
+#     /* Cor do texto para as métricas */
+#     div[data-testid="metric-container"] > label {
+#         color: #8A2BE2;
+#         font-size: 18px;
+#     }
 
-    /* Cores das porcentagens positivas e negativas */
-    div[data-testid="metric-container"] > div > p {
-        color: green;
-        font-size: 18px;
-    }
+#     /* Cores das porcentagens positivas e negativas */
+#     div[data-testid="metric-container"] > div > p {
+#         color: green;
+#         font-size: 18px;
+#     }
 
-    /* Barra de progresso (cor personalizada) */
-    .stProgress > div > div > div > div {
-        background-color: #1E90FF;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+#     /* Barra de progresso (cor personalizada) */
+#     .stProgress > div > div > div > div {
+#         background-color: #1E90FF;
+#     }
+#     </style>
+#     """, unsafe_allow_html=True)
 
 # Sidebar com ícones de navegação
 with st.sidebar:
@@ -143,43 +143,4 @@ with col3:
 st.markdown("### Tabela de Indicadores")
 st.dataframe(indicadores)
 
-# st.subheader('Tabela de Indicadores')
-# st.dataframe(
-#     indicadores.style.format(subset=indicadores.select_dtypes(include='number').columns, formatter="{:.2f}"),
-#     use_container_width=True
-# )
 
-      
-     
-
-# st.subheader('Tabela de Indicadores')
-# st.dataframe(indicadores.style.format(subset=indicadores.select_dtypes(include='number').columns, formatter="{:.2f}"))
-
-# st.subheader('Gráfico de Indicadores')
-
-# variaveis_disponiveis = indicadores.columns.drop('Data')
-
-# variaveis_selecionadas = st.multiselect(
-#     'Selecione os indicadores:',
-#     options=variaveis_disponiveis
-# )
-
-if variaveis_selecionadas:
-    df_melted = indicadores.melt(
-        id_vars=['Data'], 
-        value_vars=variaveis_selecionadas,
-        var_name='Indicador', 
-        value_name='Valor'
-    )
-    fig = px.line(
-        df_melted, 
-        x='Data', 
-        y='Valor', 
-        color='Indicador',
-        markers=True,
-        title='Evolução dos Indicadores Selecionados'
-    )
-    fig.update_layout(xaxis_title='Data', yaxis_title='Valor')
-    st.plotly_chart(fig)
-else:
-    st.warning('Por favor, selecione ao menos um indicador para visualizar o gráfico.')
