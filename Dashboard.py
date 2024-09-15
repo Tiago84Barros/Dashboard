@@ -5,7 +5,7 @@ import plotly.express as px
 @st.cache_data
 def load_data():
     # Carregar o DataFrame a partir do arquivo local
-    df = pd.read_csv('indicadores.csv', index_col=False)
+    df = pd.read_csv('indicadores', index_col=False)
 
     # Substituir espaços nos nomes das colunas por underlines
     df.columns = df.columns.str.replace(' ', '_')
