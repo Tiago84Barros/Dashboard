@@ -4,6 +4,20 @@ import plotly.express as px
 from sklearn.linear_model import LinearRegression
 import numpy as np
 
+# Função para buscar o logotipo da empresa usando a API Clearbit
+def get_company_logo(domain):
+    return f"https://logo.clearbit.com/{domain}"
+
+# Função para buscar informações da empresa usando o ticket
+def get_company_info(ticker):
+    try:
+        # Usar yfinance para pegar informações básicas da empresa
+        company = yf.Ticker(ticker)
+        info = company.info
+        return info['longName'], info['website']  # Retorna o nome da empresa e o site (para o logo)
+    except:
+        return None, None
+
 # Definir o layout da página
 st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
 
@@ -106,8 +120,8 @@ for column in indicadores.columns:
 # Função para formatar colunas monetárias e porcentagens
 def format_dataframe(df):
     # Definir colunas monetárias e de porcentagem
-    col_monetarias = ['Receita Liquida', 'Lucro Liquido', 'Dividendos', 'Divida Liquida']
-    col_porcentagem = ['Margem Liquida', 'ROE', 'indice endividamento']
+    col_monetarias = ['Receita_Líquida', 'Lucro_Líquido', 'Dividendos', 'Divida_Líquida']
+    col_porcentagem = ['Margem_Líquida', 'ROE', 'Índice_Endividamento', 'IPCA']
     
     # Formatar colunas monetárias como R$
     for col in col_monetarias:
@@ -127,12 +141,30 @@ indicadores_formatado = format_dataframe(indicadores.copy())
 # Barra superior (simulação)
 col1, col2 = st.columns([4, 1])
 with col1:
-    st.text_input("Buscar")
+    ticket = st.text_input("Buscar por Ticket")
 with col2:
     st.button("Gerar Relatório")
 
+# Verificar se o ticket foi inserido
+if ticket:
+    company_name, company_website = get_company_info(ticket)
+    if company_name and company_website:
+        st.subheader(f"Visão Geral - {company_name}")
+        
+        # Buscar o logotipo da empresa
+        logo_url = get_company_logo(company_website)
+        
+        # Exibir o logotipo no canto direito
+        col1, col2 = st.columns([4, 1])
+        with col1:
+            st.write(f"Informações financeiras de {company_name}")
+        with col2:
+            st.image(logo_url, width=150)  # Mostrar o logotipo
+    else:
+        st.error("Empresa não encontrada. Verifique o ticket inserido.")
+
 # Mostrar Métricas Resumidas
-st.markdown("## Visão Geral")
+st.markdown("## Visão Geral do Crescimento Médio (CAGR)")
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
