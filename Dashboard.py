@@ -6,10 +6,7 @@ import plotly.express as px
 def load_data():
     # Carregar o DataFrame a partir do arquivo local
     df = pd.read_csv('indicadores.csv')  # Para arquivos CSV
-    # df = pd.read_excel('indicadores.xlsx')  # Para arquivos Excel
-
     # Se necessário, fazer qualquer pré-processamento nos dados aqui
-
     return df
 
 indicadores = load_data()
