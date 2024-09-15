@@ -74,6 +74,10 @@ def load_data():
     # Substituir espaços nos nomes das colunas por underlines
     df.columns = df.columns.str.replace(' ', '_')
     # Retornar o DataFrame
+
+     # Remover a coluna 'Ano' se existir no DataFrame
+    if 'Ano' in df.columns:
+        df = df.drop(columns=['Ano'])
     return df
     
 indicadores = load_data()
@@ -99,7 +103,24 @@ for column in indicadores.columns:
         cagr = calculate_cagr(indicadores, column)
         cagrs[column] = cagr
 
+# Função para formatar colunas monetárias e porcentagens
+def format_dataframe(df):
+    # Definir colunas monetárias e de porcentagem
+    col_monetarias = ['Receita Liquida', 'Lucro Liquido', 'Dividendos', 'Divida Liquida']
+    col_porcentagem = ['Margem Liquida', 'ROE', 'indice endividamento']
+    
+    # Formatar colunas monetárias como R$
+    for col in col_monetarias:
+        df[col] = df[col].apply(lambda x: f"R${x:,.2f}")
+    
+    # Formatar colunas de porcentagem como %
+    for col in col_porcentagem:
+        df[col] = df[col].apply(lambda x: f"{x:.2f}%")
+    
+    return df
 
+# Aplicar formatação na tabela de indicadores
+indicadores_formatado = format_dataframe(indicadores.copy())
 
 # Barra superior (simulação)
 col1, col2 = st.columns([4, 1])
@@ -127,13 +148,21 @@ with col4:
 
 # Gráfico de Receita Líquida e Lucro Líquido
 st.markdown("### Receita e Lucro Líquido")
-df_melted = indicadores.melt(id_vars=['Data'], value_vars=['Receita_Liquida', 'Lucro_Líquido'],
+df_melted = indicadores.melt(id_vars=['Data'], value_vars=['Receita Liquida', 'Lucro Liquido'],
                              var_name='Indicador', value_name='Valor')
 
 fig = px.line(df_melted, x='Data', y='Valor', color='Indicador',
               title='Evolução da Receita e Lucro Líquido', markers=True)
 
-fig.update_layout(xaxis_title='Data', yaxis_title='Valor')
+# Personalizar o gráfico com cores temáticas
+fig.update_traces(line=dict(width=3))
+fig.update_layout(xaxis_title='Ano', yaxis_title='Valor',
+                  plot_bgcolor='white', 
+                  paper_bgcolor='#F5F5F5',
+                  font=dict(color='#333333'),
+                  title_font=dict(color='#8A2BE2'),
+                  legend_title_text='Indicadores')
+
 st.plotly_chart(fig, use_container_width=True)
 
 # Indicadores Categoriais (exemplo de blocos à direita)
