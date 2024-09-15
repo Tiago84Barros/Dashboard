@@ -4,10 +4,6 @@ import plotly.express as px
 from sklearn.linear_model import LinearRegression
 import numpy as np
 
-# Função para buscar o logotipo da empresa usando a API Clearbit
-def get_company_logo(domain):
-    return f"https://logo.clearbit.com/{domain}"
-
 # Função para buscar informações da empresa usando o ticket
 def get_company_info(ticker):
     try:
@@ -147,12 +143,9 @@ with col2:
 
 # Verificar se o ticket foi inserido
 if ticket:
-    company_name, company_website = get_company_info(ticket)
-    if company_name and company_website:
-        st.subheader(f"Visão Geral - {company_name}")
-        
-        # Buscar o logotipo da empresa
-        logo_url = get_company_logo(company_website)
+    company_name, logo_url = get_company_info(ticket)
+    if company_name and logo_url:
+        st.subheader(f"Visão Geral (CARG) - {company_name}")
         
         # Exibir o logotipo no canto direito
         col1, col2 = st.columns([4, 1])
@@ -164,7 +157,7 @@ if ticket:
         st.error("Empresa não encontrada. Verifique o ticket inserido.")
 
 # Mostrar Métricas Resumidas
-st.markdown("## Visão Geral do Crescimento Médio (CAGR)")
+st.markdown("## Visão Geral (CAGR)")
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
