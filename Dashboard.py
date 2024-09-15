@@ -15,17 +15,65 @@ indicadores = load_data()
 
 st.title('Dashboard de Indicadores Financeiros')
 
-st.subheader('Tabela de Indicadores')
-st.dataframe(indicadores.style.format(subset=indicadores.select_dtypes(include='number').columns, formatter="{:.2f}"))
+# Dividir a página em duas colunas
+col1, col2 = st.columns([1, 2])
 
-st.subheader('Gráfico de Indicadores')
+with col1:
+    st.subheader('Seleção de Indicadores')
+    variaveis_disponiveis = indicadores.columns.drop('Data')
+    variaveis_selecionadas = st.multiselect(
+        'Selecione os indicadores:',
+        options=variaveis_disponiveis,
+        default=variaveis_disponiveis[:3]  # Selecionar alguns por padrão
+    )
 
-variaveis_disponiveis = indicadores.columns.drop('Data')
+with col2:
+    st.subheader('Gráfico de Indicadores')
+    if variaveis_selecionadas:
+        df_melted = indicadores.melt(
+            id_vars=['Data'],
+            value_vars=variaveis_selecionadas,
+            var_name='Indicador',
+            value_name='Valor'
+        )
+        fig = px.line(
+            df_melted,
+            x='Data',
+            y='Valor',
+            color='Indicador',
+            markers=True,
+            template='seaborn'
+        )
+        fig.update_layout(
+            xaxis_title='Data',
+            yaxis_title='Valor',
+            legend_title='Indicadores',
+            title='Evolução dos Indicadores Selecionados'
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.warning('Por favor, selecione ao menos um indicador para visualizar o gráfico.')
 
-variaveis_selecionadas = st.multiselect(
-    'Selecione os indicadores:',
-    options=variaveis_disponiveis
-)
+# st.subheader('Tabela de Indicadores')
+# st.dataframe(
+#     indicadores.style.format(subset=indicadores.select_dtypes(include='number').columns, formatter="{:.2f}"),
+#     use_container_width=True
+# )
+
+      
+     
+
+# st.subheader('Tabela de Indicadores')
+# st.dataframe(indicadores.style.format(subset=indicadores.select_dtypes(include='number').columns, formatter="{:.2f}"))
+
+# st.subheader('Gráfico de Indicadores')
+
+# variaveis_disponiveis = indicadores.columns.drop('Data')
+
+# variaveis_selecionadas = st.multiselect(
+#     'Selecione os indicadores:',
+#     options=variaveis_disponiveis
+# )
 
 if variaveis_selecionadas:
     df_melted = indicadores.melt(
