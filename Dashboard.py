@@ -126,7 +126,7 @@ for column in indicadores.columns:
 
 # Função para formatar colunas monetárias e porcentagens
 def format_dataframe(df):
-    col_monetarias = ['Receita_Liquida', 'Ativo_Circulante', 'Passivo_Circulante', 'Capital_de_Giro', 'patrimonio_liquido', 'lucro_operacional', 'Lucro_Líquido', 'Dividendos', 'Divida_Líquida', 'balanca_comercial']
+    col_monetarias = ['Close', 'LPA', 'Receita_Liquida', 'Ativo_Circulante', 'Passivo_Circulante', 'Capital_de_Giro', 'patrimonio_liquido', 'lucro_operacional', 'Lucro_Líquido', 'Dividendos', 'Divida_Líquida', 'balanca_comercial']
     col_porcentagem = ['Margem_Líquida', 'ROE', 'indice_endividamento', 'selic', 'ipca', 'icc']
     
     # Formatando colunas monetárias manualmente (R$)
@@ -207,6 +207,6 @@ with col3:
 
 # Tabela de Indicadores
 st.markdown("### Tabela de Indicadores")
-st.dataframe(indicadores)
+st.dataframe(indicadores_formatado)
 
 
