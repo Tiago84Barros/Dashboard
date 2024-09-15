@@ -8,6 +8,8 @@ def load_data():
     df = pd.read_csv('indicadores', index_col=False)
     # Substituir espaços nos nomes das colunas por underlines
     df.columns = df.columns.str.replace(' ', '_')
+    # Retornar o DataFrame
+    return df
     
 indicadores = load_data()
 
