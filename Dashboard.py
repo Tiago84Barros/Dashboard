@@ -14,7 +14,7 @@ indicadores = load_data()
 st.title('Dashboard de Indicadores Financeiros')
 
 st.subheader('Tabela de Indicadores')
-st.dataframe(indicadores.style.format(subset=indicadores.select_dtypes(include='number').columns, formatter="{:.2f}"))
+st.write(indicadores.style.format(subset=indicadores.select_dtypes(include='number').columns, formatter="{:.2f}"))
 
 st.subheader('Gráfico de Indicadores')
 
