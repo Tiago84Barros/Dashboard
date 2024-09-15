@@ -76,7 +76,7 @@ indicadores = load_data()
 # Função para calcular a regressão linear
 def calcular_media_regressao(df, coluna):
     # Usar o tempo (ano) como variável independente e a coluna selecionada como variável dependente
-    df['Ano'] = df['Data'].dt.year
+    df['Ano'] = df['Data']
     X = df[['Ano']]
     y = df[coluna].values.reshape(-1, 1)
     
