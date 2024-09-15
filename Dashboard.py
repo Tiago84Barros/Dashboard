@@ -78,27 +78,28 @@ def load_data():
     
 indicadores = load_data()
 
-# Função para calcular a regressão linear
-def calcular_media_regressao(df, coluna):
-    # Usar o tempo (ano) como variável independente e a coluna selecionada como variável dependente
-    df['Ano'] = df['Data']
-    X = df[['Ano']]
-    y = df[coluna].values.reshape(-1, 1)
+# Função para calcular o crescimento médio (CAGR)
+def calculate_cagr(df, column):
+    initial_value = df.iloc[0][column]
+    final_value = df.iloc[-1][column]
+    num_years = df['Data'].iloc[-1] - df['Data'].iloc[0]
     
-    # Aplicar a regressão linear
-    reg = LinearRegression().fit(X, y)
+    # Cálculo do CAGR
+    if initial_value != 0:
+        cagr = (final_value / initial_value) ** (1 / num_years) - 1
+    else:
+        cagr = np.nan  # Caso o valor inicial seja zero, não é possível calcular o CAGR
     
-    # Prever o valor no último ano da tabela
-    ultimo_ano = df['Ano'].max()
-    previsao = reg.predict([[ultimo_ano]])
-    
-    return previsao[0][0]
+    return cagr
 
-# Calcular as métricas usando regressão linear em colunas específicas
-balance = calcular_media_regressao(indicadores, 'Receita_Liquida')
-income = calcular_media_regressao(indicadores, 'Lucro_Líquido')
-savings = calcular_media_regressao(indicadores, 'Dividendos')
-expenses = calcular_media_regressao(indicadores, 'Divida_Líquida')
+# Calcular o CAGR para cada indicador
+cagrs = {}
+for column in indicadores.columns:
+    if column != 'Data':
+        cagr = calculate_cagr(indicadores, column)
+        cagrs[column] = cagr
+
+
 
 # Barra superior (simulação)
 col1, col2 = st.columns([4, 1])
@@ -112,16 +113,17 @@ st.markdown("## Visão Geral")
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
-    st.metric(label="Saldo (Balance)", value=f"R${balance:,.2f}", delta="2.5%")
+    st.metric(label="CAGR Receita Líquida", value=f"{cagrs['Receita_Liquida']:.2%}")
 
 with col2:
-    st.metric(label="Renda (Income)", value=f"R${income:,.2f}", delta="0.5%")
+    st.metric(label="CAGR Lucro Líquido", value=f"{cagrs['Lucro_Líquido']:.2%}")
 
 with col3:
-    st.metric(label="Poupança (Savings)", value=f"R${savings:,.2f}", delta="-1.5%")
+    st.metric(label="CAGR Dividendos", value=f"{cagrs['Dividendos']:.2%}")
 
 with col4:
-    st.metric(label="Despesas (Expenses)", value=f"R${expenses:,.2f}", delta="2.5%")
+    st.metric(label="CAGR Dívida Líquida", value=f"{cagrs['Divida_Líquida']:.2%}")
+
 
 # Gráfico de Receita Líquida e Lucro Líquido
 st.markdown("### Receita e Lucro Líquido")
