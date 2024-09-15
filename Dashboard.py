@@ -111,11 +111,13 @@ def format_dataframe(df):
     
     # Formatar colunas monetárias como R$
     for col in col_monetarias:
-        df[col] = df[col].apply(lambda x: f"R${x:,.2f}")
+        if col in df.columns:
+            df[col] = df[col].apply(lambda x: f"R${x:,.2f}")
     
     # Formatar colunas de porcentagem como %
     for col in col_porcentagem:
-        df[col] = df[col].apply(lambda x: f"{x:.2f}%")
+        if col in df.columns:
+            df[col] = df[col].apply(lambda x: f"{x:.2f}%")
     
     return df
 
