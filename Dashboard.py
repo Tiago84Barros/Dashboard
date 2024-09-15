@@ -6,9 +6,10 @@ import numpy as np
 
 # Função para buscar informações da empresa usando o ticket
 def get_company_info(ticker):
+    ticker = f'{ticker}.SA'
     try:
         # Usar yfinance para pegar informações básicas da empresa
-        company = yf.Ticker(f'ticker{.SA}')
+        company = yf.Ticker(ticker)
         info = company.info
         return info['longName'], info['website']  # Retorna o nome da empresa e o site (para o logo)
     except:
