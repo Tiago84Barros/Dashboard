@@ -171,6 +171,46 @@ def format_dataframe(df):
 # Aplicar formatação na tabela de indicadores
 indicadores_formatado = format_dataframe(indicadores.copy())
 
+# Função para gerar uma análise breve com base nos indicadores
+def gerar_analise(indicadores):
+    # Obter os últimos valores dos indicadores mais importantes
+    receita_atual = indicadores['Receita_Liquida'].iloc[-1]
+    lucro_atual = indicadores['Lucro_Líquido'].iloc[-1]
+    divida_atual = indicadores['Dívida_Líquida'].iloc[-1]
+    patrimonio_atual = indicadores['patrimonio_liquido'].iloc[-1]
+    roe_atual = indicadores['ROE'].iloc[-1]
+    
+    # Iniciar a análise com base nos valores
+    analise = []
+    
+    # Análise de crescimento da receita
+    if receita_atual > indicadores['Receita_Liquida'].iloc[-2]:  # Comparar com o ano anterior
+        analise.append("A empresa está apresentando crescimento na receita líquida.")
+    else:
+        analise.append("A receita líquida da empresa está em queda.")
+
+    # Análise de lucratividade
+    if lucro_atual > indicadores['Lucro_Líquido'].iloc[-2]:
+        analise.append("A empresa tem demonstrado crescimento no lucro líquido.")
+    else:
+        analise.append("O lucro líquido da empresa está em queda, o que pode ser um sinal de alerta.")
+
+    # Análise de endividamento
+    if divida_atual > patrimonio_atual:
+        analise.append("A dívida líquida da empresa é maior que o patrimônio líquido, o que pode indicar alto risco financeiro.")
+    else:
+        analise.append("A empresa possui um nível de endividamento gerenciável em relação ao seu patrimônio líquido.")
+
+    # Análise de rentabilidade
+    if roe_atual > 15:
+        analise.append(f"O ROE atual da empresa é de {roe_atual:.2f}%, indicando boa rentabilidade.")
+    else:
+        analise.append(f"O ROE da empresa é de {roe_atual:.2f}%, o que pode indicar baixa rentabilidade.")
+
+    # Unir todas as análises
+    return " ".join(analise)
+
+
 # Barra superior (simulação) buscando a logo das empresas ____________________________________________________________________________________________________________________________________________
 col1, col2 = st.columns([4, 1])
 with col1:
