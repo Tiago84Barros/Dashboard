@@ -195,16 +195,21 @@ if variaveis_selecionadas:
     df_melted = indicadores.melt(id_vars=['Data'], value_vars=variaveis_selecionadas,
                                  var_name='Indicador', value_name='Valor')
 
+    # Configurando layout escuro e exibindo valores nos eixos
     fig = px.line(df_melted, x='Data', y='Valor', color='Indicador',
                   title='Evolução dos Indicadores Selecionados', markers=True)
 
-    fig.update_traces(line=dict(width=3))
+
+    fig.update_traces(line=dict(width=3), marker=dict(size=8), text=df_melted['Valor'].round(2), mode='lines+markers+text',
+                      textposition='top center')
     fig.update_layout(xaxis_title='Ano', yaxis_title='Valor',
-                      plot_bgcolor='black', 
-                      paper_bgcolor='#F5F5F5',
-                      font=dict(color='#333333'),
+                      plot_bgcolor='#1f1f1f',  # Fundo escuro
+                      paper_bgcolor='#1f1f1f',
+                      font=dict(color='#ffffff'),  # Cor do texto
                       title_font=dict(color='#8A2BE2'),
-                      legend_title_text='Indicadores')
+                      legend_title_text='Indicadores',
+                      xaxis=dict(showgrid=True, gridcolor='#444444'),
+                      yaxis=dict(showgrid=True, gridcolor='#444444'))
 
     st.plotly_chart(fig, use_container_width=True)
 else:
