@@ -154,9 +154,9 @@ def format_dataframe(df):
         'Lucro Liquido': 'Lucro Líquido',
         'Dividendos': 'Dividendos',
         'Divida Liquida': 'Dívida Líquida',
-        'patrimonio liquido': 'Patrimônio Líquido'
-        'lucro operacional': 'Lucro Operacional'
-        'indice de endividamento': 'Índice de Endividamento'
+        'patrimonio liquido': 'Patrimônio Líquido',
+        'lucro operacional': 'Lucro Operacional',
+        'indice de endividamento': 'Índice de Endividamento',
         'PL': 'P/L',
         'selic': 'Selic',
         'ipca': 'IPCA',
