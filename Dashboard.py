@@ -145,6 +145,23 @@ def format_dataframe(df):
 
      # Remover o sublinhado dos nomes das colunas
     df.columns = df.columns.str.replace('_', ' ')  # Substituir sublinhados por espaços
+
+    # Renomear colunas específicas
+    df = df.rename(columns={
+        'Close': 'Preço de Fechamento',  # Renomeando "Close" para "Preço de Fechamento"
+        'LPA': 'Lucro por Ação',         # Renomeando "LPA" para "Lucro por Ação"
+        'Receita Liquida': 'Receita Líquida',
+        'Lucro Liquido': 'Lucro Líquido',
+        'Dividendos': 'Dividendos',
+        'Divida Liquida': 'Dívida Líquida',
+        'PL': 'P/L',
+        'selic': 'Selic',
+        'ipca': 'IPCA',
+        'cambio': 'Câmbio',
+        'icc': 'ICC',
+        'pib': 'PIB',
+        'balança comercial': 'Balança Comercial
+    })
     
     return df
 
