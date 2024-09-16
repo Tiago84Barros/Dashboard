@@ -160,7 +160,7 @@ def format_dataframe(df):
         'cambio': 'Câmbio',
         'icc': 'ICC',
         'pib': 'PIB',
-        'balanca comercial': 'Balança Comercial
+        'balanca comercial': 'Balança Comercial'
     })
     
     return df
