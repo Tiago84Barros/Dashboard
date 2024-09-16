@@ -200,8 +200,7 @@ if variaveis_selecionadas:
                   title='Evolução dos Indicadores Selecionados', markers=True)
 
 
-    fig.update_traces(line=dict(width=3), marker=dict(size=8), text=df_melted['Valor'].round(2), mode='lines+markers+text',
-                      textposition='top center')
+    fig.update_layout(xaxis_title='Ano', yaxis_title='Valor', yaxis=dict(showgrid=True, gridcolor='#444444'))
     fig.update_layout(xaxis_title='Ano', yaxis_title='Valor',
                       plot_bgcolor='#1f1f1f',  # Fundo escuro
                       paper_bgcolor='#1f1f1f',
