@@ -142,6 +142,9 @@ def format_dataframe(df):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce')  # Garantir que está em formato numérico
             df[col] = df[col].apply(lambda x: f"{x:.2f}%" if pd.notnull(x) else x)
+
+     # Remover o sublinhado dos nomes das colunas
+    df.columns = df.columns.str.replace('_', ' ')  # Substituir sublinhados por espaços
     
     return df
 
