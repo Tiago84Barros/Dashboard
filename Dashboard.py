@@ -228,7 +228,7 @@ if variaveis_selecionadas:
                       plot_bgcolor='#1f1f1f',  # Fundo escuro
                       paper_bgcolor='#1f1f1f',
                       font=dict(color='#ffffff'),  # Cor do texto
-                      title_font=dict(color='#8A2BE2'),
+                      title_font=dict(color='#ffffff', size=24).
                       legend_title_text='Indicadores',
                       xaxis=dict(showgrid=True, gridcolor='#444444'),
                       yaxis=dict(showgrid=True, gridcolor='#444444'))
