@@ -148,6 +148,9 @@ def format_dataframe(df):
      # Remover o sublinhado dos nomes das colunas
     df.columns = df.columns.str.replace('_', ' ')  # Substituir sublinhados por espaços
 
+    # Garantir que 'Data' seja exibida como um número inteiro sem vírgulas
+    df['Data'] = df['Data'].astype(str)  # Converte para string para garantir a exibição correta
+
     # Renomear colunas específicas
     df = df.rename(columns={
         'Close': 'Preço de Fechamento',  # Renomeando "Close" para "Preço de Fechamento"
