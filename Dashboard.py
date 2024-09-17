@@ -5,7 +5,6 @@ import yfinance as yf
 from sklearn.linear_model import LinearRegression
 import numpy as np
 import openai
-from openai.error import AuthenticationError  
 import os
 
 # Carregar a chave da API do OpenAI
@@ -23,8 +22,8 @@ def test_openai_api_key():
             max_tokens=5
         )
         return "Chave API válida. Resposta do OpenAI: " + response.choices[0].text.strip()
-    except openai.error.AuthenticationError:
-        return "Chave API inválida!"
+    except openai.error.InvalidRequestError:
+        return "Chave API inválida ou erro na solicitação!"
     except Exception as e:
         return f"Ocorreu um erro: {e}"
 
