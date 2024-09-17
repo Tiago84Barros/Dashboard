@@ -22,10 +22,9 @@ def test_openai_api_key():
             max_tokens=5
         )
         return "Chave API válida. Resposta do OpenAI: " + response.choices[0].text.strip()
-    except openai.error.InvalidRequestError:
-        return "Chave API inválida ou erro na solicitação!"
     except Exception as e:
-        return f"Ocorreu um erro: {e}"
+        # Captura qualquer erro que ocorra e exibe a mensagem
+        return f"Erro ao testar a chave API: {e}"
 
 # Adicione um botão ao dashboard para testar a chave da API
 if st.button("Testar Chave API"):
