@@ -4,10 +4,9 @@ import plotly.express as px
 from sklearn.linear_model import LinearRegression
 import numpy as np
 
-# Função para obter a URL do logotipo___________________________________________________________________________________________________________________________________________
+# Função para obter a URL do logotipo a partir do repositório no GitHub ___________________________________________________________________________________________________________________________________________
 def get_logo_url(ticker):
-    # Remover o sufixo '.SA' se houver
-    ticker_clean = ticker.replace('.SA', '')
+    ticker_clean = ticker.replace('.SA', '')  # Remover o sufixo ".SA"
     logo_url = f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{ticker_clean}.png"
     
     # Verificar se o logotipo existe na URL
@@ -180,7 +179,7 @@ indicadores_formatado = format_dataframe(indicadores.copy())
 # Barra superior (simulação) buscando a logo das empresas ____________________________________________________________________________________________________________________________________________
 col1, col2 = st.columns([4, 1])
 with col1:
-    ticket = st.text_input("Buscar por Ticket").upper()
+    ticket = st.text_input("Buscar por Ticket (ex: BBAS3)").upper()
 with col2:
     st.button("Gerar Relatório")
 
@@ -192,7 +191,7 @@ if ticket:
     if company_name:
         st.subheader(f"Visão Geral - {company_name}")
         
-        # Buscar o logotipo usando a URL
+        # Buscar o logotipo usando a URL do repositório
         logo_url = get_logo_url(ticket)
         
         # Exibir o logotipo no canto direito
