@@ -4,27 +4,18 @@ import plotly.express as px
 from sklearn.linear_model import LinearRegression
 import numpy as np
 
-# Função para carregar logotipos locais ___________________________________________________________________________________________________________________________________________
-def get_local_logo(ticker):
-    logo_path = f"logos/{ticker}.png"  # Substitua pela pasta onde seus logotipos estão armazenados
-    if os.path.exists(logo_path):
-        return logo_path
-    return None
-
-# Função para buscar informações da empresa usando yfinance
-def get_company_info(ticker):
-    try:
-        # Adicionar ".SA" para tickers da B3 (bolsa brasileira) se não estiver presente
-        if not ticker.endswith(".SA"):
-            ticker += ".SA"
-        
-        # Usar yfinance para pegar informações básicas da empresa
-        company = yf.Ticker(ticker)
-        info = company.info
-        return info['longName'], info.get('website')  # Retorna o nome da empresa e o site (para o logo)
-    except:
-        return None, None
-
+# Função para obter a URL do logotipo___________________________________________________________________________________________________________________________________________
+def get_logo_url(ticker):
+    # Remover o sufixo '.SA' se houver
+    ticker_clean = ticker.replace('.SA', '')
+    logo_url = f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{ticker_clean}.png"
+    
+    # Verificar se o logotipo existe na URL
+    response = requests.get(logo_url)
+    if response.status_code == 200:
+        return logo_url
+    else:
+        return None
 # Definir o layout da página ___________________________________________________________________________________________________________________________________________________________--
 st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
 
@@ -171,65 +162,33 @@ def format_dataframe(df):
 # Aplicar formatação na tabela de indicadores
 indicadores_formatado = format_dataframe(indicadores.copy())
 
-# Função para gerar uma análise breve com base nos indicadores
-def gerar_analise(indicadores):
-    # Obter os últimos valores dos indicadores mais importantes
-    receita_atual = indicadores['Receita_Liquida'].iloc[-1]
-    lucro_atual = indicadores['Lucro_Líquido'].iloc[-1]
-    divida_atual = indicadores['Dívida_Líquida'].iloc[-1]
-    patrimonio_atual = indicadores['patrimonio_liquido'].iloc[-1]
-    roe_atual = indicadores['ROE'].iloc[-1]
-    
-    # Iniciar a análise com base nos valores
-    analise = []
-    
-    # Análise de crescimento da receita
-    if receita_atual > indicadores['Receita_Liquida'].iloc[-2]:  # Comparar com o ano anterior
-        analise.append("A empresa está apresentando crescimento na receita líquida.")
-    else:
-        analise.append("A receita líquida da empresa está em queda.")
-
-    # Análise de lucratividade
-    if lucro_atual > indicadores['Lucro_Líquido'].iloc[-2]:
-        analise.append("A empresa tem demonstrado crescimento no lucro líquido.")
-    else:
-        analise.append("O lucro líquido da empresa está em queda, o que pode ser um sinal de alerta.")
-
-    # Análise de endividamento
-    if divida_atual > patrimonio_atual:
-        analise.append("A dívida líquida da empresa é maior que o patrimônio líquido, o que pode indicar alto risco financeiro.")
-    else:
-        analise.append("A empresa possui um nível de endividamento gerenciável em relação ao seu patrimônio líquido.")
-
-    # Análise de rentabilidade
-    if roe_atual > 15:
-        analise.append(f"O ROE atual da empresa é de {roe_atual:.2f}%, indicando boa rentabilidade.")
-    else:
-        analise.append(f"O ROE da empresa é de {roe_atual:.2f}%, o que pode indicar baixa rentabilidade.")
-
-    # Unir todas as análises
-    return " ".join(analise)
-
-
 # Barra superior (simulação) buscando a logo das empresas ____________________________________________________________________________________________________________________________________________
 col1, col2 = st.columns([4, 1])
 with col1:
-    ticket = st.text_input("Buscar por Ticket")
+    ticket = st.text_input("Buscar por Ticket").upper()
+with col2:
+    st.button("Gerar Relatório")
 
 # Verificar se o ticket foi inserido
 if ticket:
-    company_name, logo_url = get_company_info(ticket)
-    if company_name and logo_url:
-        st.subheader(f"Visão Geral (CARG) - {company_name}")
+    company_name, company_website = get_company_info(ticket)
+    if company_name:
+        st.subheader(f"Visão Geral - {company_name}")
+        
+        # Buscar o logotipo usando a URL
+        logo_url = get_logo_url(ticket)
         
         # Exibir o logotipo no canto direito
         col1, col2 = st.columns([4, 1])
         with col1:
             st.write(f"Informações financeiras de {company_name}")
         with col2:
-            st.image(logo_url, width=150)  # Mostrar o logotipo
+            if logo_url:
+                st.image(logo_url, width=150)
+            else:
+                st.write("Logotipo não disponível.")
     else:
-        st.error(f"Empresa não encontrada. Verifique o ticket inserido.")
+        st.error("Empresa não encontrada.")
 
 # Mostrar Métricas Resumidas ____________________________________________________________________________________________________________________________________________________________________________
 st.markdown("## Visão Geral (CAGR)")
