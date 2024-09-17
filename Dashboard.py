@@ -4,39 +4,7 @@ import plotly.express as px
 import yfinance as yf
 from sklearn.linear_model import LinearRegression
 import numpy as np
-import openai
 import os
-
-# Carregar a chave da API do OpenAI
-#openai.api_key = st.secrets["OPENAI_API_KEY"]
-openai.api_key = "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"
-
-# Função para testar a chave da API do OpenAI
-def test_openai_api_key():
-    try:
-        # Teste básico para verificar se a chave é válida
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",  # ou "gpt-4" se tiver acesso
-            messages=[{"role": "user", "content": "Diga 'Olá, isso é um teste!'"}],
-            max_tokens=50
-        )
-        return "Chave API válida. Resposta do OpenAI: " + response.choices[0].message['content'].strip()
-    
-    except openai.error.InvalidRequestError as e:
-        return f"Erro de requisição: {e}"
-    except openai.error.AuthenticationError as e:
-        return "Erro de autenticação: Chave API inválida ou não autorizada."
-    except Exception as e:
-        return f"Erro ao testar a chave API: {e}"
-
-# Adicione um botão ao dashboard para testar a chave da API
-if st.button("Testar Chave API"):
-    resultado = test_openai_api_key()  # Chama a função para testar a chave
-    st.write(resultado)  # Exibe o resultado na interface do dashboard
-# Adicione um botão ao dashboard para testar a chave da API
-if st.button("Testar Chave API"):
-    resultado = test_openai_api_key()  # Chama a função para testar a chave
-    st.write(resultado)  # Exibe o resultado na interface do dashboard
 
 # Função para obter a URL do logotipo a partir do repositório no GitHub ___________________________________________________________________________________________________________________________________________
 def get_logo_url(ticker):
@@ -204,37 +172,6 @@ def format_dataframe(df):
 
 # Aplicar formatação na tabela de indicadores
 indicadores_formatado = format_dataframe(indicadores.copy())
-
-# Função para gerar sugestões com a API do ChatGPT ______________________________________________________________________________________________________________________________________________________________
-def generate_chatgpt_suggestions(indicators_df):
-    data_summary = indicators_df.describe().to_string()
-
-    prompt = f"""
-    Com base nas informações financeiras históricas da empresa abaixo, 
-    forneça uma análise financeira e de investimentos embasada nos princípios de Benjamin Graham:
-    
-    {data_summary}
-    
-    A análise deve incluir:
-    - O poder de crescimento da empresa.
-    - O poder de resiliência às crises.
-    - Perspectivas de crescimento baseadas no histórico apresentado.
-    - Uma avaliação se a empresa está cara ou barata com base no lucro líquido.
-    - Correlação do histórico da empresa com seus pares no mercado.
-    - Probabilidade de crescimento para os próximos cinco anos.
-    """
-
-    response = openai.ChatCompletion.create(
-        model="gpt-4",  # Modelo GPT-4 ou GPT-3.5, conforme seu plano
-        messages=[
-            {"role": "system", "content": "Você é um analista financeiro."},
-            {"role": "user", "content": prompt}
-        ],
-        max_tokens=500,
-        temperature=0.7,
-    )
-
-    return response['choices'][0]['message']['content'].strip()
     
 # Barra superior (simulação) buscando a logo das empresas ____________________________________________________________________________________________________________________________________________
 col1, col2 = st.columns([4, 1])
@@ -320,12 +257,3 @@ with col3:
 # Tabela de Indicadores
 st.markdown("### Tabela de Indicadores")
 st.dataframe(indicadores_formatado)
-
-# Gerar e mostrar sugestões do ChatGPT com base nos indicadores fornecidos ______________________________________________________________________________________________________________________________
-st.markdown("### Análise de Investimento (Sugestões do ChatGPT)")
-if st.button("Gerar Análise Financeira"):
-    with st.spinner("Gerando análise baseada em Benjamin Graham..."):
-        suggestions = generate_chatgpt_suggestions(indicadores)  # Chama a função para gerar as sugestões com base nos indicadores
-        st.markdown(suggestions)  # Mostra as sugestões geradas
-
-
