@@ -7,9 +7,6 @@ import numpy as np
 import openai
 import os
 
-# Verifique a versão da biblioteca openai
-st.write(f"Versão da biblioteca openai: {openai.__version__}")
-
 # Carregar a chave da API do OpenAI
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
