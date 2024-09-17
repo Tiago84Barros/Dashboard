@@ -4,6 +4,8 @@ import plotly.express as px
 import yfinance as yf
 from sklearn.linear_model import LinearRegression
 import numpy as np
+from dotenv import load_dotenv
+import os
 
 # Função para obter a URL do logotipo a partir do repositório no GitHub ___________________________________________________________________________________________________________________________________________
 def get_logo_url(ticker):
