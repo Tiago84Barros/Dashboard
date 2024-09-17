@@ -89,7 +89,7 @@ def load_data():
     # Carregar o DataFrame a partir do arquivo local
     df = pd.read_csv('indicadores', index_col=False)
     # Converter a coluna 'Data' para datetime e extrair apenas o ano
-    df['Data'] = pd.to_datetime(df['Data'], errors='coerce').dt.year  # Extrair somente o ano
+    df['Data'] = pd.to_datetime(df['Data'], errors='coerce').dt.year.astype(int)  # Extrair somente o ano e garantir que é int
      # Remover a coluna 'Ano' se existir no DataFrame
     if 'Ano' in df.columns:
         df = df.drop(columns=['Ano'])
