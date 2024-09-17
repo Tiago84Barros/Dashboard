@@ -193,7 +193,7 @@ if ticket:
             st.write(f"Informações financeiras de {company_name}")
         with col2:
             # Exibir o logotipo diretamente usando o Streamlit
-            st.image(logo_url, width=150)  # Carregando a imagem diretamente da URL
+            st.image(logo_url, width=100)  # Carregando a imagem diretamente da URL
     else:
         st.error("Empresa não encontrada.")
 else:
