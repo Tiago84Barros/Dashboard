@@ -4,4 +4,4 @@ requests
 pandas
 plotly
 scikit-learn
-openai migrate
+openai
