@@ -5,6 +5,7 @@ import yfinance as yf
 from sklearn.linear_model import LinearRegression
 import numpy as np
 from dotenv import load_dotenv
+import openai
 import os
 
 # Carregar a chave da API do OpenAI
