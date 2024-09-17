@@ -16,14 +16,18 @@ openai.api_key = "sk-proj-sZHefX8YSIN6yTGHgRs4ING4jBxhYi7FFiXanbySH_FtFNLcgwfihz
 # Função para testar a chave da API do OpenAI
 def test_openai_api_key():
     try:
-        # Teste básico para verificar se a chave é válida
-        response = openai.ChatCompletion.create(
+        # Teste básico para verificar se a chave é válida com a nova API
+        response = openai.completions.create(
             model="gpt-4",  # Use "gpt-3.5-turbo" se você tiver acesso apenas a esse modelo
-            messages=[{"role": "user", "content": "Diga 'Olá, isso é um teste!'"}]
+            messages=[{"role": "user", "content": "Diga 'Olá, isso é um teste!'"}],
+            max_tokens=50
         )
-        return "Chave API válida. Resposta do OpenAI: " + response['choices'][0]['message']['content'].strip()
+        return "Chave API válida. Resposta do OpenAI: " + response.choices[0].message['content'].strip()
     
-    # Captura qualquer erro que ocorra na API do OpenAI
+    except openai.error.InvalidRequestError as e:
+        return f"Erro de requisição: {e}"
+    except openai.error.AuthenticationError as e:
+        return "Erro de autenticação: Chave API inválida ou não autorizada."
     except Exception as e:
         return f"Erro ao testar a chave API: {e}"
         
