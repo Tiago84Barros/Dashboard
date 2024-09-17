@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import yfinance as yf
-import requests
 from sklearn.linear_model import LinearRegression
 import numpy as np
 
@@ -10,15 +9,8 @@ import numpy as np
 def get_logo_url(ticker):
     ticker_clean = ticker.replace('.SA', '').upper()  # Remover o sufixo ".SA" e garantir que o ticker esteja em maiúsculas
     logo_url = f"https://github.com/thefintz/icones-b3/tree/main/icones/{ticker_clean}.png"
-    
-    # Verificar se o logotipo existe na URL
-    response = requests.get(logo_url)
-
-    if response.status_code == 200:
-        return logo_url
-    else:
-        return None
-
+    return logo_url
+  
 # Função para buscar informações da empresa usando yfinance
 def get_company_info(ticker):
     try:
@@ -191,6 +183,7 @@ if ticket:
     company_name, company_website = get_company_info(ticket)
     
     if company_name:
+        st.subheader(f"Visão Geral - {company_name}")
         # Buscar o logotipo usando a URL do repositório
         logo_url = get_logo_url(ticket)
         
@@ -199,10 +192,8 @@ if ticket:
         with col1:
             st.write(f"Informações financeiras de {company_name}")
         with col2:
-            if logo_url:
-                st.image(logo_url, width=150)
-            else:
-                st.write("Logotipo não disponível.")
+            # Exibir o logotipo diretamente usando o Streamlit
+            st.image(logo_url, width=150)  # Carregando a imagem diretamente da URL
     else:
         st.error("Empresa não encontrada.")
 else:
