@@ -11,17 +11,27 @@ import os
 #openai.api_key = st.secrets["OPENAI_API_KEY"]
 openai.api_key = "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"
 
-try:
-    response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": "Você é um especialista em análise financeira."},
-            {"role": "user", "content": "Como está o mercado financeiro hoje?"},
-        ]
-    )
-    print(response['choices'][0]['message']['content'])
-except Exception as e:
-    print(f"Erro: {e}")
+
+# Função para testar a chave da API do OpenAI
+def test_openai_api_key():
+    try:
+        # Teste básico para verificar se a chave é válida
+        response = openai.Completion.create(
+            model="text-davinci-003",
+            prompt="Diga 'Olá, isso é um teste!'",
+            max_tokens=5
+        )
+        return "Chave API válida. Resposta do OpenAI: " + response.choices[0].text.strip()
+    except openai.error.AuthenticationError:
+        return "Chave API inválida!"
+    except Exception as e:
+        return f"Ocorreu um erro: {e}"
+
+# Adicione um botão ao dashboard para testar a chave da API
+if st.button("Testar Chave API"):
+    resultado = test_openai_api_key()  # Chama a função para testar a chave
+    st.write(resultado)  # Exibe o resultado na interface do dashboard
+
 # Função para obter a URL do logotipo a partir do repositório no GitHub ___________________________________________________________________________________________________________________________________________
 def get_logo_url(ticker):
     ticker_clean = ticker.replace('.SA', '').upper()  # Remover o sufixo ".SA" e garantir que o ticker esteja em maiúsculas
