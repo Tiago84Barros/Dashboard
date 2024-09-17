@@ -4,13 +4,11 @@ import plotly.express as px
 import yfinance as yf
 from sklearn.linear_model import LinearRegression
 import numpy as np
-from dotenv import load_dotenv
 import openai
 import os
 
 # Carregar a chave da API do OpenAI
-load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 # Função para obter a URL do logotipo a partir do repositório no GitHub ___________________________________________________________________________________________________________________________________________
 def get_logo_url(ticker):
