@@ -184,7 +184,6 @@ indicadores_formatado = format_dataframe(indicadores.copy())
 def generate_chatgpt_suggestions(indicators_df):
     data_summary = indicators_df.describe().to_string()
 
-    # Criar um prompt detalhado para o ChatGPT
     prompt = f"""
     Com base nas informações financeiras históricas da empresa abaixo, 
     forneça uma análise financeira e de investimentos embasada nos princípios de Benjamin Graham:
@@ -201,9 +200,9 @@ def generate_chatgpt_suggestions(indicators_df):
     """
 
     response = openai.ChatCompletion.create(
-        model="gpt-4",  # usa o "gpt-4" 
+        model="gpt-4",  # Modelo GPT-4 ou GPT-3.5, conforme seu plano
         messages=[
-            {"role": "system", "content": "Você é um assistente especializado em análise de investimentos."},
+            {"role": "system", "content": "Você é um analista financeiro."},
             {"role": "user", "content": prompt}
         ],
         max_tokens=500,
