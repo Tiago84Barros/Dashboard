@@ -7,6 +7,9 @@ import numpy as np
 from dotenv import load_dotenv
 import os
 
+# Carregar a chave da API do OpenAI
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
 # Função para obter a URL do logotipo a partir do repositório no GitHub ___________________________________________________________________________________________________________________________________________
 def get_logo_url(ticker):
     ticker_clean = ticker.replace('.SA', '').upper()  # Remover o sufixo ".SA" e garantir que o ticker esteja em maiúsculas
@@ -173,6 +176,36 @@ def format_dataframe(df):
 
 # Aplicar formatação na tabela de indicadores
 indicadores_formatado = format_dataframe(indicadores.copy())
+
+# Função para gerar sugestões com a API do ChatGPT ______________________________________________________________________________________________________________________________________________________________
+def generate_chatgpt_suggestions(indicators_df):
+    data_summary = indicators_df.describe().to_string()
+
+    # Criar um prompt detalhado para o ChatGPT
+    prompt = f"""
+    Com base nas informações financeiras históricas da empresa abaixo, 
+    forneça uma análise financeira e de investimentos embasada nos princípios de Benjamin Graham:
+    
+    {data_summary}
+    
+    A análise deve incluir:
+    - O poder de crescimento da empresa.
+    - O poder de resiliência às crises.
+    - Perspectivas de crescimento baseadas no histórico apresentado.
+    - Uma avaliação se a empresa está cara ou barata com base no lucro líquido.
+    - Correlação do histórico da empresa com seus pares no mercado.
+    - Probabilidade de crescimento para os próximos cinco anos.
+    """
+
+    response = openai.Completion.create(
+        engine="text-davinci-003",
+        prompt=prompt,
+        max_tokens=500,
+        temperature=0.7,
+    )
+
+    return response.choices[0].text.strip()
+
 
 # Barra superior (simulação) buscando a logo das empresas ____________________________________________________________________________________________________________________________________________
 col1, col2 = st.columns([4, 1])
