@@ -9,8 +9,19 @@ import os
 
 # Carregar a chave da API do OpenAI
 #openai.api_key = st.secrets["OPENAI_API_KEY"]
-#openai.api_key = "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"
+openai.api_key = "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"
 
+try:
+    response = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
+        messages=[
+            {"role": "system", "content": "Você é um especialista em análise financeira."},
+            {"role": "user", "content": "Como está o mercado financeiro hoje?"},
+        ]
+    )
+    print(response['choices'][0]['message']['content'])
+except Exception as e:
+    print(f"Erro: {e}")
 # Função para obter a URL do logotipo a partir do repositório no GitHub ___________________________________________________________________________________________________________________________________________
 def get_logo_url(ticker):
     ticker_clean = ticker.replace('.SA', '').upper()  # Remover o sufixo ".SA" e garantir que o ticker esteja em maiúsculas
