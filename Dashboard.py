@@ -16,6 +16,21 @@ def get_logo_url(ticker):
         return logo_url
     else:
         return None
+
+# Função para buscar informações da empresa usando yfinance
+def get_company_info(ticker):
+    try:
+        # Adicionar ".SA" para tickers da B3 (bolsa brasileira) se não estiver presente
+        if not ticker.endswith(".SA"):
+            ticker += ".SA"
+        
+        # Usar yfinance para pegar informações básicas da empresa
+        company = yf.Ticker(ticker)
+        info = company.info
+        return info['longName'], info.get('website')  # Retorna o nome da empresa e o site
+    except:
+        return None, None
+        
 # Definir o layout da página ___________________________________________________________________________________________________________________________________________________________--
 st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
 
@@ -172,6 +187,8 @@ with col2:
 # Verificar se o ticket foi inserido
 if ticket:
     company_name, company_website = get_company_info(ticket)
+    
+    # Só continua se encontrar a empresa
     if company_name:
         st.subheader(f"Visão Geral - {company_name}")
         
