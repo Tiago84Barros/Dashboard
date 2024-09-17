@@ -294,4 +294,11 @@ with col3:
 st.markdown("### Tabela de Indicadores")
 st.dataframe(indicadores_formatado)
 
+# Gerar e mostrar sugestões do ChatGPT com base nos indicadores fornecidos ______________________________________________________________________________________________________________________________
+st.markdown("### Análise de Investimento (Sugestões do ChatGPT)")
+if st.button("Gerar Análise Financeira"):
+    with st.spinner("Gerando análise baseada em Benjamin Graham..."):
+        suggestions = generate_chatgpt_suggestions(indicadores)  # Chama a função para gerar as sugestões com base nos indicadores
+        st.markdown(suggestions)  # Mostra as sugestões geradas
+
 
