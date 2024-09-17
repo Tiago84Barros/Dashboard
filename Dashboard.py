@@ -25,10 +25,7 @@ def get_company_info(ticker):
         # Adicionar ".SA" para tickers da B3 (bolsa brasileira) se não estiver presente
         if not ticker.endswith(".SA"):
             ticker += ".SA"
-            
-         # Logging para verificar o ticker formatado
-        st.write(f"Buscando informações da empresa para: {ticker}")
-        
+      
         # Usar yfinance para pegar informações básicas da empresa
         company = yf.Ticker(ticker)
         info = company.info
