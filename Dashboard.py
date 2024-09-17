@@ -13,10 +13,6 @@ def get_logo_url(ticker):
     # Verificar se o logotipo existe na URL
     response = requests.get(logo_url)
 
-     # Logging para verificar se a URL foi gerada corretamente e se o logotipo existe
-    st.write(f"Buscando logotipo em: {logo_url}, Status: {response.status_code}")
-
-    
     if response.status_code == 200:
         return logo_url
     else:
@@ -35,11 +31,7 @@ def get_company_info(ticker):
         # Usar yfinance para pegar informações básicas da empresa
         company = yf.Ticker(ticker)
         info = company.info
-
-        # Verificar se yfinance está retornando dados
-        st.write(f"Informações retornadas por yfinance: {info}")
-
-        
+      
         return info['longName'], info.get('website')  # Retorna o nome da empresa e o site
     except:
         return None, None
@@ -200,9 +192,6 @@ with col2:
 # Verificar se o botão foi pressionado
 if gerar_relatorio and ticket:
 
-     # Verificar o que está sendo inserido no campo de busca
-    st.write(f"Ticket digitado: {ticket}")
-    
     # Buscar informações da empresa e verificar se existe
     company_name, company_website = get_company_info(ticket)
     
