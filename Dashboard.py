@@ -175,7 +175,7 @@ indicadores_formatado = format_dataframe(indicadores.copy())
 # Barra superior (simulação) buscando a logo das empresas ____________________________________________________________________________________________________________________________________________
 col1, col2 = st.columns([4, 1])
 with col1:
-    ticket = st.text_input("Buscar por Ticket (ex: BBAS3)").upper()
+    ticket = st.text_input("Buscar por Ticker").upper()
 
 # Verificar se o botão foi pressionado
 if ticket:
