@@ -4,4 +4,4 @@ requests
 pandas
 plotly
 scikit-learn
-openai==1.46.0
+openai migrate
