@@ -196,8 +196,6 @@ with col1:
 with col2:
     gerar_relatorio = st.button("Buscar")
 
-company_name, company_website = get_company_info(ticket)
-
 # Verificar se o botão foi pressionado
 if gerar_relatorio and ticket:
 
