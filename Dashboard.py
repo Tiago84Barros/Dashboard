@@ -196,10 +196,7 @@ if ticket:
             st.image(logo_url, width=80)  # Carregando a imagem diretamente da URL
     else:
         st.error("Empresa não encontrada.")
-else:
-    if not ticket:
-        st.info("Digite um ticket para gerar o relatório.")
- 
+  
 # Mostrar Métricas Resumidas ____________________________________________________________________________________________________________________________________________________________________________
 st.markdown("## Visão Geral (CAGR)")
 col1, col2, col3, col4 = st.columns(4)
