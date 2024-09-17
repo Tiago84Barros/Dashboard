@@ -198,7 +198,7 @@ def generate_chatgpt_suggestions(indicators_df):
     """
 
     response = openai.ChatCompletion.create(
-        model="gpt-4",  # Você pode usar "gpt-4" se tiver acesso a ele
+        model="gpt-4",  # usa o "gpt-4" 
         messages=[
             {"role": "system", "content": "Você é um assistente especializado em análise de investimentos."},
             {"role": "user", "content": prompt}
