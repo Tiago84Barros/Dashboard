@@ -4,4 +4,3 @@ requests
 pandas
 plotly
 scikit-learn
-openai==0.28.0
