@@ -12,6 +12,7 @@ import os
 openai.api_key = "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"
 
 
+
 # Função para testar a chave da API do OpenAI
 def test_openai_api_key():
     try:
@@ -21,12 +22,18 @@ def test_openai_api_key():
             messages=[{"role": "user", "content": "Diga 'Olá, isso é um teste!'"}]
         )
         return "Chave API válida. Resposta do OpenAI: " + response['choices'][0]['message']['content'].strip()
+    
+    # Capture erros específicos da API OpenAI
     except openai.error.AuthenticationError:
         return "Erro de autenticação: Chave API inválida."
     except openai.error.InvalidRequestError:
         return "Erro de requisição: Verifique o modelo e os parâmetros."
+    except openai.error.OpenAIError as e:
+        # Captura qualquer outro erro que ocorra na API do OpenAI
+        return f"Erro na API OpenAI: {str(e)}"
+    
+    # Captura qualquer outro erro não previsto
     except Exception as e:
-        # Captura qualquer outro erro que ocorra e exibe a mensagem
         return f"Erro ao testar a chave API: {e}"
 
 # Adicione um botão ao dashboard para testar a chave da API
