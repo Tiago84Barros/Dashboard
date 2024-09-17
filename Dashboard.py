@@ -8,7 +8,7 @@ import numpy as np
 # Função para obter a URL do logotipo a partir do repositório no GitHub ___________________________________________________________________________________________________________________________________________
 def get_logo_url(ticker):
     ticker_clean = ticker.replace('.SA', '').upper()  # Remover o sufixo ".SA" e garantir que o ticker esteja em maiúsculas
-    logo_url = f"https://github.com/thefintz/icones-b3/tree/main/icones/{ticker_clean}.png"
+    logo_url = f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{ticker_clean}.png"
     return logo_url
   
 # Função para buscar informações da empresa usando yfinance
