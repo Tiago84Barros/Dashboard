@@ -188,17 +188,13 @@ col1, col2 = st.columns([4, 1])
 with col1:
     ticket = st.text_input("Buscar por Ticket (ex: BBAS3)").upper()
 with col2:
-    gerar_relatorio = st.button("Buscar")
-
+  
 # Verificar se o botão foi pressionado
-if gerar_relatorio and ticket:
-
+if ticket:
     # Buscar informações da empresa e verificar se existe
     company_name, company_website = get_company_info(ticket)
     
     if company_name:
-        st.subheader(f"Visão Geral - {company_name}")
-        
         # Buscar o logotipo usando a URL do repositório
         logo_url = get_logo_url(ticket)
         
