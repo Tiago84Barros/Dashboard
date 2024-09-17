@@ -183,29 +183,25 @@ with col1:
 with col2:
     st.button("Gerar Relatório")
 
-# Verificar se o ticket foi inserido
-if ticket:
-    company_name, company_website = get_company_info(ticket)
-    
-    # Só continua se encontrar a empresa
-    if company_name:
-        st.subheader(f"Visão Geral - {company_name}")
-        
-        # Buscar o logotipo usando a URL do repositório
-        logo_url = get_logo_url(ticket)
-        
-        # Exibir o logotipo no canto direito
-        col1, col2 = st.columns([4, 1])
-        with col1:
-            st.write(f"Informações financeiras de {company_name}")
-        with col2:
-            if logo_url:
-                st.image(logo_url, width=150)
-            else:
-                st.write("Logotipo não disponível.")
-    else:
-        st.error("Empresa não encontrada.")
+company_name, company_website = get_company_info(ticket)
 
+# Só continua se encontrar a empresa
+if company_name:
+    st.subheader(f"Visão Geral - {company_name}")
+    
+    # Buscar o logotipo usando a URL do repositório
+    logo_url = get_logo_url(ticket)
+    
+    # Exibir o logotipo no canto direito
+    col1, col2 = st.columns([4, 1])
+    with col1:
+        st.write(f"Informações financeiras de {company_name}")
+    with col2:
+        if logo_url:
+            st.image(logo_url, width=150)
+        else:
+            st.write("Logotipo não disponível.")
+ 
 # Mostrar Métricas Resumidas ____________________________________________________________________________________________________________________________________________________________________________
 st.markdown("## Visão Geral (CAGR)")
 col1, col2, col3, col4 = st.columns(4)
