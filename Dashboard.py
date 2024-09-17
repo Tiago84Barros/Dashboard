@@ -181,7 +181,7 @@ indicadores_formatado = format_dataframe(indicadores.copy())
 
 # Função para gerar sugestões com a API do ChatGPT ______________________________________________________________________________________________________________________________________________________________
 def generate_chatgpt_suggestions(indicators_df):
-     data_summary = indicators_df.describe().to_string()
+    data_summary = indicators_df.describe().to_string()
 
     # Criar um prompt detalhado para o ChatGPT
     prompt = f"""
@@ -199,9 +199,8 @@ def generate_chatgpt_suggestions(indicators_df):
     - Probabilidade de crescimento para os próximos cinco anos.
     """
 
-    # Fazendo a chamada à nova API do GPT
     response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",  # Você pode usar "gpt-4" se tiver acesso a ele
+        model="gpt-4",  # Você pode usar "gpt-4" se tiver acesso a ele
         messages=[
             {"role": "system", "content": "Você é um assistente especializado em análise de investimentos."},
             {"role": "user", "content": prompt}
@@ -211,7 +210,7 @@ def generate_chatgpt_suggestions(indicators_df):
     )
 
     return response['choices'][0]['message']['content'].strip()
-
+    
 # Barra superior (simulação) buscando a logo das empresas ____________________________________________________________________________________________________________________________________________
 col1, col2 = st.columns([4, 1])
 with col1:
