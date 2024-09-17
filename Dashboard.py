@@ -199,9 +199,12 @@ def generate_chatgpt_suggestions(indicators_df):
     - Probabilidade de crescimento para os próximos cinco anos.
     """
 
-    response = openai.Completion.create(
-        engine="text-davinci-003",
-        prompt=prompt,
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[
+            {"role": "system", "content": "Você é um assistente especializado em análise de investimentos."},
+            {"role": "user", "content": prompt}
+        ],
         max_tokens=500,
         temperature=0.7,
     )
