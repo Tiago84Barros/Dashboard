@@ -247,16 +247,7 @@ if variaveis_selecionadas:
 else:
     st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
 
-# Indicadores Categoriais (exemplo de blocos à direita) ____________________________________________________________________________________________________________________________________________
-col1, col2, col3 = st.columns(3)
+# Tabela de Indicadores  ___________________________________________________________________________________________________________________________________________________________________________
 
-with col1:
-    st.progress(68, text="Compras")
-with col2:
-    st.progress(76, text="Trabalho")
-with col3:
-    st.progress(73, text="Plataforma")
-
-# Tabela de Indicadores
 st.markdown("### Tabela de Indicadores")
 st.dataframe(indicadores_formatado)
