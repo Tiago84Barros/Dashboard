@@ -3,13 +3,11 @@ import wget
 import os
 import zipfile
 import requests
-from google.colab.data_table import DataTable
 import plotly.graph_objects as go
 import yfinance as yf
-from google.colab import drive
 from datetime import datetime
 from bcb import sgs
-drive.mount('/content/drive')  # usa os arquivos do google drive para salvar permanentemente os dados
+
 
 #Insere o local no qual os arquivos dos históricos das informçaões das empresas
 #de capital aberto, disponibilizadas pela CVM, ficarão armazenados.
