@@ -23,7 +23,7 @@ dfc = dfc[dfc['ORDEM_EXERC'] == "ÚLTIMO"]
 
 empresas = dre[['DENOM_CIA', 'CD_CVM']].drop_duplicates().set_index('CD_CVM')
 
-# Filtra apenas a empresa de código '25186' que se trata da .... Exibindo em DataTable apenas algumas colunas relevantes da DRE dessa empresa
+# Filtra apenas a empresa de código xxxxx que se trata da empresa yyyyyy exibindo em DataTable apenas algumas colunas relevantes da DRE dessa empresa
 
 CD_CVM = 18376
 empresa  = dre[dre['CD_CVM'] == CD_CVM]
