@@ -170,5 +170,5 @@ for codigo_cvm, empresa_row in empresas.iterrows():
     # Transforma a coluna Data no tipo DataTime
     indicadores['Data'] = pd.to_datetime(indicadores['Data'])
     
-    indicadores.to_csv(f'/content/drive/MyDrive/Colab Notebooks/Dados/indicadores_anuais/indicadores', index = False)
+    indicadores.to_csv(f'/content/drive/MyDrive/Colab Notebooks/Dados/indicadores_anuais/indicadores_nome_da_empresa_ticker', index = False)
     
