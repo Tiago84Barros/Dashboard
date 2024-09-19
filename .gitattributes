@@ -1,1 +1,4 @@
 *.csv filter=lfs diff=lfs merge=lfs -text
+con_cia_aberta_DRE_2010_2024 filter=lfs diff=lfs merge=lfs -text
+con_cia_aberta_BPP_2010_2024 filter=lfs diff=lfs merge=lfs -text
+con_cia_aberta_BPA_2010_2024 filter=lfs diff=lfs merge=lfs -text
