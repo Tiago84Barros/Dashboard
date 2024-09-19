@@ -3,6 +3,10 @@ import yfinance as yf
 from datetime import datetime
 from bcb import sgs
 
+# Carregar o arquivo CSV que contém a relação entre os códigos CVM e os tickers
+cvm_to_ticker_df = pd.read_csv('/content/drive/MyDrive/cvm_to_ticker.csv')
+# Renomear a coluna 'CVM' para 'CD_CVM' no DataFrame cvm_to_ticker_df
+cvm_to_ticker_df.rename(columns={'CVM': 'CD_CVM'}, inplace=True)
 
 # Nesse ponto, os arquivos criados serão puxados para as variáveis dre, bpa, bpp em um formato de DataFrame, utilizando a biblioteca 'Pandas'
 Ultimo_ano = '2024'
@@ -23,12 +27,10 @@ dfc = dfc[dfc['ORDEM_EXERC'] == "ÚLTIMO"]
 
 empresas = dre[['DENOM_CIA', 'CD_CVM']].drop_duplicates().set_index('CD_CVM')
 
-# Função para obter o ticker ON com base no código CVM
-def obter_ticker(codigo_cvm):
-    # Este exemplo considera que o ticker base é o código CVM com número final '3' para ações ON
-    ticker_base = str(codigo_cvm)[:4]
-    return f"{ticker_base}3
-    
+# Mesclar os DataFrames com base no código CVM
+# Agora ambas as tabelas têm a coluna 'CD_CVM', então fazemos o merge com base nessa coluna
+empresas_merged = pd.merge(empresas_df, cvm_to_ticker_df, on='CD_CVM', how='left')
+
 # Função para verificar se a empresa tem dados anteriores a 2023
 
 def tem_dados_anteriores_a_2023(df):
@@ -38,13 +40,16 @@ def tem_dados_anteriores_a_2023(df):
       return any(ano < 2023 for ano in anos_disponiveis)
   return False
   
-# Criar um loop para processar cada empresa e criar as subpastas
-for codigo_cvm, empresa_row in empresas.iterrows():
-    # Obter o ticker ON para a empresa
-    ticker = obter_ticker(codigo_cvm)
+# Laço para processar cada empresa e criar as subpastas
+for index, row in empresas_merged.iterrows():
+    # Obter o ticker real para a empresa
+    ticker = row['Ticker']
 
     # Obter o nome da empresa
     nome_empresa = empresa_row['DENOM_CIA'].replace(' ', '_')  # Substituir espaços por underscores
+
+    # Usar o código CVM da empresa a partir de 'row'
+    codigo_cvm = row['CD_CVM']
 
      # Criar a pasta principal da empresa nomeada como nome_da_empresa_ticker
     pasta_empresa = f'/content/drive/MyDrive/Colab Notebooks/Dados/demo_financeiras/{nome_empresa}_{ticker}'
@@ -63,10 +68,10 @@ for codigo_cvm, empresa_row in empresas.iterrows():
 
 # Filtra apenas a empresa de código xxxxx que se trata da empresa yyyyyy exibindo em DataTable apenas algumas colunas relevantes da DRE dessa empresa
 
-    empresa  = dre[dre['CD_CVM'] == CD_CVM]
-    empresa2 = bpa[bpa['CD_CVM'] == CD_CVM]
-    empresa3 = bpp[bpp['CD_CVM'] == CD_CVM]
-    empresa4 = dfc[dfc['CD_CVM'] == CD_CVM]
+    empresa_dre = dre[dre['CD_CVM'] == codigo_cvm]
+    empresa_bpa = bpa[bpa['CD_CVM'] == codigo_cvm]
+    empresa_bpp = bpp[bpp['CD_CVM'] == codigo_cvm]
+    empresa_dfc = dfc[dfc['CD_CVM'] == codigo_cvm]
 
     # Verificar se a empresa tem dados anteriores a 2023
     if (tem_dados_anteriores_a_2023(empresa_dre) or 
