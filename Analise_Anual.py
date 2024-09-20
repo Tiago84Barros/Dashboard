@@ -10,10 +10,10 @@ cvm_to_ticker_df.rename(columns={'CVM': 'CD_CVM'}, inplace=True)
 
 # Nesse ponto, os arquivos criados serão puxados para as variáveis dre, bpa, bpp em um formato de DataFrame, utilizando a biblioteca 'Pandas'
 Ultimo_ano = '2024'
-dre = pd.read_csv(f'/caminho/para/seu/repo/local/Dashboard/con_cia_aberta_DRE_2010_{Ultimo_ano}.csv')
-bpa = pd.read_csv(f'/content/drive/MyDrive/Colab Notebooks/Dados/dados_concat/con_cia_aberta_BPA_2010_{Ultimo_ano}')
-bpp = pd.read_csv(f'/content/drive/MyDrive/Colab Notebooks/Dados/dados_concat/con_cia_aberta_BPP_2010_{Ultimo_ano}')
-dfc = pd.read_csv(f'/content/drive/MyDrive/Colab Notebooks/Dados/dados_concat/con_cia_aberta_DFC_2010_{Ultimo_ano}')
+dre = pd.read_csv(f'https://github.com/Tiago84Barros/Dashboard/tree/main/con_cia_aberta_DRE_2010_{Ultimo_ano}.csv')
+bpa = pd.read_csv(f'https://github.com/Tiago84Barros/Dashboard/tree/main/con_cia_aberta_BPA_2010_{Ultimo_ano}.csv')
+bpp = pd.read_csv(f'https://github.com/Tiago84Barros/Dashboard/tree/main/con_cia_aberta_BPP_2010_{Ultimo_ano}.csv'')
+#dfc = pd.read_csv(f'https://github.com/Tiago84Barros/Dashboard/tree/main/con_cia_aberta_DFC_2010_{Ultimo_ano}.csv'')
 
 # Começa aqui o processo de filtragem das informações contidas em dre, bpa, bpp e dfc. Sendo deixado no arquivo apenas o último balanço presente no DataFrame
 
