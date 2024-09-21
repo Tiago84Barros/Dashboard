@@ -109,7 +109,23 @@ def download_db_from_github(db_url, local_path='indicadores_empresas.db'):
 def load_data(ticket=None, company_name=None):
     # Carregar o banco de dados SQLite baixado
     db_path = download_db_from_github(db_url)
-    conn = sqlite3.connect(db_path)
+
+    if db_path is None:
+        st.error("Banco de dados não foi baixado.")
+        return None
+    
+    # Verifique se o arquivo existe
+    if not os.path.exists(db_path):
+        st.error("Arquivo do banco de dados não encontrado.")
+        return None
+
+    try:
+        conn = sqlite3.connect(db_path)
+    except Exception as e:
+        st.error(f"Erro ao conectar ao banco de dados: {e}")
+        return None
+    
+    #conn = sqlite3.connect(db_path)
     
     # Listar todas as tabelas no banco de dados
     query = "SELECT name FROM sqlite_master WHERE type='table'"
