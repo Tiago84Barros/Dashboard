@@ -149,6 +149,11 @@ if ticket:
 else:
     st.write("Por favor, insira o ticker da empresa.")
 
+# Adicionar placeholders ou layout vazio antes de o usuário inserir o ticket
+if indicadores is None:
+    st.write("Bem-vindo ao Dashboard de Indicadores de Empresas!")
+    st.write("Insira um ticker no campo acima para começar a visualização dos dados.")
+
 # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________
 def calculate_cagr(df, column):
     initial_value = df.iloc[0][column]
