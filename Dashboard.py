@@ -92,8 +92,15 @@ db_url = "https://raw.githubusercontent.com/Tiago84Barros/Dashboard/main/indicad
 
 @st.cache_data
 def download_db_from_github(db_url, local_path='indicadores_empresas.db'):
+    st.write(f"Tentando baixar o arquivo de {db_url}...")
+  
     # Função para baixar o banco de dados do GitHub
-    response = requests.get(db_url)
+    try:
+        response = requests.get(db_url)
+        st.write(f"Status code da resposta: {response.status_code}")
+    except Exception as e:
+        st.error(f"Erro ao tentar se conectar ao GitHub: {e}")
+        return None
     
     # Verifica se o download foi bem-sucedido
     if response.status_code != 200:
