@@ -94,6 +94,12 @@ db_url = "https://github.com/Tiago84Barros/Dashboard/edit/main/indicadores_empre
 def download_db_from_github(db_url, local_path='indicadores_empresas.db'):
     # Função para baixar o banco de dados do GitHub
     response = requests.get(db_url)
+    
+    # Verifica se o download foi bem-sucedido
+    if response.status_code != 200:
+        st.error("Erro ao baixar o banco de dados do GitHub.")
+        return None
+    
     with open(local_path, 'wb') as f:
         f.write(response.content)
     return local_path
@@ -133,7 +139,7 @@ def load_data(ticket=None, company_name=None):
 # Solicita ao usuário inserir um ticker 
 col1, col2 = st.columns([4, 1])
 with col1:
-    ticket = st.text_input("GMAT3.SA").upper()
+    ticket = st.text_input("Insira um ticker:").upper()
 
 # Função para buscar e carregar dados de uma tabela específica
 indicadores = load_data(ticket)
