@@ -141,9 +141,16 @@ with col1:
 # Verificar se o ticket foi fornecido após a entrada ser definida
 if ticket:
     indicadores = load_data(ticket=ticket)
-    
+    # Verificar se dados foram retornados
     if indicadores is not None:
-        st.write(indicadores)
+        # Exibir as colunas de indicadores
+        st.write("Dados encontrados:")
+        st.dataframe(indicadores)  # Exibe o DataFrame completo
+        
+        # Exibir colunas (evitar erro de atributos inexistentes)
+        st.write("Colunas disponíveis:")
+        for column in indicadores.columns:
+            st.write(f"Coluna: {column}")
     else:
         st.write("Nenhum dado encontrado para o ticker fornecido.")
 else:
