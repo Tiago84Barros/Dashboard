@@ -90,7 +90,7 @@ with st.sidebar:
 # URL do banco de dados no GitHub
 db_url = "https://raw.githubusercontent.com/Tiago84Barros/Dashboard/main/indicadores_empresas.db"
 
-GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
+GITHUB_TOKEN = "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"
 
 @st.cache_data
 def download_db_from_github(db_url, local_path='indicadores_empresas.db'):
