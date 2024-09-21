@@ -142,7 +142,7 @@ with col1:
 if ticket:
     indicadores = load_data(ticket=ticket)
     # Verificar se dados foram retornados
-    if indicadores is not None:
+    if indicadores is not None and not indicadores.empty:
         # Exibir as colunas de indicadores
         st.write("Dados encontrados:")
         st.dataframe(indicadores)  # Exibe o DataFrame completo
