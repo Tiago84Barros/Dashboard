@@ -4,6 +4,4 @@ requests
 pandas
 plotly
 scikit-learn
-wget
 datetime
-python-bcb
