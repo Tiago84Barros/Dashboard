@@ -133,9 +133,21 @@ def load_data(ticket=None, company_name=None):
 # Função para buscar e carregar dados de uma tabela específica
 indicadores = None
 
-# Verificar se o ticket foi fornecido
+# Definir o ticker como uma entrada do usuário
+col1, _ = st.columns([4, 1])
+with col1:
+    ticket = st.text_input("Buscar por Ticker").upper()  # Captura o ticket do usuário e transforma para maiúsculas
+
+# Verificar se o ticket foi fornecido após a entrada ser definida
 if ticket:
     indicadores = load_data(ticket=ticket)
+    
+    if indicadores is not None:
+        st.write(indicadores)
+    else:
+        st.write("Nenhum dado encontrado para o ticker fornecido.")
+else:
+    st.write("Por favor, insira o ticker da empresa.")
 
 # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________
 def calculate_cagr(df, column):
