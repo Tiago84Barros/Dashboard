@@ -130,8 +130,13 @@ def load_data(ticket=None, company_name=None):
         conn.close()
         return None
 
+# Solicita ao usuário inserir um ticker 
+col1, col2 = st.columns([4, 1])
+with col1:
+    ticket = st.text_input("GMAT3.SA").upper()
+
 # Função para buscar e carregar dados de uma tabela específica
-indicadores = None
+indicadores = load_data(ticket)
 
 # Adicionar placeholders ou layout vazio antes de o usuário inserir o ticket
 if indicadores is None:
