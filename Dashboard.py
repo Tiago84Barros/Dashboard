@@ -93,24 +93,18 @@ db_url = "https://raw.githubusercontent.com/Tiago84Barros/Dashboard/main/indicad
 @st.cache_data
 def download_db_from_github(db_url, local_path='indicadores_empresas.db'):
    st.write(f"Tentando baixar o arquivo de {db_url}...")
-   
-   try:
+
+    try:
         response = requests.get(db_url, allow_redirects=True)
-        st.write(f"Status code da resposta: {response.status_code}")
-        
-        # Verificar se o download foi bem-sucedido
+        st.write(f"Teste de conexão: Status code {response.status_code}")
         if response.status_code == 200:
-            with open(local_path, 'wb') as f:
-                f.write(response.content)
-            st.write("Download concluído com sucesso.")
-            return local_path
+            st.success("Conexão bem-sucedida com o GitHub!")
         else:
-            st.error(f"Erro ao baixar o banco de dados do GitHub. Status code: {response.status_code}")
-            return None
-   except requests.exceptions.RequestException as e:
+            st.error("Não foi possível conectar ao GitHub.")
+    except requests.exceptions.RequestException as e:
         st.error(f"Erro ao tentar se conectar ao GitHub: {e}")
-        return None
-  
+   
+   
 @st.cache_data
 def load_data(ticket=None, company_name=None):
     # Carregar o banco de dados SQLite baixado
