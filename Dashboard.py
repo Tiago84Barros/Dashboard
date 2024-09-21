@@ -90,10 +90,13 @@ with st.sidebar:
 # URL do banco de dados no GitHub
 db_url = "https://raw.githubusercontent.com/Tiago84Barros/Dashboard/main/indicadores_empresas.db"
 
+GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
+
 @st.cache_data
 def download_db_from_github(db_url, local_path='indicadores_empresas.db'):
+    headers = {'Authorization': f'token {GITHUB_TOKEN}'}
     # Função para baixar o banco de dados do GitHub
-    response = requests.get(db_url)
+    response = requests.get(db_url, headers=headers)
     
     # Verifica se o download foi bem-sucedido
     if response.status_code != 200:
