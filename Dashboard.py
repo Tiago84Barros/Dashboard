@@ -1,9 +1,11 @@
 import streamlit as st
 import pandas as pd
+import requests
 import plotly.express as px
 import yfinance as yf
 from sklearn.linear_model import LinearRegression
 import numpy as np
+import sqlite3
 import os
 
 # Função para obter a URL do logotipo a partir do repositório no GitHub ___________________________________________________________________________________________________________________________________________
@@ -84,27 +86,56 @@ with st.sidebar:
     st.markdown("### Sair")
 
 # carregando o banco de dados _____________________________________________________________________________________________________________________________________________________________
-@st.cache_data
-def load_data():
-    # Carregar o DataFrame a partir do arquivo local
-    df = pd.read_csv('indicadores', index_col=False)
-    # Converter a coluna 'Data' para datetime e extrair apenas o ano
-    df['Data'] = pd.to_datetime(df['Data'], errors='coerce').dt.year.astype(int)  # Extrair somente o ano e garantir que é int
-     # Remover a coluna 'Ano' se existir no DataFrame
-    if 'Ano' in df.columns:
-        df = df.drop(columns=['Ano'])
-    # Garantir que 'Data' seja convertida para inteiros (sem vírgulas)
-    df['Data'] = df['Data'].astype(int)
-    # Substituir espaços nos nomes das colunas por underlines
-    df.columns = df.columns.str.replace(' ', '_')
-    # Retornar o DataFrame
 
-     # Remover a coluna 'Ano' se existir no DataFrame
-    if 'Ano' in df.columns:
-        df = df.drop(columns=['Ano'])
-    return df
+# URL do banco de dados no GitHub
+db_url = "https://github.com/Tiago84Barros/Dashboard/edit/main/indicadores_empresas.db"
+
+@st.cache_data
+def download_db_from_github(db_url, local_path='indicadores_empresas.db'):
+    # Função para baixar o banco de dados do GitHub
+    response = requests.get(db_url)
+    with open(local_path, 'wb') as f:
+        f.write(response.content)
+    return local_path
+
+@st.cache_data
+def load_data(ticket=None, company_name=None):
+    # Carregar o banco de dados SQLite baixado
+    db_path = download_db_from_github(db_url)
+    conn = sqlite3.connect(db_path)
     
-indicadores = load_data()
+    # Listar todas as tabelas no banco de dados
+    query = "SELECT name FROM sqlite_master WHERE type='table'"
+    tables = pd.read_sql_query(query, conn)['name'].tolist()
+    
+    # Filtrar tabelas que contenham o ticker ou o nome da empresa no nome da tabela
+    if ticket:
+        table_name = next((t for t in tables if ticket in t), None)
+    elif company_name:
+        table_name = next((t for t in tables if company_name in t), None)
+    
+    if table_name:
+        # Carregar os dados da tabela encontrada
+        df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
+        conn.close()
+        
+        # Converter a coluna 'Data' para datetime e extrair apenas o ano
+        df['Data'] = pd.to_datetime(df['Data'], errors='coerce').dt.year.astype(int)
+        
+        # Substituir espaços nos nomes das colunas por underlines
+        df.columns = df.columns.str.replace(' ', '_')
+        
+        return df
+    else:
+        conn.close()
+        return None
+
+# Função para buscar e carregar dados de uma tabela específica
+indicadores = None
+
+# Verificar se o ticket foi fornecido
+if ticket:
+    indicadores = load_data(ticket=ticket)
 
 # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________
 def calculate_cagr(df, column):
@@ -150,27 +181,7 @@ def format_dataframe(df):
 
     # Garantir que 'Data' seja exibida como um número inteiro sem vírgulas
     df['Data'] = df['Data'].astype(str)  # Converte para string para garantir a exibição correta
-
-    # Renomear colunas específicas
-    df = df.rename(columns={
-        'Close': 'Preço de Fechamento',  # Renomeando "Close" para "Preço de Fechamento"
-        'LPA': 'Lucro por Ação',         # Renomeando "LPA" para "Lucro por Ação"
-        'Receita Liquida': 'Receita Líquida',
-        'Lucro Liquido': 'Lucro Líquido',
-        'Dividendos': 'Dividendos',
-        'Divida Liquida': 'Dívida Líquida',
-        'patrimonio liquido': 'Patrimônio Líquido',
-        'lucro operacional': 'Lucro Operacional',
-        'indice de endividamento': 'Índice de Endividamento',
-        'PL': 'P/L',
-        'selic': 'Selic',
-        'ipca': 'IPCA',
-        'cambio': 'Câmbio',
-        'icc': 'ICC',
-        'pib': 'PIB',
-        'balanca comercial': 'Balança Comercial'
-    })
-    
+     
     return df
 
 # Aplicar formatação na tabela de indicadores
