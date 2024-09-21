@@ -133,29 +133,6 @@ def load_data(ticket=None, company_name=None):
 # Função para buscar e carregar dados de uma tabela específica
 indicadores = None
 
-# Definir o ticker como uma entrada do usuário
-col1, _ = st.columns([4, 1])
-with col1:
-    ticket = st.text_input("Buscar por Ticker").upper()  # Captura o ticket do usuário e transforma para maiúsculas
-
-# Verificar se o ticket foi fornecido após a entrada ser definida
-if ticket:
-    indicadores = load_data(ticket=ticket)
-    # Verificar se dados foram retornados
-    if indicadores is not None and not indicadores.empty:
-        # Exibir as colunas de indicadores
-        st.write("Dados encontrados:")
-        st.dataframe(indicadores)  # Exibe o DataFrame completo
-        
-        # Exibir colunas (evitar erro de atributos inexistentes)
-        st.write("Colunas disponíveis:")
-        for column in indicadores.columns:
-            st.write(f"Coluna: {column}")
-    else:
-        st.write("Nenhum dado encontrado para o ticker fornecido.")
-else:
-    st.write("Por favor, insira o ticker da empresa.")
-
 # Adicionar placeholders ou layout vazio antes de o usuário inserir o ticket
 if indicadores is None:
     st.write("Bem-vindo ao Dashboard de Indicadores de Empresas!")
