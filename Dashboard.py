@@ -94,23 +94,23 @@ db_url = "https://raw.githubusercontent.com/Tiago84Barros/Dashboard/main/indicad
 def download_db_from_github(db_url, local_path='indicadores_empresas.db'):
     st.write(f"Tentando baixar o arquivo de {db_url}...")
   
-    # Função para baixar o banco de dados do GitHub
-    try:
-        response = requests.get(db_url)
+   try:
+        response = requests.get(db_url, allow_redirects=True)
         st.write(f"Status code da resposta: {response.status_code}")
-    except Exception as e:
+        
+        # Verificar se o download foi bem-sucedido
+        if response.status_code == 200:
+            with open(local_path, 'wb') as f:
+                f.write(response.content)
+            st.write("Download concluído com sucesso.")
+            return local_path
+        else:
+            st.error(f"Erro ao baixar o banco de dados do GitHub. Status code: {response.status_code}")
+            return None
+    except requests.exceptions.RequestException as e:
         st.error(f"Erro ao tentar se conectar ao GitHub: {e}")
         return None
-    
-    # Verifica se o download foi bem-sucedido
-    if response.status_code != 200:
-        st.error("Erro ao baixar o banco de dados do GitHub.")
-        return None
-    
-    with open(local_path, 'wb') as f:
-        f.write(response.content)
-    return local_path
-
+  
 @st.cache_data
 def load_data(ticket=None, company_name=None):
     # Carregar o banco de dados SQLite baixado
