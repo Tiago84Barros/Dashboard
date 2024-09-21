@@ -142,7 +142,7 @@ with col1:
     ticket = st.text_input("Insira um ticker:").upper()
 
 # Função para buscar e carregar dados de uma tabela específica
-indicadores = load_data(ticket)
+indicadores = load_data("GMAT3.SA")
 
 # Adicionar placeholders ou layout vazio antes de o usuário inserir o ticket
 if indicadores is None:
