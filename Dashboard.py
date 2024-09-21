@@ -88,7 +88,7 @@ with st.sidebar:
 # carregando o banco de dados _____________________________________________________________________________________________________________________________________________________________
 
 # URL do banco de dados no GitHub
-db_url = "https://github.com/Tiago84Barros/Dashboard/blob/main/indicadores_empresas.db"
+db_url = "https://raw.githubusercontent.com/Tiago84Barros/Dashboard/main/indicadores_empresas.db"
 
 @st.cache_data
 def download_db_from_github(db_url, local_path='indicadores_empresas.db'):
