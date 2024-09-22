@@ -115,9 +115,9 @@ def load_data_from_db(ticket=None, company_name=None):
 
     try:
         conn = sqlite3.connect(db_path)
-        st.write(ticket)
+     
         # Buscando as tabelas que contêm o nome do ticker no nome
-        query_tabelas = f"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%{ticket}%'"
+        query_tabelas = f"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%{"GMAT3"}%'"
 
         # Lendo os nomes das tabelas que contêm o ticker no nome
         tabelas = pd.read_sql_query(query_tabelas, conn)
