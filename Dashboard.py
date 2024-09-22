@@ -161,7 +161,7 @@ if indicadores is not None and not indicadores.empty:
 else:
     st.error("O DataFrame 'indicadores' está vazio ou não pôde ser carregado.")
 
-# Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________
+# Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________________________________
 def calculate_cagr(df, column):
 
     # Verifique se a coluna 'Data' está no formato correto
@@ -180,8 +180,8 @@ def calculate_cagr(df, column):
     if initial_value == 0:
        raise ValueError(f"Valor inicial do indicador '{column}' é zero. Não é possível calcular CAGR.")
         
-   if num_years <= 0:
-      raise ValueError("O número de anos calculado é menor ou igual a zero. Verifique as datas fornecidas.")
+    if num_years <= 0:
+       raise ValueError("O número de anos calculado é menor ou igual a zero. Verifique as datas fornecidas.")
 
     
     # Cálculo do CAGR
