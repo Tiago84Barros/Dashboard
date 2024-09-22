@@ -276,7 +276,7 @@ with col4:
 # Seletor para escolher quais variáveis visualizar no gráfico _______________________________________________________________________________________________________________________________________
 st.markdown("### Selecione os Indicadores para Visualizar no Gráfico")
 variaveis_disponiveis = [col for col in indicadores.columns if col != 'Data']
-variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_disponiveis, default=['Receita_Liquida', 'Lucro_Líquido'])
+variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_disponiveis, default=['Receita_Líquida', 'Lucro_Líquido'])
 
 # Gráfico de indicadores selecionados
 if variaveis_selecionadas:
