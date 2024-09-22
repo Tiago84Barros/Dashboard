@@ -152,7 +152,10 @@ def load_data_from_db(ticket=None, company_name=None):
             conn.close()
             
 # Carregar os dados do banco de dados
-ticket = st.text_input("GMAT3.SA").upper()
+col1, col2 = st.columns([4, 1])
+with col1:
+    ticket = st.text_input("Digite o ticker (ex: GMAT3.SA)", key="ticker_input").upper()
+    
 indicadores = load_data_from_db(ticket)
 
 # Verificar se os dados foram carregados corretamente
@@ -233,12 +236,7 @@ def format_dataframe(df):
 # Aplicar formatação na tabela de indicadores
 indicadores_formatado = format_dataframe(indicadores.copy())
     
-# Barra superior (simulação) buscando a logo das empresas ____________________________________________________________________________________________________________________________________________
-col1, col2 = st.columns([4, 1])
-with col1:
-    ticket = st.text_input("GMAT3.SA").upper()
-
-# Verificar se o botão foi pressionado
+# Verificar se o botão foi pressionado _____________________________________________________________________________________________________________________________________________________________________
 if ticket:
     # Buscar informações da empresa e verificar se existe
     company_name, company_website = get_company_info(ticket)
