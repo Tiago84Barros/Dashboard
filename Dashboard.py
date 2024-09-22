@@ -308,17 +308,20 @@ variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_dis
 # Ensure 'indicadores' is correctly loaded
 if variaveis_selecionadas:
  
-    # Função para detectar o tema atual e armazenar em `session_state`
-    def get_current_theme():
+    # Função para verificar e atualizar o tema do Streamlit
+    def update_theme():
         current_theme = st.get_option('theme.base')
+    
+        # Se a sessão não tiver o tema configurado ou se o tema mudou, atualizar o estado
         if 'theme' not in st.session_state or st.session_state['theme'] != current_theme:
             st.session_state['theme'] = current_theme
+            st.experimental_rerun()  # Força a atualização da página para aplicar o tema ao gráfico
+    
+    # Chamar a função para verificar o tema ao iniciar o aplicativo
+    update_theme()
     
     def plot_graph(df_melted):
-        # Verificar e atualizar o tema
-        get_current_theme()
-        
-        # Configurações de cores conforme o tema
+        # Configurações de cores com base no tema
         if st.session_state['theme'] == "dark":
             theme_colors = {
                 "bg_color": "#1f1f1f",
@@ -351,12 +354,13 @@ if variaveis_selecionadas:
         # Renderizando o gráfico
         st.plotly_chart(fig, use_container_width=True)
     
-    # Exemplo de DataFrame derretido (df_melted já existente)
+    # Criar o DataFrame derretido (df_melted já existente)
     df_melted = indicadores.melt(id_vars=['Data'], value_vars=variaveis_selecionadas,
                                  var_name='Indicador', value_name='Valor')
     
     # Chama a função para exibir o gráfico
     plot_graph(df_melted)
+
     
 else:
     st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
