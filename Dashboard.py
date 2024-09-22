@@ -34,23 +34,23 @@ st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
 
 st.markdown("""
     <style>
-    /* Fundo para a página */
+    /* Fundo da página */
     .main {
-        background-color: #F5F5F5; /* Fundo branco da página */
+        background-color: var(--background-color); /* Usando variável para cor de fundo */
         padding: 0px;
-        color: #000000; /* Definindo cor padrão do texto como preto */
+        color: var(--text-color); /* Cor de texto dependente do tema */
     }
     
     /* Estilo para a barra lateral */
     .css-1544g2n {
-        background-color: #F5F5F5;
-        color: #000000; /* Definindo cor padrão do texto como preto */
+        background-color: var(--background-color);
+        color: var(--text-color);
     }
     
     /* Ajuste do fundo dos blocos de métricas */
     div[data-testid="metric-container"] {
-        background-color: white;
-        border: 1px solid #e6e6e6;
+        background-color: var(--block-background-color); /* Usando variáveis para mais flexibilidade */
+        border: 1px solid var(--block-border-color);
         padding: 5% 5% 5% 10%;
         border-radius: 10px;
         box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
@@ -58,45 +58,35 @@ st.markdown("""
     
     /* Cor do texto para as métricas */
     div[data-testid="metric-container"] > label {
-        color: #8A2BE2; /* Mantendo a cor roxa */
+        color: var(--metric-text-color); /* Mantendo a cor roxa ou outra cor */
         font-size: 18px;
     }
 
     /* Cores das porcentagens positivas e negativas */
     div[data-testid="metric-container"] > div > p {
-        color: green; /* Verde para números positivos */
+        color: var(--positive-color); /* Cor para números positivos (usando verde como padrão) */
         font-size: 18px;
     }
 
-    /* Barra de progresso (cor personalizada) */
+    /* Barra de progresso */
     .stProgress > div > div > div > div {
-        background-color: #1E90FF;
+        background-color: var(--progress-bar-color);
     }
 
-    /* Garantindo que outros textos da página sejam visíveis */
-    body, p, div, span, .css-1cpxqw2 {
-        color: #000000; /* Define cor padrão para outros textos como preto */
-    }
-    
-    /* Estilização dos títulos */
-    .stMarkdown h1, .stMarkdown h2, .stMarkdown h3, .stMarkdown h4, .stMarkdown h5, .stMarkdown h6 {
-        color: #000000; /* Define cor preta para os títulos */
-    }
-
-    /* Ajuste de cor para os textos em widgets */
+    /* Ajuste de cor para widgets */
     .stSelectbox, .stSlider, .stButton, .stCheckbox {
-        color: #000000; /* Texto dos widgets em preto */
+        color: var(--text-color);
     }
 
-    /* Cor do texto dentro de caixas de texto */
+    /* Cor do texto em caixas de texto */
     .css-2trqyj {
-        color: #000000; /* Ajusta a cor do texto dentro das caixas de entrada de texto */
+        color: var(--text-color);
     }
     
     /* Ajuste para os botões */
     button {
-        background-color: #1E90FF; /* Fundo azul para os botões */
-        color: #FFFFFF; /* Texto branco nos botões */
+        background-color: var(--button-background-color);
+        color: var(--button-text-color);
         border-radius: 5px;
         padding: 5px 10px;
         border: none;
@@ -104,18 +94,17 @@ st.markdown("""
 
     /* Ajuste para hover nos botões */
     button:hover {
-        background-color: #4169E1; /* Azul escuro quando o botão é selecionado */
-        color: #FFFFFF;
+        background-color: var(--button-hover-background-color);
+        color: var(--button-hover-text-color);
     }
 
-    /* Ajustando cor do contêiner principal do Streamlit */
+    /* Ajuste do fundo do app */
     .stApp {
-        background-color: #F5F5F5; /* Fundo geral da aplicação */
-        color: #000000; /* Texto padrão da aplicação em preto */
+        background-color: var(--background-color);
+        color: var(--text-color);
     }
-    
     </style>
-    """, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
 # Sidebar com ícones de navegação __________________________________________________________________________________________________________________________________________________________
 with st.sidebar:
@@ -318,51 +307,50 @@ variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_dis
 #Copiar código
 # Ensure 'indicadores' is correctly loaded
 if variaveis_selecionadas:
-  
+ 
     def plot_graph(df_melted):
-        # Verificando o tema atual
+        # Verificando o tema atual e definindo as cores correspondentes
         theme = st.get_option('theme.base')
         
-        # Configurando layout com base no tema
         if theme == "dark":
-            fig = px.line(df_melted, x='Data', y='Valor', color='Indicador',
-                          title='Evolução dos Indicadores Selecionados', markers=True)
-    
-            fig.update_layout(
-                xaxis_title='Ano',
-                yaxis_title='Valor',
-                plot_bgcolor='#1f1f1f',  # Fundo escuro
-                paper_bgcolor='#1f1f1f',
-                font=dict(color='#ffffff'),  # Cor do texto
-                title_font=dict(color='#ffffff', size=24),
-                legend_title_text='Indicadores',
-                xaxis=dict(showgrid=True, gridcolor='#444444'),
-                yaxis=dict(showgrid=True, gridcolor='#444444')
-            )
-        else:  # Para o tema claro
-            fig = px.line(df_melted, x='Data', y='Valor', color='Indicador',
-                          title='Evolução dos Indicadores Selecionados', markers=True)
-    
-            fig.update_layout(
-                xaxis_title='Ano',
-                yaxis_title='Valor',
-                plot_bgcolor='#ffffff',  # Fundo claro
-                paper_bgcolor='#ffffff',
-                font=dict(color='#000000'),  # Cor do texto
-                title_font=dict(color='#000000', size=24),
-                legend_title_text='Indicadores',
-                xaxis=dict(showgrid=True, gridcolor='#dddddd'),
-                yaxis=dict(showgrid=True, gridcolor='#dddddd')
-            )
-    
+            theme_colors = {
+                "bg_color": "#1f1f1f",
+                "text_color": "#ffffff",
+                "grid_color": "#444444"
+            }
+        else:
+            theme_colors = {
+                "bg_color": "#ffffff",
+                "text_color": "#000000",
+                "grid_color": "#dddddd"
+            }
+        
+        # Criando o gráfico com cores adaptativas
+        fig = px.line(df_melted, x='Data', y='Valor', color='Indicador', markers=True,
+                      title='Evolução dos Indicadores Selecionados')
+        
+        fig.update_layout(
+            xaxis_title='Ano',
+            yaxis_title='Valor',
+            plot_bgcolor=theme_colors['bg_color'],
+            paper_bgcolor=theme_colors['bg_color'],
+            font=dict(color=theme_colors['text_color']),
+            title_font=dict(color=theme_colors['text_color'], size=24),
+            legend_title_text='Indicadores',
+            xaxis=dict(showgrid=True, gridcolor=theme_colors['grid_color']),
+            yaxis=dict(showgrid=True, gridcolor=theme_colors['grid_color'])
+        )
+        
+        # Renderizando o gráfico
         st.plotly_chart(fig, use_container_width=True)
-
-    # Creating the melted DataFrame
+    
+    # Exemplo de DataFrame derretido
     df_melted = indicadores.melt(id_vars=['Data'], value_vars=variaveis_selecionadas,
                                  var_name='Indicador', value_name='Valor')
-
+    
     # Chama a função para exibir o gráfico
     plot_graph(df_melted)
+
 
 else:
     st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
