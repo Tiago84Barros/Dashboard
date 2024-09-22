@@ -164,33 +164,38 @@ else:
 # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________________________________
 def calculate_cagr(df, column):
 
-    # Verifique se a coluna 'Data' está no formato correto
-    df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
-    
-    # Garantir que não haja valores nulos na coluna de datas
-    if df['Data'].isnull().any():
-        raise ValueError("A coluna 'Data' contém valores inválidos que não puderam ser convertidos para data.")
-
-    
-    initial_value = df.iloc[0][column]
-    final_value = df.iloc[-1][column]
-    num_years = df['Data'].iloc[-1] - df['Data'].iloc[0]
-
-    # Verificando possíveis erros nos valores
-    if initial_value == 0:
-       raise ValueError(f"Valor inicial do indicador '{column}' é zero. Não é possível calcular CAGR.")
+   try:
+        # Verificando se a coluna 'Data' existe e está no formato correto
+        if 'Data' not in df.columns:
+            raise ValueError("A coluna 'Data' não foi encontrada no DataFrame.")
         
-    if num_years <= 0:
-       raise ValueError("O número de anos calculado é menor ou igual a zero. Verifique as datas fornecidas.")
+        df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
 
-    
-    # Cálculo do CAGR
-    if initial_value != 0:
+        # Verificar se houve falha na conversão de datas
+        if df['Data'].isnull().any():
+            raise ValueError("A coluna 'Data' contém valores inválidos que não puderam ser convertidos para data.")
+
+        # Valores inicial e final da coluna de interesse
+        initial_value = df.iloc[0][column]
+        final_value = df.iloc[-1][column]
+
+        # Calculando o número de anos (diferenca de tempo em anos)
+        num_years = (df['Data'].iloc[-1] - df['Data'].iloc[0]).days / 365.25
+
+        # Verificando possíveis erros nos valores
+        if initial_value == 0:
+            raise ValueError(f"Valor inicial do indicador '{column}' é zero. Não é possível calcular CAGR.")
+        
+        if num_years <= 0 or pd.isna(num_years):
+            raise ValueError(f"O número de anos calculado é inválido: {num_years}. Verifique as datas fornecidas.")
+
+        # Cálculo do CAGR
         cagr = (final_value / initial_value) ** (1 / num_years) - 1
-    else:
-        cagr = np.nan  # Caso o valor inicial seja zero, não é possível calcular o CAGR
-    
-    return cagr
+        return cagr
+
+    except Exception as e:
+        st.error(f"Erro ao calcular o CAGR: {e}")
+        return np.nan  # Retorna NaN em caso de erro
 
 # Calcular o CAGR para cada indicador
 cagrs = {}
