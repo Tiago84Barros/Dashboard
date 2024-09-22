@@ -268,35 +268,35 @@ with col4:
 
 
 # Seletor para escolher quais variáveis visualizar no gráfico _______________________________________________________________________________________________________________________________________
-st.markdown("### Selecione os Indicadores para Visualizar no Gráfico")
-variaveis_disponiveis = [col for col in indicadores.columns if col != 'Data']
-variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_disponiveis, default=['Receita_Líquida', 'Lucro_Líquido'])
+# st.markdown("### Selecione os Indicadores para Visualizar no Gráfico")
+# variaveis_disponiveis = [col for col in indicadores.columns if col != 'Data']
+# variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_disponiveis, default=['Receita_Líquida', 'Lucro_Líquido'])
 
-# Gráfico de indicadores selecionados
-if variaveis_selecionadas:
+# # Gráfico de indicadores selecionados
+# if variaveis_selecionadas:
     
-    df_melted = pd.DataFrame(data)
-    df_melted = indicadores.melt(id_vars=['Data'], value_vars=variaveis_selecionadas,
-                                 var_name='Indicador', value_name='Valor')  
+#     df_melted = pd.DataFrame(data)
+#     df_melted = indicadores.melt(id_vars=['Data'], value_vars=variaveis_selecionadas,
+#                                  var_name='Indicador', value_name='Valor')  
 
-    fig.update_layout(
-        xaxis_title='Ano',
-        yaxis_title='Valor',
-        plot_bgcolor='#1f1f1f',  # Fundo escuro
-        paper_bgcolor='#1f1f1f',
-        font=dict(color='#ffffff'),  # Cor do texto
-        title_font=dict(color='#ffffff', size=24),
-        legend_title_text='Indicadores',
-        xaxis=dict(showgrid=True, gridcolor='#444444'),
-        yaxis=dict(showgrid=True, gridcolor='#444444')
-    )
+#     fig.update_layout(
+#         xaxis_title='Ano',
+#         yaxis_title='Valor',
+#         plot_bgcolor='#1f1f1f',  # Fundo escuro
+#         paper_bgcolor='#1f1f1f',
+#         font=dict(color='#ffffff'),  # Cor do texto
+#         title_font=dict(color='#ffffff', size=24),
+#         legend_title_text='Indicadores',
+#         xaxis=dict(showgrid=True, gridcolor='#444444'),
+#         yaxis=dict(showgrid=True, gridcolor='#444444')
+#     )
     
-    st.plotly_chart(fig, use_container_width=True)
+#     st.plotly_chart(fig, use_container_width=True)
  
-    # Chama a função para exibir o gráfico
-    plot_graph(df_melted)
-else:
-    st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
+#     # Chama a função para exibir o gráfico
+#     plot_graph(df_melted)
+# else:
+#     st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
 
 # Tabela de Indicadores  ___________________________________________________________________________________________________________________________________________________________________________
 
