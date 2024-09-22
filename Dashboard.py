@@ -90,80 +90,58 @@ with st.sidebar:
 # URL do banco de dados no GitHub
 db_url = "https://raw.githubusercontent.com/Tiago84Barros/Dashboard/main/indicadores_empresas.db"
 
-def download_db_from_github(db_url, local_path='indicadores_empresas.db'):
-   st.write(f"Tentando baixar o arquivo de {db_url}...")
-   
-   try:
-        response = requests.get(db_url, allow_redirects=True)
-        st.write(f"Teste de conexão: Status code {response.status_code}")
-        if response.status_code == 200:
-            st.success("Conexão bem-sucedida com o GitHub!")
-        else:
-            st.error("Não foi possível conectar ao GitHub.")
-   except requests.exceptions.RequestException as e:
-        st.error(f"Erro ao tentar se conectar ao GitHub: {e}")
-   
-   
+# Função para baixar o banco de dados do GitHub
 @st.cache_data
-def load_data(ticket=None, company_name=None):
-    # Carregar o banco de dados SQLite baixado
-    db_path = download_db_from_github(db_url)
-
-    if db_path is None:
-        st.error("Banco de dados não foi baixado.")
+def download_db_from_github(db_url, local_path='indicadores_empresas.db'):
+    try:
+        st.info("Baixando banco de dados do GitHub...")
+        response = requests.get(db_url, allow_redirects=True)
+        
+        if response.status_code == 200:
+            with open(local_path, 'wb') as f:
+                f.write(response.content)
+            st.success("Download do banco de dados concluído com sucesso.")
+            return local_path
+        else:
+            st.error(f"Erro ao baixar o banco de dados do GitHub. Status code: {response.status_code}")
+            return None
+    except requests.exceptions.RequestException as e:
+        st.error(f"Erro ao tentar se conectar ao GitHub: {e}")
         return None
+
+# Função para carregar os dados do banco de dados
+@st.cache_data
+def load_data_from_db(ticket=None, company_name=None):
+    db_path = download_db_from_github(db_url)
     
-    # Verifique se o arquivo existe
-    if not os.path.exists(db_path):
-        st.error("Arquivo do banco de dados não encontrado.")
+    if db_path is None or not os.path.exists(db_path):
+        st.error("Erro ao acessar o banco de dados localmente.")
         return None
 
     try:
         conn = sqlite3.connect(db_path)
+        st.success("Conexão com o banco de dados estabelecida com sucesso.")
+        
+        # Lendo a tabela - Substitua "sua_tabela" pelo nome real da tabela que você deseja acessar
+        df = pd.read_sql_query("SELECT * FROM sua_tabela", conn)
+        return df
     except Exception as e:
         st.error(f"Erro ao conectar ao banco de dados: {e}")
         return None
-    
-    #conn = sqlite3.connect(db_path)
-    
-    # Listar todas as tabelas no banco de dados
-    query = "SELECT name FROM sqlite_master WHERE type='table'"
-    tables = pd.read_sql_query(query, conn)['name'].tolist()
-    
-    # Filtrar tabelas que contenham o ticker ou o nome da empresa no nome da tabela
-    if ticket:
-        table_name = next((t for t in tables if ticket in t), None)
-    elif company_name:
-        table_name = next((t for t in tables if company_name in t), None)
-    
-    if table_name:
-        # Carregar os dados da tabela encontrada
-        df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
-        conn.close()
-        
-        # Converter a coluna 'Data' para datetime e extrair apenas o ano
-        df['Data'] = pd.to_datetime(df['Data'], errors='coerce').dt.year.astype(int)
-        
-        # Substituir espaços nos nomes das colunas por underlines
-        df.columns = df.columns.str.replace(' ', '_')
-        
-        return df
-    else:
-        conn.close()
-        return None
+    finally:
+        if conn:
+            conn.close()
+            st.write("Conexão com o banco de dados fechada.")
 
-# Solicita ao usuário inserir um ticker 
-col1, col2 = st.columns([4, 1])
-with col1:
-    ticket = st.text_input("Insira um ticker:").upper()
+# Carregar os dados do banco de dados
+indicadores = load_data_from_db()
 
-# Função para buscar e carregar dados de uma tabela específica
-indicadores = load_data("GMAT3.SA")
-
-# Adicionar placeholders ou layout vazio antes de o usuário inserir o ticket
-if indicadores is None:
-    st.write("Bem-vindo ao Dashboard de Indicadores de Empresas!")
-    st.write("Insira um ticker no campo acima para começar a visualização dos dados.")
+# Verificar se os dados foram carregados corretamente
+if indicadores is not None and not indicadores.empty:
+    st.success("Indicadores carregados com sucesso.")
+    st.dataframe(indicadores)
+else:
+    st.error("O DataFrame 'indicadores' está vazio ou não pôde ser carregado.")
 
 # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________
 def calculate_cagr(df, column):
