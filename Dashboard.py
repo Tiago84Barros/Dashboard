@@ -85,7 +85,7 @@ with st.sidebar:
     st.markdown("### Ajuda")
     st.markdown("### Sair")
 
-# carregando o banco de dados _____________________________________________________________________________________________________________________________________________________________
+# carregando o banco de dados _______________________________________________________________________________________________________________________________________________________________________________
 
 # URL do banco de dados no GitHub
 db_url = "https://raw.githubusercontent.com/Tiago84Barros/Dashboard/main/indicadores_empresas.db"
@@ -175,6 +175,14 @@ def calculate_cagr(df, column):
     initial_value = df.iloc[0][column]
     final_value = df.iloc[-1][column]
     num_years = df['Data'].iloc[-1] - df['Data'].iloc[0]
+
+    # Verificando possíveis erros nos valores
+    if initial_value == 0:
+       raise ValueError(f"Valor inicial do indicador '{column}' é zero. Não é possível calcular CAGR.")
+        
+   if num_years <= 0:
+      raise ValueError("O número de anos calculado é menor ou igual a zero. Verifique as datas fornecidas.")
+
     
     # Cálculo do CAGR
     if initial_value != 0:
