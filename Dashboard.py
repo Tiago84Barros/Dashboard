@@ -132,8 +132,7 @@ def load_data_from_db(ticket=None, company_name=None):
         # Verificando se encontrou alguma tabela
         if not tabelas.empty:
             nome_tabela = tabelas.iloc[0, 0]  # Pegando o primeiro nome de tabela que contenha o ticket ou empresa
-            st.write(f"Tabela encontrada: {nome_tabela}")
-
+           
             # Escapando o nome da tabela com aspas duplas para evitar erros de sintaxe
             nome_tabela_escapado = f'"{nome_tabela}"'
 
@@ -151,21 +150,28 @@ def load_data_from_db(ticket=None, company_name=None):
     finally:
         if conn:
             conn.close()
-            st.write("Conexão com o banco de dados fechada.")
-
+            
 # Carregar os dados do banco de dados
 ticket = st.text_input("GMAT3.SA").upper()
 indicadores = load_data_from_db(ticket)
 
 # Verificar se os dados foram carregados corretamente
 if indicadores is not None and not indicadores.empty:
-    st.success("Indicadores carregados com sucesso.")
-    st.dataframe(indicadores)
+   st.dataframe(indicadores)
 else:
     st.error("O DataFrame 'indicadores' está vazio ou não pôde ser carregado.")
 
 # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________
 def calculate_cagr(df, column):
+
+    # Verifique se a coluna 'Data' está no formato correto
+    df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
+    
+    # Garantir que não haja valores nulos na coluna de datas
+    if df['Data'].isnull().any():
+        raise ValueError("A coluna 'Data' contém valores inválidos que não puderam ser convertidos para data.")
+
+    
     initial_value = df.iloc[0][column]
     final_value = df.iloc[-1][column]
     num_years = df['Data'].iloc[-1] - df['Data'].iloc[0]
