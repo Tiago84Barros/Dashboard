@@ -312,15 +312,24 @@ if variaveis_selecionadas:
     def update_theme():
         current_theme = st.get_option('theme.base')
     
-        # Se a sessão não tiver o tema configurado ou se o tema mudou, atualizar o estado
-        if 'theme' not in st.session_state or st.session_state['theme'] != current_theme:
+        # Atualiza apenas se o tema atual for diferente do armazenado
+        if 'theme' not in st.session_state:
             st.session_state['theme'] = current_theme
-            st.experimental_rerun()  # Força a atualização da página para aplicar o tema ao gráfico
+            print(f"Tema inicial detectado: {current_theme}")
+        elif st.session_state['theme'] != current_theme:
+            st.session_state['theme'] = current_theme
+            print(f"Tema atualizado para: {current_theme}")
+            st.experimental_rerun()  # Forçar recarregamento para atualizar o gráfico
     
     # Chamar a função para verificar o tema ao iniciar o aplicativo
     update_theme()
     
     def plot_graph(df_melted):
+
+        # Configurações de cores com base no tema armazenado na sessão
+        current_theme = st.session_state['theme']
+        print(f"Tema atual utilizado para o gráfico: {current_theme}")
+        
         # Configurações de cores com base no tema
         if st.session_state['theme'] == "dark":
             theme_colors = {
