@@ -115,14 +115,33 @@ def load_data_from_db(ticket=None, company_name=None):
 
     try:
         conn = sqlite3.connect(db_path)
-     
-        # Buscando as tabelas que contêm o nome do ticker no nome
-        query_tabelas = f"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%{"GMAT3"}%'"
 
-        # Lendo os nomes das tabelas que contêm o ticker no nome
+      # Se fornecido, o ticket será usado na busca
+        if ticket:
+            query_tabelas = f"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%{ticket}%'"
+        elif company_name:
+            # Caso contrário, busca por nome da empresa
+            query_tabelas = f"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%{company_name}%'"
+        else:
+            st.error("É necessário fornecer um ticket ou nome da empresa.")
+            return None
+
+        # Lendo os nomes das tabelas que contêm o ticket ou nome da empresa
         tabelas = pd.read_sql_query(query_tabelas, conn)
 
-        return df
+        # Verificando se encontrou alguma tabela
+        if not tabelas.empty:
+            nome_tabela = tabelas.iloc[0, 0]  # Pegando o primeiro nome de tabela que contenha o ticket ou empresa
+            st.write(f"Tabela encontrada: {nome_tabela}")
+
+            # Carregando os dados da tabela
+            query_dados = f"SELECT * FROM {nome_tabela}"
+            df = pd.read_sql_query(query_dados, conn)
+
+            return df
+        else:
+            st.error(f"Nenhuma tabela encontrada para o ticket '{ticket}' ou nome da empresa '{company_name}'")
+            return None
     except Exception as e:
         st.error(f"Erro ao conectar ao banco de dados: {e}")
         return None
