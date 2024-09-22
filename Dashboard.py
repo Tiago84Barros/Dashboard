@@ -115,8 +115,12 @@ def load_data_from_db(ticket=None, company_name=None):
 
     try:
         conn = sqlite3.connect(db_path)
-        # Lendo a tabela - Substitua "sua_tabela" pelo nome real da tabela que você deseja acessar
-        df = pd.read_sql_query("SELECT * FROM sua_tabela", conn)
+        # Buscando as tabelas que contêm o nome do ticker no nome
+        query_tabelas = f"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%{ticket}%'"
+
+        # Lendo os nomes das tabelas que contêm o ticker no nome
+        tabelas = pd.read_sql_query(query_tabelas, conn)
+
         return df
     except Exception as e:
         st.error(f"Erro ao conectar ao banco de dados: {e}")
