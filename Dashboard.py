@@ -315,10 +315,10 @@ if variaveis_selecionadas:
         # Atualiza apenas se o tema atual for diferente do armazenado
         if 'theme' not in st.session_state:
             st.session_state['theme'] = current_theme
-            print(f"Tema inicial detectado: {current_theme}")
+            st.write(f"Tema inicial detectado: {current_theme}")
         elif st.session_state['theme'] != current_theme:
             st.session_state['theme'] = current_theme
-            print(f"Tema atualizado para: {current_theme}")
+            st.write(f"Tema atualizado para: {current_theme}")
             st.experimental_rerun()  # Forçar recarregamento para atualizar o gráfico
     
     # Chamar a função para verificar o tema ao iniciar o aplicativo
@@ -328,7 +328,7 @@ if variaveis_selecionadas:
 
         # Configurações de cores com base no tema armazenado na sessão
         current_theme = st.session_state['theme']
-        print(f"Tema atual utilizado para o gráfico: {current_theme}")
+        st.write(f"Tema atual utilizado para o gráfico: {current_theme}")
         
         # Configurações de cores com base no tema
         if st.session_state['theme'] == "dark":
