@@ -277,10 +277,9 @@ if variaveis_selecionadas:
     df_melted = indicadores.melt(id_vars=['Data'], value_vars=variaveis_selecionadas,
                                  var_name='Indicador', value_name='Valor')
 
-    # Verificando o tema atual
+    # Configurando layout com base no tema
     theme = st.get_option('theme.base')
     
-    # Configurando layout com base no tema
     if theme == "dark":
         fig = px.line(df_melted, x='Data', y='Valor', color='Indicador',
                       title='Evolução dos Indicadores Selecionados', markers=True)
@@ -312,6 +311,7 @@ if variaveis_selecionadas:
             yaxis=dict(showgrid=True, gridcolor='#dddddd')
         )
     
+    # Exibe o gráfico
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
