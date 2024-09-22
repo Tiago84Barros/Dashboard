@@ -277,44 +277,20 @@ if variaveis_selecionadas:
     
     df_melted = pd.DataFrame(data)
     df_melted = indicadores.melt(id_vars=['Data'], value_vars=variaveis_selecionadas,
-                                 var_name='Indicador', value_name='Valor')
+                                 var_name='Indicador', value_name='Valor')  
+
+    fig.update_layout(
+        xaxis_title='Ano',
+        yaxis_title='Valor',
+        plot_bgcolor='#1f1f1f',  # Fundo escuro
+        paper_bgcolor='#1f1f1f',
+        font=dict(color='#ffffff'),  # Cor do texto
+        title_font=dict(color='#ffffff', size=24),
+        legend_title_text='Indicadores',
+        xaxis=dict(showgrid=True, gridcolor='#444444'),
+        yaxis=dict(showgrid=True, gridcolor='#444444')
+    )
     
-  
-    # Verificando o tema atual
-    theme = st.get_option('theme.base')
-    
-    # Configurando layout com base no tema
-    if theme == "dark":
-        fig = px.line(df_melted, x='Data', y='Valor', color='Indicador',
-                      title='Evolução dos Indicadores Selecionados', markers=True)
-
-        fig.update_layout(
-            xaxis_title='Ano',
-            yaxis_title='Valor',
-            plot_bgcolor='#1f1f1f',  # Fundo escuro
-            paper_bgcolor='#1f1f1f',
-            font=dict(color='#ffffff'),  # Cor do texto
-            title_font=dict(color='#ffffff', size=24),
-            legend_title_text='Indicadores',
-            xaxis=dict(showgrid=True, gridcolor='#444444'),
-            yaxis=dict(showgrid=True, gridcolor='#444444')
-        )
-    else:  # Para o tema claro
-        fig = px.line(df_melted, x='Data', y='Valor', color='Indicador',
-                      title='Evolução dos Indicadores Selecionados', markers=True)
-
-        fig.update_layout(
-            xaxis_title='Ano',
-            yaxis_title='Valor',
-            plot_bgcolor='#ffffff',  # Fundo claro
-            paper_bgcolor='#ffffff',
-            font=dict(color='#000000'),  # Cor do texto
-            title_font=dict(color='#000000', size=24),
-            legend_title_text='Indicadores',
-            xaxis=dict(showgrid=True, gridcolor='#dddddd'),
-            yaxis=dict(showgrid=True, gridcolor='#dddddd')
-        )
-
     st.plotly_chart(fig, use_container_width=True)
  
     # Chama a função para exibir o gráfico
