@@ -261,7 +261,7 @@ st.markdown("## Visão Geral (CAGR)")
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
-    st.metric(label="CAGR Receita Líquida", value=f"{cagrs['Receita_Liquida']:.2%}")
+    st.metric(label="CAGR Receita Líquida", value=f"{cagrs['Receita_Líquida']:.2%}")
 
 with col2:
     st.metric(label="CAGR Lucro Líquido", value=f"{cagrs['Lucro_Líquido']:.2%}")
