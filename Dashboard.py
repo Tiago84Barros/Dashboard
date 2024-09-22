@@ -308,11 +308,18 @@ variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_dis
 # Ensure 'indicadores' is correctly loaded
 if variaveis_selecionadas:
  
+    # Função para detectar o tema atual e armazenar em `session_state`
+    def get_current_theme():
+        current_theme = st.get_option('theme.base')
+        if 'theme' not in st.session_state or st.session_state['theme'] != current_theme:
+            st.session_state['theme'] = current_theme
+    
     def plot_graph(df_melted):
-        # Verificando o tema atual e definindo as cores correspondentes
-        theme = st.get_option('theme.base')
+        # Verificar e atualizar o tema
+        get_current_theme()
         
-        if theme == "dark":
+        # Configurações de cores conforme o tema
+        if st.session_state['theme'] == "dark":
             theme_colors = {
                 "bg_color": "#1f1f1f",
                 "text_color": "#ffffff",
@@ -344,14 +351,13 @@ if variaveis_selecionadas:
         # Renderizando o gráfico
         st.plotly_chart(fig, use_container_width=True)
     
-    # Exemplo de DataFrame derretido
+    # Exemplo de DataFrame derretido (df_melted já existente)
     df_melted = indicadores.melt(id_vars=['Data'], value_vars=variaveis_selecionadas,
                                  var_name='Indicador', value_name='Valor')
     
     # Chama a função para exibir o gráfico
     plot_graph(df_melted)
-
-
+    
 else:
     st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
 # Tabela de Indicadores  ___________________________________________________________________________________________________________________________________________________________________________
