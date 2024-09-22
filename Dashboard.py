@@ -87,78 +87,78 @@ with st.sidebar:
 
 # carregando o banco de dados _______________________________________________________________________________________________________________________________________________________________________________
 
-# URL do banco de dados no GitHub
-db_url = "https://raw.githubusercontent.com/Tiago84Barros/Dashboard/main/indicadores_empresas.db"
+# # URL do banco de dados no GitHub
+# db_url = "https://raw.githubusercontent.com/Tiago84Barros/Dashboard/main/indicadores_empresas.db"
 
-# Função para baixar o banco de dados do GitHub
-@st.cache_data
-def download_db_from_github(db_url, local_path='indicadores_empresas.db'):
-    try:
-        response = requests.get(db_url, allow_redirects=True)        
-        if response.status_code == 200:
-            with open(local_path, 'wb') as f:
-                f.write(response.content)
-            return local_path
-        else:
-            return None
-    except requests.exceptions.RequestException as e:
-        st.error(f"Erro ao tentar se conectar ao GitHub: {e}")
-        return None
+# # Função para baixar o banco de dados do GitHub
+# @st.cache_data
+# def download_db_from_github(db_url, local_path='indicadores_empresas.db'):
+#     try:
+#         response = requests.get(db_url, allow_redirects=True)        
+#         if response.status_code == 200:
+#             with open(local_path, 'wb') as f:
+#                 f.write(response.content)
+#             return local_path
+#         else:
+#             return None
+#     except requests.exceptions.RequestException as e:
+#         st.error(f"Erro ao tentar se conectar ao GitHub: {e}")
+#         return None
 
-# Função para carregar os dados do banco de dados
-@st.cache_data
-def load_data_from_db(ticket=None, company_name=None):
-    db_path = download_db_from_github(db_url)
+# # Função para carregar os dados do banco de dados
+# @st.cache_data
+# def load_data_from_db(ticket=None, company_name=None):
+#     db_path = download_db_from_github(db_url)
     
-    if db_path is None or not os.path.exists(db_path):
-        return None
+#     if db_path is None or not os.path.exists(db_path):
+#         return None
 
-    try:
-        conn = sqlite3.connect(db_path)
+#     try:
+#         conn = sqlite3.connect(db_path)
 
-      # Se fornecido, o ticket será usado na busca
-        if ticket:
-            query_tabelas = f"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%{ticket}%'"
-        elif company_name:
-            # Caso contrário, busca por nome da empresa
-            query_tabelas = f"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%{company_name}%'"
-        else:
-            st.error("É necessário fornecer um ticket ou nome da empresa.")
-            return None
+#       # Se fornecido, o ticket será usado na busca
+#         if ticket:
+#             query_tabelas = f"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%{ticket}%'"
+#         elif company_name:
+#             # Caso contrário, busca por nome da empresa
+#             query_tabelas = f"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%{company_name}%'"
+#         else:
+#             st.error("É necessário fornecer um ticket ou nome da empresa.")
+#             return None
 
-        # Lendo os nomes das tabelas que contêm o ticket ou nome da empresa
-        tabelas = pd.read_sql_query(query_tabelas, conn)
+#         # Lendo os nomes das tabelas que contêm o ticket ou nome da empresa
+#         tabelas = pd.read_sql_query(query_tabelas, conn)
 
-        # Verificando se encontrou alguma tabela
-        if not tabelas.empty:
-            nome_tabela = tabelas.iloc[0, 0]  # Pegando o primeiro nome de tabela que contenha o ticket ou empresa
+#         # Verificando se encontrou alguma tabela
+#         if not tabelas.empty:
+#             nome_tabela = tabelas.iloc[0, 0]  # Pegando o primeiro nome de tabela que contenha o ticket ou empresa
            
-            # Escapando o nome da tabela com aspas duplas para evitar erros de sintaxe
-            nome_tabela_escapado = f'"{nome_tabela}"'
+#             # Escapando o nome da tabela com aspas duplas para evitar erros de sintaxe
+#             nome_tabela_escapado = f'"{nome_tabela}"'
 
-            # Carregando os dados da tabela
-            query_dados = f"SELECT * FROM {nome_tabela_escapado}"
-            df = pd.read_sql_query(query_dados, conn)
+#             # Carregando os dados da tabela
+#             query_dados = f"SELECT * FROM {nome_tabela_escapado}"
+#             df = pd.read_sql_query(query_dados, conn)
 
-            return df
-        else:
-            st.error(f"Nenhuma tabela encontrada para o ticket '{ticket}' ou nome da empresa '{company_name}'")
-            return None
-    except Exception as e:
-        st.error(f"Erro ao conectar ao banco de dados: {e}")
-        return None
-    finally:
-        if conn:
-            conn.close()
+#             return df
+#         else:
+#             st.error(f"Nenhuma tabela encontrada para o ticket '{ticket}' ou nome da empresa '{company_name}'")
+#             return None
+#     except Exception as e:
+#         st.error(f"Erro ao conectar ao banco de dados: {e}")
+#         return None
+#     finally:
+#         if conn:
+#             conn.close()
             
-# Carregar os dados do banco de dados
-col1, col2 = st.columns([4, 1])
-with col1:
-    ticket = st.text_input("Digite o ticker (ex: GMAT3.SA)", key="ticker_input").upper()
+# # Carregar os dados do banco de dados
+# col1, col2 = st.columns([4, 1])
+# with col1:
+#     ticket = st.text_input("Digite o ticker (ex: GMAT3.SA)", key="ticker_input").upper()
     
-indicadores = load_data_from_db(ticket)
+# indicadores = load_data_from_db(ticket)
 
-# Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________________________________
+# # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________________________________
 def calculate_cagr(df, column):
 
    try:
@@ -268,35 +268,35 @@ with col4:
 
 
 # Seletor para escolher quais variáveis visualizar no gráfico _______________________________________________________________________________________________________________________________________
-# st.markdown("### Selecione os Indicadores para Visualizar no Gráfico")
-# variaveis_disponiveis = [col for col in indicadores.columns if col != 'Data']
-# variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_disponiveis, default=['Receita_Líquida', 'Lucro_Líquido'])
+st.markdown("### Selecione os Indicadores para Visualizar no Gráfico")
+variaveis_disponiveis = [col for col in indicadores.columns if col != 'Data']
+variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_disponiveis, default=['Receita_Líquida', 'Lucro_Líquido'])
 
-# # Gráfico de indicadores selecionados
-# if variaveis_selecionadas:
+# Gráfico de indicadores selecionados
+if variaveis_selecionadas:
     
-#     df_melted = pd.DataFrame(data)
-#     df_melted = indicadores.melt(id_vars=['Data'], value_vars=variaveis_selecionadas,
-#                                  var_name='Indicador', value_name='Valor')  
+    df_melted = pd.DataFrame(data)
+    df_melted = indicadores.melt(id_vars=['Data'], value_vars=variaveis_selecionadas,
+                                 var_name='Indicador', value_name='Valor')  
 
-#     fig.update_layout(
-#         xaxis_title='Ano',
-#         yaxis_title='Valor',
-#         plot_bgcolor='#1f1f1f',  # Fundo escuro
-#         paper_bgcolor='#1f1f1f',
-#         font=dict(color='#ffffff'),  # Cor do texto
-#         title_font=dict(color='#ffffff', size=24),
-#         legend_title_text='Indicadores',
-#         xaxis=dict(showgrid=True, gridcolor='#444444'),
-#         yaxis=dict(showgrid=True, gridcolor='#444444')
-#     )
+    fig.update_layout(
+        xaxis_title='Ano',
+        yaxis_title='Valor',
+        plot_bgcolor='#1f1f1f',  # Fundo escuro
+        paper_bgcolor='#1f1f1f',
+        font=dict(color='#ffffff'),  # Cor do texto
+        title_font=dict(color='#ffffff', size=24),
+        legend_title_text='Indicadores',
+        xaxis=dict(showgrid=True, gridcolor='#444444'),
+        yaxis=dict(showgrid=True, gridcolor='#444444')
+    )
     
-#     st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True)
  
-#     # Chama a função para exibir o gráfico
-#     plot_graph(df_melted)
-# else:
-#     st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
+    # Chama a função para exibir o gráfico
+    plot_graph(df_melted)
+else:
+    st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
 
 # Tabela de Indicadores  ___________________________________________________________________________________________________________________________________________________________________________
 
