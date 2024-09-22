@@ -94,16 +94,12 @@ db_url = "https://raw.githubusercontent.com/Tiago84Barros/Dashboard/main/indicad
 @st.cache_data
 def download_db_from_github(db_url, local_path='indicadores_empresas.db'):
     try:
-        st.info("Baixando banco de dados do GitHub...")
-        response = requests.get(db_url, allow_redirects=True)
-        
+        response = requests.get(db_url, allow_redirects=True)        
         if response.status_code == 200:
             with open(local_path, 'wb') as f:
                 f.write(response.content)
-            st.success("Download do banco de dados concluído com sucesso.")
             return local_path
         else:
-            st.error(f"Erro ao baixar o banco de dados do GitHub. Status code: {response.status_code}")
             return None
     except requests.exceptions.RequestException as e:
         st.error(f"Erro ao tentar se conectar ao GitHub: {e}")
@@ -115,13 +111,10 @@ def load_data_from_db(ticket=None, company_name=None):
     db_path = download_db_from_github(db_url)
     
     if db_path is None or not os.path.exists(db_path):
-        st.error("Erro ao acessar o banco de dados localmente.")
         return None
 
     try:
         conn = sqlite3.connect(db_path)
-        st.success("Conexão com o banco de dados estabelecida com sucesso.")
-        
         # Lendo a tabela - Substitua "sua_tabela" pelo nome real da tabela que você deseja acessar
         df = pd.read_sql_query("SELECT * FROM sua_tabela", conn)
         return df
