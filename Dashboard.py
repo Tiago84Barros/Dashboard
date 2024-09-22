@@ -134,7 +134,8 @@ def load_data_from_db(ticket=None, company_name=None):
             st.write("Conexão com o banco de dados fechada.")
 
 # Carregar os dados do banco de dados
-indicadores = load_data_from_db()
+ticket = st.text_input("GMAT3.SA").upper()
+indicadores = load_data_from_db(ticket)
 
 # Verificar se os dados foram carregados corretamente
 if indicadores is not None and not indicadores.empty:
