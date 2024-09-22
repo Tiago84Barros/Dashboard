@@ -36,7 +36,7 @@ st.markdown("""
     <style>
     /* Fundo para a página */
     .main {
-        background-color: #F5F5F5;
+        background-color: #F5F5F5; /* Fundo branco da página */
         padding: 0px;
         color: #000000; /* Definindo cor padrão do texto como preto */
     }
@@ -74,7 +74,7 @@ st.markdown("""
     }
 
     /* Garantindo que outros textos da página sejam visíveis */
-    body, p, div, span {
+    body, p, div, span, .css-1cpxqw2 {
         color: #000000; /* Define cor padrão para outros textos como preto */
     }
     
@@ -82,10 +82,40 @@ st.markdown("""
     .stMarkdown h1, .stMarkdown h2, .stMarkdown h3, .stMarkdown h4, .stMarkdown h5, .stMarkdown h6 {
         color: #000000; /* Define cor preta para os títulos */
     }
+
+    /* Ajuste de cor para os textos em widgets */
+    .stSelectbox, .stSlider, .stButton, .stCheckbox {
+        color: #000000; /* Texto dos widgets em preto */
+    }
+
+    /* Cor do texto dentro de caixas de texto */
+    .css-2trqyj {
+        color: #000000; /* Ajusta a cor do texto dentro das caixas de entrada de texto */
+    }
+    
+    /* Ajuste para os botões */
+    button {
+        background-color: #1E90FF; /* Fundo azul para os botões */
+        color: #FFFFFF; /* Texto branco nos botões */
+        border-radius: 5px;
+        padding: 5px 10px;
+        border: none;
+    }
+
+    /* Ajuste para hover nos botões */
+    button:hover {
+        background-color: #4169E1; /* Azul escuro quando o botão é selecionado */
+        color: #FFFFFF;
+    }
+
+    /* Ajustando cor do contêiner principal do Streamlit */
+    .stApp {
+        background-color: #F5F5F5; /* Fundo geral da aplicação */
+        color: #000000; /* Texto padrão da aplicação em preto */
+    }
     
     </style>
     """, unsafe_allow_html=True)
-
 
 # Sidebar com ícones de navegação __________________________________________________________________________________________________________________________________________________________
 with st.sidebar:
