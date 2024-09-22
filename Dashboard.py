@@ -272,12 +272,16 @@ st.markdown("### Selecione os Indicadores para Visualizar no Gráfico")
 variaveis_disponiveis = [col for col in indicadores.columns if col != 'Data']
 variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_disponiveis, default=['Receita_Líquida', 'Lucro_Líquido'])
 
-# Gráfico de indicadores selecionados
+#Copiar código
+# Ensure 'indicadores' is correctly loaded
 if variaveis_selecionadas:
-    
-    df_melted = pd.DataFrame(data)
+    # Creating the melted DataFrame
     df_melted = indicadores.melt(id_vars=['Data'], value_vars=variaveis_selecionadas,
-                                 var_name='Indicador', value_name='Valor')  
+                                 var_name='Indicador', value_name='Valor')
+
+    # Plotting with Plotly
+    fig = px.line(df_melted, x='Data', y='Valor', color='Indicador',
+                  title='Evolução dos Indicadores Selecionados', markers=True)
 
     fig.update_layout(
         xaxis_title='Ano',
@@ -290,14 +294,10 @@ if variaveis_selecionadas:
         xaxis=dict(showgrid=True, gridcolor='#444444'),
         yaxis=dict(showgrid=True, gridcolor='#444444')
     )
-    
+
     st.plotly_chart(fig, use_container_width=True)
- 
-    # Chama a função para exibir o gráfico
-    plot_graph(df_melted)
 else:
     st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
-
 # Tabela de Indicadores  ___________________________________________________________________________________________________________________________________________________________________________
 
 st.markdown("### Tabela de Indicadores")
