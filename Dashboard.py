@@ -275,6 +275,8 @@ variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_dis
 # Gráfico de indicadores selecionados
 if variaveis_selecionadas:
     
+    df_melted = pd.DataFrame(data)
+    
     def plot_graph(df_melted):
         # Verificando o tema atual
         theme = st.get_option('theme.base')
