@@ -32,18 +32,19 @@ def get_company_info(ticker):
 # Definir o layout da página ___________________________________________________________________________________________________________________________________________________________--
 st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
 
-# Estilo CSS para replicar o layout
 st.markdown("""
     <style>
-    /* Fundo branco para a página */
+    /* Fundo para a página */
     .main {
         background-color: #F5F5F5;
         padding: 0px;
+        color: #000000; /* Definindo cor padrão do texto como preto */
     }
     
     /* Estilo para a barra lateral */
     .css-1544g2n {
         background-color: #F5F5F5;
+        color: #000000; /* Definindo cor padrão do texto como preto */
     }
     
     /* Ajuste do fundo dos blocos de métricas */
@@ -57,13 +58,13 @@ st.markdown("""
     
     /* Cor do texto para as métricas */
     div[data-testid="metric-container"] > label {
-        color: #8A2BE2;
+        color: #8A2BE2; /* Mantendo a cor roxa */
         font-size: 18px;
     }
 
     /* Cores das porcentagens positivas e negativas */
     div[data-testid="metric-container"] > div > p {
-        color: green;
+        color: green; /* Verde para números positivos */
         font-size: 18px;
     }
 
@@ -71,8 +72,20 @@ st.markdown("""
     .stProgress > div > div > div > div {
         background-color: #1E90FF;
     }
+
+    /* Garantindo que outros textos da página sejam visíveis */
+    body, p, div, span {
+        color: #000000; /* Define cor padrão para outros textos como preto */
+    }
+    
+    /* Estilização dos títulos */
+    .stMarkdown h1, .stMarkdown h2, .stMarkdown h3, .stMarkdown h4, .stMarkdown h5, .stMarkdown h6 {
+        color: #000000; /* Define cor preta para os títulos */
+    }
+    
     </style>
     """, unsafe_allow_html=True)
+
 
 # Sidebar com ícones de navegação __________________________________________________________________________________________________________________________________________________________
 with st.sidebar:
