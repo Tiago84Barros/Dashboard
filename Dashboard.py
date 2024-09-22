@@ -134,8 +134,11 @@ def load_data_from_db(ticket=None, company_name=None):
             nome_tabela = tabelas.iloc[0, 0]  # Pegando o primeiro nome de tabela que contenha o ticket ou empresa
             st.write(f"Tabela encontrada: {nome_tabela}")
 
+            # Escapando o nome da tabela com aspas duplas para evitar erros de sintaxe
+            nome_tabela_escapado = f'"{nome_tabela}"'
+
             # Carregando os dados da tabela
-            query_dados = f"SELECT * FROM {nome_tabela}"
+            query_dados = f"SELECT * FROM {nome_tabela_escapado}"
             df = pd.read_sql_query(query_dados, conn)
 
             return df
