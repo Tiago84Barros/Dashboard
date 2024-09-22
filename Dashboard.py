@@ -158,12 +158,6 @@ with col1:
     
 indicadores = load_data_from_db(ticket)
 
-# Verificar se os dados foram carregados corretamente
-if indicadores is not None and not indicadores.empty:
-   st.dataframe(indicadores)
-else:
-    st.error("O DataFrame 'indicadores' está vazio ou não pôde ser carregado.")
-
 # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________________________________
 def calculate_cagr(df, column):
 
