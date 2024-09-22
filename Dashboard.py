@@ -193,7 +193,7 @@ def calculate_cagr(df, column):
         cagr = (final_value / initial_value) ** (1 / num_years) - 1
         return cagr
 
-    except Exception as e:
+   except Exception as e:
         st.error(f"Erro ao calcular o CAGR: {e}")
         return np.nan  # Retorna NaN em caso de erro
 
