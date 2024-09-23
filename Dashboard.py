@@ -393,4 +393,5 @@ if ticker:
     st.markdown("### Tabela de Indicadores")
     st.dataframe(indicadores_formatado)
     
-else st.warning("Por favor, insira um ticker válido.")
+else:
+    st.warning("Por favor, insira um ticker válido.")
