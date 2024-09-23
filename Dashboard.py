@@ -406,7 +406,7 @@ st.dataframe(indicadores_formatado)
 st.markdown(f"<h2 style='color:blue; text-align: left;'>MÚLTIPLOS DA {ticker}</h2>", unsafe_allow_html=True)
 
 # Criando a estrutura com duas colunas
-col1, col2 = st.columns([1, 0.05, 1])  # A coluna do meio (0.05) será usada para a linha vertical
+col1, col2, col3 = st.columns([1, 0.1, 1])
 
 # Preenchendo a coluna de "Saúde financeira da empresa"
 with col1:
