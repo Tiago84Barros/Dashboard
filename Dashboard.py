@@ -245,7 +245,7 @@ for column in indicadores.columns:
 def format_dataframe(df):
     col_monetarias = ['Close', 'LPA', 'Receita_Líquida', 'Ativo_Circulante', 'Passivo_Circulante', 'Capital_de_Giro', 'Patrimonio_Líquido', 
                       'Lucro_Operacional', 'Lucro_Líquido', 'Dividendos', 'Divida_Líquida', 'Balança_Comercial', 'Câmbio', 'PIB']
-    col_porcentagem = ['Margem_Líquida', 'ROE', 'Índice_Endividamento', 'Selic', 'IPCA', 'ICC']
+    col_porcentagem = ['Margem_Líquida', 'ROE', 'Selic', 'IPCA', 'ICC']
     
     # Formatando colunas monetárias manualmente (R$)
     for col in col_monetarias:
