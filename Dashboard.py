@@ -402,96 +402,25 @@ st.markdown("### Tabela de Indicadores")
 st.dataframe(indicadores_formatado)
 
 # Adicionando a nova seção de "Múltiplos do {ticker}" ________________________________________________________________________________________________________________________________________________
-st.markdown(f"""<h2 style='color:blue; text-align: center; font-weight: bold;'>MÚLTIPLOS DA {ticker}</h2>""", unsafe_allow_html=True)
+st.markdown(f"<h2 style='color:blue; text-align: center;'>MÚLTIPLOS DA {ticker}</h2>", unsafe_allow_html=True)
 
-# Função para obter o valor de um indicador ou retornar 'N/A' se não estiver presente com estilo personalizado
-def get_indicator_value(df, column_name, default="N/A", format_type="percentage"):
-    if column_name in df.columns:
-        value = df[column_name].iloc[-1]
-        if pd.notnull(value):
-            if format_type == "percentage":
-                return f"{value:.2f}%"
-            elif format_type == "currency":
-                return f"R${value:,.2f}"
-            else:
-                return f"{value:.2f}"
-    return default
+# Criando duas colunas para "Saúde financeira da empresa" e "Relevância para o investidor"
+col1, col2 = st.columns([1, 1])  # A lista [1, 1] define as proporções iguais das colunas
 
-# CSS para centralizar as colunas e estilizar as seções
-st.markdown("""
-    <style>
-        /* Container principal centralizado */
-        .centered-container {
-            display: flex;
-            justify-content: center;
-            align-items: flex-start;
-            margin: 20px auto;
-            width: 80%;
-        }
+# Preenchendo a coluna de "Saúde financeira da empresa"
+with col1:
+    st.markdown("<h3 style='text-align: center; border-bottom: 2px solid orange;'>Saúde financeira da empresa</h3>", unsafe_allow_html=True)
+    st.metric(label="Margem Líquida", value=f"{indicadores['Margem_Líquida'].iloc[-1]:.2f}%")
+    st.metric(label="ROE", value=f"{indicadores['ROE'].iloc[-1]:.2f}%")
+    st.metric(label="Índice de Endividamento", value=f"{indicadores['Divida_Líquida'].iloc[-1]:.2f}%")
 
-        /* Estilo das colunas */
-        .column {
-            flex: 1;
-            padding: 20px;
-            text-align: left;
-        }
+# Adicionando a linha vertical alaranjada entre as duas colunas
+st.markdown("<hr style='border: none; border-left: 3px solid orange; height: 200px; display: inline-block; margin: 0 auto;'>", unsafe_allow_html=True)
 
-        /* Linha vertical alaranjada */
-        .vertical-line {
-            width: 3px;
-            background-color: orange;
-            margin: 0 20px;
-            height: auto;
-        }
-
-        /* Estilo dos títulos das seções */
-        .section-title {
-            color: #333;
-            font-size: 20px;
-            font-weight: bold;
-            margin-bottom: 5px;
-            text-align: center;
-            padding-bottom: 5px;
-            border-bottom: 2px solid orange; /* Linha alaranjada abaixo do título */
-            display: inline-block;
-        }
-
-        /* Estilo para os valores dos indicadores */
-        .indicator-value {
-            font-size: 16px;
-            color: #444;
-        }
-
-        /* Centraliza o conteúdo do container */
-        .column-content {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-    </style>
-    
-    <!-- Container das colunas -->
-    <div class="centered-container">
-        <div class="column">
-            <div class="column-content">
-                <span class="section-title">Saúde financeira da empresa</span>
-                <p class="indicator-value">Margem Líquida: {get_indicator_value(indicadores, 'Margem_Líquida')}</p>
-                <p class="indicator-value">ROE: {get_indicator_value(indicadores, 'ROE')}</p>
-                <p class="indicator-value">Índice de Endividamento: {get_indicator_value(indicadores, 'Divida_Líquida')}</p>
-            </div>
-        </div>
-        
-        <div class="vertical-line"></div>
-        
-        <div class="column">
-            <div class="column-content">
-                <span class="section-title">Relevância para o investidor</span>
-                <p class="indicator-value">P/L: {get_indicator_value(indicadores, 'P/L', format_type='number')}</p>
-                <p class="indicator-value">Payout: {get_indicator_value(indicadores, 'Payout')}</p>
-                <p class="indicator-value">P/VP: {get_indicator_value(indicadores, 'P/VP', format_type='number')}</p>
-                <p class="indicator-value">Dividend Yield: {get_indicator_value(indicadores, 'Dividend Yield')}</p>
-            </div>
-        </div>
-    </div>
-""", unsafe_allow_html=True)
-
+# Preenchendo a coluna de "Relevância para o investidor"
+with col2:
+    st.markdown("<h3 style='text-align: center; border-bottom: 2px solid orange;'>Relevância para o investidor</h3>", unsafe_allow_html=True)
+    st.metric(label="P/L", value=f"{indicadores['P/L'].iloc[-1]:.2f}" if 'P/L' in indicadores.columns else "N/A")
+    st.metric(label="Payout", value=f"{indicadores['Payout'].iloc[-1]:.2f}%" if 'Payout' in indicadores.columns else "N/A")
+    st.metric(label="P/VP", value=f"{indicadores['P/VP'].iloc[-1]:.2f}" if 'P/VP' in indicadores.columns else "N/A")
+    st.metric(label="Dividend Yield", value=f"{indicadores['Dividend Yield'].iloc[-1]:.2f}%" if 'Dividend Yield' in indicadores.columns else "N/A")
