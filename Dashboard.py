@@ -407,21 +407,35 @@ st.markdown(f"""<h2 style='color:blue;'>MÚLTIPLOS DA {ticker}</h2>""", unsafe_a
 # Criando a estrutura das duas colunas abaixo
 col1, col2 = st.columns(2)
 
+# Função para obter o valor de um indicador ou retornar 'N/A' se não estiver presente com estilo personalizado
+def get_indicator_value(df, column_name, default="N/A", format_type="percentage"):
+    if column_name in df.columns:
+        value = df[column_name].iloc[-1]
+        if pd.notnull(value):
+            if format_type == "percentage":
+                return f"<span style='font-size:16px;'>{value:.2f}%</span>"
+            elif format_type == "currency":
+                return f"<span style='font-size:16px;'>R${value:,.2f}</span>"
+            else:
+                return f"<span style='font-size:16px;'>{value:.2f}</span>"
+    return f"<span style='font-size:16px;'>{default}</span>"
+
 # Seção "Saúde financeira da empresa"
 with col1:
-    st.markdown("### Saúde Financeira da Empresa")
+    st.markdown("### Saúde financeira da empresa")
     
-    # Exibindo os múltiplos desejados
-    st.metric(label="Margem Líquida", value=f"{indicadores['Margem_Líquida'].iloc[-1]:.2f}%")
-    st.metric(label="ROE", value=f"{indicadores['ROE'].iloc[-1]:.2f}%")
-    st.metric(label="Índice de Endividamento", value=f"{indicadores['Divida_Líquida'].iloc[-1]:.2f}%")
+    # Exibindo os múltiplos desejados com estilo HTML
+    st.markdown(f"**Margem Líquida:** {get_indicator_value(indicadores, 'Margem_Líquida')}", unsafe_allow_html=True)
+    st.markdown(f"**ROE:** {get_indicator_value(indicadores, 'ROE')}", unsafe_allow_html=True)
+    st.markdown(f"**Índice de Endividamento:** {get_indicator_value(indicadores, 'Divida_Líquida')}", unsafe_allow_html=True)
 
 # Seção "Relevância para o investidor"
 with col2:
-    st.markdown("### Relevância para o Investidor")
+    st.markdown("### Relevância para o investidor")
     
-    # Exibindo os múltiplos desejados
-    st.metric(label="P/L", value=f"{indicadores['PL'].iloc[-1]:.2f}")
-   # st.metric(label="Payout", value=f"{indicadores['Payout'].iloc[-1]:.2f}%")
-   # st.metric(label="P/VP", value=f"{indicadores['P/VP'].iloc[-1]:.2f}")
-   # st.metric(label="Dividend Yield", value=f"{indicadores['Dividend Yield'].iloc[-1]:.2f}%")
+    # Exibindo os múltiplos desejados com estilo HTML
+    st.markdown(f"**P/L:** {get_indicator_value(indicadores, 'P/L', format_type='number')}", unsafe_allow_html=True)
+    st.markdown(f"**Payout:** {get_indicator_value(indicadores, 'Payout')}", unsafe_allow_html=True)
+    st.markdown(f"**P/VP:** {get_indicator_value(indicadores, 'P/VP', format_type='number')}", unsafe_allow_html=True)
+    st.markdown(f"**Dividend Yield:** {get_indicator_value(indicadores, 'Dividend Yield')}", unsafe_allow_html=True)
+
