@@ -404,53 +404,6 @@ st.dataframe(indicadores_formatado)
 # Adicionando a nova seção de "Múltiplos do {ticker}" ________________________________________________________________________________________________________________________________________________
 st.markdown(f"""<h2 style='color:blue;'>MÚLTIPLOS DA {ticker}</h2>""", unsafe_allow_html=True)
 
-# HTML e CSS para centralizar as colunas e adicionar a linha vertical _________________________________________________________________________________________________________________________________
-st.markdown("""
-    <style>
-        /* Centralizar o container */
-        .centered-container {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            margin: 20px 0;
-        }
-
-        /* Estilo das colunas */
-        .column {
-            padding: 10px;
-            width: 250px;
-            text-align: center;
-        }
-
-        /* Linha vertical alaranjada */
-        .vertical-line {
-            border-left: 3px solid orange;
-            height: 100%;
-            margin: 0 20px;
-        }
-    </style>
-    
-    <!-- Container das colunas -->
-    <div class="centered-container">
-        <div class="column">
-            <h3>Saúde financeira da empresa</h3>
-            <p>Margem Líquida: <span style='font-size:16px;'>90.12%</span></p>
-            <p>ROE: <span style='font-size:16px;'>12.34%</span></p>
-            <p>Índice de Endividamento: <span style='font-size:16px;'>45.67%</span></p>
-        </div>
-        
-        <div class="vertical-line"></div>
-        
-        <div class="column">
-            <h3>Relevância para o investidor</h3>
-            <p>P/L: <span style='font-size:16px;'>15.50</span></p>
-            <p>Payout: <span style='font-size:16px;'>25.00%</span></p>
-            <p>P/VP: <span style='font-size:16px;'>1.20</span></p>
-            <p>Dividend Yield: <span style='font-size:16px;'>4.50%</span></p>
-        </div>
-    </div>
-""", unsafe_allow_html=True)
-
 # Criando a estrutura das duas colunas abaixo  _________________________________________________________________________________________________________________________________________________
 col1, col2 = st.columns(2)
 
