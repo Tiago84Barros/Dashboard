@@ -413,7 +413,7 @@ def get_indicator_value(indicator_name):
     elif indicator_name == 'Divida_Líquida':
         return 36441328.00
     elif indicator_name == 'P/L':
-        return 15.32
+        return f"{indicadores['P/L'].iloc[-1]:.2f}" if 'P/L' in indicadores.columns else "N/A")
     elif indicator_name == 'Payout':
         return 50.32
     elif indicator_name == 'P/VP':
@@ -424,7 +424,6 @@ def get_indicator_value(indicator_name):
         return "N/A"
 
 # Adicionando a nova seção de "Múltiplos do {ticker}" com a cor azul e alinhamento à esquerda
-ticker = "ABEV3.SA"  # Exemplo do ticker
 st.markdown(f"<h2 style='color:blue; text-align: left; margin-bottom: 10px;'>MÚLTIPLOS DA {ticker}</h2>", unsafe_allow_html=True)
 
 # Adicionando espaçamento entre a tabela e a seção de múltiplos
