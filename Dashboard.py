@@ -363,8 +363,7 @@ if variaveis_selecionadas:
         # Atualiza o tema na sessão com base na seleção do usuário
         if st.session_state['theme'] != selected_theme:
             st.session_state['theme'] = selected_theme
-            st.experimental_rerun()  # Atualiza a página para refletir o novo tema
-
+           
         # # Configurações de cores com base no tema armazenado na sessão
         # current_theme = st.session_state['theme']
         # st.write(f"Tema atual utilizado para o gráfico: {current_theme}")
