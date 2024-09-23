@@ -453,9 +453,14 @@ col1, col2, col3 = st.columns([1, 0.1, 1])  # A coluna do meio (0.1) será usada
 # Preenchendo a coluna de "Saúde financeira da empresa"
 with col1:
     st.markdown("<div class='section'><h3 style='text-align: left; border-bottom: 2px solid orange;'>Saúde financeira da empresa</h3></div>", unsafe_allow_html=True)
-    st.markdown(f"<p class='indicator-label'>Margem Líquida: <span class='indicator-value'><strong>{get_indicator_value('Margem_Líquida', indicadores):.2f}%</strong></span></p>", unsafe_allow_html=True)
-    st.markdown(f"<p class='indicator-label'>ROE: <span class='indicator-value'><strong>{get_indicator_value('ROE', indicadores):.2f}%</strong></span></p>", unsafe_allow_html=True)
-    st.markdown(f"<p class='indicator-label'>Índice de Endividamento: <span class='indicator-value'><strong>{get_indicator_value('Divida_Líquida', indicadores):,.2f}</strong></span></p>", unsafe_allow_html=True)
+    margem_liquida = get_indicator_value('Margem_Líquida', indicadores)
+    st.markdown(f"<p class='indicator-label'>Margem Líquida: <span class='indicator-value'><strong>{margem_liquida:.2f}%</strong></span></p>" if isinstance(margem_liquida, (int, float)) else "N/A", unsafe_allow_html=True)
+    
+    roe = get_indicator_value('ROE', indicadores)
+    st.markdown(f"<p class='indicator-label'>ROE: <span class='indicator-value'><strong>{roe:.2f}%</strong></span></p>" if isinstance(roe, (int, float)) else "N/A", unsafe_allow_html=True)
+    
+    divida_liquida = get_indicator_value('Divida_Líquida', indicadores)
+    st.markdown(f"<p class='indicator-label'>Índice de Endividamento: <span class='indicator-value'><strong>{divida_liquida:,.2f}</strong></span></p>" if isinstance(divida_liquida, (int, float)) else "N/A", unsafe_allow_html=True)
 
 # Adicionando a linha vertical alaranjada no meio
 with col2:
@@ -471,7 +476,15 @@ with col2:
 # Preenchendo a coluna de "Relevância para o investidor"
 with col3:
     st.markdown("<div class='section'><h3 style='text-align: left; border-bottom: 2px solid orange;'>Relevância para o investidor</h3></div>", unsafe_allow_html=True)
-    st.markdown(f"<p class='indicator-label'>P/L: <span class='indicator-value'><strong>{get_indicator_value('P/L', indicadores):.2f}</strong></span></p>", unsafe_allow_html=True)
-    st.markdown(f"<p class='indicator-label'>Payout: <span class='indicator-value'><strong>{get_indicator_value('Payout', indicadores):.2f}%</strong></span></p>", unsafe_allow_html=True)
-    st.markdown(f"<p class='indicator-label'>P/VP: <span class='indicator-value'><strong>{get_indicator_value('P/VP', indicadores):.2f}</strong></span></p>", unsafe_allow_html=True)
-    st.markdown(f"<p class='indicator-label'>Dividend Yield: <span class='indicator-value'><strong>{get_indicator_value('Dividend Yield', indicadores):.2f}%</strong></span></p>", unsafe_allow_html=True)
+    
+    pl = get_indicator_value('P/L', indicadores)
+    st.markdown(f"<p class='indicator-label'>P/L: <span class='indicator-value'><strong>{pl:.2f}</strong></span></p>" if isinstance(pl, (int, float)) else "N/A", unsafe_allow_html=True)
+    
+    payout = get_indicator_value('Payout', indicadores)
+    st.markdown(f"<p class='indicator-label'>Payout: <span class='indicator-value'><strong>{payout:.2f}%</strong></span></p>" if isinstance(payout, (int, float)) else "N/A", unsafe_allow_html=True)
+    
+    pvp = get_indicator_value('P/VP', indicadores)
+    st.markdown(f"<p class='indicator-label'>P/VP: <span class='indicator-value'><strong>{pvp:.2f}</strong></span></p>" if isinstance(pvp, (int, float)) else "N/A", unsafe_allow_html=True)
+    
+    dividend_yield = get_indicator_value('Dividend Yield', indicadores)
+    st.markdown(f"<p class='indicator-label'>Dividend Yield: <span class='indicator-value'><strong>{dividend_yield:.2f}%</strong></span></p>" if isinstance(dividend_yield, (int, float)) else "N/A", unsafe_allow_html=True)
