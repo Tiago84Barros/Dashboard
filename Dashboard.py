@@ -401,6 +401,9 @@ else:
 st.markdown("### Tabela de Indicadores")
 st.dataframe(indicadores_formatado)
 
+# Adicionando espaçamento entre a tabela e a seção de múltiplos
+st.markdown("<div style='margin-top: 30px;'></div>", unsafe_allow_html=True)
+
 # Adicionando a nova seção de "Múltiplos do {ticker}" ________________________________________________________________________________________________________________________________________________
 def get_indicator_value(indicator_name):
     if indicator_name == 'Margem_Líquida':
