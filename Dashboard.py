@@ -402,14 +402,14 @@ st.markdown("### Tabela de Indicadores")
 st.dataframe(indicadores_formatado)
 
 # Adicionando a nova seção de "Múltiplos do {ticker}" ________________________________________________________________________________________________________________________________________________
-st.markdown(f"## Múltiplos do {ticker}")
+st.markdown(f"## MÚLTIPLOS DA {ticker}")
 
 # Criando a estrutura das duas colunas abaixo
 col1, col2 = st.columns(2)
 
 # Seção "Saúde financeira da empresa"
 with col1:
-    st.markdown("### Saúde financeira da empresa")
+    st.markdown("### Saúde Financeira da Empresa")
     
     # Exibindo os múltiplos desejados
     st.metric(label="Margem Líquida", value=f"{indicadores['Margem_Líquida'].iloc[-1]:.2f}%")
@@ -418,7 +418,7 @@ with col1:
 
 # Seção "Relevância para o investidor"
 with col2:
-    st.markdown("### Relevância para o investidor")
+    st.markdown("### Relevância para o Investidor")
     
     # Exibindo os múltiplos desejados
     st.metric(label="P/L", value=f"{indicadores['PL'].iloc[-1]:.2f}")
