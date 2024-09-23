@@ -8,28 +8,7 @@ import numpy as np
 import sqlite3
 import os
 
-# Função para obter a URL do logotipo a partir do repositório no GitHub ___________________________________________________________________________________________________________________________________________
 
-def get_logo_url(ticker):
-    ticker_clean = ticker.replace('.SA', '').upper()  # Remover o sufixo ".SA" e garantir que o ticker esteja em maiúsculas
-    logo_url = f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{ticker_clean}.png"
-    return logo_url
-  
-# Função para buscar informações da empresa usando yfinance
-def get_company_info(ticker):
-    try:
-        # Adicionar ".SA" para tickers da B3 (bolsa brasileira) se não estiver presente
-        if not ticker.endswith(".SA"):
-            ticker += ".SA"
-      
-        # Usar yfinance para pegar informações básicas da empresa
-        company = yf.Ticker(ticker)
-        info = company.info
-      
-        return info['longName'], info.get('website')  # Retorna o nome da empresa e o site
-    except:
-        return None, None
-        
 # Definir o layout da página ___________________________________________________________________________________________________________________________________________________________--
 
 st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
@@ -116,8 +95,30 @@ with st.sidebar:
     st.markdown("## Básica")
     st.markdown("## Avançada")
     st.markdown("## Trading")
-   
 
+
+# Função para obter a URL do logotipo a partir do repositório no GitHub ___________________________________________________________________________________________________________________________________________
+
+def get_logo_url(ticker):
+    ticker_clean = ticker.replace('.SA', '').upper()  # Remover o sufixo ".SA" e garantir que o ticker esteja em maiúsculas
+    logo_url = f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{ticker_clean}.png"
+    return logo_url
+  
+# Função para buscar informações da empresa usando yfinance
+def get_company_info(ticker):
+    try:
+        # Adicionar ".SA" para tickers da B3 (bolsa brasileira) se não estiver presente
+        if not ticker.endswith(".SA"):
+            ticker += ".SA"
+      
+        # Usar yfinance para pegar informações básicas da empresa
+        company = yf.Ticker(ticker)
+        info = company.info
+      
+        return info['longName'], info.get('website')  # Retorna o nome da empresa e o site
+    except:
+        return None, None
+        
 # carregando o banco de dados _______________________________________________________________________________________________________________________________________________________________________________
 
 # URL do banco de dados no GitHub
@@ -196,50 +197,70 @@ with col1:
 
 indicadores = load_data_from_db(ticker)
 
-# Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________________________________
+# Adicionando mais indicadores financeiros ____________________________________________________________________________________________________________________________________________________________________
 
+def add_financial_indicators(df):
+    try:
+        if 'Close' in df.columns and 'LPA' in df.columns:
+            df['P/L'] = df['Close'] / df['LPA']
+        if 'Close' in df.columns and 'VPA' in df.columns:
+            df['P/VPA'] = df['Close'] / df['VPA']
+        if 'Dividendos' in df.columns and 'Close' in df.columns:
+            df['Dividend Yield'] = (df['Dividendos'] / df['Close']) * 100
+    except Exception as e:
+        st.error(f"Erro ao calcular indicadores financeiros adicionais: {e}")
+    return df
+
+indicadores = add_financial_indicators(indicadores)
+
+# Calcular o CAGR para cada indicador ________________________________________________________________________________________________________________________________________________
 def calculate_cagr(df, column):
-
-   try:
-        # Verificando se a coluna 'Data' existe e está no formato correto
-        if 'Data' not in df.columns:
-            raise ValueError("A coluna 'Data' não foi encontrada no DataFrame.")
-        
+    try:
         df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
-
-        # Verificar se houve falha na conversão de datas
-        if df['Data'].isnull().any():
-            raise ValueError("A coluna 'Data' contém valores inválidos que não puderam ser convertidos para data.")
-
-        # Valores inicial e final da coluna de interesse
         initial_value = df.iloc[0][column]
         final_value = df.iloc[-1][column]
-
-        # Calculando o número de anos (diferenca de tempo em anos)
         num_years = (df['Data'].iloc[-1] - df['Data'].iloc[0]).days / 365.25
-
-        # Verificando possíveis erros nos valores
         if initial_value == 0:
             raise ValueError(f"Valor inicial do indicador '{column}' é zero. Não é possível calcular CAGR.")
-        
-        if num_years <= 0 or pd.isna(num_years):
-            raise ValueError(f"O número de anos calculado é inválido: {num_years}. Verifique as datas fornecidas.")
-
-        # Cálculo do CAGR
         cagr = (final_value / initial_value) ** (1 / num_years) - 1
         return cagr
-
-   except Exception as e:
+    except Exception as e:
         st.error(f"Erro ao calcular o CAGR: {e}")
-        return np.nan  # Retorna NaN em caso de erro
+        return np.nan
 
-# Calcular o CAGR para cada indicador
-cagrs = {}
-for column in indicadores.columns:
-    if column != 'Data':
-        cagr = calculate_cagr(indicadores, column)
-        cagrs[column] = cagr
+cagrs = {col: calculate_cagr(indicadores, col) for col in indicadores.columns if col != 'Data'}
 
+# Função para prever os próximos valores usando Regressão Linear _____________________________________________________________________________________________________________________________
+def predict_values(df, column, n_periods=5):
+    try:
+        df['Data'] = pd.to_datetime(df['Data'])
+        df['Data_num'] = (df['Data'] - df['Data'].min()).dt.days
+        X = df['Data_num'].values.reshape(-1, 1)
+        y = df[column].values.reshape(-1, 1)
+        model = LinearRegression()
+        model.fit(X, y)
+        future_dates = np.arange(df['Data_num'].max() + 1, df['Data_num'].max() + n_periods + 1).reshape(-1, 1)
+        predictions = model.predict(future_dates)
+        return predictions.flatten()
+    except Exception as e:
+        st.error(f"Erro ao prever valores: {e}")
+        return np.nan
+
+predicted_values = predict_values(indicadores, 'Lucro Líquido', n_periods=5)
+
+# Adicionando tabs __________________________________________________________________________________________________________________________________________________________________
+tab1, tab2, tab3 = st.tabs(["Análise Básica", "Análise Avançada", "Trading"])
+with tab1:
+    st.write("Análise Básica")
+    st.dataframe(indicadores)
+with tab2:
+    st.write("Análise Avançada")
+    st.metric(label="CAGR Lucro Líquido", value=f"{cagrs['Lucro_Líquido']:.2%}")
+    st.write("Previsão de Lucro Líquido para os próximos 5 períodos:", predicted_values)
+with tab3:
+    st.write("Área de Trading (em construção)")
+  
+  
 # Função para formatar colunas monetárias e porcentagens _________________________________________________________________________________________________________________________________________
 
 def format_dataframe(df):
