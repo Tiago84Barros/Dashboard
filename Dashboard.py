@@ -326,12 +326,15 @@ if variaveis_selecionadas:
         elif st.session_state['theme'] != current_theme:
             st.session_state['theme'] = current_theme
             st.write(f"Tema atualizado para: {current_theme}")
-            st.experimental_rerun()  # Forçar recarregamento para atualizar o gráfico
-    
+                
     # Chamar a função para verificar o tema ao iniciar o aplicativo
     update_theme()
     
     def plot_graph(df_melted):
+        
+        # Configurações de cores com base no tema armazenado na sessão
+        current_theme = st.session_state['theme']
+        st.write(f"Tema atual utilizado para o gráfico: {current_theme}")
 
         # Configurações de cores com base no tema
         if st.session_state['theme'] == "dark":
