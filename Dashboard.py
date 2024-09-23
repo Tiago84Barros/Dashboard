@@ -478,7 +478,7 @@ with col3:
     st.markdown("<div class='section'><h3 style='text-align: left; border-bottom: 2px solid orange;'>Relevância para o investidor</h3></div>", unsafe_allow_html=True)
     
     pl = get_indicator_value('P/L', indicadores)
-    st.markdown(f"<p class='indicator-label'>P/L: <span class='indicator-value'><strong>{pl:.2f}</strong></span></p>" if isinstance(pl, (int, float)) else "N/A", unsafe_allow_html=True)
+    st.markdown(f"<p class='indicator-label'>P/L: <span class='indicator-value'><strong>{pl:.2f}</strong></span></p>" if isinstance(PL, (int, float)) else "N/A", unsafe_allow_html=True)
     
     payout = get_indicator_value('Payout', indicadores)
     st.markdown(f"<p class='indicator-label'>Payout: <span class='indicator-value'><strong>{payout:.2f}%</strong></span></p>" if isinstance(payout, (int, float)) else "N/A", unsafe_allow_html=True)
