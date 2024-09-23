@@ -310,16 +310,14 @@ if variaveis_selecionadas:
 
      # Função para verificar e atualizar o tema do Streamlit
     def update_theme():
-        # Inicializa o tema no session_state se não existir
-        if 'theme' not in st.session_state:
-            st.session_state['theme'] = "light"  # Definindo 'light' como padrão inicial
-        
-        # Adiciona o seletor de tema para que o usuário escolha
-        selected_theme = st.selectbox("Escolha o tema do gráfico:", ["light", "dark"], index=0 if st.session_state['theme'] == "light" else 1)
+        # Adiciona um seletor de tema para que o usuário escolha
+        selected_theme = st.selectbox("Escolha o tema do gráfico:", ["light", "dark"])
     
         # Atualiza o tema na sessão com base na seleção do usuário
-        if st.session_state['theme'] != selected_theme:
+        if 'theme' not in st.session_state or st.session_state['theme'] != selected_theme:
             st.session_state['theme'] = selected_theme
+            st.write(f"Tema selecionado: {selected_theme}")
+
            
         # # Configurações de cores com base no tema armazenado na sessão
         # current_theme = st.session_state['theme']
