@@ -231,22 +231,22 @@ def calculate_cagr(df, column):
 cagrs = {col: calculate_cagr(indicadores, col) for col in indicadores.columns if col != 'Data'}
 
 # Função para prever os próximos valores usando Regressão Linear _____________________________________________________________________________________________________________________________
-def predict_values(df, column, n_periods=5):
-    try:
-        df['Data'] = pd.to_datetime(df['Data'])
-        df['Data_num'] = (df['Data'] - df['Data'].min()).dt.days
-        X = df['Data_num'].values.reshape(-1, 1)
-        y = df[column].values.reshape(-1, 1)
-        model = LinearRegression()
-        model.fit(X, y)
-        future_dates = np.arange(df['Data_num'].max() + 1, df['Data_num'].max() + n_periods + 1).reshape(-1, 1)
-        predictions = model.predict(future_dates)
-        return predictions.flatten()
-    except Exception as e:
-        st.error(f"Erro ao prever valores: {e}")
-        return np.nan
+# def predict_values(df, column, n_periods=5):
+#     try:
+#         df['Data'] = pd.to_datetime(df['Data'])
+#         df['Data_num'] = (df['Data'] - df['Data'].min()).dt.days
+#         X = df['Data_num'].values.reshape(-1, 1)
+#         y = df[column].values.reshape(-1, 1)
+#         model = LinearRegression()
+#         model.fit(X, y)
+#         future_dates = np.arange(df['Data_num'].max() + 1, df['Data_num'].max() + n_periods + 1).reshape(-1, 1)
+#         predictions = model.predict(future_dates)
+#         return predictions.flatten()
+#     except Exception as e:
+#         st.error(f"Erro ao prever valores: {e}")
+#         return np.nan
 
-predicted_values = predict_values(indicadores, 'Lucro Líquido', n_periods=5)
+# predicted_values = predict_values(indicadores, 'Lucro Líquido', n_periods=5)
 
 # Adicionando tabs __________________________________________________________________________________________________________________________________________________________________
 tab1, tab2, tab3 = st.tabs(["Análise Básica", "Análise Avançada", "Trading"])
