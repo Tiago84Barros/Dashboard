@@ -405,15 +405,39 @@ st.dataframe(indicadores_formatado)
 # Adicionando a nova seção de "Múltiplos do {ticker}" com a cor azul e alinhamento à esquerda
 st.markdown(f"<h2 style='color:blue; text-align: left;'>MÚLTIPLOS DA {ticker}</h2>", unsafe_allow_html=True)
 
+# Definindo o estilo CSS para as variáveis dos múltiplos
+st.markdown("""
+    <style>
+        .indicator-value {
+            color: #FF5733; /* Cor laranja vibrante para os valores */
+            font-family: 'Trebuchet MS', sans-serif; /* Fonte estilosa e profissional */
+            font-size: 18px; /* Aumentando um pouco o tamanho da fonte */
+            padding-left: 10px; /* Espaçamento à esquerda */
+        }
+
+        .indicator-label {
+            color: #333; /* Cor mais suave para o label */
+            font-family: 'Trebuchet MS', sans-serif; /* Mesma fonte para consistência */
+            font-size: 18px; /* Tamanho da fonte do label */
+            padding-left: 10px;
+        }
+
+        /* Adicionando uma leve sombra para destacar o texto */
+        .indicator-value strong {
+            text-shadow: 1px 1px 2px #aaa;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
 # Criando a estrutura com duas colunas
-col1, col2, col3 = st.columns([1, 0.1, 1])
+col1, col2, col3 = st.columns([1, 0.1, 1])  # A coluna do meio (0.1) será usada para a linha vertical
 
 # Preenchendo a coluna de "Saúde financeira da empresa"
 with col1:
     st.markdown("<h3 style='text-align: left; border-bottom: 2px solid orange;'>Saúde financeira da empresa</h3>", unsafe_allow_html=True)
-    st.markdown(f"<p style='text-align:left; font-size:16px; padding-left: 10px;'>Margem Líquida: <strong>{indicadores['Margem_Líquida'].iloc[-1]:.2f}%</strong></p>", unsafe_allow_html=True)
-    st.markdown(f"<p style='text-align:left; font-size:16px; padding-left: 10px;'>ROE: <strong>{indicadores['ROE'].iloc[-1]:.2f}%</strong></p>", unsafe_allow_html=True)
-    st.markdown(f"<p style='text-align:left; font-size:16px; padding-left: 10px;'>Índice de Endividamento: <strong>{indicadores['Divida_Líquida'].iloc[-1]:.2f}%</strong></p>", unsafe_allow_html=True)
+    st.markdown(f"<p class='indicator-label'>Margem Líquida: <span class='indicator-value'><strong>{get_indicator_value('Margem_Líquida'):.2f}%</strong></span></p>", unsafe_allow_html=True)
+    st.markdown(f"<p class='indicator-label'>ROE: <span class='indicator-value'><strong>{get_indicator_value('ROE'):.2f}%</strong></span></p>", unsafe_allow_html=True)
+    st.markdown(f"<p class='indicator-label'>Índice de Endividamento: <span class='indicator-value'><strong>{get_indicator_value('Divida_Líquida'):.2f}%</strong></span></p>", unsafe_allow_html=True)
 
 # Adicionando a linha vertical alaranjada no meio
 with col2:
@@ -429,9 +453,7 @@ with col2:
 # Preenchendo a coluna de "Relevância para o investidor"
 with col3:
     st.markdown("<h3 style='text-align: left; border-bottom: 2px solid orange;'>Relevância para o investidor</h3>", unsafe_allow_html=True)
-    st.markdown(f"<p style='text-align:left; font-size:16px; padding-left: 10px;'>P/L: <strong>{indicadores['P/L'].iloc[-1]:.2f}</strong></p>" if 'P/L' in indicadores.columns else "<p>N/A</p>", unsafe_allow_html=True)
-    st.markdown(f"<p style='text-align:left; font-size:16px; padding-left: 10px;'>Payout: <strong>{indicadores['Payout'].iloc[-1]:.2f}%</strong></p>" if 'Payout' in indicadores.columns else "<p>N/A</p>", unsafe_allow_html=True)
-    st.markdown(f"<p style='text-align:left; font-size:16px; padding-left: 10px;'>P/VP: <strong>{indicadores['P/VP'].iloc[-1]:.2f}</strong></p>" if 'P/VP' in indicadores.columns else "<p>N/A</p>", unsafe_allow_html=True)
-    st.markdown(f"<p style='text-align:left; font-size:16px; padding-left: 10px;'>Dividend Yield: <strong>{indicadores['Dividend Yield'].iloc[-1]:.2f}%</strong></p>" if 'Dividend Yield' in indicadores.columns else "<p>N/A</p>", unsafe_allow_html=True)
-
-
+    st.markdown(f"<p class='indicator-label'>P/L: <span class='indicator-value'><strong>{get_indicator_value('P/L'):.2f}</strong></span></p>", unsafe_allow_html=True)
+    st.markdown(f"<p class='indicator-label'>Payout: <span class='indicator-value'><strong>{get_indicator_value('Payout'):.2f}%</strong></span></p>", unsafe_allow_html=True)
+    st.markdown(f"<p class='indicator-label'>P/VP: <span class='indicator-value'><strong>{get_indicator_value('P/VP'):.2f}</strong></span></p>", unsafe_allow_html=True)
+    st.markdown(f"<p class='indicator-label'>Dividend Yield: <span class='indicator-value'><strong>{get_indicator_value('Dividend Yield'):.2f}%</strong></span></p>", unsafe_allow_html=True)
