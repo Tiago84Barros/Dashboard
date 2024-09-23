@@ -421,7 +421,7 @@ with col2:
     st.markdown("### Relevância para o investidor")
     
     # Exibindo os múltiplos desejados
-    st.metric(label="P/L", value=f"{indicadores['P/L'].iloc[-1]:.2f}")
-    st.metric(label="Payout", value=f"{indicadores['Payout'].iloc[-1]:.2f}%")
-    st.metric(label="P/VP", value=f"{indicadores['P/VP'].iloc[-1]:.2f}")
-    st.metric(label="Dividend Yield", value=f"{indicadores['Dividend Yield'].iloc[-1]:.2f}%")
+    st.metric(label="P/L", value=f"{indicadores['PL'].iloc[-1]:.2f}")
+   # st.metric(label="Payout", value=f"{indicadores['Payout'].iloc[-1]:.2f}%")
+   # st.metric(label="P/VP", value=f"{indicadores['P/VP'].iloc[-1]:.2f}")
+   # st.metric(label="Dividend Yield", value=f"{indicadores['Dividend Yield'].iloc[-1]:.2f}%")
