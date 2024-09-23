@@ -428,7 +428,7 @@ ticker = "ABEV3.SA"  # Exemplo do ticker
 st.markdown(f"<h2 style='color:blue; text-align: left; margin-bottom: 30px;'>MÚLTIPLOS DA {ticker}</h2>", unsafe_allow_html=True)
 
 # Adicionando espaçamento entre a tabela e a seção de múltiplos
-st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
+st.markdown("<div style='margin-top: 3px;'></div>", unsafe_allow_html=True)
 
 # Definindo o estilo CSS para as variáveis dos múltiplos
 st.markdown("""
