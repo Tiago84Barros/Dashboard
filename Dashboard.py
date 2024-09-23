@@ -327,12 +327,11 @@ if variaveis_selecionadas:
         # # Atualiza o tema na sessão com base na seleção do usuário
         # if 'theme' not in st.session_state or st.session_state['theme'] != selected_theme:
         #     st.session_state['theme'] = selected_theme
-        #     st.write(f"Tema selecionado: {selected_theme}")
-
+        
            
         # Configurações de cores com base no tema armazenado na sessão
         current_theme = st.session_state.get('theme', 'light')
-        st.write(f"Tema atual utilizado para o gráfico: {current_theme}")
+        
         # Se `current_theme` estiver `None`, define um tema padrão (light) para garantir que o código não quebre
         if current_theme is None:
             current_theme = "light"  # Definindo o tema padrão como 'light'
@@ -340,10 +339,10 @@ if variaveis_selecionadas:
         # Atualiza apenas se o tema atual for diferente do armazenado
         if 'theme' not in st.session_state:
             st.session_state['theme'] = current_theme
-            st.write(f"Tema inicial detectado: {current_theme}")
+          
         elif st.session_state['theme'] != current_theme:
             st.session_state['theme'] = current_theme
-            st.write(f"Tema atualizado para: {current_theme}")
+           
     
       # Chamar a função para verificar o tema ao iniciar o aplicativo
     update_theme()
