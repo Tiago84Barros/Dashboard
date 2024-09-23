@@ -187,7 +187,6 @@ def load_data_from_db(ticket=None, company_name=None):
 col1, col2 = st.columns([4, 1])
 with col1:
     ticket = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input").upper()
-    st.write(ticker)
 
 indicadores = load_data_from_db(ticket)
 
