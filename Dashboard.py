@@ -402,7 +402,27 @@ st.markdown("### Tabela de Indicadores")
 st.dataframe(indicadores_formatado)
 
 # Adicionando a nova seção de "Múltiplos do {ticker}" ________________________________________________________________________________________________________________________________________________
+# Definindo a função para retornar o valor do indicador
+def get_indicator_value(indicator_name):
+    if indicator_name == 'Margem_Líquida':
+        return 18.76
+    elif indicator_name == 'ROE':
+        return 23.27
+    elif indicator_name == 'Divida_Líquida':
+        return 36441328.00
+    elif indicator_name == 'P/L':
+        return 15.32
+    elif indicator_name == 'Payout':
+        return 50.32
+    elif indicator_name == 'P/VP':
+        return 1.22
+    elif indicator_name == 'Dividend Yield':
+        return 4.56
+    else:
+        return "N/A"
+
 # Adicionando a nova seção de "Múltiplos do {ticker}" com a cor azul e alinhamento à esquerda
+ticker = "ABEV3.SA"  # Exemplo do ticker
 st.markdown(f"<h2 style='color:blue; text-align: left;'>MÚLTIPLOS DA {ticker}</h2>", unsafe_allow_html=True)
 
 # Definindo o estilo CSS para as variáveis dos múltiplos
