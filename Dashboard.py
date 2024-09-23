@@ -422,7 +422,7 @@ def get_indicator_value(indicator_name):
 
 # Adicionando a nova seção de "Múltiplos do {ticker}" com a cor azul e alinhamento à esquerda
 ticker = "ABEV3.SA"  # Exemplo do ticker
-st.markdown(f"<h2 style='color:blue; text-align: left;'>MÚLTIPLOS DA {ticker}</h2>", unsafe_allow_html=True)
+st.markdown(f"<h2 style='color:blue; text-align: left; margin-bottom: 30px;'>MÚLTIPLOS DA {ticker}</h2>", unsafe_allow_html=True)
 
 # Adicionando espaçamento entre a tabela e a seção de múltiplos
 st.markdown("<div style='margin-top: 30px;'></div>", unsafe_allow_html=True)
@@ -447,6 +447,11 @@ st.markdown("""
         /* Adicionando uma leve sombra para destacar o texto */
         .indicator-value strong {
             text-shadow: 1px 1px 2px #aaa;
+        }
+
+        /* Espaçamento adicional para separar as seções */
+        .section {
+            margin-bottom: 20px; /* Espaço entre o título "Múltiplos da {ticker}" e os indicadores */
         }
     </style>
 """, unsafe_allow_html=True)
