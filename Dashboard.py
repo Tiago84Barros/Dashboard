@@ -307,9 +307,40 @@ variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_dis
 #Copiar código
 # Ensure 'indicadores' is correctly loaded
 if variaveis_selecionadas:
+
+     # Função para verificar e atualizar o tema do Streamlit
+    def update_theme():
+        # Inicializa o tema no session_state se não existir
+        if 'theme' not in st.session_state:
+            st.session_state['theme'] = "light"  # Definindo 'light' como padrão inicial
+        
+        # Adiciona o seletor de tema para que o usuário escolha
+        selected_theme = st.selectbox("Escolha o tema do gráfico:", ["light", "dark"], index=0 if st.session_state['theme'] == "light" else 1)
+    
+        # Atualiza o tema na sessão com base na seleção do usuário
+        if st.session_state['theme'] != selected_theme:
+            st.session_state['theme'] = selected_theme
+           
+        # # Configurações de cores com base no tema armazenado na sessão
+        # current_theme = st.session_state['theme']
+        # st.write(f"Tema atual utilizado para o gráfico: {current_theme}")
+        # # Se `current_theme` estiver `None`, define um tema padrão (light) para garantir que o código não quebre
+        # if current_theme is None:
+        #     current_theme = "light"  # Definindo o tema padrão como 'light'
+    
+        # # Atualiza apenas se o tema atual for diferente do armazenado
+        # if 'theme' not in st.session_state:
+        #     st.session_state['theme'] = current_theme
+        #     st.write(f"Tema inicial detectado: {current_theme}")
+        # elif st.session_state['theme'] != current_theme:
+        #     st.session_state['theme'] = current_theme
+        #     st.write(f"Tema atualizado para: {current_theme}")
+    
+      # Chamar a função para verificar o tema ao iniciar o aplicativo
+    update_theme()
  
     def plot_graph(df_melted):
-        
+                
         # Configurações de cores com base no tema armazenado na sessão
         current_theme = st.session_state['theme']
         st.write(f"Tema atual utilizado para o gráfico: {current_theme}")
@@ -350,42 +381,11 @@ if variaveis_selecionadas:
     # Criar o DataFrame derretido (df_melted já existente)
     df_melted = indicadores.melt(id_vars=['Data'], value_vars=variaveis_selecionadas,
                                  var_name='Indicador', value_name='Valor')
-    
-    # Função para verificar e atualizar o tema do Streamlit
-    def update_theme():
-        # Inicializa o tema no session_state se não existir
-        if 'theme' not in st.session_state:
-            st.session_state['theme'] = "light"  # Definindo 'light' como padrão inicial
-        
-        # Adiciona o seletor de tema para que o usuário escolha
-        selected_theme = st.selectbox("Escolha o tema do gráfico:", ["light", "dark"], index=0 if st.session_state['theme'] == "light" else 1)
-    
-        # Atualiza o tema na sessão com base na seleção do usuário
-        if st.session_state['theme'] != selected_theme:
-            st.session_state['theme'] = selected_theme
-           
-        # # Configurações de cores com base no tema armazenado na sessão
-        # current_theme = st.session_state['theme']
-        # st.write(f"Tema atual utilizado para o gráfico: {current_theme}")
-        # # Se `current_theme` estiver `None`, define um tema padrão (light) para garantir que o código não quebre
-        # if current_theme is None:
-        #     current_theme = "light"  # Definindo o tema padrão como 'light'
-    
-        # # Atualiza apenas se o tema atual for diferente do armazenado
-        # if 'theme' not in st.session_state:
-        #     st.session_state['theme'] = current_theme
-        #     st.write(f"Tema inicial detectado: {current_theme}")
-        # elif st.session_state['theme'] != current_theme:
-        #     st.session_state['theme'] = current_theme
-        #     st.write(f"Tema atualizado para: {current_theme}")
-   
+       
     # Chama a função para exibir o gráfico
     plot_graph(df_melted)
     
-    # Chamar a função para verificar o tema ao iniciar o aplicativo
-    update_theme()
-
-    
+   
 else:
     st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
 # Tabela de Indicadores  ___________________________________________________________________________________________________________________________________________________________________________
