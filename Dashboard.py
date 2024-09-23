@@ -402,7 +402,7 @@ st.markdown("### Tabela de Indicadores")
 st.dataframe(indicadores_formatado)
 
 # Adicionando a nova seção de "Múltiplos do {ticker}" ________________________________________________________________________________________________________________________________________________
-st.markdown(f"<h2 style='color:blue; text-align: center;'>MÚLTIPLOS DA {ticker}</h2>", unsafe_allow_html=True)
+st.markdown(f"<h2 style='color:blue; text-align: left;'>MÚLTIPLOS DA {ticker}</h2>", unsafe_allow_html=True)
 
 # Criando duas colunas para "Saúde financeira da empresa" e "Relevância para o investidor"
 col1, col2 = st.columns([1, 1])  # A lista [1, 1] define as proporções iguais das colunas
@@ -410,17 +410,22 @@ col1, col2 = st.columns([1, 1])  # A lista [1, 1] define as proporções iguais 
 # Preenchendo a coluna de "Saúde financeira da empresa"
 with col1:
     st.markdown("<h3 style='text-align: center; border-bottom: 2px solid orange;'>Saúde financeira da empresa</h3>", unsafe_allow_html=True)
-    st.metric(label="Margem Líquida", value=f"{indicadores['Margem_Líquida'].iloc[-1]:.2f}%")
-    st.metric(label="ROE", value=f"{indicadores['ROE'].iloc[-1]:.2f}%")
-    st.metric(label="Índice de Endividamento", value=f"{indicadores['Divida_Líquida'].iloc[-1]:.2f}%")
-
-# Adicionando a linha vertical alaranjada entre as duas colunas
-st.markdown("<hr style='border: none; border-left: 3px solid orange; height: 200px; display: inline-block; margin: 0 auto;'>", unsafe_allow_html=True)
+    st.markdown(f"<p style='text-align:center; font-size:14px;'>Margem Líquida: {indicadores['Margem_Líquida'].iloc[-1]:.2f}%</p>", unsafe_allow_html=True)
+    st.markdown(f"<p style='text-align:center; font-size:14px;'>ROE: {indicadores['ROE'].iloc[-1]:.2f}%</p>", unsafe_allow_html=True)
+    st.markdown(f"<p style='text-align:center; font-size:14px;'>Índice de Endividamento: {indicadores['Divida_Líquida'].iloc[-1]:.2f}%</p>", unsafe_allow_html=True)
 
 # Preenchendo a coluna de "Relevância para o investidor"
 with col2:
     st.markdown("<h3 style='text-align: center; border-bottom: 2px solid orange;'>Relevância para o investidor</h3>", unsafe_allow_html=True)
-    st.metric(label="P/L", value=f"{indicadores['P/L'].iloc[-1]:.2f}" if 'P/L' in indicadores.columns else "N/A")
-    st.metric(label="Payout", value=f"{indicadores['Payout'].iloc[-1]:.2f}%" if 'Payout' in indicadores.columns else "N/A")
-    st.metric(label="P/VP", value=f"{indicadores['P/VP'].iloc[-1]:.2f}" if 'P/VP' in indicadores.columns else "N/A")
-    st.metric(label="Dividend Yield", value=f"{indicadores['Dividend Yield'].iloc[-1]:.2f}%" if 'Dividend Yield' in indicadores.columns else "N/A")
+    st.markdown(f"<p style='text-align:center; font-size:14px;'>P/L: {indicadores['P/L'].iloc[-1]:.2f}" if 'P/L' in indicadores.columns else "N/A</p>", unsafe_allow_html=True)
+    st.markdown(f"<p style='text-align:center; font-size:14px;'>Payout: {indicadores['Payout'].iloc[-1]:.2f}%" if 'Payout' in indicadores.columns else "N/A</p>", unsafe_allow_html=True)
+    st.markdown(f"<p style='text-align:center; font-size:14px;'>P/VP: {indicadores['P/VP'].iloc[-1]:.2f}" if 'P/VP' in indicadores.columns else "N/A</p>", unsafe_allow_html=True)
+    st.markdown(f"<p style='text-align:center; font-size:14px;'>Dividend Yield: {indicadores['Dividend Yield'].iloc[-1]:.2f}%" if 'Dividend Yield' in indicadores.columns else "N/A</p>", unsafe_allow_html=True)
+
+# Ajuste da linha vertical centralizada
+vertical_line_html = """
+<div style='display: flex; justify-content: center; align-items: center; height: 100%; margin: auto;'>
+    <div style='width: 3px; background-color: orange; height: 200px;'></div>
+</div>
+"""
+st.markdown(vertical_line_html, unsafe_allow_html=True)
