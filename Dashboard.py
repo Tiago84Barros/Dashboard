@@ -112,13 +112,11 @@ st.markdown("""
 
 with st.sidebar:
     #st.image("logo.png", width=150)
-    st.markdown("# Início")
-    st.markdown("## Transações")
-    st.markdown("## Pagamentos")
-    st.markdown("## Configurações")
-    st.markdown("---")
-    st.markdown("### Ajuda")
-    st.markdown("### Sair")
+    st.markdown("# Análises")
+    st.markdown("## Básica")
+    st.markdown("## Avançada")
+    st.markdown("## Trading")
+   
 
 # carregando o banco de dados _______________________________________________________________________________________________________________________________________________________________________________
 
