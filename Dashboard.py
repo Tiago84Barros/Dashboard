@@ -402,6 +402,7 @@ st.markdown("### Tabela de Indicadores")
 st.dataframe(indicadores_formatado)
 
 # Adicionando a nova seção de "Múltiplos do {ticker}" ________________________________________________________________________________________________________________________________________________
+# Adicionando a nova seção de "Múltiplos do {ticker}" com a cor azul e alinhamento à esquerda
 st.markdown(f"<h2 style='color:blue; text-align: left;'>MÚLTIPLOS DA {ticker}</h2>", unsafe_allow_html=True)
 
 # Criando duas colunas para "Saúde financeira da empresa" e "Relevância para o investidor"
@@ -409,23 +410,24 @@ col1, col2 = st.columns([1, 1])  # A lista [1, 1] define as proporções iguais 
 
 # Preenchendo a coluna de "Saúde financeira da empresa"
 with col1:
-    st.markdown("<h3 style='text-align: center; border-bottom: 2px solid orange;'>Saúde financeira da empresa</h3>", unsafe_allow_html=True)
-    st.markdown(f"<p style='text-align:center; font-size:14px;'>Margem Líquida: {indicadores['Margem_Líquida'].iloc[-1]:.2f}%</p>", unsafe_allow_html=True)
-    st.markdown(f"<p style='text-align:center; font-size:14px;'>ROE: {indicadores['ROE'].iloc[-1]:.2f}%</p>", unsafe_allow_html=True)
-    st.markdown(f"<p style='text-align:center; font-size:14px;'>Índice de Endividamento: {indicadores['Divida_Líquida'].iloc[-1]:.2f}%</p>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align: left; border-bottom: 2px solid orange;'>Saúde financeira da empresa</h3>", unsafe_allow_html=True)
+    st.markdown(f"<p style='text-align:left; font-size:16px;'>Margem Líquida: <strong>{indicadores['Margem_Líquida'].iloc[-1]:.2f}%</strong></p>", unsafe_allow_html=True)
+    st.markdown(f"<p style='text-align:left; font-size:16px;'>ROE: <strong>{indicadores['ROE'].iloc[-1]:.2f}%</strong></p>", unsafe_allow_html=True)
+    st.markdown(f"<p style='text-align:left; font-size:16px;'>Índice de Endividamento: <strong>{indicadores['Divida_Líquida'].iloc[-1]:.2f}%</strong></p>", unsafe_allow_html=True)
 
 # Preenchendo a coluna de "Relevância para o investidor"
 with col2:
-    st.markdown("<h3 style='text-align: center; border-bottom: 2px solid orange;'>Relevância para o investidor</h3>", unsafe_allow_html=True)
-    st.markdown(f"<p style='text-align:center; font-size:14px;'>P/L: {indicadores['P/L'].iloc[-1]:.2f}" if 'P/L' in indicadores.columns else "N/A</p>", unsafe_allow_html=True)
-    st.markdown(f"<p style='text-align:center; font-size:14px;'>Payout: {indicadores['Payout'].iloc[-1]:.2f}%" if 'Payout' in indicadores.columns else "N/A</p>", unsafe_allow_html=True)
-    st.markdown(f"<p style='text-align:center; font-size:14px;'>P/VP: {indicadores['P/VP'].iloc[-1]:.2f}" if 'P/VP' in indicadores.columns else "N/A</p>", unsafe_allow_html=True)
-    st.markdown(f"<p style='text-align:center; font-size:14px;'>Dividend Yield: {indicadores['Dividend Yield'].iloc[-1]:.2f}%" if 'Dividend Yield' in indicadores.columns else "N/A</p>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align: left; border-bottom: 2px solid orange;'>Relevância para o investidor</h3>", unsafe_allow_html=True)
+    st.markdown(f"<p style='text-align:left; font-size:16px;'>P/L: <strong>{indicadores['P/L'].iloc[-1]:.2f}</strong></p>" if 'P/L' in indicadores.columns else "<p>N/A</p>", unsafe_allow_html=True)
+    st.markdown(f"<p style='text-align:left; font-size:16px;'>Payout: <strong>{indicadores['Payout'].iloc[-1]:.2f}%</strong></p>" if 'Payout' in indicadores.columns else "<p>N/A</p>", unsafe_allow_html=True)
+    st.markdown(f"<p style='text-align:left; font-size:16px;'>P/VP: <strong>{indicadores['P/VP'].iloc[-1]:.2f}</strong></p>" if 'P/VP' in indicadores.columns else "<p>N/A</p>", unsafe_allow_html=True)
+    st.markdown(f"<p style='text-align:left; font-size:16px;'>Dividend Yield: <strong>{indicadores['Dividend Yield'].iloc[-1]:.2f}%</strong></p>" if 'Dividend Yield' in indicadores.columns else "<p>N/A</p>", unsafe_allow_html=True)
 
-# Ajuste da linha vertical centralizada
+# Ajuste da linha vertical centralizada e um pouco mais para cima
 vertical_line_html = """
-<div style='display: flex; justify-content: center; align-items: center; height: 100%; margin: auto;'>
-    <div style='width: 3px; background-color: orange; height: 200px;'></div>
+<div style='display: flex; justify-content: center; align-items: flex-start; height: 200px; margin-top: -50px;'>
+    <div style='width: 3px; background-color: orange; height: 250px;'></div>
 </div>
 """
 st.markdown(vertical_line_html, unsafe_allow_html=True)
+
