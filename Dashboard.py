@@ -139,7 +139,7 @@ def download_db_from_github(db_url, local_path='indicadores_empresas.db'):
 
 # Função para carregar os dados do banco de dados
 @st.cache_data
-def load_data_from_db(ticket=None, company_name=None):
+def load_data_from_db(ticker=None, company_name=None):
     db_path = download_db_from_github(db_url)
     
     if db_path is None or not os.path.exists(db_path):
@@ -148,22 +148,22 @@ def load_data_from_db(ticket=None, company_name=None):
     try:
         conn = sqlite3.connect(db_path)
 
-      # Se fornecido, o ticket será usado na busca
-        if ticket:
-            query_tabelas = f"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%{ticket}%'"
+      # Se fornecido, o ticker será usado na busca
+        if ticker:
+            query_tabelas = f"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%{ticker}%'"
         elif company_name:
             # Caso contrário, busca por nome da empresa
             query_tabelas = f"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%{company_name}%'"
         else:
-            st.error("É necessário fornecer um ticket ou nome da empresa.")
+            st.error("É necessário fornecer um ticker ou nome da empresa.")
             return None
 
-        # Lendo os nomes das tabelas que contêm o ticket ou nome da empresa
+        # Lendo os nomes das tabelas que contêm o ticker ou nome da empresa
         tabelas = pd.read_sql_query(query_tabelas, conn)
 
         # Verificando se encontrou alguma tabela
         if not tabelas.empty:
-            nome_tabela = tabelas.iloc[0, 0]  # Pegando o primeiro nome de tabela que contenha o ticket ou empresa
+            nome_tabela = tabelas.iloc[0, 0]  # Pegando o primeiro nome de tabela que contenha o ticker ou empresa
            
             # Escapando o nome da tabela com aspas duplas para evitar erros de sintaxe
             nome_tabela_escapado = f'"{nome_tabela}"'
@@ -174,7 +174,7 @@ def load_data_from_db(ticket=None, company_name=None):
 
             return df
         else:
-            st.error(f"Nenhuma tabela encontrada para o ticket '{ticket}' ou nome da empresa '{company_name}'")
+            st.error(f"Nenhuma tabela encontrada para o ticker '{ticker}' ou nome da empresa '{company_name}'")
             return None
     except Exception as e:
         st.error(f"Erro ao conectar ao banco de dados: {e}")
@@ -186,13 +186,13 @@ def load_data_from_db(ticket=None, company_name=None):
 # Inserindo o ticker para a busca ___________________________________________________________________________________________________________________________________________________________________________
 col1, col2 = st.columns([4, 1])
 with col1:
-    ticket = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input").upper()
+    ticker = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input").upper()
     # Atualizar ticker no estado da sessão ao pressionar Enter
-    if ticket:
-        ticker = ticket.upper() + ".SA"
+    if ticker:
+        ticker = ticker.upper() + ".SA"
         st.session_state.ticker = ticker
 
-indicadores = load_data_from_db(ticket)
+indicadores = load_data_from_db(ticker)
 
 # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________________________________
 def calculate_cagr(df, column):
@@ -266,15 +266,16 @@ def format_dataframe(df):
 # Aplicar formatação na tabela de indicadores
 indicadores_formatado = format_dataframe(indicadores.copy())
     
-# Verificar se o botão foi pressionado _____________________________________________________________________________________________________________________________________________________________________
-if ticket:
+# Da algumas informações referentes a empresa no momento da escolha do ticker _____________________________________________________________________________________________________________________________________________________________________
+
+if ticker:
     # Buscar informações da empresa e verificar se existe
-    company_name, company_website = get_company_info(ticket)
+    company_name, company_website = get_company_info(ticker)
     
     if company_name:
         st.subheader(f"Visão Geral - {company_name}")
         # Buscar o logotipo usando a URL do repositório
-        logo_url = get_logo_url(ticket)
+        logo_url = get_logo_url(ticker)
         
         # Exibir o logotipo no canto direito
         col1, col2 = st.columns([4, 1])
@@ -287,6 +288,7 @@ if ticket:
         st.error("Empresa não encontrada.")
   
 # Mostrar Métricas Resumidas ____________________________________________________________________________________________________________________________________________________________________________
+
 st.markdown("## Visão Geral (CAGR)")
 col1, col2, col3, col4 = st.columns(4)
 
@@ -304,6 +306,7 @@ with col4:
 
 
 # Seletor para escolher quais variáveis visualizar no gráfico _______________________________________________________________________________________________________________________________________
+
 st.markdown("### Selecione os Indicadores para Visualizar no Gráfico")
 variaveis_disponiveis = [col for col in indicadores.columns if col != 'Data']
 variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_disponiveis, default=['Receita_Líquida', 'Lucro_Líquido', 'Divida_Líquida'])
