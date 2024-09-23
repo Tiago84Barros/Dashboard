@@ -186,7 +186,7 @@ def load_data_from_db(ticket=None, company_name=None):
 # Carregar os dados do banco de dados
 col1, col2 = st.columns([4, 1])
 with col1:
-    ticket = st.text_input("Digite o ticker (ex: GMAT3.SA)", key="ticker_input").upper()
+    ticket = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input").upper()
     
 indicadores = load_data_from_db(ticket)
 
@@ -302,7 +302,7 @@ with col4:
 # Seletor para escolher quais variáveis visualizar no gráfico _______________________________________________________________________________________________________________________________________
 st.markdown("### Selecione os Indicadores para Visualizar no Gráfico")
 variaveis_disponiveis = [col for col in indicadores.columns if col != 'Data']
-variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_disponiveis, default=['Receita_Líquida', 'Lucro_Líquido'])
+variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_disponiveis, default=['Receita_Líquida', 'Lucro_Líquido', 'Dívida_Líquida'])
 
 #Copiar código
 # Ensure 'indicadores' is correctly loaded
