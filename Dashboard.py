@@ -311,6 +311,13 @@ if variaveis_selecionadas:
     # Função para verificar e atualizar o tema do Streamlit
     def update_theme():
         current_theme = st.get_option('theme.base')
+
+        # Configurações de cores com base no tema armazenado na sessão
+        current_theme = st.session_state['theme']
+        st.write(f"Tema atual utilizado para o gráfico: {current_theme}")
+        # Se `current_theme` estiver `None`, define um tema padrão (light) para garantir que o código não quebre
+        if current_theme is None:
+            current_theme = "light"  # Definindo o tema padrão como 'light'
     
         # Atualiza apenas se o tema atual for diferente do armazenado
         if 'theme' not in st.session_state:
@@ -326,13 +333,6 @@ if variaveis_selecionadas:
     
     def plot_graph(df_melted):
 
-        # Configurações de cores com base no tema armazenado na sessão
-        current_theme = st.session_state['theme']
-        st.write(f"Tema atual utilizado para o gráfico: {current_theme}")
-        # Se `current_theme` estiver `None`, define um tema padrão (light) para garantir que o código não quebre
-        if current_theme is None:
-            current_theme = "light"  # Definindo o tema padrão como 'light'
-        
         # Configurações de cores com base no tema
         if st.session_state['theme'] == "dark":
             theme_colors = {
