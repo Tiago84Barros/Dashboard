@@ -351,9 +351,6 @@ if variaveis_selecionadas:
     df_melted = indicadores.melt(id_vars=['Data'], value_vars=variaveis_selecionadas,
                                  var_name='Indicador', value_name='Valor')
     
-    # Chama a função para exibir o gráfico
-    plot_graph(df_melted)
-
     # Função para verificar e atualizar o tema do Streamlit
     def update_theme():
         current_theme = st.get_option('theme.base')
@@ -381,7 +378,10 @@ if variaveis_selecionadas:
         # elif st.session_state['theme'] != current_theme:
         #     st.session_state['theme'] = current_theme
         #     st.write(f"Tema atualizado para: {current_theme}")
-                
+   
+    # Chama a função para exibir o gráfico
+    plot_graph(df_melted)
+    
     # Chamar a função para verificar o tema ao iniciar o aplicativo
     update_theme()
 
