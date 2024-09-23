@@ -9,6 +9,7 @@ import sqlite3
 import os
 
 # Função para obter a URL do logotipo a partir do repositório no GitHub ___________________________________________________________________________________________________________________________________________
+
 def get_logo_url(ticker):
     ticker_clean = ticker.replace('.SA', '').upper()  # Remover o sufixo ".SA" e garantir que o ticker esteja em maiúsculas
     logo_url = f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{ticker_clean}.png"
@@ -30,6 +31,7 @@ def get_company_info(ticker):
         return None, None
         
 # Definir o layout da página ___________________________________________________________________________________________________________________________________________________________--
+
 st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
 
 st.markdown("""
@@ -107,6 +109,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Sidebar com ícones de navegação __________________________________________________________________________________________________________________________________________________________
+
 with st.sidebar:
     #st.image("logo.png", width=150)
     st.markdown("# Início")
@@ -184,6 +187,7 @@ def load_data_from_db(ticker=None, company_name=None):
             conn.close()
             
 # Inserindo o ticker para a busca ___________________________________________________________________________________________________________________________________________________________________________
+
 col1, col2 = st.columns([4, 1])
 with col1:
     ticker = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input").upper()
@@ -195,6 +199,7 @@ with col1:
 indicadores = load_data_from_db(ticker)
 
 # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________________________________
+
 def calculate_cagr(df, column):
 
    try:
@@ -238,10 +243,11 @@ for column in indicadores.columns:
         cagrs[column] = cagr
 
 # Função para formatar colunas monetárias e porcentagens _________________________________________________________________________________________________________________________________________
+
 def format_dataframe(df):
     col_monetarias = ['Close', 'LPA', 'Receita_Líquida', 'Ativo_Circulante', 'Passivo_Circulante', 'Capital_de_Giro', 'Patrimonio_Líquido', 
-                      'Lucro_Operacional', 'Lucro_Líquido', 'Dividendos', 'Divida_Líquida', 'Balanca_Comercial', 'Câmbio', 'PIB']
-    col_porcentagem = ['Margem_Líquida', 'ROE', 'índice_endividamento', 'Selic', 'IPCA', 'ICC']
+                      'Lucro_Operacional', 'Lucro_Líquido', 'Dividendos', 'Divida_Líquida', 'Balança_Comercial', 'Câmbio', 'PIB']
+    col_porcentagem = ['Margem_Líquida', 'ROE', 'Índice_Endividamento', 'Selic', 'IPCA', 'ICC']
     
     # Formatando colunas monetárias manualmente (R$)
     for col in col_monetarias:
