@@ -395,7 +395,33 @@ if variaveis_selecionadas:
    
 else:
     st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
+    
 # Tabela de Indicadores  ___________________________________________________________________________________________________________________________________________________________________________
 
 st.markdown("### Tabela de Indicadores")
 st.dataframe(indicadores_formatado)
+
+# Adicionando a nova seção de "Múltiplos do {ticker}" ________________________________________________________________________________________________________________________________________________
+st.markdown(f"## Múltiplos do {ticker}")
+
+# Criando a estrutura das duas colunas abaixo
+col1, col2 = st.columns(2)
+
+# Seção "Saúde financeira da empresa"
+with col1:
+    st.markdown("### Saúde financeira da empresa")
+    
+    # Exibindo os múltiplos desejados
+    st.metric(label="Margem Líquida", value=f"{indicadores['Margem_Líquida'].iloc[-1]:.2f}%")
+    st.metric(label="ROE", value=f"{indicadores['ROE'].iloc[-1]:.2f}%")
+    st.metric(label="Índice de Endividamento", value=f"{indicadores['Divida_Líquida'].iloc[-1]:.2f}%")
+
+# Seção "Relevância para o investidor"
+with col2:
+    st.markdown("### Relevância para o investidor")
+    
+    # Exibindo os múltiplos desejados
+    st.metric(label="P/L", value=f"{indicadores['P/L'].iloc[-1]:.2f}")
+    st.metric(label="Payout", value=f"{indicadores['Payout'].iloc[-1]:.2f}%")
+    st.metric(label="P/VP", value=f"{indicadores['P/VP'].iloc[-1]:.2f}")
+    st.metric(label="Dividend Yield", value=f"{indicadores['Dividend Yield'].iloc[-1]:.2f}%")
