@@ -187,9 +187,10 @@ def load_data_from_db(ticket=None, company_name=None):
 col1, col2 = st.columns([4, 1])
 with col1:
     ticket = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input").upper()
-    # Converter para caixa alta e adicionar a sufixo .SA
-    ticker = ticker_input.upper() + ".SA"
-    st.session_state.ticker = ticker  # Armazenar o ticker em caixa alta no estado da sessão
+    # Atualizar ticker no estado da sessão ao pressionar Enter
+        if ticket_input:
+            ticker = ticket_input.upper() + ".SA"
+            st.session_state.ticker = ticker
 
 indicadores = load_data_from_db(ticket)
 
