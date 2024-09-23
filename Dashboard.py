@@ -402,7 +402,7 @@ st.markdown("### Tabela de Indicadores")
 st.dataframe(indicadores_formatado)
 
 # Adicionando a nova seção de "Múltiplos do {ticker}" ________________________________________________________________________________________________________________________________________________
-st.markdown(f"## MÚLTIPLOS DA {ticker}")
+st.markdown(f"""<h2 style='color:blue;'>MÚLTIPLOS DA {ticker}</h2>""", unsafe_allow_html=True)
 
 # Criando a estrutura das duas colunas abaixo
 col1, col2 = st.columns(2)
