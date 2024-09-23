@@ -188,7 +188,7 @@ col1, col2 = st.columns([4, 1])
 with col1:
     ticket = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input").upper()
     # Atualizar ticker no estado da sessão ao pressionar Enter
-    if ticket_input:
+    if ticket:
         ticker = ticket_input.upper() + ".SA"
         st.session_state.ticker = ticker
 
