@@ -351,8 +351,7 @@ if variaveis_selecionadas:
                 
         # Configurações de cores com base no tema armazenado na sessão
         current_theme = st.session_state['theme']
-        st.write(f"Tema atual utilizado para o gráfico: {current_theme}")
-
+       
         # Configurações de cores com base no tema
         if st.session_state['theme'] == "dark":
             theme_colors = {
