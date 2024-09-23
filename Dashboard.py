@@ -402,10 +402,7 @@ st.markdown("### Tabela de Indicadores")
 st.dataframe(indicadores_formatado)
 
 # Adicionando a nova seção de "Múltiplos do {ticker}" ________________________________________________________________________________________________________________________________________________
-st.markdown(f"""<h2 style='color:blue;'>MÚLTIPLOS DA {ticker}</h2>""", unsafe_allow_html=True)
-
-# Criando a estrutura das duas colunas abaixo  _________________________________________________________________________________________________________________________________________________
-col1, col2 = st.columns(2)
+st.markdown(f"""<h2 style='color:blue; text-align: center; font-weight: bold;'>MÚLTIPLOS DA {ticker}</h2>""", unsafe_allow_html=True)
 
 # Função para obter o valor de um indicador ou retornar 'N/A' se não estiver presente com estilo personalizado
 def get_indicator_value(df, column_name, default="N/A", format_type="percentage"):
@@ -413,29 +410,88 @@ def get_indicator_value(df, column_name, default="N/A", format_type="percentage"
         value = df[column_name].iloc[-1]
         if pd.notnull(value):
             if format_type == "percentage":
-                return f"<span style='font-size:16px;'>{value:.2f}%</span>"
+                return f"{value:.2f}%"
             elif format_type == "currency":
-                return f"<span style='font-size:16px;'>R${value:,.2f}</span>"
+                return f"R${value:,.2f}"
             else:
-                return f"<span style='font-size:16px;'>{value:.2f}</span>"
-    return f"<span style='font-size:16px;'>{default}</span>"
+                return f"{value:.2f}"
+    return default
 
-# Seção "Saúde financeira da empresa"
-with col1:
-    st.markdown("### Saúde financeira da empresa")
-    
-    # Exibindo os múltiplos desejados com estilo HTML
-    st.markdown(f"**Margem Líquida:** {get_indicator_value(indicadores, 'Margem_Líquida')}", unsafe_allow_html=True)
-    st.markdown(f"**ROE:** {get_indicator_value(indicadores, 'ROE')}", unsafe_allow_html=True)
-    st.markdown(f"**Índice de Endividamento:** {get_indicator_value(indicadores, 'Divida_Líquida')}", unsafe_allow_html=True)
+# CSS para centralizar as colunas e estilizar as seções
+st.markdown("""
+    <style>
+        /* Container principal centralizado */
+        .centered-container {
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            margin: 20px auto;
+            width: 80%;
+        }
 
-# Seção "Relevância para o investidor"
-with col2:
-    st.markdown("### Relevância para o investidor")
+        /* Estilo das colunas */
+        .column {
+            flex: 1;
+            padding: 20px;
+            text-align: left;
+        }
+
+        /* Linha vertical alaranjada */
+        .vertical-line {
+            width: 3px;
+            background-color: orange;
+            margin: 0 20px;
+            height: auto;
+        }
+
+        /* Estilo dos títulos das seções */
+        .section-title {
+            color: #333;
+            font-size: 20px;
+            font-weight: bold;
+            margin-bottom: 5px;
+            text-align: center;
+            padding-bottom: 5px;
+            border-bottom: 2px solid orange; /* Linha alaranjada abaixo do título */
+            display: inline-block;
+        }
+
+        /* Estilo para os valores dos indicadores */
+        .indicator-value {
+            font-size: 16px;
+            color: #444;
+        }
+
+        /* Centraliza o conteúdo do container */
+        .column-content {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+    </style>
     
-    # Exibindo os múltiplos desejados com estilo HTML
-    st.markdown(f"**P/L:** {get_indicator_value(indicadores, 'P/L', format_type='number')}", unsafe_allow_html=True)
-    st.markdown(f"**Payout:** {get_indicator_value(indicadores, 'Payout')}", unsafe_allow_html=True)
-    st.markdown(f"**P/VP:** {get_indicator_value(indicadores, 'P/VP', format_type='number')}", unsafe_allow_html=True)
-    st.markdown(f"**Dividend Yield:** {get_indicator_value(indicadores, 'Dividend Yield')}", unsafe_allow_html=True)
+    <!-- Container das colunas -->
+    <div class="centered-container">
+        <div class="column">
+            <div class="column-content">
+                <span class="section-title">Saúde financeira da empresa</span>
+                <p class="indicator-value">Margem Líquida: {get_indicator_value(indicadores, 'Margem_Líquida')}</p>
+                <p class="indicator-value">ROE: {get_indicator_value(indicadores, 'ROE')}</p>
+                <p class="indicator-value">Índice de Endividamento: {get_indicator_value(indicadores, 'Divida_Líquida')}</p>
+            </div>
+        </div>
+        
+        <div class="vertical-line"></div>
+        
+        <div class="column">
+            <div class="column-content">
+                <span class="section-title">Relevância para o investidor</span>
+                <p class="indicator-value">P/L: {get_indicator_value(indicadores, 'P/L', format_type='number')}</p>
+                <p class="indicator-value">Payout: {get_indicator_value(indicadores, 'Payout')}</p>
+                <p class="indicator-value">P/VP: {get_indicator_value(indicadores, 'P/VP', format_type='number')}</p>
+                <p class="indicator-value">Dividend Yield: {get_indicator_value(indicadores, 'Dividend Yield')}</p>
+            </div>
+        </div>
+    </div>
+""", unsafe_allow_html=True)
 
