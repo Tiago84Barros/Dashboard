@@ -172,6 +172,7 @@ with col1:
       st.session_state.ticker = ticker
 
 indicadores = load_data_from_db(ticker)
+indicadores = indicadores.drop(columns=['Ticker'])
 
 st.markdown("### Tabela de Demonstrações Financeiras Carregada")
 st.dataframe(indicadores)  # Mostra o DataFrame completo no dashboard
