@@ -274,7 +274,7 @@ if ticker:
 # Mostrar Métricas Resumidas ____________________________________________________________________________________________________________________________________________________________________________
 
 st.markdown("## Visão Geral (CAGR)")
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3 = st.columns(4)
 
 with col1:
     st.metric(label="CAGR Receita Líquida", value=f"{cagrs['Receita_Liquida']:.2%}")
@@ -284,9 +284,6 @@ with col2:
 
 with col3:
     st.metric(label="CAGR Dividendos", value=f"{cagrs['Dividendos']:.2%}")
-
-with col4:
-    st.metric(label="CAGR Dívida Líquida", value=f"{cagrs['Divida_Liquida']:.2%}")
 
 
 # Seletor para escolher quais variáveis visualizar no gráfico _______________________________________________________________________________________________________________________________________
