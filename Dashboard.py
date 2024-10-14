@@ -15,7 +15,7 @@ def get_logo_url(ticker):
     logo_url = f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{ticker_clean}.png"
     return logo_url
   
-# Função para buscar informações da empresa usando yfinance
+# Função para buscar informações da empresa usando yfinance _______________________________________________________________________________________________________________________________________________________
 def get_company_info(ticker):
     try:
         # Adicionar ".SA" para tickers da B3 (bolsa brasileira) se não estiver presente
@@ -30,7 +30,7 @@ def get_company_info(ticker):
     except:
         return None, None
         
-# Definir o layout da página ___________________________________________________________________________________________________________________________________________________________--
+# Definir o layout da página ______________________________________________________________________________________________________________________________________________________________________________________
 
 st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
 
@@ -149,8 +149,8 @@ def load_data_from_db(ticker):
     try:
         conn = sqlite3.connect(db_path)
 
-        # Buscar dados na tabela 'Demonstracoes_Financeiras' usando o ticker fornecido
-        query_dados = f"SELECT * FROM Demonstracoes_Financeiras WHERE Ticker = '{ticker}'"
+        # Buscar dados na tabela 'Demonstracoes_Financeiras' sem o sufixo '.SA'
+        query_dados = f"SELECT * FROM Demonstracoes_Financeiras WHERE Ticker = '{ticker}' OR Ticker = '{ticker.replace('.SA', '')}'"
         df = pd.read_sql_query(query_dados, conn)
 
         return df
