@@ -288,49 +288,21 @@ with col3:
 
 # Seletor para escolher quais variáveis visualizar no gráfico _______________________________________________________________________________________________________________________________________
 
+# Seletor para escolher quais variáveis visualizar no gráfico
 st.markdown("### Selecione os Indicadores para Visualizar no Gráfico")
 variaveis_disponiveis = [col for col in indicadores.columns if col != 'Data']
 variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_disponiveis, default=['Receita_Líquida', 'Lucro_Líquido', 'Divida_Líquida'])
 
-#Copiar código
-# Ensure 'indicadores' is correctly loaded
+# Garantir que 'indicadores' está carregado corretamente
 if variaveis_selecionadas:
 
-     # Função para verificar e atualizar o tema do Streamlit
+    # Função para verificar o tema do Streamlit
     def update_theme():
-        # # Adiciona um seletor de tema para que o usuário escolha
-        # selected_theme = st.selectbox("Escolha o tema do gráfico:", ["light", "dark"])
-    
-        # # Atualiza o tema na sessão com base na seleção do usuário
-        # if 'theme' not in st.session_state or st.session_state['theme'] != selected_theme:
-        #     st.session_state['theme'] = selected_theme
-        
-           
         # Configurações de cores com base no tema armazenado na sessão
-        current_theme = st.session_state.get('theme', 'light')
+        current_theme = st.session_state.get('theme', 'light')  # Tema padrão é 'light'
         
-        # Se `current_theme` estiver `None`, define um tema padrão (light) para garantir que o código não quebre
-        if current_theme is None:
-            current_theme = "light"  # Definindo o tema padrão como 'light'
-    
-        # Atualiza apenas se o tema atual for diferente do armazenado
-        if 'theme' not in st.session_state:
-            st.session_state['theme'] = current_theme
-          
-        elif st.session_state['theme'] != current_theme:
-            st.session_state['theme'] = current_theme
-           
-    
-      # Chamar a função para verificar o tema ao iniciar o aplicativo
-    update_theme()
- 
-    def plot_graph(df_melted):
-                
-        # Configurações de cores com base no tema armazenado na sessão
-        current_theme = st.session_state['theme']
-       
-        # Configurações de cores com base no tema
-        if st.session_state['theme'] == "dark":
+        # Configurações para tema claro e escuro
+        if current_theme == "dark":
             theme_colors = {
                 "bg_color": "#1f1f1f",
                 "text_color": "#ffffff",
@@ -342,8 +314,13 @@ if variaveis_selecionadas:
                 "text_color": "#000000",
                 "grid_color": "#dddddd"
             }
+        return theme_colors
+
+    # Função para exibir o gráfico
+    def plot_graph(df_melted):
+        theme_colors = update_theme()  # Atualiza as cores com base no tema
         
-        # Criando o gráfico com cores adaptativas
+        # Criar o gráfico com cores adaptativas
         fig = px.line(df_melted, x='Data', y='Valor', color='Indicador', markers=True,
                       title='Evolução dos Indicadores Selecionados')
         
@@ -359,19 +336,23 @@ if variaveis_selecionadas:
             yaxis=dict(showgrid=True, gridcolor=theme_colors['grid_color'])
         )
         
-        # Renderizando o gráfico
+        # Renderizar o gráfico no Streamlit
         st.plotly_chart(fig, use_container_width=True)
-    
-    # Criar o DataFrame derretido (df_melted já existente)
+
+    # Criar o DataFrame "melted" para formatar os dados
     df_melted = indicadores.melt(id_vars=['Data'], value_vars=variaveis_selecionadas,
                                  var_name='Indicador', value_name='Valor')
-       
+
     # Chama a função para exibir o gráfico
     plot_graph(df_melted)
-    
-   
+
 else:
     st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
+
+  
+ 
+    
+
     
 # Tabela de Indicadores  ___________________________________________________________________________________________________________________________________________________________________________
 
