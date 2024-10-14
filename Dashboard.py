@@ -121,7 +121,7 @@ with st.sidebar:
 # carregando o banco de dados _______________________________________________________________________________________________________________________________________________________________________________
 
 # URL do banco de dados no GitHub
-db_url = "https://raw.githubusercontent.com/Tiago84Barros/Dashboard/main/indicadores_empresas.db"
+db_url = "https://raw.githubusercontent.com/Tiago84Barros/Dashboard/main/metadados.db"
 
 # Função para baixar o banco de dados do GitHub
 @st.cache_data
