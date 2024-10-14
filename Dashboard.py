@@ -165,13 +165,21 @@ def load_data_from_db(ticker):
 
 col1, col2 = st.columns([4, 1])
 with col1:
+  # Inserindo o ticker para a busca
     ticker = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input").upper()
-    # Atualizar ticker no estado da sessão ao pressionar Enter
+    
     if ticker:
-        ticker = ticker.upper() + ".SA"
-        st.session_state.ticker = ticker
-
-indicadores = load_data_from_db(ticker)
+        indicadores = load_data_from_db(ticker)
+    
+        if indicadores is not None and not indicadores.empty:
+            # Formatar os dados para exibição
+            indicadores_formatado = format_dataframe(indicadores.copy())
+    
+            # Mostrar os dados financeiros na tabela
+            st.markdown("### Demonstrações Financeiras")
+            st.dataframe(indicadores_formatado)
+        else:
+            st.warning("Nenhum dado encontrado para o ticker fornecido.")
 
 # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________________________________
 
