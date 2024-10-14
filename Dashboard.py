@@ -174,8 +174,6 @@ with col1:
 indicadores = load_data_from_db(ticker)
 indicadores = indicadores.drop(columns=['Ticker'])
 
-st.markdown("### Tabela de Demonstrações Financeiras Carregada")
-st.dataframe(indicadores)  # Mostra o DataFrame completo no dashboard
 # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________________________________
 
 def calculate_cagr(df, column):
