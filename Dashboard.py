@@ -248,7 +248,7 @@ def format_dataframe(df):
     return df
 
 # Aplicar formatação na tabela de indicadores
-indicadores_formatado = format_dataframe(indicadores.copy())
+indicadores_formatados = format_dataframe(indicadores.copy())
     
 # Da algumas informações referentes a empresa no momento da escolha do ticker _____________________________________________________________________________________________________________________________________________________________________
 
@@ -291,7 +291,7 @@ with col3:
 # Seletor para escolher quais variáveis visualizar no gráfico
 st.markdown("### Selecione os Indicadores para Visualizar no Gráfico")
 variaveis_disponiveis = [col for col in indicadores.columns if col != 'Data']
-variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_disponiveis, default=['Receita_Liquida', 'Lucro_Liquido', 'Divida_Liquida'])
+variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_disponiveis, default=['Receita_Liquida', 'Lucro_Liquido'])
 
 # Garantir que 'indicadores' está carregado corretamente
 if variaveis_selecionadas:
@@ -347,9 +347,7 @@ if variaveis_selecionadas:
     plot_graph(df_melted)
 
 else:
-    st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
-
-  
+    st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")  
  
     
 
@@ -357,7 +355,7 @@ else:
 # Tabela de Indicadores  ___________________________________________________________________________________________________________________________________________________________________________
 
 st.markdown("### Tabela de Indicadores")
-st.dataframe(indicadores_formatado)
+st.dataframe(indicadores_formatados)
 
 # Adicionando espaçamento entre a tabela e a seção de múltiplos
 st.markdown("<div style='margin-top: 30px;'></div>", unsafe_allow_html=True)
