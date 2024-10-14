@@ -218,35 +218,6 @@ for column in indicadores.columns:
         cagr = calculate_cagr(indicadores, column)
         cagrs[column] = cagr
 
-# Função para formatar colunas monetárias e porcentagens _________________________________________________________________________________________________________________________________________
-
-def format_dataframe(df):
-    col_monetarias = ['Close', 'LPA', 'Receita_Líquida', 'Ativo_Circulante', 'Passivo_Circulante', 'Capital_de_Giro', 'Patrimonio_Líquido', 
-                      'Lucro_Operacional', 'Lucro_Líquido', 'Dividendos', 'Divida_Líquida', 'Balança_Comercial', 'Câmbio', 'PIB']
-    col_porcentagem = ['Margem_Líquida', 'ROE', 'Selic', 'IPCA', 'ICC']
-    
-    # Formatando colunas monetárias manualmente (R$)
-    for col in col_monetarias:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce')  # Garantir que está em formato numérico
-            df[col] = df[col].apply(lambda x: f"R${x:,.2f}" if pd.notnull(x) else x)
-    
-    # Formatando colunas de porcentagem manualmente (%)
-    for col in col_porcentagem:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce')  # Garantir que está em formato numérico
-            df[col] = df[col].apply(lambda x: f"{x:.2f}%" if pd.notnull(x) else x)
-
-     # Remover o sublinhado dos nomes das colunas
-    df.columns = df.columns.str.replace('_', ' ')  # Substituir sublinhados por espaços
-
-    # Garantir que 'Data' seja exibida como um número inteiro sem vírgulas
-    df['Data'] = df['Data'].astype(str)  # Converte para string para garantir a exibição correta
-     
-    return df
-
-# Aplicar formatação na tabela de indicadores
-indicadores_formatados = format_dataframe(indicadores.copy())
     
 # Da algumas informações referentes a empresa no momento da escolha do ticker _____________________________________________________________________________________________________________________________________________________________________
 
@@ -348,16 +319,6 @@ else:
     st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")  
  
     
-
-    
-# Tabela de Indicadores  ___________________________________________________________________________________________________________________________________________________________________________
-
-st.markdown("### Tabela de Indicadores")
-st.dataframe(indicadores_formatados)
-
-# Adicionando espaçamento entre a tabela e a seção de múltiplos
-st.markdown("<div style='margin-top: 30px;'></div>", unsafe_allow_html=True)
-
 # Adicionando a nova seção de "Múltiplos do {ticker}" ________________________________________________________________________________________________________________________________________________
 # Função para calcular o valor médio de um indicador com base no DataFrame histórico
 def get_indicator_value(indicator_name, df):
