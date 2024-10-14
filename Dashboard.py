@@ -125,7 +125,7 @@ db_url = "https://raw.githubusercontent.com/Tiago84Barros/Dashboard/main/metadad
 
 # Função para baixar o banco de dados do GitHub
 @st.cache_data
-def download_db_from_github(db_url, local_path='indicadores_empresas.db'):
+def download_db_from_github(db_url, local_path='metadados.db'):
     try:
         response = requests.get(db_url, allow_redirects=True)        
         if response.status_code == 200:
