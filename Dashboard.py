@@ -274,7 +274,7 @@ if ticker:
 # Mostrar Métricas Resumidas ____________________________________________________________________________________________________________________________________________________________________________
 
 st.markdown("## Visão Geral (CAGR)")
-col1, col2, col3 = st.columns(4)
+col1, col2, col3 = st.columns(3)
 
 with col1:
     st.metric(label="CAGR Receita Líquida", value=f"{cagrs['Receita_Liquida']:.2%}")
