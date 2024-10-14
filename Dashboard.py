@@ -138,9 +138,9 @@ def download_db_from_github(db_url, local_path='metadados.db'):
         st.error(f"Erro ao tentar se conectar ao GitHub: {e}")
         return None
 
-# Função para carregar os dados do banco de dados
+# Função para carregar os dados do banco de dados _______________________________________________________________________________________________________________________________________________________________
 @st.cache_data
-def load_data_from_db(ticker=None, company_name=None):
+def load_data_from_db(ticker):
     db_path = download_db_from_github(db_url)
     
     if db_path is None or not os.path.exists(db_path):
@@ -149,34 +149,11 @@ def load_data_from_db(ticker=None, company_name=None):
     try:
         conn = sqlite3.connect(db_path)
 
-      # Se fornecido, o ticker será usado na busca
-        if ticker:
-            query_tabelas = f"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%{ticker}%'"
-        elif company_name:
-            # Caso contrário, busca por nome da empresa
-            query_tabelas = f"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%{company_name}%'"
-        else:
-            st.error("É necessário fornecer um ticker ou nome da empresa.")
-            return None
+        # Buscar dados na tabela 'Demonstracoes_Financeiras' usando o ticker fornecido
+        query_dados = f"SELECT * FROM Demonstracoes_Financeiras WHERE Ticker = '{ticker}'"
+        df = pd.read_sql_query(query_dados, conn)
 
-        # Lendo os nomes das tabelas que contêm o ticker ou nome da empresa
-        tabelas = pd.read_sql_query(query_tabelas, conn)
-
-        # Verificando se encontrou alguma tabela
-        if not tabelas.empty:
-            nome_tabela = tabelas.iloc[0, 0]  # Pegando o primeiro nome de tabela que contenha o ticker ou empresa
-           
-            # Escapando o nome da tabela com aspas duplas para evitar erros de sintaxe
-            nome_tabela_escapado = f'"{nome_tabela}"'
-
-            # Carregando os dados da tabela
-            query_dados = f"SELECT * FROM {nome_tabela_escapado}"
-            df = pd.read_sql_query(query_dados, conn)
-
-            return df
-        else:
-            st.error(f"Nenhuma tabela encontrada para o ticker '{ticker}' ou nome da empresa '{company_name}'")
-            return None
+        return df
     except Exception as e:
         st.error(f"Erro ao conectar ao banco de dados: {e}")
         return None
