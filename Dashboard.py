@@ -221,16 +221,24 @@ st.markdown("""
         height: auto;
         margin-left: 15px;  /* Adiciona espaço entre o texto e o logo */
     }
+    a {
+        text-decoration: none;  /* Remove sublinhado dos links */
+        color: inherit;  /* Mantém a cor do texto original */
+    }
+    a:hover {
+        text-decoration: none;  /* Garante que o sublinhado não apareça ao passar o mouse */
+    }
     </style>
 """, unsafe_allow_html=True)
-
 # Inserindo o ticker para a busca ___________________________________________________________________________________________________________________________________________________________________________
 
 col1, col2 = st.columns([4, 1])
 with col1:
-    ticker_input = st.text_input("Digite o ticker").upper()
-    if ticker_input:
-        st.session_state.ticker = ticker_input.upper() + ".SA"
+     ticker = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input").upper()
+    # Atualizar ticker no estado da sessão ao pressionar Enter
+    if ticker:
+        ticker = ticker.upper() + ".SA"
+        st.session_state.ticker = ticker
 
 # Se nenhum ticker for inserido, exibir lista de tickers disponíveis por setor ____________________________________________________________________________________________________________________________________
 if not ticker:
@@ -247,36 +255,30 @@ if not ticker:
             for i, row in dados_setor.iterrows():
                 logo_url = get_logo_url(row['ticker'])  # Obter a URL do logotipo da empresa
                 with [col1, col2, col3][i % 3]:      
-                    if st.markdown(f"<div class='sector-box' onclick='window.location.href = \"?ticker={row['ticker']}\"'>", unsafe_allow_html=True):
-                        st.session_state.ticker = row['ticker']  # Salvar o ticker na sessão
-                    
-                    # Exibir o layout do quadrado
-                    st.markdown(f"""
+                   st.markdown(f"""
+                    <a href='/?ticker={row['ticker']}'>
                     <div class='sector-box'>
                         <div class='sector-info'>
-                            <strong>{row['nome_empresa']}</strong><br>
+                            <strong>{row['NOME']}</strong><br>
                             Ticker: {row['ticker']}<br>
                             Subsetor: {row['SUBSETOR']}<br>
                             Segmento: {row['SEGMENTO']}
                         </div>
                         <img src='{logo_url}' class='sector-logo' alt='Logo da empresa'>
                     </div>
+                    </a>
                     """, unsafe_allow_html=True)
-
-# Se o ticker foi selecionado, exibir as informações do ticker
-if 'ticker' in st.session_state:
-    ticker = st.session_state.ticker
-    st.markdown(f"### Informações do Ticker {ticker}")
-
-    # Função que carrega os dados do ticker do banco de dados
+    else:
+        st.warning("Nenhuma informação de setores encontrada.")
+else:
+    # Se houver um ticker, continuar com a exibição normal das informações do ticker
     indicadores = load_data_from_db(ticker)
-    
     if indicadores is not None:
         # Exibir gráficos e indicadores do ticker selecionado
-        # Colocar aqui o código de exibição dos gráficos e métricas
-        st.write(f"Aqui estão os gráficos e indicadores para {ticker}")
+        st.markdown(f"### Informações do Ticker {ticker}")
+        # Adicionar o código atual para gráficos e métricas aqui
     else:
-        st.warning("Nenhum dado encontrado para o ticker selecionado.")
+        st.warning("Ticker não encontrado.")
 # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________________________________
 
 def calculate_cagr(df, column):
