@@ -230,9 +230,9 @@ col1, col2 = st.columns([4, 1])
 with col1:
    ticker = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input").upper()
    # Atualizar ticker no estado da sessão ao pressionar Enter
-   if ticker:
-      ticker = ticker.upper() + ".SA"
-      st.session_state.ticker = ticker
+    ticker_input = st.text_input("Digite o ticker (ex: GMAT3)").upper()
+    if ticker_input:
+        st.session_state.ticker = ticker_input.upper() + ".SA""
 
 # Se nenhum ticker for inserido, exibir lista de tickers disponíveis por setor ____________________________________________________________________________________________________________________________________
 if not ticker:
