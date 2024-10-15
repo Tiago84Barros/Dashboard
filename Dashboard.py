@@ -124,7 +124,7 @@ with st.sidebar:
 db_url = "https://raw.githubusercontent.com/Tiago84Barros/Dashboard/main/metadados.db"
 
 # Função para baixar o banco de dados do GitHub
-@st.cache_data
+@st.cache_data(ttl=3600)  # Atualiza o cache a cada 1 hora
 def download_db_from_github(db_url, local_path='metadados.db'):
     try:
         response = requests.get(db_url, allow_redirects=True)        
@@ -267,11 +267,8 @@ if variaveis_selecionadas:
 
     # Função para verificar o tema do Streamlit
     def update_theme():
-        # Configurações de cores com base no tema armazenado na sessão
-        current_theme = st.session_state.get('theme', 'light')  # Tema padrão é 'light'
-        
-        # Configurações para tema claro e escuro
-        if current_theme == "dark":
+        theme_colors = {}
+        if st.config.get_option('theme.base') == 'dark':  # Verifica o tema configurado no Streamlit
             theme_colors = {
                 "bg_color": "#1f1f1f",
                 "text_color": "#ffffff",
@@ -296,13 +293,13 @@ if variaveis_selecionadas:
         fig.update_layout(
             xaxis_title='Ano',
             yaxis_title='Valor',
-            plot_bgcolor=theme_colors['bg_color'],
-            paper_bgcolor=theme_colors['bg_color'],
-            font=dict(color=theme_colors['text_color']),
-            title_font=dict(color=theme_colors['text_color'], size=24),
+            plot_bgcolor=theme_colors['bg_color'], # Aplicando cor de fundo
+            paper_bgcolor=theme_colors['bg_color'], # Aplicando cor de fundo do papel
+            font=dict(color=theme_colors['text_color']), # Aplicando cor da fonte
+            title_font=dict(color=theme_colors['text_color'], size=24), # Cor do título
             legend_title_text='Indicadores',
-            xaxis=dict(showgrid=True, gridcolor=theme_colors['grid_color']),
-            yaxis=dict(showgrid=True, gridcolor=theme_colors['grid_color'])
+            xaxis=dict(showgrid=True, gridcolor=theme_colors['grid_color']), # Cor da grade do eixo X
+            yaxis=dict(showgrid=True, gridcolor=theme_colors['grid_color']) # Cor da grade do eixo Y
         )
         
         # Renderizar o gráfico no Streamlit
@@ -318,88 +315,72 @@ if variaveis_selecionadas:
 else:
     st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")  
  
+
+# Função para carregar os dados da tabela "multiplos" do banco de dados  ________________________________________________________________________________________________________________________________________________
+@st.cache_data
+def load_multiplos_from_db(ticker):
+    db_path = download_db_from_github(db_url)
     
-# Adicionando a nova seção de "Múltiplos do {ticker}" ________________________________________________________________________________________________________________________________________________
-# Função para calcular o valor médio de um indicador com base no DataFrame histórico
-def get_indicator_value(indicator_name, df):
-    if indicator_name in df.columns:
-        return df[indicator_name].mean()
-    else:
-        return "N/A"
+    if db_path is None or not os.path.exists(db_path):
+        return None
 
-# Adicionando a nova seção de "Múltiplos do {ticker}" com a cor azul e alinhamento à esquerda
-st.markdown(f"<h2 style='color:blue; text-align: left; margin-bottom: 10px;'>MÚLTIPLOS DA {ticker}</h2>", unsafe_allow_html=True)
+    try:
+        conn = sqlite3.connect(db_path)
 
-# Adicionando espaçamento entre a tabela e a seção de múltiplos
-#st.markdown("<div style='margin-top: 3px;'></div>", unsafe_allow_html=True)
-
-# Definindo o estilo CSS para as variáveis dos múltiplos
-st.markdown("""
-    <style>
-        .indicator-value {
-            color: #FF5733; /* Cor laranja vibrante para os valores */
-            font-family: 'Trebuchet MS', sans-serif; /* Fonte estilosa e profissional */
-            font-size: 18px; /* Aumentando um pouco o tamanho da fonte */
-            padding-left: 10px; /* Espaçamento à esquerda */
-        }
-
-        .indicator-label {
-            color: #333; /* Cor mais suave para o label */
-            font-family: 'Trebuchet MS', sans-serif; /* Mesma fonte para consistência */
-            font-size: 18px; /* Tamanho da fonte do label */
-            padding-left: 10px;
-        }
-
-        /* Adicionando uma leve sombra para destacar o texto */
-        .indicator-value strong {
-            text-shadow: 1px 1px 2px #aaa;
-        }
-
-        /* Espaçamento adicional para separar as seções */
-        .section {
-            margin-bottom: 20px; /* Espaço entre o título "Múltiplos da {ticker}" e os indicadores */
-        }
-    </style>
-""", unsafe_allow_html=True)
-
-# Criando a estrutura com duas colunas
-col1, col2, col3 = st.columns([1, 0.1, 1])  # A coluna do meio (0.1) será usada para a linha vertical
-
-# Preenchendo a coluna de "Saúde financeira da empresa"
-with col1:
-    st.markdown("<div class='section'><h3 style='text-align: left; border-bottom: 2px solid orange;'>Saúde financeira da empresa</h3></div>", unsafe_allow_html=True)
-    margem_liquida = get_indicator_value('Margem_Líquida', indicadores)
-    st.markdown(f"<p class='indicator-label'>Margem Líquida: <span class='indicator-value'><strong>{margem_liquida:.2f}%</strong></span></p>" if isinstance(margem_liquida, (int, float)) else "N/A", unsafe_allow_html=True)
-    
-    roe = get_indicator_value('ROE', indicadores)
-    st.markdown(f"<p class='indicator-label'>ROE: <span class='indicator-value'><strong>{roe:.2f}%</strong></span></p>" if isinstance(roe, (int, float)) else "N/A", unsafe_allow_html=True)
-    
-    divida_liquida = get_indicator_value('Divida_Líquida', indicadores)
-    st.markdown(f"<p class='indicator-label'>Índice de Endividamento: <span class='indicator-value'><strong>{divida_liquida:,.2f}</strong></span></p>" if isinstance(divida_liquida, (int, float)) else "N/A", unsafe_allow_html=True)
-
-# Adicionando a linha vertical alaranjada no meio
-with col2:
-    st.markdown(
+        # Buscar dados na tabela 'multiplos' para o ticker
+        query_multiplos = f"""
+        SELECT * FROM multiplos 
+        WHERE Ticker = '{ticker}' OR Ticker = '{ticker.replace('.SA', '')}' 
+        ORDER BY Data DESC LIMIT 1
         """
-        <div style='display: flex; justify-content: center; align-items: flex-start; height: 300px;'>
-            <div style='width: 3px; background-color: orange; height: 100%;'></div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+        df_multiplos = pd.read_sql_query(query_multiplos, conn)
+        return df_multiplos
+    except Exception as e:
+        st.error(f"Erro ao carregar a tabela 'multiplos': {e}")
+        return None
+    finally:
+        if conn:
+            conn.close()
 
-# Preenchendo a coluna de "Relevância para o investidor"
-with col3:
-    st.markdown("<div class='section'><h3 style='text-align: left; border-bottom: 2px solid orange;'>Relevância para o investidor</h3></div>", unsafe_allow_html=True)
+# Carregar dados da tabela 'multiplos'
+multiplos = load_multiplos_from_db(ticker)
+
+if multiplos is not None and not multiplos.empty:
+    # Exibir múltiplos em "quadrados"
+    st.markdown("### Indicadores Financeiros")
     
-    pl = get_indicator_value('P/L', indicadores)
-    st.markdown(f"<p class='indicator-label'>P/L: <span class='indicator-value'><strong>{pl:.2f}</strong></span></p>" if isinstance(PL, (int, float)) else "N/A", unsafe_allow_html=True)
+    col1, col2, col3, col4 = st.columns(4)
     
-    payout = get_indicator_value('Payout', indicadores)
-    st.markdown(f"<p class='indicator-label'>Payout: <span class='indicator-value'><strong>{payout:.2f}%</strong></span></p>" if isinstance(payout, (int, float)) else "N/A", unsafe_allow_html=True)
+    with col1:
+        st.metric(label="P/L", value=f"{multiplos['P/L'].values[0]:.2f}")
     
-    pvp = get_indicator_value('P/VP', indicadores)
-    st.markdown(f"<p class='indicator-label'>P/VP: <span class='indicator-value'><strong>{pvp:.2f}</strong></span></p>" if isinstance(pvp, (int, float)) else "N/A", unsafe_allow_html=True)
+    with col2:
+        margem_liquida = multiplos['Margem_Líquida'].values[0]
+        st.metric(label="Margem Líquida", value=f"{margem_liquida:.2f}%")
     
-    dividend_yield = get_indicator_value('Dividend Yield', indicadores)
-    st.markdown(f"<p class='indicator-label'>Dividend Yield: <span class='indicator-value'><strong>{dividend_yield:.2f}%</strong></span></p>" if isinstance(dividend_yield, (int, float)) else "N/A", unsafe_allow_html=True)
+    with col3:
+        roe = multiplos['ROE'].values[0]
+        st.metric(label="ROE", value=f"{roe:.2f}%")
+    
+    with col4:
+        roic = multiplos['ROIC'].values[0]
+        st.metric(label="ROIC", value=f"{roic:.2f}%")
+    
+    col5, col6, col7, col8 = st.columns(4)
+    
+    with col5:
+        dividend_yield = multiplos['Dividendo_Yield'].values[0]
+        st.metric(label="Dividend Yield", value=f"{dividend_yield:.2f}%")
+    
+    with col6:
+        pvp = multiplos['P/VP'].values[0]
+        st.metric(label="P/VP", value=f"{pvp:.2f}")
+    
+    with col7:
+        payout = multiplos['Payout'].values[0]
+        st.metric(label="Payout", value=f"{payout:.2f}%")
+    
+    with col8:
+        st.metric(label="Data", value=f"{multiplos['Data'].values[0]}")
+else:
+    st.warning("Nenhum dado de múltiplos encontrado para o ticker informado.")
