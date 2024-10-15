@@ -221,6 +221,13 @@ st.markdown("""
         height: auto;
         margin-left: 15px;  /* Adiciona espaço entre o texto e o logo */
     }
+    a {
+        text-decoration: none;  /* Remove sublinhado dos links */
+        color: inherit;  /* Mantém a cor do texto original */
+    }
+    a:hover {
+        text-decoration: none;  /* Garante que o sublinhado não apareça ao passar o mouse */
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -244,15 +251,14 @@ if not ticker:
         
         for setor, dados_setor in setores_agrupados:
             st.markdown(f"#### {setor}")
+            
             col1, col2, col3 = st.columns(3)
             for i, row in dados_setor.iterrows():
                 logo_url = get_logo_url(row['ticker'])  # Obter a URL do logotipo da empresa
                 with [col1, col2, col3][i % 3]:      
-                    if st.button(f"{row['nome_empresa']}", key=row['ticker']):
-                        st.session_state.ticker = row['ticker']
-                    
-                    # Exibir as informações da empresa junto com o logotipo
+                     # Tornando o quadrado clicável usando uma estrutura de link invisível
                     st.markdown(f"""
+                    <a href='/?ticker={row['ticker']}'>
                     <div class='sector-box'>
                         <div class='sector-info'>
                             <strong>{row['nome_empresa']}</strong><br>
@@ -262,7 +268,8 @@ if not ticker:
                         </div>
                         <img src='{logo_url}' class='sector-logo' alt='Logo da empresa'>
                     </div>
-                    """, unsafe_allow_html=True)                    
+                    </a>
+                    """, unsafe_allow_html=True)                 
     else:
          # Se houver um ticker, exibir as informações do ticker selecionado
         ticker = st.session_state.ticker
