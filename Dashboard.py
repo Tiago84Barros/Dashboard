@@ -234,11 +234,17 @@ st.markdown("""
 
 col1, col2 = st.columns([4, 1])
 with col1:
-     ticker = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input").upper()
-    # Atualizar ticker no estado da sessão ao pressionar Enter
-    if ticker:
-        ticker = ticker.upper() + ".SA"
+     # Verificar se o usuário digitou um ticker manualmente
+    ticker_input = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input").upper()
+    
+    # Verificar se o ticker foi digitado e atualizá-lo na sessão
+    if ticker_input:
+        ticker = ticker_input + ".SA"
         st.session_state.ticker = ticker
+    elif 'ticker' in st.session_state:
+        ticker = st.session_state.ticker
+    else:
+        ticker = None
 
 # Se nenhum ticker for inserido, exibir lista de tickers disponíveis por setor ____________________________________________________________________________________________________________________________________
 if not ticker:
