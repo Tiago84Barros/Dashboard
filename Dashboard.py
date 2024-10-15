@@ -345,42 +345,113 @@ def load_multiplos_from_db(ticker):
 # Carregar dados da tabela 'multiplos'
 multiplos = load_multiplos_from_db(ticker)
 
+# Adicionar estilo CSS para os quadrados
+st.markdown("""
+    <style>
+    /* Estilo dos quadrados de métricas */
+    .metric-box {
+        background-color: white;
+        padding: 20px;
+        margin: 10px;
+        border-radius: 10px;
+        box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
+        border: 1px solid #f0f0f0;
+        text-align: center;
+    }
+    
+    /* Estilo para o valor das métricas */
+    .metric-value {
+        font-size: 24px;
+        font-weight: bold;
+    }
+    
+    /* Estilo para o rótulo das métricas */
+    .metric-label {
+        font-size: 14px;
+        color: #6c757d;
+    }
+    
+    </style>
+""", unsafe_allow_html=True)
+
+
 if multiplos is not None and not multiplos.empty:
     # Exibir múltiplos em "quadrados"
     st.markdown("### Indicadores Financeiros")
     
     col1, col2, col3, col4 = st.columns(4)
     
-    with col1:
-        st.metric(label="P/L", value=f"{multiplos['P/L'].values[0]:.2f}")
+   with col1:
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{multiplos['P/L'].values[0]:.2f}</div>
+            <div class='metric-label'>P/L</div>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col2:
         margem_liquida = multiplos['Margem_Líquida'].values[0]
-        st.metric(label="Margem Líquida", value=f"{margem_liquida:.2f}%")
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{margem_liquida:.2f}%</div>
+            <div class='metric-label'>Margem Líquida</div>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col3:
         roe = multiplos['ROE'].values[0]
-        st.metric(label="ROE", value=f"{roe:.2f}%")
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{roe:.2f}%</div>
+            <div class='metric-label'>ROE</div>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col4:
         roic = multiplos['ROIC'].values[0]
-        st.metric(label="ROIC", value=f"{roic:.2f}%")
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{roic:.2f}%</div>
+            <div class='metric-label'>ROIC</div>
+        </div>
+        """, unsafe_allow_html=True)
     
     col5, col6, col7, col8 = st.columns(4)
     
     with col5:
         dividend_yield = multiplos['Dividendo_Yield'].values[0]
-        st.metric(label="Dividend Yield", value=f"{dividend_yield:.2f}%")
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{dividend_yield:.2f}%</div>
+            <div class='metric-label'>Dividend Yield</div>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col6:
         pvp = multiplos['P/VP'].values[0]
-        st.metric(label="P/VP", value=f"{pvp:.2f}")
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{pvp:.2f}</div>
+            <div class='metric-label'>P/VP</div>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col7:
         payout = multiplos['Payout'].values[0]
-        st.metric(label="Payout", value=f"{payout:.2f}%")
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{payout:.2f}%</div>
+            <div class='metric-label'>Payout</div>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col8:
-        st.metric(label="Data", value=f"{multiplos['Data'].values[0]}")
+        data = multiplos['Data'].values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{data}</div>
+            <div class='metric-label'>Data</div>
+        </div>
+        """, unsafe_allow_html=True)
 else:
     st.warning("Nenhum dado de múltiplos encontrado para o ticker informado.")
