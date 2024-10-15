@@ -236,6 +236,9 @@ col1, col2 = st.columns([4, 1])
 with col1:
      # Verificar se o usuário digitou um ticker manualmente
     ticker_input = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input").upper()
+     # Se o ticker_input está vazio e existia um ticker salvo, limpar o ticker da sessão
+    if not ticker_input and 'ticker' in st.session_state:
+        del st.session_state.ticker  # Limpa o ticker da sessão quando o campo é esvaziado
     
     # Verificar se o ticker foi digitado e atualizá-lo na sessão
     if ticker_input:
