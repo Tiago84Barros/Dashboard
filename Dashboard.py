@@ -200,6 +200,11 @@ st.markdown("""
         justify-content: space-between;
         align-items: center;
         height: 140px;  /* Definindo uma altura fixa para os blocos */
+        cursor: pointer;  /* Torna o quadrado clicável */
+        transition: background-color 0.3s ease;  /* Animação de transição ao passar o mouse */
+    }
+    .sector-box:hover {
+        background-color: #f0f0f0;  /* Muda a cor de fundo ao passar o mouse */
     }
     .sector-info {
         font-size: 14px;
@@ -218,8 +223,13 @@ st.markdown("""
         height: auto;
         margin-left: 15px;  /* Adiciona espaço entre o texto e o logo */
     }
+    a {
+        text-decoration: none;  /* Remove sublinhado dos links */
+        color: inherit;  /* Mantém a cor do texto original */
+    }
     </style>
 """, unsafe_allow_html=True)
+
 # Inserindo o ticker para a busca ___________________________________________________________________________________________________________________________________________________________________________
 
 col1, col2 = st.columns([4, 1])
@@ -246,6 +256,7 @@ if not ticker:
                     logo_url = get_logo_url(row['ticker'])  # Obter a URL do logotipo da empresa
                    # Exibir as informações da empresa junto com o logotipo
                     st.markdown(f"""
+                    <a href='/?ticker={row['ticker']}'>
                     <div class='sector-box'>
                         <div class='sector-info'>
                             <strong>{row['nome_empresa']}</strong><br>
