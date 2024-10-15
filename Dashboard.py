@@ -242,7 +242,7 @@ if not ticker:
                     <div class='sector-box'>
                         <img src='{logo_url}' class='sector-logo' alt='Logo da empresa'><br>
                         <div class='sector-info'>
-                            <strong>{row['NOME']}</strong><br>
+                            <strong>{row['nome_empresa']}</strong><br>
                             Ticker: {row['ticker']}<br>
                             Subsetor: {row['SUBSETOR']}<br>
                             Segmento: {row['SEGMENTO']}
