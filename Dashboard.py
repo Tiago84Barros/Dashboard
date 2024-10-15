@@ -244,7 +244,6 @@ if not ticker:
                    # Exibir as informações da empresa junto com o logotipo
                     st.markdown(f"""
                     <div class='sector-box'>
-                        <img src='{logo_url}' class='sector-logo' alt='Logo da empresa'><br>
                         <div class='sector-info'>
                             <strong>{row['nome_empresa']}</strong><br>
                             Ticker: {row['ticker']}<br>
