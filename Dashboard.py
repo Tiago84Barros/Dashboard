@@ -377,9 +377,9 @@ st.markdown("""
 
 if multiplos is not None and not multiplos.empty:
     # Exibir múltiplos em "quadrados"
-    st.markdown("### Indicadores Financeiros")
+   st.markdown("### Indicadores Financeiros")
     
-    col1, col2, col3, col4 = st.columns(4)
+   col1, col2, col3, col4 = st.columns(4)
     
    with col1:
         st.markdown(f"""
@@ -389,7 +389,7 @@ if multiplos is not None and not multiplos.empty:
         </div>
         """, unsafe_allow_html=True)
     
-    with col2:
+   with col2:
         margem_liquida = multiplos['Margem_Líquida'].values[0]
         st.markdown(f"""
         <div class='metric-box'>
@@ -398,7 +398,7 @@ if multiplos is not None and not multiplos.empty:
         </div>
         """, unsafe_allow_html=True)
     
-    with col3:
+   with col3:
         roe = multiplos['ROE'].values[0]
         st.markdown(f"""
         <div class='metric-box'>
@@ -407,7 +407,7 @@ if multiplos is not None and not multiplos.empty:
         </div>
         """, unsafe_allow_html=True)
     
-    with col4:
+   with col4:
         roic = multiplos['ROIC'].values[0]
         st.markdown(f"""
         <div class='metric-box'>
@@ -416,9 +416,9 @@ if multiplos is not None and not multiplos.empty:
         </div>
         """, unsafe_allow_html=True)
     
-    col5, col6, col7, col8 = st.columns(4)
+   col5, col6, col7, col8 = st.columns(4)
     
-    with col5:
+   with col5:
         dividend_yield = multiplos['Dividendo_Yield'].values[0]
         st.markdown(f"""
         <div class='metric-box'>
@@ -427,7 +427,7 @@ if multiplos is not None and not multiplos.empty:
         </div>
         """, unsafe_allow_html=True)
     
-    with col6:
+   with col6:
         pvp = multiplos['P/VP'].values[0]
         st.markdown(f"""
         <div class='metric-box'>
@@ -436,7 +436,7 @@ if multiplos is not None and not multiplos.empty:
         </div>
         """, unsafe_allow_html=True)
     
-    with col7:
+   with col7:
         payout = multiplos['Payout'].values[0]
         st.markdown(f"""
         <div class='metric-box'>
@@ -445,7 +445,7 @@ if multiplos is not None and not multiplos.empty:
         </div>
         """, unsafe_allow_html=True)
     
-    with col8:
+   with col8:
         data = multiplos['Data'].values[0]
         st.markdown(f"""
         <div class='metric-box'>
