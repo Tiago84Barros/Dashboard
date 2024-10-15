@@ -221,6 +221,10 @@ st.markdown("""
         height: auto;
         margin-left: 15px;  /* Adiciona espaço entre o texto e o logo */
     }
+    .sector-row {
+        display: flex;
+        justify-content: flex-start;  /* Alinha os itens à esquerda */
+        flex-wrap: wrap;  /* Permite que os itens quebrem linha se necessário */
     a {
         text-decoration: none;  /* Remove sublinhado dos links */
         color: inherit;  /* Mantém a cor do texto original */
