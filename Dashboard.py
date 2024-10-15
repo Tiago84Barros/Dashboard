@@ -185,6 +185,33 @@ def load_setores_from_db():
 
 # Carregar os setores
 setores = load_setores_from_db()
+
+# Adicionar estilo CSS para os blocos e logotipos _________________________________________________________________________________________________________________________________________________________________
+st.markdown("""
+    <style>
+    .sector-box {
+        border: 1px solid #ddd;
+        padding: 15px;
+        border-radius: 10px;
+        margin-bottom: 10px;
+        text-align: center;
+    }
+    .sector-logo {
+        width: 60px;
+        height: auto;
+        margin-bottom: 10px;
+    }
+    .sector-info {
+        font-size: 14px;
+        color: #333;
+    }
+    .sector-info strong {
+        font-size: 16px;
+        color: #000;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
             
 # Inserindo o ticker para a busca ___________________________________________________________________________________________________________________________________________________________________________
 
@@ -208,18 +235,20 @@ if not ticker:
             st.markdown(f"#### {setor}")
             col1, col2, col3 = st.columns(3)
             for i, row in dados_setor.iterrows():
-                with [col1, col2, col3][i % 3]:
+                with [col1, col2, col3][i % 3]:             
                     logo_url = get_logo_url(row['ticker'])  # Obter a URL do logotipo da empresa
+                   # Exibir as informações da empresa junto com o logotipo
                     st.markdown(f"""
-                    <div style='border: 1px solid #ddd; padding: 10px; border-radius: 5px;'>
-                        <strong>{row['nome_empresa']}</strong><br>
-                        Ticker: {row['ticker']}<br>
-                        Subsetor: {row['SUBSETOR']}<br>
-                        Segmento: {row['SEGMENTO']}
+                    <div class='sector-box'>
+                        <img src='{logo_url}' class='sector-logo' alt='Logo da empresa'><br>
+                        <div class='sector-info'>
+                            <strong>{row['NOME']}</strong><br>
+                            Ticker: {row['ticker']}<br>
+                            Subsetor: {row['SUBSETOR']}<br>
+                            Segmento: {row['SEGMENTO']}
+                        </div>
                     </div>
-                    """, unsafe_allow_html=True)
-                    # Exibir o logotipo da empresa
-                    st.image(logo_url, width=80)  # Exibe o logotipo no bloco correspondente
+                    """, unsafe_allow_html=True)                    
     else:
         st.warning("Nenhuma informação de setores encontrada.")
 else:
