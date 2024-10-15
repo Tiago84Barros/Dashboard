@@ -211,7 +211,7 @@ if not ticker:
                 with [col1, col2, col3][i % 3]:
                     st.markdown(f"""
                     <div style='border: 1px solid #ddd; padding: 10px; border-radius: 5px;'>
-                        <strong>{row['NOME']}</strong><br>
+                        <strong>{row['nome_empresa']}</strong><br>
                         Ticker: {row['ticker']}<br>
                         Subsetor: {row['SUBSETOR']}<br>
                         Segmento: {row['SEGMENTO']}
