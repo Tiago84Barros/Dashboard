@@ -250,6 +250,7 @@ if not ticker:
                             Subsetor: {row['SUBSETOR']}<br>
                             Segmento: {row['SEGMENTO']}
                         </div>
+                        <img src='{logo_url}' class='sector-logo' alt='Logo da empresa'>
                     </div>
                     """, unsafe_allow_html=True)                    
     else:
