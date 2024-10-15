@@ -264,7 +264,9 @@ if not ticker:
                     </div>
                     """, unsafe_allow_html=True)                    
     else:
-        st.warning("Nenhuma informação de setores encontrada.")
+         # Se houver um ticker, exibir as informações do ticker selecionado
+        ticker = st.session_state.ticker
+        st.markdown(f"### Informações do Ticker {ticker}")
 else:
     # Se houver um ticker, continuar com a exibição normal das informações do ticker
     indicadores = load_data_from_db(ticker)
