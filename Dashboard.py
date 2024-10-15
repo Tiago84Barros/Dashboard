@@ -228,7 +228,7 @@ st.markdown("""
 
 col1, col2 = st.columns([4, 1])
 with col1:
-    ticker_input = st.text_input("Digite o ticker (ex: GMAT3)").upper()
+    ticker_input = st.text_input("Digite o ticker").upper()
     if ticker_input:
         st.session_state.ticker = ticker_input.upper() + ".SA"
 
