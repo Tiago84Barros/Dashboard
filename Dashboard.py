@@ -191,6 +191,12 @@ setores = load_setores_from_db()
 # Adicionar estilo CSS para os blocos, com o logo à direita e as informações à esquerda, e altura fixa
 st.markdown("""
     <style>
+    .sector-container {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-start;  /* Alinhamento à esquerda */
+        gap: 10px;  /* Espaço entre os blocos */
+    }
     .sector-box {
         border: 1px solid #ddd;
         padding: 15px;
@@ -200,6 +206,9 @@ st.markdown("""
         justify-content: space-between;
         align-items: center;
         height: 140px;  /* Definindo uma altura fixa para os blocos */
+        width: 30%;  /* Largura de 30% para caber três blocos por linha */
+        min-width: 250px;  /* Largura mínima para evitar colapsos em telas menores */
+        box-sizing: border-box;  /* Garante que padding e border sejam considerados no tamanho total */
     }
     .sector-info {
         font-size: 14px;
