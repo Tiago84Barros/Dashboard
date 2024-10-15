@@ -227,6 +227,9 @@ st.markdown("""
         text-decoration: none;  /* Remove sublinhado dos links */
         color: inherit;  /* Mantém a cor do texto original */
     }
+    a:hover {
+        text-decoration: none;  /* Garante que o sublinhado não apareça ao passar o mouse */
+    }
     </style>
 """, unsafe_allow_html=True)
 
