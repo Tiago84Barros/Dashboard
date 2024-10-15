@@ -218,6 +218,8 @@ if not ticker:
                         Segmento: {row['SEGMENTO']}
                     </div>
                     """, unsafe_allow_html=True)
+                    # Exibir o logotipo da empresa
+                    st.image(logo_url, width=80)  # Exibe o logotipo no bloco correspondente
     else:
         st.warning("Nenhuma informação de setores encontrada.")
 else:
