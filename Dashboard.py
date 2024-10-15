@@ -187,6 +187,7 @@ def load_setores_from_db():
 setores = load_setores_from_db()
 
 # Adicionar estilo CSS para os blocos e logotipos _________________________________________________________________________________________________________________________________________________________________
+# Adicionar estilo CSS para os blocos, com o logo à direita e as informações à esquerda
 st.markdown("""
     <style>
     .sector-box {
@@ -202,6 +203,7 @@ st.markdown("""
         font-size: 14px;
         color: #333;
         text-align: left;
+        flex: 1; /* Faz com que as informações ocupem mais espaço à esquerda */
     }
     .sector-info strong {
         font-size: 16px;
@@ -210,6 +212,7 @@ st.markdown("""
     .sector-logo {
         width: 50px;
         height: auto;
+        margin-left: 15px; /* Adiciona espaço entre o texto e o logo */
     }
     </style>
 """, unsafe_allow_html=True)
