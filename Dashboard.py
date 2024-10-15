@@ -186,9 +186,7 @@ def load_setores_from_db():
 # Carregar os setores
 setores = load_setores_from_db()
 
-# Adicionar estilo CSS para os blocos e logotipos _________________________________________________________________________________________________________________________________________________________________
-#
-# Adicionar estilo CSS para os blocos, com o logo à direita e as informações à esquerda, e altura fixa
+# Adicionar estilo CSS para os blocos, com o logo à direita e as informações à esquerda, e altura fixa ____________________________________________________________________________________________________________
 st.markdown("""
     <style>
     .sector-box {
@@ -248,9 +246,12 @@ if not ticker:
             st.markdown(f"#### {setor}")
             col1, col2, col3 = st.columns(3)
             for i, row in dados_setor.iterrows():
-                with [col1, col2, col3][i % 3]:             
-                    logo_url = get_logo_url(row['ticker'])  # Obter a URL do logotipo da empresa
-                   # Exibir as informações da empresa junto com o logotipo
+                logo_url = get_logo_url(row['ticker'])  # Obter a URL do logotipo da empresa
+                with [col1, col2, col3][i % 3]:      
+                    if st.button(f"{row['nome_empresa']}", key=row['ticker']):
+                        st.session_state.ticker = row['ticker']
+                    
+                    # Exibir as informações da empresa junto com o logotipo
                     st.markdown(f"""
                     <div class='sector-box'>
                         <div class='sector-info'>
