@@ -223,13 +223,6 @@ st.markdown("""
         height: auto;
         margin-left: 15px;  /* Adiciona espaço entre o texto e o logo */
     }
-    a {
-        text-decoration: none;  /* Remove sublinhado dos links */
-        color: inherit;  /* Mantém a cor do texto original */
-    }
-    a:hover {
-        text-decoration: none;  /* Garante que o sublinhado não apareça ao passar o mouse */
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -259,7 +252,6 @@ if not ticker:
                     logo_url = get_logo_url(row['ticker'])  # Obter a URL do logotipo da empresa
                    # Exibir as informações da empresa junto com o logotipo
                     st.markdown(f"""
-                    <a href='/?ticker={row['ticker']}'>
                     <div class='sector-box'>
                         <div class='sector-info'>
                             <strong>{row['nome_empresa']}</strong><br>
