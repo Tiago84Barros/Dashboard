@@ -255,11 +255,11 @@ if not ticker:
             for i, row in dados_setor.iterrows():
                 logo_url = get_logo_url(row['ticker'])  # Obter a URL do logotipo da empresa
                 with [col1, col2, col3][i % 3]:      
-                   st.markdown(f"""
+                    st.markdown(f"""
                     <a href='/?ticker={row['ticker']}'>
                     <div class='sector-box'>
                         <div class='sector-info'>
-                            <strong>{row['NOME']}</strong><br>
+                            <strong>{row['nome_empresa']}</strong><br>
                             Ticker: {row['ticker']}<br>
                             Subsetor: {row['SUBSETOR']}<br>
                             Segmento: {row['SEGMENTO']}
