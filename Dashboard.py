@@ -221,13 +221,6 @@ st.markdown("""
         height: auto;
         margin-left: 15px;  /* Adiciona espaço entre o texto e o logo */
     }
-    a {
-        text-decoration: none;  /* Remove sublinhado dos links */
-        color: inherit;  /* Mantém a cor do texto original */
-    }
-    a:hover {
-        text-decoration: none;  /* Garante que o sublinhado não apareça ao passar o mouse */
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -256,9 +249,12 @@ if not ticker:
             for i, row in dados_setor.iterrows():
                 logo_url = get_logo_url(row['ticker'])  # Obter a URL do logotipo da empresa
                 with [col1, col2, col3][i % 3]:      
-                     # Tornando o quadrado clicável usando uma estrutura de link invisível
+                    # Criação de uma área clicável que salva o ticker na sessão ao clicar
+                    if st.markdown(f"<div class='sector-box' role='button' style='cursor:pointer' onclick='window.location.reload();'>{row['nome_empresa']}</div>", unsafe_allow_html=True):
+                        st.session_state.ticker = row['ticker']  # Salvar o ticker na sessão
+                    
+                    # Exibir o layout do quadrado
                     st.markdown(f"""
-                    <a href='/?ticker={row['ticker']}'>
                     <div class='sector-box'>
                         <div class='sector-info'>
                             <strong>{row['nome_empresa']}</strong><br>
@@ -268,23 +264,22 @@ if not ticker:
                         </div>
                         <img src='{logo_url}' class='sector-logo' alt='Logo da empresa'>
                     </div>
-                    </a>
-                    """, unsafe_allow_html=True)                 
-    else:
-         # Se houver um ticker, exibir as informações do ticker selecionado
-        ticker = st.session_state.ticker
-        st.markdown(f"### Informações do Ticker {ticker}")
-else:
-    # Se houver um ticker, continuar com a exibição normal das informações do ticker
+                    """, unsafe_allow_html=True)         
+                    
+ # Se o ticker foi selecionado, exibir as informações do ticker
+if 'ticker' in st.session_state:
+    ticker = st.session_state.ticker
+    st.markdown(f"### Informações do Ticker {ticker}")
+
+    # Função que carrega os dados do ticker do banco de dados
     indicadores = load_data_from_db(ticker)
-    indicadores = indicadores.drop(columns=['Ticker'])
     
     if indicadores is not None:
-        # Continuar com o cálculo de múltiplos e exibição dos gráficos e métricas
-        # (Seu código atual para exibição dos gráficos e métricas permanece aqui)
-        pass
+        # Exibir gráficos e indicadores do ticker selecionado
+        # Colocar aqui o código de exibição dos gráficos e métricas
+        st.write(f"Aqui estão os gráficos e indicadores para {ticker}")
     else:
-        st.warning("Ticker não encontrado.")
+        st.warning("Nenhum dado encontrado para o ticker selecionado.")
 
 # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________________________________
 
