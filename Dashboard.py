@@ -160,6 +160,31 @@ def load_data_from_db(ticker):
     finally:
         if conn:
             conn.close()
+
+# Função para carregar os setores do banco de dados _______________________________________________________________________________________________________________________________________________________________
+@st.cache_data
+def load_setores_from_db():
+    db_path = download_db_from_github(db_url)
+    
+    if db_path is None or not os.path.exists(db_path):
+        return None
+
+    try:
+        conn = sqlite3.connect(db_path)
+
+        # Buscar dados da tabela 'setores'
+        query_setores = "SELECT * FROM setores"
+        df_setores = pd.read_sql_query(query_setores, conn)
+        return df_setores
+    except Exception as e:
+        st.error(f"Erro ao carregar a tabela 'setores': {e}")
+        return None
+    finally:
+        if conn:
+            conn.close()
+
+# Carregar os setores
+setores = load_setores_from_db()
             
 # Inserindo o ticker para a busca ___________________________________________________________________________________________________________________________________________________________________________
 
@@ -171,8 +196,40 @@ with col1:
       ticker = ticker.upper() + ".SA"
       st.session_state.ticker = ticker
 
-indicadores = load_data_from_db(ticker)
-indicadores = indicadores.drop(columns=['Ticker'])
+# Se nenhum ticker for inserido, exibir lista de tickers disponíveis por setor ____________________________________________________________________________________________________________________________________
+if not ticker:
+    st.markdown("### Selecione um Ticker")
+    
+    if setores is not None and not setores.empty:
+        # Agrupar tickers por setor
+        setores_agrupados = setores.groupby('SETOR')
+        
+        for setor, dados_setor in setores_agrupados:
+            st.markdown(f"#### {setor}")
+            col1, col2, col3 = st.columns(3)
+            for i, row in dados_setor.iterrows():
+                with [col1, col2, col3][i % 3]:
+                    st.markdown(f"""
+                    <div style='border: 1px solid #ddd; padding: 10px; border-radius: 5px;'>
+                        <strong>{row['NOME']}</strong><br>
+                        Ticker: {row['ticker']}<br>
+                        Subsetor: {row['SUBSETOR']}<br>
+                        Segmento: {row['SEGMENTO']}
+                    </div>
+                    """, unsafe_allow_html=True)
+    else:
+        st.warning("Nenhuma informação de setores encontrada.")
+else:
+    # Se houver um ticker, continuar com a exibição normal das informações do ticker
+    indicadores = load_data_from_db(ticker)
+    indicadores = indicadores.drop(columns=['Ticker'])
+    
+    if indicadores is not None:
+        # Continuar com o cálculo de múltiplos e exibição dos gráficos e métricas
+        # (Seu código atual para exibição dos gráficos e métricas permanece aqui)
+        pass
+    else:
+        st.warning("Ticker não encontrado.")
 
 # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________________________________
 
