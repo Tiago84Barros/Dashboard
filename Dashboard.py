@@ -194,25 +194,26 @@ st.markdown("""
         padding: 15px;
         border-radius: 10px;
         margin-bottom: 10px;
-        text-align: center;
-    }
-    .sector-logo {
-        width: 60px;
-        height: auto;
-        margin-bottom: 10px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
     }
     .sector-info {
         font-size: 14px;
         color: #333;
+        text-align: left;
     }
     .sector-info strong {
         font-size: 16px;
         color: #000;
     }
+    .sector-logo {
+        width: 50px;
+        height: auto;
+    }
     </style>
 """, unsafe_allow_html=True)
-
-            
+          
 # Inserindo o ticker para a busca ___________________________________________________________________________________________________________________________________________________________________________
 
 col1, col2 = st.columns([4, 1])
