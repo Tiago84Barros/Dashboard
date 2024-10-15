@@ -226,7 +226,7 @@ if ticker:
     company_name, company_website = get_company_info(ticker)
     
     if company_name:
-        st.subheader(f"Visão Geral - {company_name}")
+        st.subheader(f"{company_name}")
         # Buscar o logotipo usando a URL do repositório
         logo_url = get_logo_url(ticker)
         
