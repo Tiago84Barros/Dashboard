@@ -187,6 +187,7 @@ def load_setores_from_db():
 setores = load_setores_from_db()
 
 # Adicionar estilo CSS para os blocos, com o logo à direita e as informações à esquerda, e altura fixa ________________________________________________________________________________________
+# Adicionar estilo CSS para os blocos, com o logo à direita e as informações à esquerda, e altura fixa
 st.markdown("""
     <style>
     .sector-box {
@@ -224,7 +225,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Inserir campo para o usuário digitar o ticker ______________________________________________________________________________________________________________________________________________
+# Inserir campo para o usuário digitar o ticker
 col1, col2 = st.columns([4, 1])
 with col1:
     # Verificar se o usuário digitou um ticker manualmente ou se veio de um clique no quadrado
@@ -248,7 +249,7 @@ with col1:
     else:
         ticker = None
 
-# Se nenhum ticker for inserido, exibir lista de tickers disponíveis por setor ________________________________________________________________________________________________________________
+# Se nenhum ticker for inserido, exibir lista de tickers disponíveis por setor
 if not ticker:
     st.markdown("### Selecione um Ticker")
 
@@ -277,23 +278,7 @@ if not ticker:
                             Subsetor: {row['SUBSETOR']}<br>
                             Segmento: {row['SEGMENTO']}
                         </div>
-                        <img src='{logo_url}' class='sector-logo' alt='Logo da empresa'>
-                    </div>
-                    """, unsafe_allow_html=True)
-    else:
-        st.warning("Nenhuma informação de setores encontrada.")
-else:
-    # Se houver um ticker, continuar com a exibição normal das informações do ticker
-    ticker = st.session_state.ticker
-    indicadores = load_data_from_db(ticker)
-    if indicadores is not None:
-        # Exibir gráficos e indicadores do ticker selecionado
-        st.markdown(f"### Informações do Ticker {ticker}")
-        # Exemplo de exibição de gráficos e métricas
-        st.write(f"Exibindo dados para {ticker}")
-        # Adicionar o código para gráficos e métricas aqui
-    else:
-        st.warning("Ticker não encontrado.")
+                        <img src='{logo_url}' class='sector-logo' alt
 
 # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________________________________
 
