@@ -221,22 +221,16 @@ st.markdown("""
         height: auto;
         margin-left: 15px;  /* Adiciona espaço entre o texto e o logo */
     }
-     a {
-        text-decoration: none;  /* Remove sublinhado dos links */
-        color: inherit;  /* Mantém a cor do texto original */
-    }
-    a:hover {
-        text-decoration: none;  /* Garante que o sublinhado não apareça ao passar o mouse */
-    }
     </style>
 """, unsafe_allow_html=True)
-# Inserindo o ticker para a busca ___________________________________________________________________________________________________________________________________________________________________________
 
+# Inserindo o ticker para a busca ___________________________________________________________________________________________________________________________________________________________________________
 col1, col2 = st.columns([4, 1])
 with col1:
-     # Verificar se o usuário digitou um ticker manualmente
+    # Verificar se o usuário digitou um ticker manualmente
     ticker_input = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input").upper()
-     # Se o ticker_input está vazio e existia um ticker salvo, limpar o ticker da sessão
+    
+    # Se o ticker_input está vazio e existia um ticker salvo, limpar o ticker da sessão
     if not ticker_input and 'ticker' in st.session_state:
         del st.session_state.ticker  # Limpa o ticker da sessão quando o campo é esvaziado
     
@@ -264,8 +258,13 @@ if not ticker:
             for i, row in dados_setor.iterrows():
                 logo_url = get_logo_url(row['ticker'])  # Obter a URL do logotipo da empresa
                 with [col1, col2, col3][i % 3]:      
+                    # Tornar o quadrado clicável e salvar o ticker na sessão
+                    if st.button(f"{row['nome_empresa']}", key=row['ticker']):
+                        st.session_state.ticker = row['ticker']  # Salva o ticker na sessão
+                        st.experimental_rerun()  # Recarrega a página para exibir os detalhes do ticker
+
+                    # Exibir o layout do quadrado
                     st.markdown(f"""
-                    <a href='/?ticker={row['ticker']}'>
                     <div class='sector-box'>
                         <div class='sector-info'>
                             <strong>{row['nome_empresa']}</strong><br>
@@ -275,7 +274,6 @@ if not ticker:
                         </div>
                         <img src='{logo_url}' class='sector-logo' alt='Logo da empresa'>
                     </div>
-                    </a>
                     """, unsafe_allow_html=True)
     else:
         st.warning("Nenhuma informação de setores encontrada.")
