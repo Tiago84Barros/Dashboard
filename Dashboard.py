@@ -29,6 +29,11 @@ def get_company_info(ticker):
         return info['longName'], info.get('website')  # Retorna o nome da empresa e o site
     except:
         return None, None
+
+# Adicionar título ao cabeçalho _______________________________________________________________________________________________________________________________________________________________
+st.markdown("""
+    <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Básica de Ações</h1>
+""", unsafe_allow_html=True)
         
 # Definir o layout da página ______________________________________________________________________________________________________________________________________________________________________________________
 
@@ -187,7 +192,6 @@ def load_setores_from_db():
 setores = load_setores_from_db()
 
 # Adicionar estilo CSS para os blocos, com o logo à direita e as informações à esquerda, e altura fixa ________________________________________________________________________________________
-# Adicionar estilo CSS para os blocos, com o logo à direita e as informações à esquerda, e altura fixa
 st.markdown("""
     <style>
     .sector-box {
