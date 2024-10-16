@@ -228,16 +228,17 @@ st.markdown("""
 # Inserir campo para o usuário digitar o ticker
 col1, col2 = st.columns([4, 1])
 with col1:
-    # Se houver um ticker definido via clique, usá-lo como valor no campo de busca
-    if 'ticker' in st.session_state:
-        ticker_input = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input", value=st.session_state.ticker).upper()
-    else:
-        ticker_input = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input").upper()
+    # Verificar se o campo de busca está vazio e, se sim, limpar o `st.session_state`
+    if 'ticker' in st.session_state and not st.session_state.get('ticker_input'):
+        del st.session_state.ticker  # Remove o ticker da sessão se o campo foi apagado
+
+    # Se houver um ticker definido via clique ou input, usá-lo como valor no campo de busca
+    ticker_input = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input").upper()
 
     # Verificar se o campo de busca está vazio e limpar o `st.session_state` se for o caso
     if ticker_input == "":
         if 'ticker' in st.session_state:
-            del st.session_state.ticker  # Remove o ticker da sessão se o campo foi apagado
+            del st.session_state.ticker  # Remove o ticker da sessão quando o campo é esvaziado
         ticker = None
     else:
         # Verificar se o ticker foi digitado e atualizá-lo na sessão
