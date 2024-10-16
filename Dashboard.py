@@ -537,7 +537,7 @@ if multiplos is not None and not multiplos.empty:
         """, unsafe_allow_html=True)
     
    with col4:
-        roic = multiplos['Indice_Envidividamento'].values[0]
+        roic = multiplos['Indice_Endividamento'].values[0]
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{roic:.2f}%</div>
