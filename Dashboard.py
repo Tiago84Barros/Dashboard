@@ -186,6 +186,7 @@ def load_setores_from_db():
 # Carregar os setores
 setores = load_setores_from_db()
 
+# Adicionar estilo CSS para os blocos onde aparecem a empresas e seus segmentos, com o logo à direita e as informações à esquerda, e altura fixa ____________________________________________________________________________________________________________
 # Adicionar estilo CSS para os blocos, com o logo à direita e as informações à esquerda, e altura fixa ____________________________________________________________________________________________________________
 st.markdown("""
     <style>
@@ -224,7 +225,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Inserindo o ticker para a busca ___________________________________________________________________________________________________________________________________________________________________________
+# Inserir campo para o usuário digitar o ticker ___________________________________________________________________________________________________________________________________________________________________________
 col1, col2 = st.columns([4, 1])
 with col1:
     # Verificar se o usuário digitou um ticker manualmente
@@ -257,11 +258,10 @@ if not ticker:
             col1, col2, col3 = st.columns(3)
             for i, row in dados_setor.iterrows():
                 logo_url = get_logo_url(row['ticker'])  # Obter a URL do logotipo da empresa
-                with [col1, col2, col3][i % 3]:      
-                    # Tornar o quadrado clicável e salvar o ticker na sessão
-                    if st.button(f"{row['nome_empresa']}", key=row['ticker']):
+                with [col1, col2, col3][i % 3]:
+                    # Tornar o quadrado clicável para atualizar o ticker na sessão
+                    if st.button(f"Selecionar {row['nome_empresa']}", key=row['ticker']):
                         st.session_state.ticker = row['ticker']  # Salva o ticker na sessão
-                        st.experimental_rerun()  # Recarrega a página para exibir os detalhes do ticker
 
                     # Exibir o layout do quadrado
                     st.markdown(f"""
@@ -279,13 +279,17 @@ if not ticker:
         st.warning("Nenhuma informação de setores encontrada.")
 else:
     # Se houver um ticker, continuar com a exibição normal das informações do ticker
+    ticker = st.session_state.ticker
     indicadores = load_data_from_db(ticker)
     if indicadores is not None:
         # Exibir gráficos e indicadores do ticker selecionado
         st.markdown(f"### Informações do Ticker {ticker}")
-        # Adicionar o código atual para gráficos e métricas aqui
+        # Exemplo de exibição de gráficos e métricas
+        st.write(f"Exibindo dados para {ticker}")
+        # Adicionar o código para gráficos e métricas aqui
     else:
         st.warning("Ticker não encontrado.")
+
 # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________________________________
 
 def calculate_cagr(df, column):
