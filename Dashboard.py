@@ -513,13 +513,13 @@ if multiplos is not None and not multiplos.empty:
    with col1:
         st.markdown(f"""
         <div class='metric-box'>
-            <div class='metric-value'>{multiplos['P/L'].values[0]:.2f}</div>
+            <div class='metric-value'>{multiplos['Margem_Líquida'].values[0]:.2f}</div>
             <div class='metric-label'>P/L</div>
         </div>
         """, unsafe_allow_html=True)
     
    with col2:
-        margem_liquida = multiplos['Margem_Líquida'].values[0]
+        margem_liquida = multiplos['ROE'].values[0]
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{margem_liquida:.2f}%</div>
@@ -528,7 +528,7 @@ if multiplos is not None and not multiplos.empty:
         """, unsafe_allow_html=True)
     
    with col3:
-        roe = multiplos['ROE'].values[0]
+        roe = multiplos['ROIC'].values[0]
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{roe:.2f}%</div>
@@ -537,7 +537,7 @@ if multiplos is not None and not multiplos.empty:
         """, unsafe_allow_html=True)
     
    with col4:
-        roic = multiplos['ROIC'].values[0]
+        roic = multiplos['Indice_Envidividamento'].values[0]
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{roic:.2f}%</div>
@@ -548,13 +548,15 @@ if multiplos is not None and not multiplos.empty:
    col5, col6, col7, col8 = st.columns(4)
     
    with col5:
-        dividend_yield = multiplos['Dividendo_Yield'].values[0]
+        # Substituir NaN ou valores inexistentes por 0
+        dividend_yield = multiplos['Dividendo_Yield'].fillna(0).values[0]
+        # Exibir o Dividend Yield no dashboard
         st.markdown(f"""
-        <div class='metric-box'>
-            <div class='metric-value'>{dividend_yield:.2f}%</div>
-            <div class='metric-label'>Dividend Yield</div>
-        </div>
-        """, unsafe_allow_html=True)
+            <div class='metric-box'>
+                <div class='metric-value'>{dividend_yield:.2f}%</div>
+                <div class='metric-label'>Dividend Yield</div>
+            </div>
+            """, unsafe_allow_html=True)
     
    with col6:
         pvp = multiplos['P/VP'].values[0]
