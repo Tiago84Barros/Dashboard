@@ -528,6 +528,7 @@ st.markdown("""
         box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
         border: 1px solid #f0f0f0;
         text-align: center;
+        width: 100%; /* Garante que o tamanho dos quadrados seja consistente */
     }
     
     /* Estilo para o valor das métricas */
@@ -541,26 +542,34 @@ st.markdown("""
         font-size: 14px;
         color: #6c757d;
     }
+
+    /* Ajustes para a responsividade */
+    .stColumns > div {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
     
     </style>
 """, unsafe_allow_html=True)
 
-
 if multiplos is not None and not multiplos.empty:
     # Exibir múltiplos em "quadrados"
-   st.markdown("### Indicadores Financeiros")
+    st.markdown("### Indicadores Financeiros")
     
-   col1, col2, col3, col4 = st.columns(4)
-    
-   with col1:
-    margem_liquida = multiplos['Margem_Líquida'].fillna(0).values[0]
-    st.markdown(f"""
-    <div class='metric-box'>
-        <div class='metric-value'>{margem_liquida:.2f}%</div>
-        <div class='metric-label'>Margem Líquida</div>
-    </div>
-    """, unsafe_allow_html=True)
-    
+    col1, col2, col3, col4 = st.columns(4)
+
+    # Coluna 1 - Margem Líquida
+    with col1:
+        margem_liquida = multiplos['Margem_Líquida'].fillna(0).values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{margem_liquida:.2f}%</div>
+            <div class='metric-label'>Margem Líquida</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Coluna 2 - ROE
     with col2:
         roe = multiplos['ROE'].fillna(0).values[0]
         st.markdown(f"""
@@ -569,7 +578,8 @@ if multiplos is not None and not multiplos.empty:
             <div class='metric-label'>ROE</div>
         </div>
         """, unsafe_allow_html=True)
-    
+
+    # Coluna 3 - ROIC
     with col3:
         roic = multiplos['ROIC'].fillna(0).values[0]
         st.markdown(f"""
@@ -578,7 +588,8 @@ if multiplos is not None and not multiplos.empty:
             <div class='metric-label'>ROIC</div>
         </div>
         """, unsafe_allow_html=True)
-    
+
+    # Coluna 4 - Índice de Endividamento
     with col4:
         endividamento = multiplos['Indice_Endividamento'].fillna(0).values[0]
         st.markdown(f"""
@@ -587,20 +598,21 @@ if multiplos is not None and not multiplos.empty:
             <div class='metric-label'>Índice de Endividamento</div>
         </div>
         """, unsafe_allow_html=True)
-    
+
+    # Segunda linha de colunas
     col5, col6, col7, col8 = st.columns(4)
-    
+
+    # Coluna 5 - Dividend Yield
     with col5:
-        # Substituir NaN ou valores inexistentes por 0
         dividend_yield = multiplos['Dividendo_Yield'].fillna(0).values[0]
-        # Exibir o Dividend Yield no dashboard
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{dividend_yield:.2f}%</div>
             <div class='metric-label'>Dividend Yield</div>
         </div>
         """, unsafe_allow_html=True)
-    
+
+    # Coluna 6 - P/VP
     with col6:
         pvp = multiplos['P/VP'].fillna(0).values[0]
         st.markdown(f"""
@@ -609,7 +621,8 @@ if multiplos is not None and not multiplos.empty:
             <div class='metric-label'>P/VP</div>
         </div>
         """, unsafe_allow_html=True)
-    
+
+    # Coluna 7 - Payout
     with col7:
         payout = multiplos['Payout'].fillna(0).values[0]
         st.markdown(f"""
@@ -618,7 +631,8 @@ if multiplos is not None and not multiplos.empty:
             <div class='metric-label'>Payout</div>
         </div>
         """, unsafe_allow_html=True)
-    
+
+    # Coluna 8 - P/L
     with col8:
         pl = multiplos['P/L'].fillna(0).values[0]
         st.markdown(f"""
@@ -627,6 +641,7 @@ if multiplos is not None and not multiplos.empty:
             <div class='metric-label'>P/L</div>
         </div>
         """, unsafe_allow_html=True)
+
 
 else:
     st.warning("Nenhum dado de múltiplos encontrado para o ticker informado.")
