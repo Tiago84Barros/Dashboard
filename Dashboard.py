@@ -331,9 +331,14 @@ def calculate_cagr(df, column):
 # Calcular o CAGR para cada indicador
 cagrs = {}
 for column in indicadores.columns:
-    if column != 'Data':
-        cagr = calculate_cagr(indicadores, column)
-        cagrs[column] = cagr
+    if column != 'Data' and not (indicadores[column] == 0).all():
+        try:
+            cagr = calculate_cagr(indicadores, column)
+            cagrs[column] = cagr
+        except Exception as e:
+            cagrs[column] = None  # Atribui None caso ocorra erro no cálculo do CAGR
+    else:
+        cagrs[column] = None  # Se todos os valores forem zero, atribui None
 
     
 # Da algumas informações referentes a empresa no momento da escolha do ticker _____________________________________________________________________________________________________________________________________________________________________
@@ -363,13 +368,16 @@ st.markdown("## Visão Geral (CAGR)")
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    st.metric(label="CAGR Receita Líquida", value=f"{cagrs['Receita_Liquida']:.2%}")
+    receita_liquida_cagr = cagrs.get('Receita_Liquida')
+    st.metric(label="CAGR Receita Líquida", value=f"{receita_liquida_cagr:.2%}" if receita_liquida_cagr else "-")
 
 with col2:
-    st.metric(label="CAGR Lucro Líquido", value=f"{cagrs['Lucro_Liquido']:.2%}")
+    lucro_liquido_cagr = cagrs.get('Lucro_Liquido')
+    st.metric(label="CAGR Lucro Líquido", value=f"{lucro_liquido_cagr:.2%}" if lucro_liquido_cagr else "-")
 
 with col3:
-    st.metric(label="CAGR Dividendos", value=f"{cagrs['Dividendos']:.2%}")
+    dividendos_cagr = cagrs.get('Dividendos')
+    st.metric(label="CAGR Dividendos", value=f"{dividendos_cagr:.2%}" if dividendos_cagr else "-")
 
 
 # Seletor para escolher quais variáveis visualizar no gráfico _______________________________________________________________________________________________________________________________________
@@ -431,6 +439,10 @@ if variaveis_selecionadas:
 
 else:
     st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")  
+
+# Exibir a tabela de indicadores no final ____________________________________________________________________________________________________________________________________________________
+st.markdown("### Tabela de Indicadores")
+st.dataframe(df_indicadores)  # Mostra a tabela interativa no dashboard
  
 
 # Função para carregar os dados da tabela "multiplos" do banco de dados  ________________________________________________________________________________________________________________________________________________
@@ -572,7 +584,3 @@ if multiplos is not None and not multiplos.empty:
         """, unsafe_allow_html=True)
 else:
     st.warning("Nenhum dado de múltiplos encontrado para o ticker informado.")
-
-# Exibir a tabela de indicadores no final
-st.markdown("### Tabela de Indicadores")
-st.dataframe(df_indicadores)  # Mostra a tabela interativa no dashboard
