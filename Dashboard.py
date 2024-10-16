@@ -511,37 +511,38 @@ if multiplos is not None and not multiplos.empty:
    col1, col2, col3, col4 = st.columns(4)
     
    with col1:
+        margem_liquida = multiplos['Margem_Líquida'].values[0]
         st.markdown(f"""
         <div class='metric-box'>
-            <div class='metric-value'>{multiplos['Margem_Líquida'].values[0]:.2f}</div>
-            <div class='metric-label'>P/L</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-   with col2:
-        margem_liquida = multiplos['ROE'].values[0]
-        st.markdown(f"""
-        <div class='metric-box'>
-            <div class='metric-value'>{margem_liquida:.2f}%</div>
+            <div class='metric-value'>{margem_liquida.values[0]:.2f}</div>
             <div class='metric-label'>Margem Líquida</div>
         </div>
         """, unsafe_allow_html=True)
     
-   with col3:
-        roe = multiplos['ROIC'].values[0]
+   with col2:
+        roe = multiplos['ROE'].values[0]
         st.markdown(f"""
         <div class='metric-box'>
-            <div class='metric-value'>{roe:.2f}%</div>
+            <div class='metric-value'>{ROE:.2f}%</div>
             <div class='metric-label'>ROE</div>
         </div>
         """, unsafe_allow_html=True)
     
-   with col4:
-        roic = multiplos['Indice_Endividamento'].values[0]
+   with col3:
+        roic = multiplos['ROIC'].values[0]
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{roic:.2f}%</div>
             <div class='metric-label'>ROIC</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+   with col4:
+        Endividamento = multiplos['Indice_Endividamento'].values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{Endividamento:.2f}%</div>
+            <div class='metric-label'>Indice_Endividamento</div>
         </div>
         """, unsafe_allow_html=True)
     
@@ -577,11 +578,11 @@ if multiplos is not None and not multiplos.empty:
         """, unsafe_allow_html=True)
     
    with col8:
-        data = multiplos['P/L'].values[0]
+        pl = multiplos['P/L'].values[0]
         st.markdown(f"""
         <div class='metric-box'>
-            <div class='metric-value'>{data}</div>
-            <div class='metric-label'>Data</div>
+            <div class='metric-value'>{pl}</div>
+            <div class='metric-label'>P/L</div>
         </div>
         """, unsafe_allow_html=True)
 else:
