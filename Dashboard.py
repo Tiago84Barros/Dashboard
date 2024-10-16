@@ -228,23 +228,17 @@ st.markdown("""
 # Inserir campo para o usuário digitar o ticker
 col1, col2 = st.columns([4, 1])
 with col1:
-    # Verificar se o campo de busca está vazio e, se sim, limpar o `st.session_state`
-    if 'ticker' in st.session_state and not st.session_state.get('ticker_input'):
-        del st.session_state.ticker  # Remove o ticker da sessão se o campo foi apagado
+    # Capturar o valor do campo de busca e garantir que o estado seja atualizado
+    ticker_input = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input", value=st.session_state.get('ticker', '')).upper()
 
-    # Se houver um ticker definido via clique ou input, usá-lo como valor no campo de busca
-    ticker_input = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input").upper()
-
-    # Verificar se o campo de busca está vazio e limpar o `st.session_state` se for o caso
+    # Verificar se o campo de busca está vazio
     if ticker_input == "":
         if 'ticker' in st.session_state:
             del st.session_state.ticker  # Remove o ticker da sessão quando o campo é esvaziado
         ticker = None
     else:
-        # Verificar se o ticker foi digitado e atualizá-lo na sessão
-        ticker = ticker_input + ".SA" if ticker_input else None
-        if ticker_input:
-            st.session_state.ticker = ticker
+        ticker = ticker_input + ".SA"
+        st.session_state.ticker = ticker  # Salva o ticker no estado
 
 # Se nenhum ticker for inserido, exibir lista de tickers disponíveis por setor
 if not ticker:
@@ -264,6 +258,7 @@ if not ticker:
                     # Tornar o quadrado clicável para atualizar o campo de busca com o ticker
                     if st.button(f"{row['nome_empresa']}", key=row['ticker']):
                         st.session_state.ticker = row['ticker']  # Salva o ticker no estado
+                        st.experimental_rerun()  # Recarrega a página
 
                     # Exibir o layout do quadrado
                     st.markdown(f"""
