@@ -574,5 +574,5 @@ else:
     st.warning("Nenhum dado de múltiplos encontrado para o ticker informado.")
 
 # Exibir a tabela de indicadores no final
-st.write("## Tabela de Indicadores Financeiros")
+st.markdown("### Tabela de Indicadores")
 st.dataframe(df_indicadores)  # Mostra a tabela interativa no dashboard
