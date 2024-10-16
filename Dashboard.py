@@ -290,6 +290,8 @@ else:
     ticker = st.session_state.ticker
     indicadores = load_data_from_db(ticker)
     indicadores = indicadores.drop(columns=['Ticker'])
+    # Extraindo apenas o ano da coluna 'Data'
+    indicadores['Data'] = indicadores['Data'].dt.year
  
 # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________________________________
 
