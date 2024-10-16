@@ -518,73 +518,73 @@ if multiplos is not None and not multiplos.empty:
         <div class='metric-label'>Margem Líquida</div>
     </div>
     """, unsafe_allow_html=True)
-
-with col2:
-    roe = multiplos['ROE'].fillna(0).values[0]
-    st.markdown(f"""
-    <div class='metric-box'>
-        <div class='metric-value'>{roe:.2f}%</div>
-        <div class='metric-label'>ROE</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col3:
-    roic = multiplos['ROIC'].fillna(0).values[0]
-    st.markdown(f"""
-    <div class='metric-box'>
-        <div class='metric-value'>{roic:.2f}%</div>
-        <div class='metric-label'>ROIC</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col4:
-    endividamento = multiplos['Indice_Endividamento'].fillna(0).values[0]
-    st.markdown(f"""
-    <div class='metric-box'>
-        <div class='metric-value'>{endividamento:.2f}%</div>
-        <div class='metric-label'>Índice de Endividamento</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-col5, col6, col7, col8 = st.columns(4)
-
-with col5:
-    # Substituir NaN ou valores inexistentes por 0
-    dividend_yield = multiplos['Dividendo_Yield'].fillna(0).values[0]
-    # Exibir o Dividend Yield no dashboard
-    st.markdown(f"""
-    <div class='metric-box'>
-        <div class='metric-value'>{dividend_yield:.2f}%</div>
-        <div class='metric-label'>Dividend Yield</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col6:
-    pvp = multiplos['P/VP'].fillna(0).values[0]
-    st.markdown(f"""
-    <div class='metric-box'>
-        <div class='metric-value'>{pvp:.2f}</div>
-        <div class='metric-label'>P/VP</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col7:
-    payout = multiplos['Payout'].fillna(0).values[0]
-    st.markdown(f"""
-    <div class='metric-box'>
-        <div class='metric-value'>{payout:.2f}%</div>
-        <div class='metric-label'>Payout</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col8:
-    pl = multiplos['P/L'].fillna(0).values[0]
-    st.markdown(f"""
-    <div class='metric-box'>
-        <div class='metric-value'>{pl:.2f}</div>
-        <div class='metric-label'>P/L</div>
-    </div>
-    """, unsafe_allow_html=True)
+    
+    with col2:
+        roe = multiplos['ROE'].fillna(0).values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{roe:.2f}%</div>
+            <div class='metric-label'>ROE</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        roic = multiplos['ROIC'].fillna(0).values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{roic:.2f}%</div>
+            <div class='metric-label'>ROIC</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col4:
+        endividamento = multiplos['Indice_Endividamento'].fillna(0).values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{endividamento:.2f}%</div>
+            <div class='metric-label'>Índice de Endividamento</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    col5, col6, col7, col8 = st.columns(4)
+    
+    with col5:
+        # Substituir NaN ou valores inexistentes por 0
+        dividend_yield = multiplos['Dividendo_Yield'].fillna(0).values[0]
+        # Exibir o Dividend Yield no dashboard
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{dividend_yield:.2f}%</div>
+            <div class='metric-label'>Dividend Yield</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col6:
+        pvp = multiplos['P/VP'].fillna(0).values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{pvp:.2f}</div>
+            <div class='metric-label'>P/VP</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col7:
+        payout = multiplos['Payout'].fillna(0).values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{payout:.2f}%</div>
+            <div class='metric-label'>Payout</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col8:
+        pl = multiplos['P/L'].fillna(0).values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{pl:.2f}</div>
+            <div class='metric-label'>P/L</div>
+        </div>
+        """, unsafe_allow_html=True)
 
 else:
     st.warning("Nenhum dado de múltiplos encontrado para o ticker informado.")
