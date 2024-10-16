@@ -577,7 +577,7 @@ if multiplos is not None and not multiplos.empty:
         """, unsafe_allow_html=True)
     
    with col8:
-        data = multiplos['Data'].values[0]
+        data = multiplos['P/L'].values[0]
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{data}</div>
