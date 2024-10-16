@@ -289,7 +289,7 @@ else:
     # Se houver um ticker, continuar com a exibição normal das informações do ticker
     ticker = st.session_state.ticker
     indicadores = load_data_from_db(ticker)
-
+    indicadores = indicadores.drop(columns=['Ticker'])
  
 # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________________________________
 
