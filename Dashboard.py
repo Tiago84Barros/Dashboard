@@ -8,6 +8,14 @@ import numpy as np
 import sqlite3
 import os
 
+# Configurar a página como o primeiro comando
+st.set_page_config(page_title="Análise Básica de Ações", layout="wide")
+
+# Adicionar título ao cabeçalho _______________________________________________________________________________________________________________________________________________________________
+st.markdown("""
+    <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Básica de Ações</h1>
+""", unsafe_allow_html=True)
+
 # Função para obter a URL do logotipo a partir do repositório no GitHub ___________________________________________________________________________________________________________________________________________
 
 def get_logo_url(ticker):
@@ -29,12 +37,7 @@ def get_company_info(ticker):
         return info['longName'], info.get('website')  # Retorna o nome da empresa e o site
     except:
         return None, None
-
-# Adicionar título ao cabeçalho _______________________________________________________________________________________________________________________________________________________________
-st.markdown("""
-    <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Básica de Ações</h1>
-""", unsafe_allow_html=True)
-        
+      
 # Definir o layout da página ______________________________________________________________________________________________________________________________________________________________________________________
 
 st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
