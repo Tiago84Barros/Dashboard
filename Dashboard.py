@@ -32,11 +32,15 @@ def get_company_info(ticker):
       
 # Definir o layout da página ______________________________________________________________________________________________________________________________________________________________________________________
 
+# Definir o layout da página como o primeiro comando
 st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
 
-<h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Básica de Ações</h1>
+# Adicionar o título ao cabeçalho
+st.markdown("""
+    <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Básica de Ações</h1>
 """, unsafe_allow_html=True)
 
+# Adicionar o estilo CSS para personalizar a aparência da página
 st.markdown("""
     <style>
     /* Fundo da página */
@@ -110,6 +114,7 @@ st.markdown("""
     }
     </style>
 """, unsafe_allow_html=True)
+
 
 # Sidebar com ícones de navegação __________________________________________________________________________________________________________________________________________________________
 
