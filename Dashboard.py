@@ -282,14 +282,17 @@ else:
     # Se houver um ticker, continuar com a exibição normal das informações do ticker
     ticker = st.session_state.ticker
     indicadores = load_data_from_db(ticker)
-    if indicadores is not None:
+
+    # Verificar se indicadores foram carregados corretamente antes de acessar as colunas
+    if indicadores is not None and not indicadores.empty:
         # Exibir gráficos e indicadores do ticker selecionado
         st.markdown(f"### Informações do Ticker {ticker}")
-        # Exemplo de exibição de gráficos e métricas
-        st.write(f"Exibindo dados para {ticker}")
+        for column in indicadores.columns:
+            # Exemplo de exibição de gráficos e métricas
+            st.write(f"Indicador: {column}")
         # Adicionar o código para gráficos e métricas aqui
     else:
-        st.warning("Ticker não encontrado.")
+        st.warning("Nenhuma informação encontrada para o ticker selecionado.")
 
 # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________________________________
 
