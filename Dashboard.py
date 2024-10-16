@@ -473,6 +473,8 @@ def load_multiplos_from_db(ticker):
 
 # Carregar dados da tabela 'multiplos'
 multiplos = load_multiplos_from_db(ticker)
+st.markdown("### Tabela de Múltiplos")
+st.dataframe(multiplos)  # Mostra a tabela interativa no dashboard
 
 # Adicionar estilo CSS para os quadrados
 st.markdown("""
