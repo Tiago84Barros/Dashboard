@@ -228,17 +228,24 @@ st.markdown("""
 # Inserir campo para o usuário digitar o ticker
 col1, col2 = st.columns([4, 1])
 with col1:
-    # Capturar o valor do campo de busca e garantir que o estado seja atualizado
-    ticker_input = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input", value=st.session_state.get('ticker', '')).upper()
+    # Verificar se o campo de busca está vazio e se um ticker foi clicado
+    if 'ticker' in st.session_state:
+        ticker_input = st.text_input("Digite o ticker (ex: GMAT3)", value=st.session_state.ticker, key="ticker_input").upper()
+    else:
+        ticker_input = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input").upper()
 
-    # Verificar se o campo de busca está vazio
+    # Limpar o `st.session_state` quando o campo de busca está vazio e o usuário pressiona enter
     if ticker_input == "":
         if 'ticker' in st.session_state:
-            del st.session_state.ticker  # Remove o ticker da sessão quando o campo é esvaziado
-        ticker = None
+            del st.session_state.ticker  # Limpar o ticker da sessão quando o campo está vazio
+        ticker = None  # Para garantir que o layout renderize a lista de tickers
     else:
-        ticker = ticker_input + ".SA"
-        st.session_state.ticker = ticker  # Salva o ticker no estado
+        # Atualizar o ticker no session_state se o campo de busca for preenchido
+        if ticker_input:
+            ticker = ticker_input + ".SA"
+            st.session_state.ticker = ticker
+        else:
+            ticker = None
 
 # Se nenhum ticker for inserido, exibir lista de tickers disponíveis por setor
 if not ticker:
@@ -258,7 +265,6 @@ if not ticker:
                     # Tornar o quadrado clicável para atualizar o campo de busca com o ticker
                     if st.button(f"{row['nome_empresa']}", key=row['ticker']):
                         st.session_state.ticker = row['ticker']  # Salva o ticker no estado
-                        st.experimental_rerun()  # Recarrega a página
 
                     # Exibir o layout do quadrado
                     st.markdown(f"""
