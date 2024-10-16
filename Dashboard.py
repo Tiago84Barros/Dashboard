@@ -442,7 +442,7 @@ else:
 
 # Exibir a tabela de indicadores no final ____________________________________________________________________________________________________________________________________________________
 st.markdown("### Tabela de Indicadores")
-st.dataframe(df_indicadores)  # Mostra a tabela interativa no dashboard
+st.dataframe(indicadores)  # Mostra a tabela interativa no dashboard
  
 
 # Função para carregar os dados da tabela "multiplos" do banco de dados  ________________________________________________________________________________________________________________________________________________
