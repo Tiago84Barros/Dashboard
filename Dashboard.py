@@ -287,12 +287,16 @@ else:
     if indicadores is not None and not indicadores.empty:
         # Exibir gráficos e indicadores do ticker selecionado
         st.markdown(f"### Informações do Ticker {ticker}")
+        
+        # Adicionar loop para exibir as colunas dos indicadores
         for column in indicadores.columns:
-            # Exemplo de exibição de gráficos e métricas
             st.write(f"Indicador: {column}")
+            st.write(indicadores[column].head())  # Exibe os primeiros valores do indicador para demonstração
+
         # Adicionar o código para gráficos e métricas aqui
     else:
         st.warning("Nenhuma informação encontrada para o ticker selecionado.")
+
 
 # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________________________________
 
