@@ -234,12 +234,16 @@ with col1:
     else:
         ticker_input = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input").upper()
 
-    # Verificar se o ticker foi digitado e atualizá-lo na sessão
-    if ticker_input:
-        ticker = ticker_input + ".SA"
-        st.session_state.ticker = ticker
-    else:
+    # Verificar se o campo de busca está vazio e limpar o `st.session_state` se for o caso
+    if ticker_input == "":
+        if 'ticker' in st.session_state:
+            del st.session_state.ticker  # Remove o ticker da sessão se o campo foi apagado
         ticker = None
+    else:
+        # Verificar se o ticker foi digitado e atualizá-lo na sessão
+        ticker = ticker_input + ".SA" if ticker_input else None
+        if ticker_input:
+            st.session_state.ticker = ticker
 
 # Se nenhum ticker for inserido, exibir lista de tickers disponíveis por setor
 if not ticker:
