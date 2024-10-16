@@ -572,3 +572,13 @@ if multiplos is not None and not multiplos.empty:
         """, unsafe_allow_html=True)
 else:
     st.warning("Nenhum dado de múltiplos encontrado para o ticker informado.")
+
+# Exibindo os gráficos dos múltiplos (supondo que já foram criados antes)
+# Exemplo de gráficos com múltiplos
+st.title('Análise de Múltiplos Financeiros')
+
+# Outros gráficos e análises aqui...
+
+# Exibir a tabela de indicadores no final
+st.write("## Tabela de Indicadores Financeiros")
+st.dataframe(df_indicadores)  # Mostra a tabela interativa no dashboard
