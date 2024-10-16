@@ -291,7 +291,7 @@ else:
     indicadores = load_data_from_db(ticker)
 
     # Verificar se indicadores foram carregados corretamente antes de acessar as colunas
-   # if indicadores is not None and not indicadores.empty:
+    if indicadores is not None and not indicadores.empty:
         # Exibir gráficos e indicadores do ticker selecionado
        # st.markdown(f"### Informações do Ticker {ticker}")
         
