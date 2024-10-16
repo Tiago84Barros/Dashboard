@@ -34,6 +34,9 @@ def get_company_info(ticker):
 
 st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
 
+<h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Básica de Ações</h1>
+""", unsafe_allow_html=True)
+
 st.markdown("""
     <style>
     /* Fundo da página */
