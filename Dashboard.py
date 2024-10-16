@@ -263,7 +263,6 @@ if not ticker:
                     # Tornar o quadrado clicável para atualizar o campo de busca com o ticker
                     if st.button(f"{row['nome_empresa']}", key=row['ticker']):
                         st.session_state.ticker = row['ticker']  # Salva o ticker no estado
-                        st.experimental_rerun()  # Força a recarga imediata após o clique
 
                     # Exibir o layout do quadrado
                     st.markdown(f"""
