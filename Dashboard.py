@@ -115,7 +115,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-
 # Sidebar com ícones de navegação __________________________________________________________________________________________________________________________________________________________
 
 with st.sidebar:
@@ -124,7 +123,48 @@ with st.sidebar:
     st.markdown("## Básica")
     st.markdown("## Avançada")
     st.markdown("## Trading")
-   
+
+import streamlit as st
+
+# CSS para posicionar o botão de atualização no canto superior direito _____________________________________________________________________________________________________________________________________
+st.markdown("""
+    <style>
+    .button-container {
+        display: flex;
+        justify-content: flex-end;
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        z-index: 1;
+    }
+    .button-container button {
+        background-color: #4CAF50; /* Cor verde */
+        color: white;
+        padding: 10px 20px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+    .button-container button:hover {
+        background-color: #45a049; /* Tom de verde mais escuro ao passar o mouse */
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# Adicionando o botão dentro de um container HTML no canto superior direito
+st.markdown("""
+    <div class="button-container">
+        <form action="#">
+            <button type="submit">Atualizar dados</button>
+        </form>
+    </div>
+""", unsafe_allow_html=True)
+
+# Verifica se o botão foi clicado e atualiza os dados
+if st.button('Atualizar dados'):
+    st.cache_data.clear()  # Limpa o cache
+    st.experimental_rerun()  # Recarrega a aplicação
+
 
 # carregando o banco de dados _______________________________________________________________________________________________________________________________________________________________________________
 
