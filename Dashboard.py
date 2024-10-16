@@ -228,24 +228,22 @@ st.markdown("""
 # Inserir campo para o usuário digitar o ticker
 col1, col2 = st.columns([4, 1])
 with col1:
-    # Verificar se o campo de busca está vazio e se um ticker foi clicado
+    # Se houver um ticker definido via clique ou input, usá-lo como valor no campo de busca
     if 'ticker' in st.session_state:
-        ticker_input = st.text_input("Digite o ticker (ex: GMAT3)", value=st.session_state.ticker, key="ticker_input").upper()
+        ticker_input = st.text_input("Digite o ticker (ex: GMAT3)", value=st.session_state.ticker.split(".SA")[0], key="ticker_input").upper()
     else:
         ticker_input = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input").upper()
 
-    # Limpar o `st.session_state` quando o campo de busca está vazio e o usuário pressiona enter
+    # Verificar se o campo de busca está vazio e remover o ticker do session_state
     if ticker_input == "":
         if 'ticker' in st.session_state:
-            del st.session_state.ticker  # Limpar o ticker da sessão quando o campo está vazio
-        ticker = None  # Para garantir que o layout renderize a lista de tickers
+            del st.session_state['ticker']  # Remove o ticker do estado
+        ticker = None  # Garantir que o sistema retorne à lista de setores
     else:
-        # Atualizar o ticker no session_state se o campo de busca for preenchido
+        # Se houver input, atualizar o estado
+        ticker = ticker_input + ".SA" if ticker_input else None
         if ticker_input:
-            ticker = ticker_input + ".SA"
             st.session_state.ticker = ticker
-        else:
-            ticker = None
 
 # Se nenhum ticker for inserido, exibir lista de tickers disponíveis por setor
 if not ticker:
