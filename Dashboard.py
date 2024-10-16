@@ -186,7 +186,7 @@ def load_setores_from_db():
 # Carregar os setores
 setores = load_setores_from_db()
 
-# Adicionar estilo CSS para os blocos, com o logo à direita e as informações à esquerda, e altura fixa
+# Adicionar estilo CSS para os blocos, com o logo à direita e as informações à esquerda, e altura fixa ________________________________________________________________________________________
 st.markdown("""
     <style>
     .sector-box {
@@ -224,11 +224,16 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Inserir campo para o usuário digitar o ticker
+# Inserir campo para o usuário digitar o ticker ______________________________________________________________________________________________________________________________________________
 col1, col2 = st.columns([4, 1])
 with col1:
-    # Verificar se o usuário digitou um ticker manualmente
-    ticker_input = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input").upper()
+    # Verificar se o usuário digitou um ticker manualmente ou se veio de um clique no quadrado
+    if 'ticker_from_click' in st.session_state:
+        # Se o ticker foi obtido de um clique no quadrado, preenche o campo com ele
+        ticker_input = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input", value=st.session_state.ticker_from_click).upper()
+        del st.session_state.ticker_from_click  # Remove o estado após usar
+    else:
+        ticker_input = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input").upper()
 
     # Se o ticker_input está vazio e existia um ticker salvo, limpar o ticker da sessão
     if not ticker_input and 'ticker' in st.session_state:
@@ -243,7 +248,7 @@ with col1:
     else:
         ticker = None
 
-# Se nenhum ticker for inserido, exibir lista de tickers disponíveis por setor
+# Se nenhum ticker for inserido, exibir lista de tickers disponíveis por setor ________________________________________________________________________________________________________________
 if not ticker:
     st.markdown("### Selecione um Ticker")
 
@@ -258,9 +263,14 @@ if not ticker:
             for i, row in dados_setor.iterrows():
                 logo_url = get_logo_url(row['ticker'])  # Obter a URL do logotipo da empresa
                 with [col1, col2, col3][i % 3]:
-                    # Tornar o quadrado clicável para atualizar o ticker na sessão e usar query params
+                    # Tornar o quadrado clicável para atualizar o campo de busca com o ticker
+                    if st.button(f"Selecionar {row['nome_empresa']}", key=row['ticker']):
+                        st.session_state.ticker_from_click = row['ticker']  # Salva o ticker no estado
+                        st.experimental_rerun()  # Recarrega a página para simular o clique no Enter
+
+                    # Exibir o layout do quadrado
                     st.markdown(f"""
-                    <div class='sector-box' onclick="window.location.href='/?ticker={row['ticker']}'">
+                    <div class='sector-box'>
                         <div class='sector-info'>
                             <strong>{row['nome_empresa']}</strong><br>
                             Ticker: {row['ticker']}<br>
