@@ -228,24 +228,16 @@ st.markdown("""
 # Inserir campo para o usuário digitar o ticker
 col1, col2 = st.columns([4, 1])
 with col1:
-    # Verificar se o usuário digitou um ticker manualmente ou se veio de um clique no quadrado
-    if 'ticker_from_click' in st.session_state:
-        # Se o ticker foi obtido de um clique no quadrado, preenche o campo com ele
-        ticker_input = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input", value=st.session_state.ticker_from_click).upper()
-        del st.session_state.ticker_from_click  # Remove o estado após usar
+    # Se houver um ticker definido via clique, usá-lo como valor no campo de busca
+    if 'ticker' in st.session_state:
+        ticker_input = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input", value=st.session_state.ticker).upper()
     else:
         ticker_input = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input").upper()
-
-    # Se o ticker_input está vazio e existia um ticker salvo, limpar o ticker da sessão
-    if not ticker_input and 'ticker' in st.session_state:
-        del st.session_state.ticker  # Limpa o ticker da sessão quando o campo é esvaziado
 
     # Verificar se o ticker foi digitado e atualizá-lo na sessão
     if ticker_input:
         ticker = ticker_input + ".SA"
         st.session_state.ticker = ticker
-    elif 'ticker' in st.session_state:
-        ticker = st.session_state.ticker
     else:
         ticker = None
 
@@ -265,9 +257,8 @@ if not ticker:
                 logo_url = get_logo_url(row['ticker'])  # Obter a URL do logotipo da empresa
                 with [col1, col2, col3][i % 3]:
                     # Tornar o quadrado clicável para atualizar o campo de busca com o ticker
-                    if st.button(f"Selecionar {row['nome_empresa']}", key=row['ticker']):
-                        st.session_state.ticker_from_click = row['ticker']  # Salva o ticker no estado
-                        st.experimental_rerun()  # Recarrega a página para simular o clique no Enter
+                    if st.button(f"{row['nome_empresa']}", key=row['ticker']):
+                        st.session_state.ticker = row['ticker']  # Salva o ticker no estado
 
                     # Exibir o layout do quadrado
                     st.markdown(f"""
@@ -278,7 +269,23 @@ if not ticker:
                             Subsetor: {row['SUBSETOR']}<br>
                             Segmento: {row['SEGMENTO']}
                         </div>
-                        <img src='{logo_url}' class='sector-logo' alt
+                        <img src='{logo_url}' class='sector-logo' alt='Logo da empresa'>
+                    </div>
+                    """, unsafe_allow_html=True)
+    else:
+        st.warning("Nenhuma informação de setores encontrada.")
+else:
+    # Se houver um ticker, continuar com a exibição normal das informações do ticker
+    ticker = st.session_state.ticker
+    indicadores = load_data_from_db(ticker)
+    if indicadores is not None:
+        # Exibir gráficos e indicadores do ticker selecionado
+        st.markdown(f"### Informações do Ticker {ticker}")
+        # Exemplo de exibição de gráficos e métricas
+        st.write(f"Exibindo dados para {ticker}")
+        # Adicionar o código para gráficos e métricas aqui
+    else:
+        st.warning("Ticker não encontrado.")
 
 # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________________________________
 
