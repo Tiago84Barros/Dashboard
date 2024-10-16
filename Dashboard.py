@@ -290,6 +290,8 @@ else:
     ticker = st.session_state.ticker
     indicadores = load_data_from_db(ticker)
     indicadores = indicadores.drop(columns=['Ticker'])
+    # Convertendo a coluna 'Data' para o formato datetime, se ainda não estiver
+    indicadores['Data'] = pd.to_datetime(indicadores['Data'])
     # Extraindo apenas o ano da coluna 'Data'
     indicadores['Data'] = indicadores['Data'].dt.year
  
