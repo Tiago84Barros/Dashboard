@@ -624,7 +624,7 @@ if multiplos is not None and not multiplos.empty:
 
     # Coluna 7 - Payout
     with col7:
-        payout = multiplos['Payout'].fillna(0).values[0]
+        payout = (multiplos['Payout'].fillna(0).values[0])*100
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{payout:.2f}%</div>
