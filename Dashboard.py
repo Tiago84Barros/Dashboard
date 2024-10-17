@@ -384,11 +384,25 @@ for column in indicadores.columns:
 # Da algumas informações referentes a empresa no momento da escolha do ticker _____________________________________________________________________________________________________________________________________________________________________
 
 if ticker:
+
+    # Função para obter o preço da ação em tempo real
+    def get_current_price(ticker):
+        try:
+            stock = yf.Ticker(ticker)
+            todays_data = stock.history(period='1d')
+            return todays_data['Close'][0]  # Retorna o preço de fechamento do último dia
+        except Exception as e:
+            st.error(f"Erro ao obter o preço da ação: {e}")
+            return None
+            
     # Buscar informações da empresa e verificar se existe
     company_name, company_website = get_company_info(ticker)
+
+    # Obter o preço atual da ação
+    current_price = get_current_price(ticker)
     
     if company_name:
-        st.subheader(f"{company_name}")
+       st.subheader(f"{company_name} - Preço Atual: R$ {current_price:.2f}")
         # Buscar o logotipo usando a URL do repositório
         logo_url = get_logo_url(ticker)
         
@@ -554,13 +568,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 if multiplos is not None and not multiplos.empty:
-
-    # Obtenha o preço da ação
-    acao = yf.Ticker(ticker)
-    
-    # Obter o preço do último dia disponível
-    preco_hoje = acao.history(period='1d')['Close'][0]
-    
+      
     # Exibir múltiplos em "quadrados"
     st.markdown("### Indicadores Financeiros")
     
@@ -611,7 +619,7 @@ if multiplos is not None and not multiplos.empty:
 
     # Coluna 5 - Dividend Yield
     with col5:
-        dividend_yield = (multiplos['Dividendo_Yield'].fillna(0).values[0])/preco_hoje
+        dividend_yield = (multiplos['Dividendo_Yield'].fillna(0).values[0])/current_price
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{dividend_yield:.2f}%</div>
@@ -621,7 +629,7 @@ if multiplos is not None and not multiplos.empty:
 
     # Coluna 6 - P/VP
     with col6:
-        pvp = preco_hoje/multiplos['P/VP'].fillna(0).values[0]
+        pvp = current_price/multiplos['P/VP'].fillna(0).values[0]
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{pvp:.2f}</div>
@@ -641,7 +649,7 @@ if multiplos is not None and not multiplos.empty:
 
     # Coluna 8 - P/L
     with col8:
-        pl = preco_hoje/multiplos['P/L'].fillna(0).values[0]
+        pl = current_price/multiplos['P/L'].fillna(0).values[0]
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{pl:.2f}</div>
