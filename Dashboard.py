@@ -554,6 +554,13 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 if multiplos is not None and not multiplos.empty:
+
+    # Obtenha o preço da ação
+    acao = yf.Ticker(ticker)
+    
+    # Obter o preço do último dia disponível
+    preco_hoje = acao.history(period='1d')['Close'][0]
+    
     # Exibir múltiplos em "quadrados"
     st.markdown("### Indicadores Financeiros")
     
@@ -604,7 +611,7 @@ if multiplos is not None and not multiplos.empty:
 
     # Coluna 5 - Dividend Yield
     with col5:
-        dividend_yield = multiplos['Dividendo_Yield'].fillna(0).values[0]
+        dividend_yield = (multiplos['Dividendo_Yield'].fillna(0).values[0])/preco_hoje
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{dividend_yield:.2f}%</div>
@@ -614,7 +621,7 @@ if multiplos is not None and not multiplos.empty:
 
     # Coluna 6 - P/VP
     with col6:
-        pvp = multiplos['P/VP'].fillna(0).values[0]
+        pvp = preco_hoje/multiplos['P/VP'].fillna(0).values[0]
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{pvp:.2f}</div>
@@ -634,7 +641,7 @@ if multiplos is not None and not multiplos.empty:
 
     # Coluna 8 - P/L
     with col8:
-        pl = multiplos['P/L'].fillna(0).values[0]
+        pl = preco_hoje/multiplos['P/L'].fillna(0).values[0]
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{pl:.2f}</div>
