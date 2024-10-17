@@ -594,7 +594,7 @@ if multiplos is not None and not multiplos.empty:
         endividamento = multiplos['Indice_Endividamento'].fillna(0).values[0]
         st.markdown(f"""
         <div class='metric-box'>
-            <div class='metric-value'>{endividamento:.2f}%</div>
+            <div class='metric-value'>{endividamento:.2f}</div>
             <div class='metric-label'>Índice de Endividamento</div>
         </div>
         """, unsafe_allow_html=True)
