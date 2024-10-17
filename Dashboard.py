@@ -418,20 +418,40 @@ if ticker:
   
 # Mostrar Métricas Resumidas ____________________________________________________________________________________________________________________________________________________________________________
 
-st.markdown("## Visão Geral (CAGR)")
+# Adicionar estilo CSS para criar quadrados para o CAGR
+st.markdown("""
+    <style>
+    .cagr-box {
+        border: 1px solid #ddd;
+        padding: 20px;
+        border-radius: 10px;
+        margin-bottom: 10px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100px;  /* Definindo a altura do bloco */
+        width: 100%;  /* Largura completa */
+        text-align: center;
+        font-size: 20px;
+        font-weight: bold;
+        color: #333;
+        background-color: #f9f9f9;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# Exibir os valores do CAGR em quadrados
+st.markdown("### Visão Geral (CAGR)")
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    receita_liquida_cagr = cagrs.get('Receita_Liquida')
-    st.metric(label="CAGR Receita Líquida", value=f"{receita_liquida_cagr:.2%}" if receita_liquida_cagr else "-")
+     st.markdown(f"<div class='cagr-box'>CAGR Receita Líquida: {cagrs['Receita_Liquida']:.2%}</div>", unsafe_allow_html=True)
 
 with col2:
-    lucro_liquido_cagr = cagrs.get('Lucro_Liquido')
-    st.metric(label="CAGR Lucro Líquido", value=f"{lucro_liquido_cagr:.2%}" if lucro_liquido_cagr else "-")
+     st.markdown(f"<div class='cagr-box'>CAGR Lucro Líquido: {cagrs['Lucro_Liquido']:.2%}</div>", unsafe_allow_html=True)lse "-")
 
 with col3:
-    dividendos_cagr = cagrs.get('Dividendos')
-    st.metric(label="CAGR Dividendos", value=f"{dividendos_cagr:.2%}" if dividendos_cagr else "-")
+     st.markdown(f"<div class='cagr-box'>CAGR Dividendos: {cagrs['Dividendos']:.2%}</div>", unsafe_allow_html=True)
 
 
 # Seletor para escolher quais variáveis visualizar no gráfico _______________________________________________________________________________________________________________________________________
