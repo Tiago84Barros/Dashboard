@@ -402,7 +402,7 @@ if ticker:
     current_price = get_current_price(ticker)
     
     if company_name:
-       st.subheader(f"{company_name} - Preço Atual: R$ {current_price:.2f}")
+        st.subheader(f"{company_name} - Preço Atual: R$ {current_price:.2f}")
         # Buscar o logotipo usando a URL do repositório
         logo_url = get_logo_url(ticker)
         
