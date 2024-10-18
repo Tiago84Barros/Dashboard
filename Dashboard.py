@@ -385,7 +385,7 @@ for column in indicadores.columns:
 
 if ticker:
     # Mostrar o valor do ticker inserido
-    st.write(f"Ticker inserido: {ticker_input}")
+    st.write(f"Ticker inserido: {ticker}")
 
     def get_price(ticker):
        try:
