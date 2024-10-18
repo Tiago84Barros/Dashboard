@@ -385,7 +385,8 @@ for column in indicadores.columns:
 
 if ticker:
 
-    def get_stock_price(ticker):
+    def get_price(ticker):
+        st.markdown(ticker)
        try:
             # Usar yfinance para obter o preço da ação
             stock = yf.Ticker(ticker)
@@ -406,7 +407,7 @@ if ticker:
     company_name, company_website = get_company_info(ticker)
 
     # Obter o preço atual da ação
-    current_price = get_stock_price(ticker)
+    current_price = get_price(ticker)
     
     if company_name:
         if current_price is not None:
