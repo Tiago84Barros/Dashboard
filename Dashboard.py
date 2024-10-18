@@ -406,7 +406,7 @@ if ticker:
     company_name, company_website = get_company_info(ticker)
 
     # Obter o preço atual da ação
-    current_price = get_current_price(ticker)
+    current_price = get_stock_price(ticker)
     
     if company_name:
         st.subheader(f"{company_name} - Preço Atual: R$ {current_price:.2f}")
