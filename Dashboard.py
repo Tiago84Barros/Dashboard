@@ -395,7 +395,7 @@ if ticker:
             # Verificar se a consulta retornou dados
             if price_data.empty:
                 raise ValueError("Nenhum dado disponível para o ticker solicitado.")
-    
+            
             current_price = price_data['Close'].iloc[0]  # Obtém o preço de fechamento mais recente
             return current_price
         except Exception as e:
