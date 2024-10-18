@@ -384,9 +384,10 @@ for column in indicadores.columns:
 # Da algumas informações referentes a empresa no momento da escolha do ticker _____________________________________________________________________________________________________________________________________________________________________
 
 if ticker:
+    # Mostrar o valor do ticker inserido
+    st.write(f"Ticker inserido: {ticker_input}")
 
     def get_price(ticker):
-        st.markdown(ticker)
        try:
             # Usar yfinance para obter o preço da ação
             stock = yf.Ticker(ticker)
