@@ -398,7 +398,7 @@ if ticker:
             else:
                 return None
 
-        except Exception as e:
+       except Exception as e:
             st.error(f"Erro ao obter o preço da ação: {e}")
             return None
             
