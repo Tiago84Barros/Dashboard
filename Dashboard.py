@@ -392,6 +392,9 @@ if ticker:
             # Usar yfinance para obter o preço da ação
             stock = yf.Ticker(ticker)
             stock_info = stock.history(period="1d")  # Obter dados do último dia
+
+            # Exibir o conteúdo de stock_info para ver o que está sendo retornado
+            st.write("Dados retornados pelo yfinance:", stock_info)
     
             # Verificar se existe o preço de fechamento ('Close')
             if not stock_info.empty:
