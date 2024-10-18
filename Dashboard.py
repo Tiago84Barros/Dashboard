@@ -126,7 +126,7 @@ with st.sidebar:
 
 import streamlit as st
 
-# CSS para posicionar o botão de atualização no canto superior direito _____________________________________________________________________________________________________________________________________
+# CSS para posicionar o botão de atualização no canto superior direito __________________________________________________________________________________________________________________________________________________________________________________________
 st.markdown("""
     <style>
     .button-container {
@@ -234,7 +234,7 @@ def load_setores_from_db():
 # Carregar os setores
 setores = load_setores_from_db()
 
-# Adicionar estilo CSS para os blocos, com o logo à direita e as informações à esquerda, e altura fixa ________________________________________________________________________________________
+# Adicionar estilo CSS para os blocos, com o logo à direita e as informações à esquerda, e altura fixa ___________________________________________________________________________________________________________________________________________________________________________________________
 st.markdown("""
     <style>
     .sector-box {
