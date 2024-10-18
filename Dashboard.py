@@ -409,7 +409,10 @@ if ticker:
     current_price = get_stock_price(ticker)
     
     if company_name:
-        st.subheader(f"{company_name} - Preço Atual: R$ {current_price:.2f}")
+        if current_price is not None:
+            st.subheader(f"{company_name} - Preço Atual: R$ {current_price:.2f}")
+        else:
+            st.error("Não foi possível obter o preço da ação.")
         # Buscar o logotipo usando a URL do repositório
         logo_url = get_logo_url(ticker)
         
