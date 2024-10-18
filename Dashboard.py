@@ -385,12 +385,19 @@ for column in indicadores.columns:
 
 if ticker:
 
-    # Função para obter o preço da ação em tempo real
-    def get_current_price(ticker):
+    def get_stock_price(ticker):
         try:
+            # Usar yfinance para obter o preço da ação
             stock = yf.Ticker(ticker)
-            todays_data = stock.history(period='1d')
-            return todays_data['Close'][0]  # Retorna o preço de fechamento do último dia
+            # O preço da ação é extraído dos dados de preço atuais
+            price_data = stock.history(period="1d")
+            
+            # Verificar se a consulta retornou dados
+            if price_data.empty:
+                raise ValueError("Nenhum dado disponível para o ticker solicitado.")
+    
+            current_price = price_data['Close'].iloc[0]  # Obtém o preço de fechamento mais recente
+            return current_price
         except Exception as e:
             st.error(f"Erro ao obter o preço da ação: {e}")
             return None
