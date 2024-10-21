@@ -616,8 +616,18 @@ if multiplos is not None and not multiplos.empty:
         </div>
         """, unsafe_allow_html=True)
 
-    # Coluna 2 - ROE
-    with col2:
+    # Coluna 2 - Margem Operacional
+    with col1:
+        margem_Operacional = multiplos['Margem_Operacional'].fillna(0).values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{margem_Operacional:.2f}%</div>
+            <div class='metric-label'>Margem Operacional</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Coluna 3 - ROE
+    with col3:
         roe = multiplos['ROE'].fillna(0).values[0]
         st.markdown(f"""
         <div class='metric-box'>
@@ -626,7 +636,7 @@ if multiplos is not None and not multiplos.empty:
         </div>
         """, unsafe_allow_html=True)
 
-    # Coluna 3 - ROIC
+    # Coluna 4 - ROIC
     with col3:
         roic = multiplos['ROIC'].fillna(0).values[0]
         st.markdown(f"""
@@ -636,20 +646,32 @@ if multiplos is not None and not multiplos.empty:
         </div>
         """, unsafe_allow_html=True)
 
-    # Coluna 4 - Índice de Endividamento
-    with col4:
-        endividamento = multiplos['Indice_Endividamento'].fillna(0).values[0]
+     # Segunda linha de colunas
+    col5, col6, col7, col8 = st.columns(4)
+
+    # Coluna 4 - Endividamento Total
+    with col5:
+        endividamento_total = multiplos['Endividamento_Total'].fillna(0).values[0]
         st.markdown(f"""
         <div class='metric-box'>
-            <div class='metric-value'>{endividamento:.2f}</div>
+            <div class='metric-value'>{endividamento_total:.2f}</div>
+            <div class='metric-label'>Endividamento Total</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+     # Coluna 5 - Índice de Endividamento sobre o Patrimônio Líquido
+    with col5:
+        Indice_endividamento = multiplos['Indice_Endividamento'].fillna(0).values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{Indice_endividamento:.2f}</div>
             <div class='metric-label'>Índice de Endividamento</div>
         </div>
         """, unsafe_allow_html=True)
 
-    # Segunda linha de colunas
-    col5, col6, col7, col8 = st.columns(4)
+   
 
-    # Coluna 5 - Dividend Yield
+    # Coluna 6 - Dividend Yield
     with col5:
         dividend_yield = (multiplos['Dividendo_Yield'].fillna(0).values[0])/current_price
         st.markdown(f"""
