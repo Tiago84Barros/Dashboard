@@ -608,7 +608,7 @@ if multiplos is not None and not multiplos.empty:
 
     # Coluna 1 - Margem Líquida
     with col1:
-        margem_liquida = multiplos['Margem_Líquida'].fillna(0).values[0]
+        margem_liquida = multiplos['Margem_Liquida'].fillna(0).values[0]
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{margem_liquida:.2f}%</div>
