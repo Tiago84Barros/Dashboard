@@ -682,7 +682,7 @@ if multiplos is not None and not multiplos.empty:
    
     # Coluna 8: Líquidez Corrente
     with col7:
-        Liquidez_Corrente = multiplos['Liquidez_Corrente'].fillna(0).values[0]
+        Liquidez_Corrente = multiplos['Liquidez-Corrente'].fillna(0).values[0]
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{Liquidez_Corrente:.2f}</div>
