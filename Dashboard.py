@@ -637,7 +637,7 @@ if multiplos is not None and not multiplos.empty:
         """, unsafe_allow_html=True)
 
     # Coluna 4 - ROIC
-    with col3:
+    with col4:
         roic = multiplos['ROIC'].fillna(0).values[0]
         st.markdown(f"""
         <div class='metric-box'>
@@ -659,13 +659,13 @@ if multiplos is not None and not multiplos.empty:
         </div>
         """, unsafe_allow_html=True)
 
-     # Coluna 6 - Índice de Endividamento sobre o Patrimônio Líquido
+     # Coluna 6 - Alavancagem Financeira sobre o Patrimônio Líquido
     with col6:
-        Indice_endividamento = multiplos['Indice_Endividamento'].fillna(0).values[0]
+        alavancagem_financeira = multiplos['Alavancagem_Financeira'].fillna(0).values[0]
         st.markdown(f"""
         <div class='metric-box'>
-            <div class='metric-value'>{Indice_endividamento:.2f}</div>
-            <div class='metric-label'>Índice de Endividamento</div>
+            <div class='metric-value'>{alavancagem_financeira:.2f}</div>
+            <div class='metric-label'>Alavancagem Financeira</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -681,12 +681,12 @@ if multiplos is not None and not multiplos.empty:
 
    
     # Coluna 8: Líquidez Corrente
-    with col7:
-        Liquidez_Corrente = multiplos['Liquidez-Corrente'].fillna(0).values[0]
+    with col8:
+        Liquidez_Corrente = multiplos['Liquidez_Corrente'].fillna(0).values[0]
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{Liquidez_Corrente:.2f}</div>
-            <div class='metric-label'>Dívida Líquida</div>
+            <div class='metric-label'>Liquidez Corrente</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -695,7 +695,7 @@ if multiplos is not None and not multiplos.empty:
 
     # Coluna 9 - Dividend Yield
     with col9:
-        dividend_yield = (multiplos['Dividendo_Yield'].fillna(0).values[0])/current_price
+        dividend_yield = (multiplos['DY'].fillna(0).values[0])/current_price
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{dividend_yield:.2f}%</div>
