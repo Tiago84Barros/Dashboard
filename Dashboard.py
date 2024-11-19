@@ -334,29 +334,35 @@ else:
 # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________________________________
 
 def calculate_cagr(df, column):
-
-   try:
+    try:
         # Verificando se a coluna 'Data' existe e está no formato correto
         if 'Data' not in df.columns:
             raise ValueError("A coluna 'Data' não foi encontrada no DataFrame.")
-        
+
         df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
 
         # Verificar se houve falha na conversão de datas
         if df['Data'].isnull().any():
             raise ValueError("A coluna 'Data' contém valores inválidos que não puderam ser convertidos para data.")
 
-        # Valores inicial e final da coluna de interesse
-        initial_value = df.iloc[0][column]
-        final_value = df.iloc[-1][column]
+        # Verificar se a coluna está vazia ou possui apenas valores nulos
+        if df[column].isnull().all():
+            raise ValueError(f"A coluna '{column}' está vazia ou contém apenas valores nulos.")
 
-        # Calculando o número de anos (diferenca de tempo em anos)
-        num_years = (df['Data'].iloc[-1] - df['Data'].iloc[0]).days / 365.25
+        # Valores inicial e final da coluna de interesse
+        initial_value = df[column].iloc[0]
+        final_value = df[column].iloc[-1]
 
         # Verificando possíveis erros nos valores
         if initial_value == 0:
             raise ValueError(f"Valor inicial do indicador '{column}' é zero. Não é possível calcular CAGR.")
         
+        if final_value == 0:
+            raise ValueError(f"Valor final do indicador '{column}' é zero. Não é possível calcular CAGR.")
+
+        # Calculando o número de anos (diferença de tempo em anos)
+        num_years = (df['Data'].iloc[-1] - df['Data'].iloc[0]).days / 365.25
+
         if num_years <= 0 or pd.isna(num_years):
             raise ValueError(f"O número de anos calculado é inválido: {num_years}. Verifique as datas fornecidas.")
 
@@ -364,22 +370,23 @@ def calculate_cagr(df, column):
         cagr = (final_value / initial_value) ** (1 / num_years) - 1
         return cagr
 
-   except Exception as e:
-        st.error(f"Erro ao calcular o CAGR: {e}")
+    except Exception as e:
+        st.error(f"Erro ao calcular o CAGR para '{column}': {e}")
         return np.nan  # Retorna NaN em caso de erro
+
 
 # Calcular o CAGR para cada indicador
 cagrs = {}
+
 for column in indicadores.columns:
-    if column != 'Data' and not (indicadores[column] == 0).all():
-        try:
+    if column != 'Data':  # Ignorar a coluna de datas
+        # Checar se há dados suficientes para cálculo
+        col_data = indicadores[column]
+        if col_data.isnull().all() or (col_data == 0).all():
+            cagrs[column] = None  # Ignorar colunas inválidas
+        else:
             cagr = calculate_cagr(indicadores, column)
             cagrs[column] = cagr
-        except Exception as e:
-            cagrs[column] = None  # Atribui None caso ocorra erro no cálculo do CAGR
-    else:
-        cagrs[column] = None  # Se todos os valores forem zero, atribui None
-
     
 # Da algumas informações referentes a empresa no momento da escolha do ticker _____________________________________________________________________________________________________________________________________________________________________
 
@@ -565,7 +572,7 @@ multiplos = load_multiplos_from_db(ticker)
 st.markdown("### Tabela de Múltiplos")
 st.dataframe(multiplos)  # Mostra a tabela interativa no dashboard
 
-# Adicionar estilo CSS para os quadrados
+# Adicionar estilo CSS para os quadrados que apresentaram os múltiplos _________________________________________________________________________________________________________________
 st.markdown("""
     <style>
     /* Estilo dos quadrados de métricas */
