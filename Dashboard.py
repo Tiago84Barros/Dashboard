@@ -708,12 +708,12 @@ if multiplos is not None and not multiplos.empty:
                 st.error("O preço atual não pode ser zero.")
         else:
             st.error("Não foi possível calcular o Dividend Yield devido a dados insuficientes.")
-                st.markdown(f"""
-                <div class='metric-box'>
-                    <div class='metric-value'>{dividend_yield:.2f}%</div>
-                    <div class='metric-label'>Dividend Yield</div>
-                </div>
-                """, unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{dividend_yield:.2f}%</div>
+            <div class='metric-label'>Dividend Yield</div>
+        </div>
+        """, unsafe_allow_html=True)
 
     # Coluna 10 - P/VP
     with col10:
