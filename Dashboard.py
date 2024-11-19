@@ -698,13 +698,22 @@ if multiplos is not None and not multiplos.empty:
 
     # Coluna 9 - Dividend Yield
     with col9:
-        dividend_yield = ( 100*(multiplos['DY'].fillna(0).values[0])/current_price)
-        st.markdown(f"""
-        <div class='metric-box'>
-            <div class='metric-value'>{dividend_yield:.2f}%</div>
-            <div class='metric-label'>Dividend Yield</div>
-        </div>
-        """, unsafe_allow_html=True)
+        if 'DY' in multiplos.columns and not multiplos['DY'].isna().all():
+            try:
+                dy_value = multiplos['DY'].fillna(0).values[0]
+                dividend_yield = (100 * dy_value / current_price)
+            except IndexError:
+                st.error("Índice fora do alcance ao acessar o valor de 'DY'.")
+            except ZeroDivisionError:
+                st.error("O preço atual não pode ser zero.")
+        else:
+            st.error("Não foi possível calcular o Dividend Yield devido a dados insuficientes.")
+                st.markdown(f"""
+                <div class='metric-box'>
+                    <div class='metric-value'>{dividend_yield:.2f}%</div>
+                    <div class='metric-label'>Dividend Yield</div>
+                </div>
+                """, unsafe_allow_html=True)
 
     # Coluna 10 - P/VP
     with col10:
