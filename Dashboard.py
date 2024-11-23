@@ -706,7 +706,7 @@ if multiplos is not None and not multiplos.empty:
     # Coluna 9 - Dividend Yield
     with col9:
         if 'DY' in multiplos.columns and not multiplos['DY'].isna().all():
-            dividend_yield = (100 * dy_value / current_price)
+            dividend_yield = (100 * DY / current_price)
          
         st.markdown(f"""
         <div class='metric-box'>
