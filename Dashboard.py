@@ -707,8 +707,12 @@ if multiplos is not None and not multiplos.empty:
     with col9:
         if 'DY' in multiplos.columns and not multiplos['DY'].isna().all():
             try:
-                dy_value = multiplos['DY'].fillna(0).values[0]
-                dividend_yield = (100 * dy_value / current_price)
+                if dy_value is None or current_price is None:
+                    st.error("Valores não definidos para dy_value ou current_price")
+                elif not isinstance(dy_value, (int, float)) or not isinstance(current_price, (int, float)):
+                    st.error("dy_value ou current_price não são números")
+                else:
+                    dividend_yield = (100 * dy_value / current_price)
             except IndexError:
                 st.error("Índice fora do alcance ao acessar o valor de 'DY'.")
             except ZeroDivisionError:
