@@ -656,52 +656,8 @@ if multiplos is not None and not multiplos.empty:
      # Segunda linha de colunas
     col5, col6, col7, col8 = st.columns(4)
 
-    # Coluna 5 - Endividamento Total
+    # Coluna 5 - Dividend Yield
     with col5:
-        endividamento_total = multiplos['Endividamento_Total'].fillna(0).values[0]
-        st.markdown(f"""
-        <div class='metric-box'>
-            <div class='metric-value'>{endividamento_total:.2f}</div>
-            <div class='metric-label'>Endividamento Total</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-     # Coluna 6 - Alavancagem Financeira sobre o Patrimônio Líquido
-    with col6:
-        alavancagem_financeira = multiplos['Alavancagem_Financeira'].fillna(0).values[0]
-        st.markdown(f"""
-        <div class='metric-box'>
-            <div class='metric-value'>{alavancagem_financeira:.2f}</div>
-            <div class='metric-label'>Alavancagem Financeira</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-     # Coluna 7 - Dívida Líquida
-    with col7:
-        Divida_Liquida = multiplos['Divida_Liquida'].fillna(0).values[0]
-        st.markdown(f"""
-        <div class='metric-box'>
-            <div class='metric-value'>{Divida_Liquida:.2f}</div>
-            <div class='metric-label'>Dívida Líquida</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-   
-    # Coluna 8: Líquidez Corrente
-    with col8:
-        Liquidez_Corrente = multiplos['Liquidez_Corrente'].fillna(0).values[0]
-        st.markdown(f"""
-        <div class='metric-box'>
-            <div class='metric-value'>{Liquidez_Corrente:.2f}</div>
-            <div class='metric-label'>Liquidez Corrente</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # Terceira linha de colunas
-    col9, col10, col11, col12 = st.columns(4)
-
-    # Coluna 9 - Dividend Yield
-    with col9:
         dividend_yield = (100 * multiplos['DY'].fillna(0).values[0 ]/ current_price)
         st.markdown(f"""
         <div class='metric-box'>
@@ -710,8 +666,8 @@ if multiplos is not None and not multiplos.empty:
         </div>
         """, unsafe_allow_html=True)
 
-    # Coluna 10 - P/VP
-    with col10:
+    # Coluna 6 - P/VP
+    with col6:
         pvp = current_price/multiplos['P/VP'].fillna(0).values[0]
         st.markdown(f"""
         <div class='metric-box'>
@@ -720,8 +676,8 @@ if multiplos is not None and not multiplos.empty:
         </div>
         """, unsafe_allow_html=True)
 
-    # Coluna 11 - Payout
-    with col11:
+    # Coluna 07 - Payout
+    with col07:
         payout = (multiplos['Payout'].fillna(0).values[0])*100
         st.markdown(f"""
         <div class='metric-box'>
@@ -730,8 +686,8 @@ if multiplos is not None and not multiplos.empty:
         </div>
         """, unsafe_allow_html=True)
 
-    # Coluna 12 - P/L
-    with col12:
+    # Coluna 08 - P/L
+    with col08:
         pl = current_price/multiplos['P/L'].fillna(0).values[0]
         st.markdown(f"""
         <div class='metric-box'>
@@ -740,6 +696,39 @@ if multiplos is not None and not multiplos.empty:
         </div>
         """, unsafe_allow_html=True)
 
+
+    # Terceira linha de colunas
+    col9, col10, col11, col12 = st.columns(4)
+    # Coluna 09 - Endividamento Total
+    with col9:
+        endividamento_total = multiplos['Endividamento_Total'].fillna(0).values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{endividamento_total:.2f}</div>
+            <div class='metric-label'>Endividamento Total</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+     # Coluna 10 - Alavancagem Financeira sobre o Patrimônio Líquido
+    with col10:
+        alavancagem_financeira = multiplos['Alavancagem_Financeira'].fillna(0).values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{alavancagem_financeira:.2f}</div>
+            <div class='metric-label'>Alavancagem Financeira</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+     
+    # Coluna 11: Líquidez Corrente
+    with col11:
+        Liquidez_Corrente = multiplos['Liquidez_Corrente'].fillna(0).values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{Liquidez_Corrente:.2f}</div>
+            <div class='metric-label'>Liquidez Corrente</div>
+        </div>
+        """, unsafe_allow_html=True)
 
 else:
     st.warning("Nenhum dado de múltiplos encontrado para o ticker informado.")
