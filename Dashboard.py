@@ -677,7 +677,7 @@ if multiplos is not None and not multiplos.empty:
         """, unsafe_allow_html=True)
 
     # Coluna 07 - Payout
-    with col07:
+    with col7:
         payout = (multiplos['Payout'].fillna(0).values[0])*100
         st.markdown(f"""
         <div class='metric-box'>
@@ -687,7 +687,7 @@ if multiplos is not None and not multiplos.empty:
         """, unsafe_allow_html=True)
 
     # Coluna 08 - P/L
-    with col08:
+    with col8:
         pl = current_price/multiplos['P/L'].fillna(0).values[0]
         st.markdown(f"""
         <div class='metric-box'>
