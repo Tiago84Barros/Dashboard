@@ -706,19 +706,8 @@ if multiplos is not None and not multiplos.empty:
     # Coluna 9 - Dividend Yield
     with col9:
         if 'DY' in multiplos.columns and not multiplos['DY'].isna().all():
-            try:
-                if dy_value is None or current_price is None:
-                    st.error("Valores não definidos para dy_value ou current_price")
-                elif not isinstance(dy_value, (int, float)) or not isinstance(current_price, (int, float)):
-                    st.error("dy_value ou current_price não são números")
-                else:
-                    dividend_yield = (100 * dy_value / current_price)
-            except IndexError:
-                st.error("Índice fora do alcance ao acessar o valor de 'DY'.")
-            except ZeroDivisionError:
-                st.error("O preço atual não pode ser zero.")
-        else:
-            st.error("Não foi possível calcular o Dividend Yield devido a dados insuficientes.")
+            dividend_yield = (100 * dy_value / current_price)
+         
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{dividend_yield:.2f}%</div>
