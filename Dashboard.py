@@ -705,7 +705,7 @@ if multiplos is not None and not multiplos.empty:
 
     # Coluna 9 - Dividend Yield
     with col9:
-        dividend_yield = (100 * DY / current_price)
+        dividend_yield = (100 * multiplos['DY'].fillna(0).values[0 ]/ current_price)
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{dividend_yield:.2f}%</div>
