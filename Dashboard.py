@@ -371,7 +371,7 @@ def calculate_cagr(df, column):
         return cagr
 
     except Exception as e:
-        st.error(f"Erro ao calcular o CAGR para '{column}': {e}")
+        #st.error(f"Erro ao calcular o CAGR para '{column}': {e}")
         return np.nan  # Retorna NaN em caso de erro
 
 
