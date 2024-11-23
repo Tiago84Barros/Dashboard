@@ -470,11 +470,8 @@ with col2:
     st.markdown(f"<div class='cagr-box'>Lucro Líquido: {cagrs['Lucro_Liquido']:.2%}</div>", unsafe_allow_html=True)
 
 with col3:
-    if pd.notna(cagrs['Dividendos']) and isinstance(cagrs['Dividendos'], (int, float)):
-        st.markdown(f"<div class='cagr-box'>Dividendos: {cagrs['Dividendos']:.2%}</div>", unsafe_allow_html=True)
-    else:
-        st.markdown(f"<div class='cagr-box'>Dividendos: N/A</div>", unsafe_allow_html=True)
-
+    st.markdown(f"<div class='cagr-box'>Dividendos: {cagrs['Patrimonio_Liquido']:.2%}</div>", unsafe_allow_html=True)
+ 
 
 # Seletor para escolher quais variáveis visualizar no gráfico _______________________________________________________________________________________________________________________________________
 
