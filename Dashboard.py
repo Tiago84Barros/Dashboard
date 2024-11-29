@@ -473,7 +473,67 @@ with col3:
     st.markdown(f"<div class='cagr-box'>Patrimônio Líquido: {cagrs['Patrimonio_Liquido']:.2%}</div>", unsafe_allow_html=True)
  
 
-# Seletor para escolher quais variáveis visualizar no gráfico _______________________________________________________________________________________________________________________________________
+# Cria o gráfico de LINHA e Seletor para escolher quais variáveis visualizar  _______________________________________________________________________________________________________________________________________
+
+# # Seletor para escolher quais variáveis visualizar no gráfico
+# st.markdown("### Selecione os Indicadores para Visualizar no Gráfico")
+# variaveis_disponiveis = [col for col in indicadores.columns if col != 'Data']
+# variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_disponiveis, default=['Receita_Liquida', 'Lucro_Liquido'])
+
+# # Garantir que 'indicadores' está carregado corretamente
+# if variaveis_selecionadas:
+
+#     # Função para verificar o tema do Streamlit
+#     def update_theme():
+#         theme_colors = {}
+#         if st.config.get_option('theme.base') == 'dark':  # Verifica o tema configurado no Streamlit
+#             theme_colors = {
+#                 "bg_color": "#1f1f1f",
+#                 "text_color": "#ffffff",
+#                 "grid_color": "#444444"
+#             }
+#         else:
+#             theme_colors = {
+#                 "bg_color": "#ffffff",
+#                 "text_color": "#000000",
+#                 "grid_color": "#dddddd"
+#             }
+#         return theme_colors
+
+#     # Função para exibir o gráfico
+#     def plot_graph(df_melted):
+#         theme_colors = update_theme()  # Atualiza as cores com base no tema
+        
+#         # Criar o gráfico com cores adaptativas
+#         fig = px.line(df_melted, x='Data', y='Valor', color='Indicador', markers=True,
+#                       title='Evolução dos Indicadores Selecionados')
+        
+#         fig.update_layout(
+#             xaxis_title='Ano',
+#             yaxis_title='Valor',
+#             plot_bgcolor=theme_colors['bg_color'], # Aplicando cor de fundo
+#             paper_bgcolor=theme_colors['bg_color'], # Aplicando cor de fundo do papel
+#             font=dict(color=theme_colors['text_color']), # Aplicando cor da fonte
+#             title_font=dict(color=theme_colors['text_color'], size=24), # Cor do título
+#             legend_title_text='Indicadores',
+#             xaxis=dict(showgrid=True, gridcolor=theme_colors['grid_color']), # Cor da grade do eixo X
+#             yaxis=dict(showgrid=True, gridcolor=theme_colors['grid_color']) # Cor da grade do eixo Y
+#         )
+        
+#         # Renderizar o gráfico no Streamlit
+#         st.plotly_chart(fig, use_container_width=True)
+
+#     # Criar o DataFrame "melted" para formatar os dados
+#     df_melted = indicadores.melt(id_vars=['Data'], value_vars=variaveis_selecionadas,
+#                                  var_name='Indicador', value_name='Valor')
+
+#     # Chama a função para exibir o gráfico
+#     plot_graph(df_melted)
+
+# else:
+#     st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")  
+
+# Cria o gráfico em BARRA e o seletor para escolher quais variáveis mostrar __________________________________________________________________________________________________________________________________________________
 
 # Seletor para escolher quais variáveis visualizar no gráfico
 st.markdown("### Selecione os Indicadores para Visualizar no Gráfico")
@@ -500,24 +560,30 @@ if variaveis_selecionadas:
             }
         return theme_colors
 
-    # Função para exibir o gráfico
+    # Função para exibir o gráfico de barras
     def plot_graph(df_melted):
         theme_colors = update_theme()  # Atualiza as cores com base no tema
         
-        # Criar o gráfico com cores adaptativas
-        fig = px.line(df_melted, x='Data', y='Valor', color='Indicador', markers=True,
-                      title='Evolução dos Indicadores Selecionados')
+        # Criar o gráfico de barras com cores adaptativas
+        fig = px.bar(
+            df_melted,
+            x='Data',
+            y='Valor',
+            color='Indicador',
+            barmode='group',  # Barras agrupadas por indicador
+            title='Evolução dos Indicadores Selecionados'
+        )
         
         fig.update_layout(
             xaxis_title='Ano',
             yaxis_title='Valor',
-            plot_bgcolor=theme_colors['bg_color'], # Aplicando cor de fundo
-            paper_bgcolor=theme_colors['bg_color'], # Aplicando cor de fundo do papel
-            font=dict(color=theme_colors['text_color']), # Aplicando cor da fonte
-            title_font=dict(color=theme_colors['text_color'], size=24), # Cor do título
+            plot_bgcolor=theme_colors['bg_color'],  # Aplicando cor de fundo
+            paper_bgcolor=theme_colors['bg_color'],  # Aplicando cor de fundo do papel
+            font=dict(color=theme_colors['text_color']),  # Aplicando cor da fonte
+            title_font=dict(color=theme_colors['text_color'], size=24),  # Cor do título
             legend_title_text='Indicadores',
-            xaxis=dict(showgrid=True, gridcolor=theme_colors['grid_color']), # Cor da grade do eixo X
-            yaxis=dict(showgrid=True, gridcolor=theme_colors['grid_color']) # Cor da grade do eixo Y
+            xaxis=dict(showgrid=True, gridcolor=theme_colors['grid_color']),  # Cor da grade do eixo X
+            yaxis=dict(showgrid=True, gridcolor=theme_colors['grid_color'])  # Cor da grade do eixo Y
         )
         
         # Renderizar o gráfico no Streamlit
@@ -531,7 +597,8 @@ if variaveis_selecionadas:
     plot_graph(df_melted)
 
 else:
-    st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")  
+    st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
+
     
 
 # Exibir a tabela de indicadores no final ____________________________________________________________________________________________________________________________________________________
