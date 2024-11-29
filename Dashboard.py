@@ -711,8 +711,9 @@ if multiplos is not None and not multiplos.empty:
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{margem_liquida:.2f}%</div>
-            <div class='metric-label' title='Mede a eficiência da empresa em converter receita em lucro após todas as despesas.'>
+            <div class='metric-label'>
                Margem Líquida
+               <span class='tooltip'>Mede a eficiência da empresa em converter receita em lucro após todas as despesas.</span>
         </div>
         """, unsafe_allow_html=True)
 
