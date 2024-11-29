@@ -659,8 +659,10 @@ st.markdown("""
     
     /* Estilo para o rótulo das métricas */
     .metric-label {
-        font-size: 14px;
-        color: #6c757d;
+        #font-size: 14px;
+        #color: #6c757d;
+        color: #FFA500; /* Cor alaranjada */
+        font-weight: bold; /* Texto em negrito */
     }
 
     /* Ajustes para a responsividade */
