@@ -688,7 +688,7 @@ if multiplos is not None and not multiplos.empty:
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{margem_liquida:.2f}%</div>
-            <div class='metric-label' title='Margem Líquida: Mede a eficiência da empresa em converter receita em lucro após todas as despesas.'>
+            <div class='metric-label' title='Mede a eficiência da empresa em converter receita em lucro após todas as despesas.'>
                Margem Líquida
         </div>
         """, unsafe_allow_html=True)
@@ -699,7 +699,7 @@ if multiplos is not None and not multiplos.empty:
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{margem_Operacional:.2f}%</div>
-            <div class='metric-label'>Margem Operacional</div>
+            <div class='metric-label' title='Mede a eficiência operacional da empresa antes das despesas financeiras e impostos.'>Margem Operacional</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -709,7 +709,7 @@ if multiplos is not None and not multiplos.empty:
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{roe:.2f}%</div>
-            <div class='metric-label'>ROE</div>
+            <div class='metric-label' title='ROE (Retorno sobre o Patrimônio): Indica a eficiência da empresa em gerar lucro com o capital dos acionistas.'>ROE</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -719,7 +719,7 @@ if multiplos is not None and not multiplos.empty:
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{roic:.2f}%</div>
-            <div class='metric-label'>ROIC</div>
+            <div class='metric-label' title='ROIC (Retorno sobre Capital Investido): Mede a eficiência da empresa em gerar retorno sobre o capital total investido.'>ROIC</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -732,7 +732,7 @@ if multiplos is not None and not multiplos.empty:
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{dividend_yield:.2f}%</div>
-            <div class='metric-label'>Dividend Yield</div>
+            <div class='metric-label' title='Mede o retorno percentual dos dividendos pagos pela empresa em relação ao preço da ação.'>Dividend Yield</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -742,7 +742,7 @@ if multiplos is not None and not multiplos.empty:
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{pvp:.2f}</div>
-            <div class='metric-label'>P/VP</div>
+            <div class='metric-label' title='P/VP (Preço sobre Valor Patrimonial): Avalia se a ação está sendo negociada acima ou abaixo do valor contábil da empresa.'>P/VP</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -752,7 +752,7 @@ if multiplos is not None and not multiplos.empty:
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{payout:.2f}%</div>
-            <div class='metric-label'>Payout</div>
+            <div class='metric-label' title='Indica a porcentagem do lucro líquido que é distribuída aos acionistas na forma de dividendos.'>Payout</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -762,7 +762,7 @@ if multiplos is not None and not multiplos.empty:
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{pl:.2f}</div>
-            <div class='metric-label'>P/L</div>
+            <div class='metric-label' title='P/L (Preço sobre Lucro): Indica quantos anos levaria para o investidor recuperar seu investimento com os lucros da empresa.'>P/L</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -775,7 +775,7 @@ if multiplos is not None and not multiplos.empty:
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{endividamento_total:.2f}</div>
-            <div class='metric-label'>Endividamento Total</div>
+             <div class='metric-label' title='Mede o nível de dívida da empresa em relação ao seu patrimônio e ativos.'>Endividamento Total</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -785,7 +785,7 @@ if multiplos is not None and not multiplos.empty:
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{alavancagem_financeira:.2f}</div>
-            <div class='metric-label'>Alavancagem Financeira</div>
+            <div class='metric-label' title='Mede o quanto a empresa utiliza de capital de terceiros em relação ao patrimônio líquido.'>Alavancagem Financeira</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -796,7 +796,7 @@ if multiplos is not None and not multiplos.empty:
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{Liquidez_Corrente:.2f}</div>
-            <div class='metric-label'>Liquidez Corrente</div>
+            <div class='metric-label' title='Mede a capacidade da empresa em honrar suas dívidas de curto prazo com seus ativos circulantes.'>Liquidez Corrente</div>
         </div>
         """, unsafe_allow_html=True)
 
