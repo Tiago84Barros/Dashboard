@@ -665,6 +665,29 @@ st.markdown("""
         font-weight: bold; /* Texto em negrito */
     }
 
+    .tooltip {
+        visibility: hidden;
+        background-color: #333;
+        color: #fff;
+        text-align: center;
+        border-radius: 6px;
+        padding: 10px;
+        font-size: 16px; /* Aumentar tamanho da fonte */
+        position: absolute;
+        z-index: 1;
+        bottom: 125%; /* Posição acima do texto */
+        left: 50%;
+        transform: translateX(-50%);
+        opacity: 0;
+        transition: opacity 0.3s;
+        white-space: nowrap;
+    }
+    .metric-label:hover .tooltip {
+        visibility: visible;
+        opacity: 1;
+    }
+    </style>
+
     /* Ajustes para a responsividade */
     .stColumns > div {
         display: flex;
