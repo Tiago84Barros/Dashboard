@@ -565,7 +565,7 @@ def load_multiplos_from_db(ticker):
             conn.close()
 
 # Carregar dados da tabela 'multiplos'
-# multiplos = load_multiplos_from_db(ticker)
+multiplos = load_multiplos_from_db(ticker)
 # st.markdown("### Tabela de Múltiplos")
 # st.dataframe(multiplos)  # Mostra a tabela interativa no dashboard
 
