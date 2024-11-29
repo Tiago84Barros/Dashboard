@@ -724,6 +724,7 @@ if multiplos is not None and not multiplos.empty:
         <div class='metric-box'>
             <div class='metric-value'>{margem_Operacional:.2f}%</div>
             <div class='metric-label' title='Mede a eficiência operacional da empresa antes das despesas financeiras e impostos.'>Margem Operacional</div>
+          </div>
         </div>
         """, unsafe_allow_html=True)
 
