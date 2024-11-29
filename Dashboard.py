@@ -533,11 +533,10 @@ if variaveis_selecionadas:
 else:
     st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")  
     
-"""
+
 # Exibir a tabela de indicadores no final ____________________________________________________________________________________________________________________________________________________
-st.markdown("### Tabela de Indicadores")
-st.dataframe(indicadores)  # Mostra a tabela interativa no dashboard
-"""
+# st.markdown("### Tabela de Indicadores")
+# st.dataframe(indicadores)  # Mostra a tabela interativa no dashboard
 
 # Função para carregar os dados da tabela "multiplos" do banco de dados  ________________________________________________________________________________________________________________________________________________
 @st.cache_data
