@@ -745,30 +745,42 @@ if multiplos is not None and not multiplos.empty:
 
     # Coluna 6 - P/VP
     with col6:
-        pvp = current_price/multiplos['P/VP'].fillna(0).values[0]
+        pvp_value = multiplos['P/VP'].fillna(0).values[0]
+        if pvp_value == 0 or pd.isna(pvp_value):  # Verifica divisão por zero ou NaN
+            pvp = "-"
+        else:
+            pvp = f"{(current_price / pvp_value):.2f}"
         st.markdown(f"""
         <div class='metric-box'>
-            <div class='metric-value'>{pvp:.2f}</div>
+            <div class='metric-value'>{pvp}</div>
             <div class='metric-label' title='P/VP (Preço sobre Valor Patrimonial): Avalia se a ação está sendo negociada acima ou abaixo do valor contábil da empresa.'>P/VP</div>
         </div>
         """, unsafe_allow_html=True)
 
     # Coluna 07 - Payout
     with col7:
-        payout = (multiplos['Payout'].fillna(0).values[0])*100
+        payout_value = multiplos['Payout'].fillna(0).values[0]
+        if pd.isna(payout_value):  # Verifica NaN
+            payout = "-"
+        else:
+            payout = f"{(payout_value * 100):.2f}%"
         st.markdown(f"""
         <div class='metric-box'>
-            <div class='metric-value'>{payout:.2f}%</div>
+            <div class='metric-value'>{payout}%</div>
             <div class='metric-label' title='Indica a porcentagem do lucro líquido que é distribuída aos acionistas na forma de dividendos.'>Payout</div>
         </div>
         """, unsafe_allow_html=True)
 
     # Coluna 08 - P/L
     with col8:
-        pl = current_price/multiplos['P/L'].fillna(0).values[0]
+        pl_value = multiplos['P/L'].fillna(0).values[0]
+        if pl_value == 0 or pd.isna(pl_value):  # Verifica divisão por zero ou NaN
+            pl = "-"
+        else:
+            pl = f"{(current_price / pl_value):.2f}"
         st.markdown(f"""
         <div class='metric-box'>
-            <div class='metric-value'>{pl:.2f}</div>
+            <div class='metric-value'>{pl}</div>
             <div class='metric-label' title='P/L (Preço sobre Lucro): Indica quantos anos levaria para o investidor recuperar seu investimento com os lucros da empresa.'>P/L</div>
         </div>
         """, unsafe_allow_html=True)
