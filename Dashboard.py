@@ -637,69 +637,193 @@ multiplos = load_multiplos_from_db(ticker)
 # st.dataframe(multiplos)  # Mostra a tabela interativa no dashboard
 
 # Adicionar estilo CSS para os quadrados que apresentaram os múltiplos _________________________________________________________________________________________________________________
-# Verificando colunas esperadas
-expected_columns = [
-    "Margem_Liquida", "Margem_Operacional", "ROE", "ROIC", 
-    "DY", "P/VP", "Payout", "P/L", "Endividamento_Total", 
-    "Alavancagem_Financeira", "Liquidez_Corrente"
-]
-if not set(expected_columns).issubset(multiplos.columns):
-    st.error("As colunas esperadas não estão presentes no DataFrame.")
-else:
-    # Verificação de `current_price`
-    if current_price == 0 or pd.isna(current_price):
-        st.error("O preço atual da ação (current_price) é inválido.")
-    else:
-        st.markdown("### Indicadores Financeiros")
-        col1, col2, col3, col4 = st.columns(4)
+ st.markdown("""
+    <style>
+    /* Estilo dos quadrados de métricas */
+    .metric-box {
+        background-color: white;
+        padding: 20px;
+        margin: 10px;
+        border-radius: 10px;
+        box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
+        border: 1px solid #f0f0f0;
+        text-align: center;
+        width: 100%; /* Garante que o tamanho dos quadrados seja consistente */
+    }
+    
+    /* Estilo para o valor das métricas */
+    .metric-value {
+        font-size: 24px;
+        font-weight: bold;
+    }
+    
+    /* Estilo para o rótulo das métricas */
+    .metric-label {
+        #font-size: 14px;
+        #color: #6c757d;
+        color: #FFA500; /* Cor alaranjada */
+        font-weight: bold; /* Texto em negrito */
+    }
 
-        with col1:
-            margem_liquida = multiplos['Margem_Liquida'].fillna(0).values[0]
-            st.markdown(f"""
-            <div class='metric-box'>
-                <div class='metric-value'>{margem_liquida:.2f}%</div>
-                <div class='metric-label'>
-                    Margem Líquida
-                    <span class='tooltip'>Mede a eficiência da empresa em converter receita em lucro após todas as despesas.</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+    .tooltip {
+        visibility: hidden;
+        background-color: #333;
+        color: #fff;
+        text-align: center;
+        border-radius: 6px;
+        padding: 10px;
+        font-size: 16px; /* Aumentar tamanho da fonte */
+        position: absolute;
+        z-index: 1;
+        bottom: 125%; /* Posição acima do texto */
+        left: 50%;
+        transform: translateX(-50%);
+        opacity: 0;
+        transition: opacity 0.3s;
+        white-space: nowrap;
+    }
+    .metric-label:hover .tooltip {
+        visibility: visible;
+        opacity: 1;
+    }
+    </style>
 
-        with col2:
-            margem_operacional = multiplos['Margem_Operacional'].fillna(0).values[0]
-            st.markdown(f"""
-            <div class='metric-box'>
-                <div class='metric-value'>{margem_operacional:.2f}%</div>
-                <div class='metric-label'>
-                    Margem Operacional
-                    <span class='tooltip'>Mede a eficiência operacional da empresa antes das despesas financeiras e impostos.</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+    /* Ajustes para a responsividade */
+    .stColumns > div {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    </style>
+""", unsafe_allow_html=True)
 
-        with col3:
-            roe = multiplos['ROE'].fillna(0).values[0]
-            st.markdown(f"""
-            <div class='metric-box'>
-                <div class='metric-value'>{roe:.2f}%</div>
-                <div class='metric-label'>
-                    ROE
-                    <span class='tooltip'>Indica a eficiência da empresa em gerar lucro com o capital dos acionistas.</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+if multiplos is not None and not multiplos.empty:
+      
+    # Exibir múltiplos em "quadrados"
+    st.markdown("### Indicadores Financeiros")
+    
+    col1, col2, col3, col4 = st.columns(4)
 
-        with col4:
-            roic = multiplos['ROIC'].fillna(0).values[0]
-            st.markdown(f"""
-            <div class='metric-box'>
-                <div class='metric-value'>{roic:.2f}%</div>
-                <div class='metric-label'>
-                    ROIC
-                    <span class='tooltip'>Mede a eficiência da empresa em gerar retorno sobre o capital total investido.</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+    # Coluna 1 - Margem Líquida
+    with col1:
+        margem_liquida = multiplos['Margem_Liquida'].fillna(0).values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{margem_liquida:.2f}%</div>
+            <div class='metric-label'>
+               Margem Líquida
+               <span class='tooltip'>Mede a eficiência da empresa em converter receita em lucro após todas as despesas.</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Coluna 2 - Margem Operacional
+    with col2:
+        margem_Operacional = multiplos['Margem_Operacional'].fillna(0).values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{margem_Operacional:.2f}%</div>
+            <div class='metric-label' title='Mede a eficiência operacional da empresa antes das despesas financeiras e impostos.'>Margem Operacional</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Coluna 3 - ROE
+    with col3:
+        roe = multiplos['ROE'].fillna(0).values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{roe:.2f}%</div>
+            <div class='metric-label' title='ROE (Retorno sobre o Patrimônio): Indica a eficiência da empresa em gerar lucro com o capital dos acionistas.'>ROE</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Coluna 4 - ROIC
+    with col4:
+        roic = multiplos['ROIC'].fillna(0).values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{roic:.2f}%</div>
+            <div class='metric-label' title='ROIC (Retorno sobre Capital Investido): Mede a eficiência da empresa em gerar retorno sobre o capital total investido.'>ROIC</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+     # Segunda linha de colunas
+    col5, col6, col7, col8 = st.columns(4)
+
+    # Coluna 5 - Dividend Yield
+    with col5:
+        dividend_yield = (100 * multiplos['DY'].fillna(0).values[0 ]/ current_price)
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{dividend_yield:.2f}%</div>
+            <div class='metric-label' title='Mede o retorno percentual dos dividendos pagos pela empresa em relação ao preço da ação.'>Dividend Yield</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Coluna 6 - P/VP
+    with col6:
+        pvp = current_price/multiplos['P/VP'].fillna(0).values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{pvp:.2f}</div>
+            <div class='metric-label' title='P/VP (Preço sobre Valor Patrimonial): Avalia se a ação está sendo negociada acima ou abaixo do valor contábil da empresa.'>P/VP</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Coluna 07 - Payout
+    with col7:
+        payout = (multiplos['Payout'].fillna(0).values[0])*100
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{payout:.2f}%</div>
+            <div class='metric-label' title='Indica a porcentagem do lucro líquido que é distribuída aos acionistas na forma de dividendos.'>Payout</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Coluna 08 - P/L
+    with col8:
+        pl = current_price/multiplos['P/L'].fillna(0).values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{pl:.2f}</div>
+            <div class='metric-label' title='P/L (Preço sobre Lucro): Indica quantos anos levaria para o investidor recuperar seu investimento com os lucros da empresa.'>P/L</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+
+    # Terceira linha de colunas
+    col9, col10, col11, col12 = st.columns(4)
+    # Coluna 09 - Endividamento Total
+    with col9:
+        endividamento_total = multiplos['Endividamento_Total'].fillna(0).values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{endividamento_total:.2f}</div>
+             <div class='metric-label' title='Mede o nível de dívida da empresa em relação ao seu patrimônio e ativos.'>Endividamento Total</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+     # Coluna 10 - Alavancagem Financeira sobre o Patrimônio Líquido
+    with col10:
+        alavancagem_financeira = multiplos['Alavancagem_Financeira'].fillna(0).values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{alavancagem_financeira:.2f}</div>
+            <div class='metric-label' title='Mede o quanto a empresa utiliza de capital de terceiros em relação ao patrimônio líquido.'>Alavancagem Financeira</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+     
+    # Coluna 11: Líquidez Corrente
+    with col11:
+        Liquidez_Corrente = multiplos['Liquidez_Corrente'].fillna(0).values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{Liquidez_Corrente:.2f}</div>
+            <div class='metric-label' title='Mede a capacidade da empresa em honrar suas dívidas de curto prazo com seus ativos circulantes.'>Liquidez Corrente</div>
+        </div>
+        """, unsafe_allow_html=True)
 
 else:
     st.warning("Nenhum dado de múltiplos encontrado para o ticker informado.")
