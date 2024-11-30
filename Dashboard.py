@@ -766,7 +766,7 @@ if multiplos is not None and not multiplos.empty:
             payout = f"{(payout_value * 100):.2f}%"
         st.markdown(f"""
         <div class='metric-box'>
-            <div class='metric-value'>{payout}%</div>
+            <div class='metric-value'>{payout}</div>
             <div class='metric-label' title='Indica a porcentagem do lucro líquido que é distribuída aos acionistas na forma de dividendos.'>Payout</div>
         </div>
         """, unsafe_allow_html=True)
