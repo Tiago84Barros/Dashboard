@@ -636,7 +636,7 @@ multiplos = load_multiplos_from_db(ticker)
 # st.markdown("### Tabela de Múltiplos")
 # st.dataframe(multiplos)  # Mostra a tabela interativa no dashboard
 
-# Adicionar estilo CSS para os quadrados que apresentaram os múltiplos _________________________________________________________________________________________________________________
+# Adicionar estilo CSS para os quadrados que apresentarão os múltiplos _________________________________________________________________________________________________________________
  # Verificando colunas esperadas
 
 st.markdown("""
@@ -666,8 +666,6 @@ st.markdown("""
         color: #FFA500; /* Cor alaranjada */
         font-weight: bold; /* Texto em negrito */
     }
-
-   </style>
 
     /* Ajustes para a responsividade */
     .stColumns > div {
