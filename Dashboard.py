@@ -272,12 +272,12 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Inserir campo para o usuário digitar o ticker
+# Inserir campo para o usuário digitar o ticker _______________________________________________________________________________________________________________________________-
 col1, col2 = st.columns([4, 1])
 with col1:
     # Se houver um ticker definido via clique ou input, usá-lo como valor no campo de busca
     if 'ticker' in st.session_state:
-        ticker_input = st.text_input("Digite o ticker (ex: GMAT3)", value=st.session_state.ticker.split(".SA")[0], key="ticker_input").upper()
+        ticker_input = st.text_input("DIGITE O TICKER", value=st.session_state.ticker.split(".SA")[0], key="ticker_input").upper()
     else:
         ticker_input = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input").upper()
 
