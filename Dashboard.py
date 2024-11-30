@@ -639,8 +639,7 @@ multiplos = load_multiplos_from_db(ticker)
 # Adicionar estilo CSS para os quadrados que apresentaram os múltiplos _________________________________________________________________________________________________________________
  # Verificando colunas esperadas
 
-Você disse:
-chat uma parte do meu algoritmo é responsável por exibir indicadores financeiros no dashboard criado no github para o streamlit, você poderia revisar essa parte do algoritmo para corrigir algum erro, segue o código: st.markdown("""
+st.markdown("""
     <style>
     /* Estilo dos quadrados de métricas */
     .metric-box {
