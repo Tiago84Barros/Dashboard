@@ -731,10 +731,14 @@ if multiplos is not None and not multiplos.empty:
 
     # Coluna 5 - Dividend Yield
     with col5:
-        dividend_yield = (100 * multiplos['DY'].fillna(0).values[0 ]/ current_price)
+        dy_value = multiplos['DY'].fillna(0).values[0]
+        if current_price == 0 or pd.isna(current_price):  # Verifica divisão por zero ou NaN
+            dividend_yield = "-"
+        else:
+            dividend_yield = f"{(100 * dy_value / current_price):.2f}%"
         st.markdown(f"""
         <div class='metric-box'>
-            <div class='metric-value'>{dividend_yield:.2f}%</div>
+            <div class='metric-value'>{dividend_yield}</div>
             <div class='metric-label' title='Mede o retorno percentual dos dividendos pagos pela empresa em relação ao preço da ação.'>Dividend Yield</div>
         </div>
         """, unsafe_allow_html=True)
