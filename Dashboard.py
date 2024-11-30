@@ -643,64 +643,66 @@ expected_columns = [
     "DY", "P/VP", "Payout", "P/L", "Endividamento_Total", 
     "Alavancagem_Financeira", "Liquidez_Corrente"
 ]
+
+# Verificação das colunas esperadas
 if not set(expected_columns).issubset(multiplos.columns):
     st.error("As colunas esperadas não estão presentes no DataFrame.")
-else:
-    # Verificação de `current_price`
-    if current_price == 0 or pd.isna(current_price):
-        st.error("O preço atual da ação (current_price) é inválido.")
-    else:
-        st.markdown("### Indicadores Financeiros")
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            margem_liquida = multiplos['Margem_Liquida'].fillna(0).values[0]
-            st.markdown(f"""
-            <div class='metric-box'>
-                <div class='metric-value'>{margem_liquida:.2f}%</div>
-                <div class='metric-label'>
-                    Margem Líquida
-                    <span class='tooltip'>Mede a eficiência da empresa em converter receita em lucro após todas as despesas.</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        with col2:
-            margem_operacional = multiplos['Margem_Operacional'].fillna(0).values[0]
-            st.markdown(f"""
-            <div class='metric-box'>
-                <div class='metric-value'>{margem_operacional:.2f}%</div>
-                <div class='metric-label'>
-                    Margem Operacional
-                    <span class='tooltip'>Mede a eficiência operacional da empresa antes das despesas financeiras e impostos.</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        with col3:
-            roe = multiplos['ROE'].fillna(0).values[0]
-            st.markdown(f"""
-            <div class='metric-box'>
-                <div class='metric-value'>{roe:.2f}%</div>
-                <div class='metric-label'>
-                    ROE
-                    <span class='tooltip'>Indica a eficiência da empresa em gerar lucro com o capital dos acionistas.</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        with col4:
-            roic = multiplos['ROIC'].fillna(0).values[0]
-            st.markdown(f"""
-            <div class='metric-box'>
-                <div class='metric-value'>{roic:.2f}%</div>
-                <div class='metric-label'>
-                    ROIC
-                    <span class='tooltip'>Mede a eficiência da empresa em gerar retorno sobre o capital total investido.</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-
-else:
+elif current_price == 0 or pd.isna(current_price):
+    # Verificação do preço atual
+    st.error("O preço atual da ação (current_price) é inválido.")
+elif multiplos.empty:
+    # Verificação se o DataFrame está vazio
     st.warning("Nenhum dado de múltiplos encontrado para o ticker informado.")
+else:
+    # Exibição de indicadores financeiros
+    st.markdown("### Indicadores Financeiros")
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        margem_liquida = multiplos['Margem_Liquida'].fillna(0).values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{margem_liquida:.2f}%</div>
+            <div class='metric-label'>
+                Margem Líquida
+                <span class='tooltip'>Mede a eficiência da empresa em converter receita em lucro após todas as despesas.</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col2:
+        margem_operacional = multiplos['Margem_Operacional'].fillna(0).values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{margem_operacional:.2f}%</div>
+            <div class='metric-label'>
+                Margem Operacional
+                <span class='tooltip'>Mede a eficiência operacional da empresa antes das despesas financeiras e impostos.</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col3:
+        roe = multiplos['ROE'].fillna(0).values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{roe:.2f}%</div>
+            <div class='metric-label'>
+                ROE
+                <span class='tooltip'>Indica a eficiência da empresa em gerar lucro com o capital dos acionistas.</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col4:
+        roic = multiplos['ROIC'].fillna(0).values[0]
+        st.markdown(f"""
+        <div class='metric-box'>
+            <div class='metric-value'>{roic:.2f}%</div>
+            <div class='metric-label'>
+                ROIC
+                <span class='tooltip'>Mede a eficiência da empresa em gerar retorno sobre o capital total investido.</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
