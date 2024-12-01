@@ -473,66 +473,6 @@ with col3:
     st.markdown(f"<div class='cagr-box'>Patrimônio Líquido: {cagrs['Patrimonio_Liquido']:.2%}</div>", unsafe_allow_html=True)
  
 
-# Cria o gráfico de LINHA e Seletor para escolher quais variáveis visualizar  _______________________________________________________________________________________________________________________________________
-
-# # Seletor para escolher quais variáveis visualizar no gráfico
-# st.markdown("### Selecione os Indicadores para Visualizar no Gráfico")
-# variaveis_disponiveis = [col for col in indicadores.columns if col != 'Data']
-# variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_disponiveis, default=['Receita_Liquida', 'Lucro_Liquido'])
-
-# # Garantir que 'indicadores' está carregado corretamente
-# if variaveis_selecionadas:
-
-#     # Função para verificar o tema do Streamlit
-#     def update_theme():
-#         theme_colors = {}
-#         if st.config.get_option('theme.base') == 'dark':  # Verifica o tema configurado no Streamlit
-#             theme_colors = {
-#                 "bg_color": "#1f1f1f",
-#                 "text_color": "#ffffff",
-#                 "grid_color": "#444444"
-#             }
-#         else:
-#             theme_colors = {
-#                 "bg_color": "#ffffff",
-#                 "text_color": "#000000",
-#                 "grid_color": "#dddddd"
-#             }
-#         return theme_colors
-
-#     # Função para exibir o gráfico
-#     def plot_graph(df_melted):
-#         theme_colors = update_theme()  # Atualiza as cores com base no tema
-        
-#         # Criar o gráfico com cores adaptativas
-#         fig = px.line(df_melted, x='Data', y='Valor', color='Indicador', markers=True,
-#                       title='Evolução dos Indicadores Selecionados')
-        
-#         fig.update_layout(
-#             xaxis_title='Ano',
-#             yaxis_title='Valor',
-#             plot_bgcolor=theme_colors['bg_color'], # Aplicando cor de fundo
-#             paper_bgcolor=theme_colors['bg_color'], # Aplicando cor de fundo do papel
-#             font=dict(color=theme_colors['text_color']), # Aplicando cor da fonte
-#             title_font=dict(color=theme_colors['text_color'], size=24), # Cor do título
-#             legend_title_text='Indicadores',
-#             xaxis=dict(showgrid=True, gridcolor=theme_colors['grid_color']), # Cor da grade do eixo X
-#             yaxis=dict(showgrid=True, gridcolor=theme_colors['grid_color']) # Cor da grade do eixo Y
-#         )
-        
-#         # Renderizar o gráfico no Streamlit
-#         st.plotly_chart(fig, use_container_width=True)
-
-#     # Criar o DataFrame "melted" para formatar os dados
-#     df_melted = indicadores.melt(id_vars=['Data'], value_vars=variaveis_selecionadas,
-#                                  var_name='Indicador', value_name='Valor')
-
-#     # Chama a função para exibir o gráfico
-#     plot_graph(df_melted)
-
-# else:
-#     st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")  
-
 # Cria o gráfico em BARRA e o seletor para escolher quais variáveis mostrar das DFPs __________________________________________________________________________________________________________________________________________________
 
 # Seletor para escolher quais variáveis visualizar no gráfico
@@ -822,10 +762,39 @@ if multiplos is not None and not multiplos.empty:
 
 # Cria o gráfico em BARRA e o seletor para escolher quais variáveis mostrar das DFPs __________________________________________________________________________________________________________________________________________________
 
-# Seletor para escolher quais variáveis visualizar no gráfico
+# 1 - Chamar a tabela multiplos do banco de dados com todas as informações 
+@st.cache_data
+def load_multiplos_from_db(ticker):
+    db_path = download_db_from_github(db_url)
+    
+    if db_path is None or not os.path.exists(db_path):
+        return None
+
+    try:
+        conn = sqlite3.connect(db_path)
+
+        # Buscar todos os dados históricos da tabela 'multiplos' para o ticker
+        query_multiplos = f"""
+        SELECT * FROM multiplos 
+        WHERE Ticker = '{ticker}' OR Ticker = '{ticker.replace('.SA', '')}' 
+        ORDER BY Data ASC
+        """
+        df_multiplos = pd.read_sql_query(query_multiplos, conn)
+        return df_multiplos
+    except Exception as e:
+        st.error(f"Erro ao carregar a tabela 'multiplos': {e}")
+        return None
+    finally:
+        if conn:
+            conn.close()
+
+# Carregar dados históricos
+multiplos = load_multiplos_from_db(ticker)
+
+# 2 - Seletor para escolher quais variáveis visualizar no gráfico
 st.markdown("### Selecione os Indicadores para Visualizar no Gráfico")
-variaveis_disponiveis = [col for col in indicadores.columns if col != 'Data']
-variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_disponiveis, default=['Receita_Liquida', 'Lucro_Liquido'])
+variaveis_disponiveis = [col for col in multiplos.columns if col != 'Data']
+variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_disponiveis, default=['Margem_Liquida', 'Margem_Operacional'])
 
 # Garantir que 'indicadores' está carregado corretamente
 if variaveis_selecionadas:
