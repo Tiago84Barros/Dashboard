@@ -846,7 +846,7 @@ if variaveis_selecionadas:
         st.plotly_chart(fig, use_container_width=True)
 
     # Criar o DataFrame "melted" para formatar os dados
-    df_melted = indicadores.melt(id_vars=['Data'], value_vars=variaveis_selecionadas,
+    df_melted = multiplos.melt(id_vars=['Data'], value_vars=variaveis_selecionadas,
                                  var_name='Indicador', value_name='Valor')
 
     # Chama a função para exibir o gráfico
