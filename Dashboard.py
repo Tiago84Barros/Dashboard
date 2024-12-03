@@ -839,7 +839,7 @@ multiplos['Data'] = pd.to_datetime(multiplos['Data'], errors='coerce')
 st.markdown("### Selecione os Indicadores para Visualizar no Gráfico")
 
 # Excluir a coluna 'Data' do mapeamento
-exclude_columns = ['Data', 'Ticker', 'N Acoes]
+exclude_columns = ['Data', 'Ticker', 'N_Acoes]
 
 # Mapeamentos personalizados (se necessário)
 custom_mappings = {
