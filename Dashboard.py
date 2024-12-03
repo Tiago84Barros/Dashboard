@@ -489,12 +489,16 @@ variaveis_disponiveis_display = list(col_name_mapping.values())
 default_cols = ['Receita Líquida', 'Lucro Líquido']  # Ajuste conforme necessário
 default_display = [nome for nome in variaveis_disponiveis_display if nome in default_cols]
 
+if not default_display:
+    st.warning("Os indicadores padrão não foram encontrados. Por favor, revise os nomes em 'default_cols'.")
+
+
 variaveis_selecionadas_display = st.multiselect(
     "Escolha os Indicadores:",
     variaveis_disponiveis_display,
-    default=default_display,
-    key='multiplos_multiselect'
+    default=default_display
 )
+
 
 # Garantir que 'indicadores' está carregado corretamente
 if variaveis_selecionadas_display:
