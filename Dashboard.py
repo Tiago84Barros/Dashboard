@@ -786,7 +786,7 @@ if multiplos is not None and not multiplos.empty:
         """, unsafe_allow_html=True)
 
 
-# Cria o gráfico em BARRA e o seletor para escolher quais variáveis mostrar das DFPs __________________________________________________________________________________________________________________________________________________
+# Cria o gráfico em BARRA e o seletor para escolher quais variáveis mostrar dos Múltiplos __________________________________________________________________________________________________________________________________________________
 
 # 1 - Chamar a tabela multiplos do banco de dados com todas as informações 
 @st.cache_data
@@ -817,13 +817,63 @@ def load_multiplos_from_db(ticker):
 # Carregar dados históricos
 multiplos = load_multiplos_from_db(ticker)
 
+# Converter 'Data' para datetime, se necessário
+multiplos['Data'] = pd.to_datetime(multiplos['Data'], errors='coerce')
+
 # 2 - Seletor para escolher quais variáveis visualizar no gráfico
 st.markdown("### Selecione os Indicadores para Visualizar no Gráfico")
-variaveis_disponiveis = [col for col in multiplos.columns if col != 'Data']
-variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_disponiveis, default=['Margem_Liquida', 'Margem_Operacional'])
 
-# Garantir que 'indicadores' está carregado corretamente
-if variaveis_selecionadas:
+# Excluir a coluna 'Data' do mapeamento
+exclude_columns = ['Data']
+
+# Mapeamentos personalizados (se necessário)
+custom_mappings = {
+    'Margem_Liquida': 'Margem Líquida',
+    'Margem_Operacional': 'Margem Operacional',
+    'DY': 'Dividend Yield',
+    'P_VP': 'P/VP',
+    'P_L': 'P/L',
+    # Adicione outros mapeamentos personalizados conforme necessário
+}
+
+# Criar mapeamentos de nomes de colunas
+def create_column_name_mappings(df, exclude_columns=None, custom_mappings=None):
+    if exclude_columns is None:
+        exclude_columns = []
+    if custom_mappings is None:
+        custom_mappings = {}
+    col_name_mapping = {}
+    for col in df.columns:
+        if col not in exclude_columns:
+            # Usa o mapeamento personalizado se existir, caso contrário, formata o nome padrão
+            friendly_name = custom_mappings.get(col, col.replace('_', ' ').title())
+            col_name_mapping[col] = friendly_name
+    display_name_to_col = {v: k for k, v in col_name_mapping.items()}
+    display_names = list(col_name_mapping.values())
+    return col_name_mapping, display_name_to_col, display_names
+
+col_name_mapping, display_name_to_col, variaveis_disponiveis_display = create_column_name_mappings(
+    multiplos,
+    exclude_columns=exclude_columns,
+    custom_mappings=custom_mappings
+)
+
+# Nomes padrão (amigáveis) para seleção
+default_cols = ['Margem Líquida', 'Margem Operacional']  # Ajuste conforme necessário
+default_display = [nome for nome in variaveis_disponiveis_display if nome in default_cols]
+
+variaveis_selecionadas_display = st.multiselect(
+    "Escolha os Indicadores:",
+    variaveis_disponiveis_display,
+    default=default_display,
+    key='multiplos_multiselect'
+)
+
+# Garantir que 'multiplos' está carregado corretamente
+if variaveis_selecionadas_display:
+
+    # Converter nomes amigáveis selecionados para nomes originais
+    variaveis_selecionadas = [display_name_to_col[nome] for nome in variaveis_selecionadas_display]
 
     # Função para verificar o tema do Streamlit
     def update_theme():
@@ -872,8 +922,15 @@ if variaveis_selecionadas:
         st.plotly_chart(fig, use_container_width=True)
 
     # Criar o DataFrame "melted" para formatar os dados
-    df_melted = multiplos.melt(id_vars=['Data'], value_vars=variaveis_selecionadas,
-                                 var_name='Indicador', value_name='Valor')
+    df_melted = multiplos.melt(
+        id_vars=['Data'],
+        value_vars=variaveis_selecionadas,
+        var_name='Indicador',
+        value_name='Valor'
+    )
+
+    # Mapear os nomes das colunas para os nomes amigáveis no DataFrame
+    df_melted['Indicador'] = df_melted['Indicador'].map(col_name_mapping)
 
     # Chama a função para exibir o gráfico
     plot_graph(df_melted)
