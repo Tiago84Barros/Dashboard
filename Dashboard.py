@@ -483,7 +483,10 @@ col_name_mapping = {col: col.replace('_', ' ').title() for col in indicadores.co
 # Ajustar manualmente os nomes para incluir os acentos corretos
 correcoes = {
     'Receita Liquida': 'Receita Líquida',
-    'Lucro Liquido': 'Lucro Líquido'
+    'Lucro Liquido': 'Lucro Líquido',
+    'Patrimonio Liquido': 'Patrimônio Líquido',
+    'Caixa Liquido': 'Caixa Líquido',
+    'Passivo Exigivel': 'Passivo Exigível'
 }
 
 # Atualizar o mapeamento com as correções
