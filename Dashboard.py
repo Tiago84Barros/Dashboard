@@ -480,12 +480,20 @@ st.markdown("### Selecione os Indicadores para Visualizar no Gráfico")
 
 # Criar mapeamento de nomes de colunas para nomes amigáveis
 col_name_mapping = {col: col.replace('_', ' ').title() for col in indicadores.columns if col != 'Data'}
+# Ajustar manualmente os nomes para incluir os acentos corretos
+correcoes = {
+    'Receita Liquida': 'Receita Líquida',
+    'Lucro Liquido': 'Lucro Líquido'
+}
+
+# Atualizar o mapeamento com as correções
+col_name_mapping = {k: correcoes.get(v, v) for k, v in col_name_mapping.items()}
+
+
 display_name_to_col = {v: k for k, v in col_name_mapping.items()}
 
 # Lista de nomes amigáveis para exibição
 variaveis_disponiveis_display = list(col_name_mapping.values())
-
-st.write("Nomes disponíveis:", variaveis_disponiveis_display)
 
 # Nomes padrão (amigáveis) para seleção
 default_cols = ['Receita Líquida', 'Lucro Líquido']  # Ajuste conforme necessário
