@@ -491,6 +491,7 @@ st.write("Nomes disponíveis:", variaveis_disponiveis_display)
 default_cols = ['Receita Líquida', 'Lucro Líquido']  # Ajuste conforme necessário
 default_display = [nome for nome in variaveis_disponiveis_display if nome in default_cols]
 
+st.write("Nomes disponíveis:", variaveis_disponiveis_display)
 
 variaveis_selecionadas_display = st.multiselect(
     "Escolha os Indicadores:",
