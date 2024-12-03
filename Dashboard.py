@@ -477,16 +477,34 @@ with col3:
 
 # Seletor para escolher quais variáveis visualizar no gráfico
 st.markdown("### Selecione os Indicadores para Visualizar no Gráfico")
-variaveis_disponiveis = [col for col in indicadores.columns if col != 'Data']
-variaveis_selecionadas = st.multiselect("Escolha os Indicadores:", variaveis_disponiveis, default=['Receita_Liquida', 'Lucro_Liquido'])
+
+# Criar mapeamento de nomes de colunas para nomes amigáveis
+col_name_mapping = {col: col.replace('_', ' ').title() for col in indicadores.columns if col != 'Data'}
+display_name_to_col = {v: k for k, v in col_name_mapping.items()}
+
+# Lista de nomes amigáveis para exibição
+variaveis_disponiveis_display = list(col_name_mapping.values())
+
+# Nomes padrão (amigáveis) para seleção
+default_cols = ['Receita Líquida', 'Lucro Líquido']  # Ajuste conforme necessário
+default_display = [nome for nome in variaveis_disponiveis_display if nome in default_cols]
+
+variaveis_selecionadas_display = st.multiselect(
+    "Escolha os Indicadores:",
+    variaveis_disponiveis_display,
+    default=default_display
+)
 
 # Garantir que 'indicadores' está carregado corretamente
-if variaveis_selecionadas:
+if variaveis_selecionadas_display:
+
+    # Converter nomes amigáveis selecionados para nomes originais
+    variaveis_selecionadas = [display_name_to_col[nome] for nome in variaveis_selecionadas_display]
 
     # Função para verificar o tema do Streamlit
     def update_theme():
         theme_colors = {}
-        if st.config.get_option('theme.base') == 'dark':  # Verifica o tema configurado no Streamlit
+        if st.config.get_option('theme.base') == 'dark':
             theme_colors = {
                 "bg_color": "#1f1f1f",
                 "text_color": "#ffffff",
@@ -503,41 +521,49 @@ if variaveis_selecionadas:
     # Função para exibir o gráfico de barras
     def plot_graph(df_melted):
         theme_colors = update_theme()  # Atualiza as cores com base no tema
-        
+
         # Criar o gráfico de barras com cores adaptativas
         fig = px.bar(
             df_melted,
             x='Data',
             y='Valor',
             color='Indicador',
-            barmode='group',  # Barras agrupadas por indicador
+            barmode='group',
             title='Evolução dos Indicadores Selecionados'
         )
-        
+
         fig.update_layout(
             xaxis_title='Ano',
             yaxis_title='Valor',
-            plot_bgcolor=theme_colors['bg_color'],  # Aplicando cor de fundo
-            paper_bgcolor=theme_colors['bg_color'],  # Aplicando cor de fundo do papel
-            font=dict(color=theme_colors['text_color']),  # Aplicando cor da fonte
-            title_font=dict(color=theme_colors['text_color'], size=24),  # Cor do título
+            plot_bgcolor=theme_colors['bg_color'],
+            paper_bgcolor=theme_colors['bg_color'],
+            font=dict(color=theme_colors['text_color']),
+            title_font=dict(color=theme_colors['text_color'], size=24),
             legend_title_text='Indicadores',
-            xaxis=dict(showgrid=True, gridcolor=theme_colors['grid_color']),  # Cor da grade do eixo X
-            yaxis=dict(showgrid=True, gridcolor=theme_colors['grid_color'])  # Cor da grade do eixo Y
+            xaxis=dict(showgrid=True, gridcolor=theme_colors['grid_color']),
+            yaxis=dict(showgrid=True, gridcolor=theme_colors['grid_color'])
         )
-        
+
         # Renderizar o gráfico no Streamlit
         st.plotly_chart(fig, use_container_width=True)
 
     # Criar o DataFrame "melted" para formatar os dados
-    df_melted = indicadores.melt(id_vars=['Data'], value_vars=variaveis_selecionadas,
-                                 var_name='Indicador', value_name='Valor')
+    df_melted = indicadores.melt(
+        id_vars=['Data'],
+        value_vars=variaveis_selecionadas,
+        var_name='Indicador',
+        value_name='Valor'
+    )
+
+    # Mapear os nomes das colunas para os nomes amigáveis no DataFrame
+    df_melted['Indicador'] = df_melted['Indicador'].map(col_name_mapping)
 
     # Chama a função para exibir o gráfico
     plot_graph(df_melted)
 
 else:
     st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
+
 
     
 
