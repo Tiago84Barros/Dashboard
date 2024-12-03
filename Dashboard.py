@@ -486,7 +486,8 @@ correcoes = {
     'Lucro Liquido': 'Lucro Líquido',
     'Patrimonio Liquido': 'Patrimônio Líquido',
     'Caixa Liquido': 'Caixa Líquido',
-    'Passivo Exigivel': 'Passivo Exigível'
+    'Passivo Exigivel': 'Passivo Exigível',
+    'Divida Liquida': 'Dívida Líquida'
 }
 
 # Atualizar o mapeamento com as correções
