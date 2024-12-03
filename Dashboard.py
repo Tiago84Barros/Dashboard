@@ -492,7 +492,8 @@ default_display = [nome for nome in variaveis_disponiveis_display if nome in def
 variaveis_selecionadas_display = st.multiselect(
     "Escolha os Indicadores:",
     variaveis_disponiveis_display,
-    default=default_display
+    default=default_display,
+    key='multiplos_multiselect'
 )
 
 # Garantir que 'indicadores' está carregado corretamente
@@ -563,8 +564,6 @@ if variaveis_selecionadas_display:
 
 else:
     st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
-
-
     
 
 # Exibir a tabela de indicadores no final ____________________________________________________________________________________________________________________________________________________
