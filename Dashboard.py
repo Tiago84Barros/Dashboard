@@ -368,12 +368,8 @@ def calculate_cagr(df, column):
 
         # Cálculo do CAGR
         cagr = (final_value / initial_value) ** (1 / num_years) - 1
-       
-         # Verificar se o resultado é NaN ou infinito
-        if pd.isna(cagr) or np.isinf(cagr):
-            return "-"
-        else:
-            return cagr
+    
+        return cagr
 
     except Exception as e:
         #st.error(f"Erro ao calcular o CAGR para '{column}': {e}")
@@ -464,18 +460,24 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+def format_cagr(value):
+    if isinstance(value, (int, float)) and not pd.isna(value) and not np.isinf(value):
+        return f"{value:.2%}"
+    else:
+        return "-"
+
 # Exibir os valores do CAGR em quadrados
 st.markdown("### Visão Geral (CAGR)")
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    st.markdown(f"<div class='cagr-box'>Receita Líquida: {cagrs['Receita_Liquida']:.2%}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='cagr-box'>Receita Líquida: {format_cagr(cagrs['Receita Líquida'])}</div>", unsafe_allow_html=True)
 
 with col2:
-    st.markdown(f"<div class='cagr-box'>Lucro Líquido: {cagrs['Lucro_Liquido']:.2%}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='cagr-box'>Lucro Líquido: {format_cagr(cagrs['Lucro Líquido'])}</div>", unsafe_allow_html=True)
 
 with col3:
-    st.markdown(f"<div class='cagr-box'>Patrimônio Líquido: {cagrs['Patrimonio_Liquido']:.2%}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='cagr-box'>Patrimônio Líquido: {format_cagr(cagrs['Patrimônio Líquido'])}</div>", unsafe_allow_html=True)
  
 
 # Cria o gráfico em BARRA e o seletor para escolher quais variáveis mostrar das DFPs __________________________________________________________________________________________________________________________________________________
