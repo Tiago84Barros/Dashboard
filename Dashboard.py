@@ -368,7 +368,12 @@ def calculate_cagr(df, column):
 
         # Cálculo do CAGR
         cagr = (final_value / initial_value) ** (1 / num_years) - 1
-        return cagr
+       
+         # Verificar se o resultado é NaN ou infinito
+        if pd.isna(cagr) or np.isinf(cagr):
+            return "-"
+        else:
+            return cagr
 
     except Exception as e:
         #st.error(f"Erro ao calcular o CAGR para '{column}': {e}")
