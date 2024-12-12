@@ -721,7 +721,7 @@ if multiplos is not None and not multiplos.empty:
         if current_price == 0 or pd.isna(current_price):  # Verifica divisão por zero ou NaN
             dividend_yield = "-"
         else:
-            dividend_yield = f"{(100 * dy_value / current_price):.2f}%"
+            dividend_yield = f"{(100 * dy_value):.2f}%"
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{dividend_yield}</div>
@@ -735,7 +735,7 @@ if multiplos is not None and not multiplos.empty:
         if pvp_value == 0 or pd.isna(pvp_value):  # Verifica divisão por zero ou NaN
             pvp = "-"
         else:
-            pvp = f"{(current_price / pvp_value):.2f}"
+            pvp = f"{(pvp_value):.2f}"
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{pvp}</div>
@@ -763,7 +763,7 @@ if multiplos is not None and not multiplos.empty:
         if pl_value == 0 or pd.isna(pl_value):  # Verifica divisão por zero ou NaN
             pl = "-"
         else:
-            pl = f"{(current_price / pl_value):.2f}"
+            pl = f"{(pl_value):.2f}"
         st.markdown(f"""
         <div class='metric-box'>
             <div class='metric-value'>{pl}</div>
