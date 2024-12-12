@@ -718,7 +718,7 @@ if multiplos is not None and not multiplos.empty:
     # Coluna 5 - Dividend Yield
     with col5:
         dy_value = multiplos['DY'].fillna(0).values[0]
-        if current_price == 0 or pd.isna(dy_value) # Verifica divisão por zero ou NaN
+        if current_price == 0 or pd.isna(dy_value): # Verifica divisão por zero ou NaN
             dividend_yield = "-"
         else:
             dividend_yield = f"{(100 * dy_value):.2f}%"
