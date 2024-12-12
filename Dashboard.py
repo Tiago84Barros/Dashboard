@@ -760,7 +760,7 @@ if multiplos is not None and not multiplos.empty:
     # Coluna 08 - P/L
     with col8:
         pl_value = multiplos['P/L'].fillna(0).values[0]
-        if pl_value == 0 or pd.isna(pl_value):  # Verifica divisão por zero ou NaN
+        if pl_value == 0 or pd.isna(pl_value) or pd.math.isinf(pl_value):  # Verifica divisão por zero ou NaN
             pl = "-"
         else:
             pl = f"{(pl_value):.2f}"
