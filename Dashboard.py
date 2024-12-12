@@ -718,7 +718,7 @@ if multiplos is not None and not multiplos.empty:
     # Coluna 5 - Dividend Yield
     with col5:
         dy_value = multiplos['DY'].fillna(0).values[0]
-        if current_price == 0 or pd.isna(current_price):  # Verifica divisão por zero ou NaN
+        if current_price == 0 or pd.isna(dy_value) # Verifica divisão por zero ou NaN
             dividend_yield = "-"
         else:
             dividend_yield = f"{(100 * dy_value):.2f}%"
@@ -732,7 +732,7 @@ if multiplos is not None and not multiplos.empty:
     # Coluna 6 - P/VP
     with col6:
         pvp_value = multiplos['P/VP'].fillna(0).values[0]
-        if pvp_value == 0 or pd.isna(pvp_value):  # Verifica divisão por zero ou NaN
+        if pvp_value == 0 or pd.isna(pvp_value) or np.isinf(pvp_value):  # Verifica divisão por zero ou NaN
             pvp = "-"
         else:
             pvp = f"{(pvp_value):.2f}"
@@ -760,7 +760,7 @@ if multiplos is not None and not multiplos.empty:
     # Coluna 08 - P/L
     with col8:
         pl_value = multiplos['P/L'].fillna(0).values[0]
-        if pl_value == 0 or pd.isna(pl_value) or pd.math.isinf(pl_value):  # Verifica divisão por zero ou NaN
+        if pl_value == 0 or pd.isna(pl_value) or np.isinf(pl_value):  # Verifica divisão por zero ou NaN
             pl = "-"
         else:
             pl = f"{(pl_value):.2f}"
