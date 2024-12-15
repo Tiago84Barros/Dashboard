@@ -112,30 +112,30 @@ st.markdown("""
 
 
 
- # Função para carregar os setores do banco de dados _______________________________________________________________________________________________________________________________________________________________
-        @st.cache_data
-        def load_setores_from_db():
-            db_path = download_db_from_github(db_url)
-            
-            if db_path is None or not os.path.exists(db_path):
-                return None
-        
-            try:
-                conn = sqlite3.connect(db_path)
-        
-                # Buscar dados da tabela 'setores'
-                query_setores = "SELECT * FROM setores"
-                df_setores = pd.read_sql_query(query_setores, conn)
-                return df_setores
-            except Exception as e:
-                st.error(f"Erro ao carregar a tabela 'setores': {e}")
-                return None
-            finally:
-                if conn:
-                    conn.close()
-        
-        # Carregar os setores
-        setores = load_setores_from_db()
+# Função para carregar os setores do banco de dados _______________________________________________________________________________________________________________________________________________________________
+@st.cache_data
+def load_setores_from_db():
+    db_path = download_db_from_github(db_url)
+    
+    if db_path is None or not os.path.exists(db_path):
+        return None
+
+    try:
+        conn = sqlite3.connect(db_path)
+
+        # Buscar dados da tabela 'setores'
+        query_setores = "SELECT * FROM setores"
+        df_setores = pd.read_sql_query(query_setores, conn)
+        return df_setores
+    except Exception as e:
+        st.error(f"Erro ao carregar a tabela 'setores': {e}")
+        return None
+    finally:
+        if conn:
+            conn.close()
+
+# Carregar os setores
+setores = load_setores_from_db()
 
 # Sidebar com ícones de navegação __________________________________________________________________________________________________________________________________________________________
 
