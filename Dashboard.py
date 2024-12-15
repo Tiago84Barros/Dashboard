@@ -967,4 +967,4 @@ if pagina == "Avançada":
 if pagina == "Trading":
      st.markdown("""
             <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Trading de Ações</h1>
-     """, unsafe_allow_html=True))
+     """, unsafe_allow_html=True)
