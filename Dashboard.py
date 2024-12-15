@@ -961,6 +961,10 @@ if pagina == "Básica":
             st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
 
 if pagina == "Avançada":
-    st.warning("Nada escrito")
+    st.markdown("""
+    <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Avançada de Ações</h1>
+""", unsafe_allow_html=True)
 if pagina == "Trading":
-    st.warning("Nada escrito")
+ st.markdown("""
+    <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Trading de Ações</h1>
+""", unsafe_allow_html=True))
