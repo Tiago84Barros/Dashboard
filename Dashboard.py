@@ -965,6 +965,142 @@ if pagina == "Avançada":
         st.markdown("""
             <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Avançada de Ações</h1>
         """, unsafe_allow_html=True)
+
+        # Passo 1: Selecionar o Setor
+        setores_unicos = setores['SETOR'].dropna().unique()
+        setor_selecionado = st.selectbox("Selecione o Setor:", sorted(setores_unicos))
+        
+        if setor_selecionado:
+            # Filtrar subsetores do setor selecionado
+            subsetores_filtrados = setores[setores['SETOR'] == setor_selecionado]['SUBSETOR'].dropna().unique()
+            subsetor_selecionado = st.selectbox("Selecione o Subsetor:", sorted(subsetores_filtrados))
+        
+            if subsetor_selecionado:
+                # Filtrar segmentos do subsetor selecionado
+                segmentos_filtrados = setores[(setores['SETOR'] == setor_selecionado) & (setores['SUBSETOR'] == subsetor_selecionado)]['SEGMENTO'].dropna().unique()
+                segmento_selecionado = st.selectbox("Selecione o Segmento:", sorted(segmentos_filtrados))
+        
+                if segmento_selecionado:
+                    # Filtrar as empresas do (Setor, Subsetor, Segmento) escolhido
+                    empresas_filtradas = setores[
+                        (setores['SETOR'] == setor_selecionado) &
+                        (setores['SUBSETOR'] == subsetor_selecionado) &
+                        (setores['SEGMENTO'] == segmento_selecionado)
+                    ]
+        
+                    st.markdown(f"### Empresas no Segmento {segmento_selecionado}")
+                    
+                    # Criar um dataframe para armazenar o score das empresas
+                    resultados = []
+        
+                    for i, row in empresas_filtradas.iterrows():
+                        ticker = row['ticker']
+                        nome_emp = row['nome_empresa']
+        
+                        # Carregar múltiplos ou indicadores desta empresa
+                        multiplos = load_multiplos_from_db(ticker+".SA")  # Ajuste conforme sua função
+                        # Caso multipĺos não sejam encontrados, pular empresa
+                        if multiplos is None or multiplos.empty:
+                            continue
+        
+                        # Aqui você define as métricas que farão parte do score
+                        # Exemplo: 
+                        # Vamos supor que seu DF multiplos possui as colunas: 
+                        # 'Margem_Liquida', 'Margem_Operacional', 'ROE', 'ROIC', 'DY', 'P/L', 'P/VP', 'Endividamento_Total', 'EV_EBITDA', etc.
+                        
+                        # Primeiro, garantimos a última linha (mais recente):
+                        multiplos_recent = multiplos.iloc[-1]
+        
+                        # Coletar métricas (checar se as colunas existem antes)
+                        margem_liquida = multiplos_recent.get('Margem_Liquida', np.nan)
+                        margem_operacional = multiplos_recent.get('Margem_Operacional', np.nan)
+                        roe = multiplos_recent.get('ROE', np.nan)
+                        roic = multiplos_recent.get('ROIC', np.nan)
+                        pl = multiplos_recent.get('P/L', np.nan)
+                        pvp = multiplos_recent.get('P/VP', np.nan)
+                        endividamento = multiplos_recent.get('Endividamento_Total', np.nan)
+                        ev_ebitda = multiplos_recent.get('EV_EBITDA', np.nan)
+        
+                        # Normalizar métricas para criar um score:
+                        # Exemplo simplificado: métricas "positivas" (quanto maior melhor) e "negativas" (quanto menor melhor)
+                        # Vamos criar pesos e normalizações simples. Ajuste conforme sua estratégia.
+                        
+                        # Exemplo de normalização:
+                        # Assumindo que você tenha um universo de empresas comparável, você poderia normalizar cada indicador 
+                        # em relação à média e ao desvio padrão do segmento. Aqui faremos algo simples por falta de contexto global.
+                        
+                        # Por simplicidade: 
+                        # "positivas" = Margem Líquida, Margem Operacional, ROE, ROIC
+                        # "negativas" = P/L, P/VP, Endividamento, EV/EBITDA (quanto menor melhor)
+                        
+                        # Vamos atribuir um score de 0 a 1 para cada métrica, com base em uma função simples:
+                        # score_metrica = 1 / (1 + exp(- (valor - media)/desvio)) ou algo mais simples, por ora algo arbitrário:
+                        
+                        # Sem referência externa, faremos algo MUITO simples: 
+                        # Se a métrica positiva é negativa ou nula, score baixo. Se for alta, score alto.
+                        # Este é um placeholder. Idealmente, normalize com dados de todo o setor.
+        
+                        def simple_scale_positive(x):
+                            if pd.isna(x):
+                                return 0.5
+                            # Arbitrário: acima de 20% = ótimo (1.0), 0% = 0.5, negativo = piora
+                            if x < 0:
+                                return 0.3
+                            elif x > 0.2:
+                                return 1.0
+                            else:
+                                # linear entre 0% e 20%
+                                return 0.5 + (x * (0.5/0.2))
+        
+                        def simple_scale_negative(x):
+                            if pd.isna(x):
+                                return 0.5
+                            # Arbitrário: quanto menor melhor. Se for abaixo de 5 = ótimo (1.0), se for acima de 30 = ruim (0.3)
+                            if x > 30:
+                                return 0.3
+                            elif x < 5:
+                                return 1.0
+                            else:
+                                # linear entre 5 e 30
+                                return 1.0 - ((x - 5)*(0.7/25))
+        
+                        score_marg_liq = simple_scale_positive(margem_liquida/100)  # margens em porcentagem, dividir por 100
+                        score_marg_op = simple_scale_positive(margem_operacional/100)
+                        score_roe = simple_scale_positive(roe/100)
+                        score_roic = simple_scale_positive(roic/100)
+                        score_pl = simple_scale_negative(pl)
+                        score_pvp = simple_scale_negative(pvp)
+                        score_end = simple_scale_negative(endividamento)
+                        score_ev_ebitda = simple_scale_negative(ev_ebitda)
+        
+                        # Criar um score final agregando tudo (a média simples por exemplo):
+                        final_score = np.mean([score_marg_liq, score_marg_op, score_roe, score_roic, score_pl, score_pvp, score_end, score_ev_ebitda])
+        
+                        resultados.append({
+                            'nome_empresa': nome_emp,
+                            'ticker': ticker,
+                            'score': final_score
+                        })
+                    
+                    # Converter resultados em DF e ordenar por score
+                    if resultados:
+                        df_resultados = pd.DataFrame(resultados).sort_values(by='score', ascending=False)
+                        
+                        # Exibir as empresas em pequenos blocos
+                        st.markdown("### Ranking de Empresas")
+                        colunas = st.columns(3)  # Ajuste quantas colunas quiser
+                        for idx, row in df_resultados.iterrows():
+                            logo_url = get_logo_url(row['ticker'])
+                            with colunas[idx % 3]:
+                                st.markdown(f"""
+                                <div style='border:1px solid #ddd; border-radius:10px; padding:10px; margin-bottom:10px; text-align:center;'>
+                                    <img src='{logo_url}' width='50' style='margin-bottom:5px;'><br>
+                                    <strong>{row['nome_empresa']} ({row['ticker']})</strong><br>
+                                    Score: {row['score']:.2f}
+                                </div>
+                                """, unsafe_allow_html=True)
+                    else:
+                        st.info("Não há dados disponíveis para empresas neste segmento.")
 if pagina == "Trading":
      st.markdown("""
             <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Trading de Ações</h1>
