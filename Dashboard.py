@@ -110,6 +110,33 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+
+
+ # Função para carregar os setores do banco de dados _______________________________________________________________________________________________________________________________________________________________
+        @st.cache_data
+        def load_setores_from_db():
+            db_path = download_db_from_github(db_url)
+            
+            if db_path is None or not os.path.exists(db_path):
+                return None
+        
+            try:
+                conn = sqlite3.connect(db_path)
+        
+                # Buscar dados da tabela 'setores'
+                query_setores = "SELECT * FROM setores"
+                df_setores = pd.read_sql_query(query_setores, conn)
+                return df_setores
+            except Exception as e:
+                st.error(f"Erro ao carregar a tabela 'setores': {e}")
+                return None
+            finally:
+                if conn:
+                    conn.close()
+        
+        # Carregar os setores
+        setores = load_setores_from_db()
+
 # Sidebar com ícones de navegação __________________________________________________________________________________________________________________________________________________________
 
 with st.sidebar:
@@ -212,31 +239,7 @@ if pagina == "Básica":
                 if conn:
                     conn.close()
         
-        # Função para carregar os setores do banco de dados _______________________________________________________________________________________________________________________________________________________________
-        @st.cache_data
-        def load_setores_from_db():
-            db_path = download_db_from_github(db_url)
-            
-            if db_path is None or not os.path.exists(db_path):
-                return None
-        
-            try:
-                conn = sqlite3.connect(db_path)
-        
-                # Buscar dados da tabela 'setores'
-                query_setores = "SELECT * FROM setores"
-                df_setores = pd.read_sql_query(query_setores, conn)
-                return df_setores
-            except Exception as e:
-                st.error(f"Erro ao carregar a tabela 'setores': {e}")
-                return None
-            finally:
-                if conn:
-                    conn.close()
-        
-        # Carregar os setores
-        setores = load_setores_from_db()
-        
+               
         # Adicionar estilo CSS para os blocos, com o logo à direita e as informações à esquerda, e altura fixa ___________________________________________________________________________________________________________________________________________________________________________________________
         st.markdown("""
             <style>
@@ -961,7 +964,8 @@ if pagina == "Básica":
         else:
             st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
 
-if pagina == "Avançada":
+if pagina == "Avançada": #_______________________________________________________________# Análise Avançada #____________________________________________________________________________________________________________
+    
         st.markdown("""
             <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Avançada de Ações</h1>
         """, unsafe_allow_html=True)
@@ -1101,6 +1105,7 @@ if pagina == "Avançada":
                                 """, unsafe_allow_html=True)
                     else:
                         st.info("Não há dados disponíveis para empresas neste segmento.")
+                        
 if pagina == "Trading":
      st.markdown("""
             <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Trading de Ações</h1>
