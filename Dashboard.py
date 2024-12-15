@@ -127,7 +127,7 @@ with st.sidebar:
     # USE O RADIO PARA ESCOLHER ENTRE AS SEÇÕES:
     pagina = st.radio("Escolha a seção:", ["Básica", "Avançada", "Trading"])
 
-if pagina = "Básica":
+if pagina == "Básica":
         # CSS para posicionar o botão de atualização no canto superior direito __________________________________________________________________________________________________________________________________________________________________________________________
         st.markdown("""
             <style>
@@ -960,5 +960,5 @@ if pagina = "Básica":
         else:
             st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
 
-if pagina = "Avançada":
-if pagina = "Trading":
+if pagina == "Avançada":
+if pagina == "Trading":
