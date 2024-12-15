@@ -961,4 +961,6 @@ if pagina == "Básica":
             st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
 
 if pagina == "Avançada":
+    st.warning("Nada escrito")
 if pagina == "Trading":
+    st.warning("Nada escrito")
