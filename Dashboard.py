@@ -131,7 +131,7 @@ def download_db_from_github(db_url, local_path='metadados.db'):
         st.error(f"Erro ao tentar se conectar ao GitHub: {e}")
         return None
 
-# Função para carregar os setores do banco de dados _______________________________________________________________________________________________________________________________________________________________
+# Função para carregar os SETORES do banco de dados _______________________________________________________________________________________________________________________________________________________________
 @st.cache_data
 def load_setores_from_db():
     db_path = download_db_from_github(db_url)
@@ -156,25 +156,7 @@ def load_setores_from_db():
 # Carregar os setores
 setores = load_setores_from_db()
 
-# carregando o banco de dados _______________________________________________________________________________________________________________________________________________________________________________
-        
-# URL do banco de dados no GitHub
-db_url = "https://raw.githubusercontent.com/Tiago84Barros/Dashboard/main/metadados.db"
-
-# Função para baixar o banco de dados do GitHub
-@st.cache_data(ttl=3600)  # Atualiza o cache a cada 1 hora
-def download_db_from_github(db_url, local_path='metadados.db'):
-    try:
-        response = requests.get(db_url, allow_redirects=True)        
-        if response.status_code == 200:
-            with open(local_path, 'wb') as f:
-                f.write(response.content)
-            return local_path
-        else:
-            return None
-    except requests.exceptions.RequestException as e:
-        st.error(f"Erro ao tentar se conectar ao GitHub: {e}")
-        return None
+# RETIRADO O BANCO DE DADOS REPETIDO DO CARREGAMENTO DO METADADOS
 
 # Função para carregar os dados do banco de dados _______________________________________________________________________________________________________________________________________________________________
 @st.cache_data
@@ -198,6 +180,39 @@ def load_data_from_db(ticker):
     finally:
         if conn:
             conn.close()
+
+# Chama o banco de dados dos Múltiplos __________________________________________________________________________________________________________________________________________________
+@st.cache_data
+def load_multiplos_from_db(ticker):
+    db_path = download_db_from_github(db_url)
+    
+    if db_path is None or not os.path.exists(db_path):
+        return None
+
+    try:
+        conn = sqlite3.connect(db_path)
+
+        # Buscar todos os dados históricos da tabela 'multiplos' para o ticker
+        query_multiplos = f"""
+        SELECT * FROM multiplos 
+        WHERE Ticker = '{ticker}' OR Ticker = '{ticker.replace('.SA', '')}' 
+        ORDER BY Data ASC
+        """
+        df_multiplos = pd.read_sql_query(query_multiplos, conn)
+        return df_multiplos
+    except Exception as e:
+        st.error(f"Erro ao carregar a tabela 'multiplos': {e}")
+        return None
+    finally:
+        if conn:
+            conn.close()
+
+# Carregar dados históricos
+multiplos = load_multiplos_from_db(ticker)
+
+# Converter 'Data' para datetime, se necessário
+multiplos['Data'] = pd.to_datetime(multiplos['Data'], errors='coerce')
+        
 
 
 # Sidebar com ícones de navegação __________________________________________________________________________________________________________________________________________________________
@@ -838,37 +853,9 @@ if pagina == "Básica":
         # Cria o gráfico em BARRA e o seletor para escolher quais variáveis mostrar dos Múltiplos __________________________________________________________________________________________________________________________________________________
         
         # 1 - Chamar a tabela multiplos do banco de dados com todas as informações 
-        @st.cache_data
-        def load_multiplos_from_db(ticker):
-            db_path = download_db_from_github(db_url)
-            
-            if db_path is None or not os.path.exists(db_path):
-                return None
-        
-            try:
-                conn = sqlite3.connect(db_path)
-        
-                # Buscar todos os dados históricos da tabela 'multiplos' para o ticker
-                query_multiplos = f"""
-                SELECT * FROM multiplos 
-                WHERE Ticker = '{ticker}' OR Ticker = '{ticker.replace('.SA', '')}' 
-                ORDER BY Data ASC
-                """
-                df_multiplos = pd.read_sql_query(query_multiplos, conn)
-                return df_multiplos
-            except Exception as e:
-                st.error(f"Erro ao carregar a tabela 'multiplos': {e}")
-                return None
-            finally:
-                if conn:
-                    conn.close()
-        
-        # Carregar dados históricos
-        multiplos = load_multiplos_from_db(ticker)
-        
-        # Converter 'Data' para datetime, se necessário
-        multiplos['Data'] = pd.to_datetime(multiplos['Data'], errors='coerce')
-        
+    
+    # _________________________________ RETIRADO O CHAMAMENTO DO BANCO DE DADOS DE MÚLTIPLOS DE DENTRO DO CAMPO IF DO FUNÇÃO BÁSICA ______________________________________________________
+    
         # 2 - Seletor para escolher quais variáveis visualizar no gráfico
         st.markdown("### Selecione os Indicadores para Visualizar no Gráfico")
         
