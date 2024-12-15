@@ -164,40 +164,40 @@ db_url = "https://raw.githubusercontent.com/Tiago84Barros/Dashboard/main/metadad
 # Função para baixar o banco de dados do GitHub
 @st.cache_data(ttl=3600)  # Atualiza o cache a cada 1 hora
 def download_db_from_github(db_url, local_path='metadados.db'):
-try:
-    response = requests.get(db_url, allow_redirects=True)        
-    if response.status_code == 200:
-        with open(local_path, 'wb') as f:
-            f.write(response.content)
-        return local_path
-    else:
+    try:
+        response = requests.get(db_url, allow_redirects=True)        
+        if response.status_code == 200:
+            with open(local_path, 'wb') as f:
+                f.write(response.content)
+            return local_path
+        else:
+            return None
+    except requests.exceptions.RequestException as e:
+        st.error(f"Erro ao tentar se conectar ao GitHub: {e}")
         return None
-except requests.exceptions.RequestException as e:
-    st.error(f"Erro ao tentar se conectar ao GitHub: {e}")
-    return None
 
 # Função para carregar os dados do banco de dados _______________________________________________________________________________________________________________________________________________________________
 @st.cache_data
 def load_data_from_db(ticker):
-db_path = download_db_from_github(db_url)
-
-if db_path is None or not os.path.exists(db_path):
-    return None
-
-try:
-    conn = sqlite3.connect(db_path)
-
-    # Buscar dados na tabela 'Demonstracoes_Financeiras' sem o sufixo '.SA'
-    query_dados = f"SELECT * FROM Demonstracoes_Financeiras WHERE Ticker = '{ticker}' OR Ticker = '{ticker.replace('.SA', '')}'"
-    df = pd.read_sql_query(query_dados, conn)
-
-    return df
-except Exception as e:
-    st.error(f"Erro ao conectar ao banco de dados: {e}")
-    return None
-finally:
-    if conn:
-        conn.close()
+    db_path = download_db_from_github(db_url)
+    
+    if db_path is None or not os.path.exists(db_path):
+        return None
+    
+    try:
+        conn = sqlite3.connect(db_path)
+    
+        # Buscar dados na tabela 'Demonstracoes_Financeiras' sem o sufixo '.SA'
+        query_dados = f"SELECT * FROM Demonstracoes_Financeiras WHERE Ticker = '{ticker}' OR Ticker = '{ticker.replace('.SA', '')}'"
+        df = pd.read_sql_query(query_dados, conn)
+    
+        return df
+    except Exception as e:
+        st.error(f"Erro ao conectar ao banco de dados: {e}")
+        return None
+    finally:
+        if conn:
+            conn.close()
 
 
 # Sidebar com ícones de navegação __________________________________________________________________________________________________________________________________________________________
