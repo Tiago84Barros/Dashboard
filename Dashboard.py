@@ -111,7 +111,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# carregando o banco de dados _______________________________________________________________________________________________________________________________________________________________________________
+# Carregando o banco de dados _______________________________________________________________________________________________________________________________________________________________________________
 
 # URL do banco de dados no GitHub
 db_url = "https://raw.githubusercontent.com/Tiago84Barros/Dashboard/main/metadados.db"
@@ -206,14 +206,6 @@ def load_multiplos_from_db(ticker):
     finally:
         if conn:
             conn.close()
-
-# Carregar dados históricos
-multiplos = load_multiplos_from_db(ticker)
-
-# Converter 'Data' para datetime, se necessário
-multiplos['Data'] = pd.to_datetime(multiplos['Data'], errors='coerce')
-        
-
 
 # Sidebar com ícones de navegação __________________________________________________________________________________________________________________________________________________________
 
@@ -853,6 +845,12 @@ if pagina == "Básica":
         # Cria o gráfico em BARRA e o seletor para escolher quais variáveis mostrar dos Múltiplos __________________________________________________________________________________________________________________________________________________
         
         # 1 - Chamar a tabela multiplos do banco de dados com todas as informações 
+
+        # Carregar dados históricos
+        multiplos = load_multiplos_from_db(ticker)
+        
+        # Converter 'Data' para datetime, se necessário
+        multiplos['Data'] = pd.to_datetime(multiplos['Data'], errors='coerce')
     
     # _________________________________ RETIRADO O CHAMAMENTO DO BANCO DE DADOS DE MÚLTIPLOS DE DENTRO DO CAMPO IF DO FUNÇÃO BÁSICA ______________________________________________________
     
