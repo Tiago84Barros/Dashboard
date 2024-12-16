@@ -1122,7 +1122,7 @@ if pagina == "Avançada": #_____________________________________________________
                     st.markdown("### Comparação de Indicadores entre Empresas do Segmento")
                     
                     # Lista de indicadores disponíveis (ajuste conforme suas colunas e nomenclaturas)
-                    indicadores_disponiveis = ["Lucro_Liquido", "Receita_Liquida", "Patrimonio_Liquido", "Margem_Liquida", "ROE", "P/L", "EV_EBITDA"]
+                    indicadores_disponiveis = ["Lucro Líquido", "Receita Líquida", "Patrimônio Líquido", "Margem Líquida", "ROE", "P/L", "EV_EBITDA"]
                     
                     # Mapeamento de nomes amigáveis para nomes de colunas no banco
                     nomes_to_col = {
