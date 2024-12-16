@@ -846,14 +846,16 @@ if pagina == "Básica":
         
         # 1 - Chamar a tabela multiplos do banco de dados com todas as informações 
 
+     # _________________________________ RETIRADO O CHAMAMENTO DO BANCO DE DADOS DE MÚLTIPLOS DE DENTRO DO CAMPO IF DO FUNÇÃO BÁSICA ______________________________________________________
+    
+
         # Carregar dados históricos
         multiplos = load_multiplos_from_db(ticker)
         
         # Converter 'Data' para datetime, se necessário
         multiplos['Data'] = pd.to_datetime(multiplos['Data'], errors='coerce')
     
-    # _________________________________ RETIRADO O CHAMAMENTO DO BANCO DE DADOS DE MÚLTIPLOS DE DENTRO DO CAMPO IF DO FUNÇÃO BÁSICA ______________________________________________________
-    
+   
         # 2 - Seletor para escolher quais variáveis visualizar no gráfico
         st.markdown("### Selecione os Indicadores para Visualizar no Gráfico")
         
