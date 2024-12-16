@@ -629,7 +629,7 @@ if pagina == "Básica":
         
         # Função para carregar os dados da tabela "multiplos" do banco de dados  ________________________________________________________________________________________________________________________________________________
         @st.cache_data
-        def load_multiplos_from_db(ticker):
+        def load_multiplos_limitado_from_db(ticker):
             db_path = download_db_from_github(db_url)
             
             if db_path is None or not os.path.exists(db_path):
@@ -654,7 +654,7 @@ if pagina == "Básica":
                     conn.close()
         
         # Carregar dados da tabela 'multiplos'
-        multiplos = load_multiplos_from_db(ticker)
+        multiplos = load_multiplos_limitado_from_db(ticker)
         # st.markdown("### Tabela de Múltiplos")
         # st.dataframe(multiplos)  # Mostra a tabela interativa no dashboard
         
