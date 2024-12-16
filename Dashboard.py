@@ -1115,6 +1115,62 @@ if pagina == "Avançada": #_____________________________________________________
                                 """, unsafe_allow_html=True)
                     else:
                         st.info("Não há dados disponíveis para empresas neste segmento.")
+
+                   # Este trecho de código deve estar dentro do bloco onde o usuário já selecionou o setor, subsetor, segmento.
+                    # Ou seja, após você ter definido o DataFrame 'empresas_filtradas'.
+                    
+                    st.markdown("### Comparação de Indicadores entre Empresas do Segmento")
+                    
+                    # Lista de indicadores disponíveis (ajuste conforme suas colunas e nomenclaturas)
+                    indicadores_disponiveis = ["Lucro Líquido", "Receita Líquida", "Patrimônio Líquido", "Margem Líquida", "ROE", "P/L", "EV_EBITDA"]
+                    
+                    # Mapeamento de nomes amigáveis para nomes de colunas no banco
+                    nomes_to_col = {
+                        "Lucro Líquido": "Lucro_Liquido",
+                        "Receita Líquida": "Receita_Liquida",
+                        "Patrimônio Líquido": "Patrimonio_Liquido",
+                        "Margem Líquida": "Margem_Liquida",
+                        "ROE": "ROE",
+                        "P/L": "P/L",
+                        "EV_EBITDA": "EV_EBITDA"
+                    }
+                    
+                    # Selecionar o indicador a ser exibido
+                    indicador_selecionado = st.selectbox("Selecione o Indicador para Comparar:", indicadores_disponiveis, index=0)
+                    col_indicador = nomes_to_col[indicador_selecionado]
+                    
+                    # Selecionar as empresas a exibir (por padrão, todas as empresas do segmento)
+                    lista_empresas = empresas_filtradas['nome_empresa'].tolist()
+                    empresas_selecionadas = st.multiselect("Selecione as empresas a serem exibidas no gráfico:", lista_empresas, default=lista_empresas)
+                    
+                    # Montar o DataFrame para o gráfico
+                    df_grafico = []
+                    
+                    for i, row in empresas_filtradas.iterrows():
+                        nome_emp = row['nome_empresa']
+                        if nome_emp in empresas_selecionadas:
+                            ticker = row['ticker']
+                            multiplos_data = load_multiplos_from_db(ticker + ".SA")  # Ajuste conforme sua função e sufixo
+                            if multiplos_data is not None and not multiplos_data.empty and col_indicador in multiplos_data.columns:
+                                # Pegamos o valor mais recente do indicador
+                                valor = multiplos_data.iloc[-1][col_indicador]
+                                df_grafico.append({
+                                    "Empresa": nome_emp,
+                                    "Valor": valor
+                                })
+                    
+                    df_grafico = pd.DataFrame(df_grafico)
+                    
+                    if df_grafico.empty:
+                        st.warning("Não há dados disponíveis para as empresas selecionadas ou para o indicador escolhido.")
+                    else:
+                        # Criar gráfico de barras comparando o indicador selecionado entre as empresas
+                        fig = px.bar(df_grafico, x='Empresa', y='Valor', color='Empresa', 
+                                     title=f"{indicador_selecionado} por Empresa no Segmento Selecionado")
+                    
+                        fig.update_layout(xaxis_title="Empresas", yaxis_title=indicador_selecionado, showlegend=False)
+                    
+                        st.plotly_chart(fig, use_container_width=True)
                         
 if pagina == "Trading":
      st.markdown("""
