@@ -156,9 +156,7 @@ def load_setores_from_db():
 # Carregar os setores
 setores = load_setores_from_db()
 
-# RETIRADO O BANCO DE DADOS REPETIDO DO CARREGAMENTO DO METADADOS
-
-# Função para carregar os dados do banco de dados _______________________________________________________________________________________________________________________________________________________________
+# Função para carregar os dados das DEMONSTRAÇÕES FINANCEIRAS do banco de dados _______________________________________________________________________________________________________________________________________________________________
 @st.cache_data
 def load_data_from_db(ticker):
     db_path = download_db_from_github(db_url)
@@ -1198,7 +1196,7 @@ if pagina == "Avançada": #_____________________________________________________
                                 ticker = row['ticker']
                         
                                 # Carregar dados da tabela demonstracoes_financeiras
-                                dre_data = load_demonstracoes_from_db(ticker + ".SA")  # Ajuste conforme sua função
+                                dre_data = load_data_from_db(ticker + ".SA")  # Ajuste conforme sua função
                                 if dre_data is not None and not dre_data.empty:
                                     dre_data['Empresa'] = nome_emp
                                     dre_data['Ano'] = pd.to_datetime(dre_data['Data'], errors='coerce').dt.year
