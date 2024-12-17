@@ -1196,10 +1196,10 @@ if pagina == "Avançada": #_____________________________________________________
                                 ticker = row['ticker']
                         
                                 # Carregar dados da tabela demonstracoes_financeiras
-                                dre_data = load_data_from_db(ticker + ".SA")  # Ajuste conforme sua função
+                                dre_data = load_demonstracoes_from_db(ticker + ".SA")  # Função para carregar os dados
                                 if dre_data is not None and not dre_data.empty:
                                     dre_data['Empresa'] = nome_emp
-                                    dre_data['Ano'] = pd.to_datetime(dre_data['Data'], errors='coerce').dt.year
+                                    dre_data['Ano'] = pd.to_datetime(dre_data['Data'], errors='coerce').dt.year  # Extrair apenas o ano
                                     df_comparativo.append(dre_data)
                         
                             if df_comparativo:
@@ -1207,8 +1207,10 @@ if pagina == "Avançada": #_____________________________________________________
                             return None
                         
                         # Carregar os dados para as empresas selecionadas
-                        dre_data_comparativo = load_dre_comparativo(empresas_filtradas[empresas_filtradas['nome_empresa'].isin(empresas_selecionadas)],
-                                                                   indicadores_dre=["Receita_Liquida", "Lucro_Liquido", "Patrimonio_Liquido"])
+                        dre_data_comparativo = load_dre_comparativo(
+                            empresas_filtradas[empresas_filtradas['nome_empresa'].isin(empresas_selecionadas)],
+                            indicadores_dre=["Receita_Liquida", "Lucro_Liquido", "Patrimonio_Liquido"]
+                        )
                         
                         if dre_data_comparativo is not None:
                             # Criar mapeamento de nomes de colunas para nomes amigáveis
@@ -1222,54 +1224,40 @@ if pagina == "Avançada": #_____________________________________________________
                             display_name_to_col = {v: k for k, v in col_name_mapping.items()}
                             variaveis_disponiveis_display = list(col_name_mapping.values())
                         
-                            # Selecionar indicadores para visualizar
-                            default_cols = ["Receita Líquida", "Lucro Líquido"]
-                            variaveis_selecionadas_display = st.multiselect(
-                                "Escolha os Indicadores:",
+                            # Selecionar um único indicador para visualizar
+                            indicador_selecionado_display = st.selectbox(
+                                "Escolha o Indicador:",
                                 variaveis_disponiveis_display,
-                                default=default_cols
+                                index=0
                             )
                         
-                            if variaveis_selecionadas_display:
-                                # Converter os nomes amigáveis selecionados para os nomes originais
-                                variaveis_selecionadas = [display_name_to_col[nome] for nome in variaveis_selecionadas_display]
+                            # Converter o nome amigável selecionado para o nome original
+                            indicador_selecionado = display_name_to_col[indicador_selecionado_display]
                         
-                                # Criar DataFrame "melted" para plotar
-                                df_melted = dre_data_comparativo.melt(
-                                    id_vars=["Ano", "Empresa"],
-                                    value_vars=variaveis_selecionadas,
-                                    var_name="Indicador",
-                                    value_name="Valor"
-                                )
+                            # Filtrar os dados apenas para o indicador selecionado
+                            df_filtrado = dre_data_comparativo[['Ano', indicador_selecionado, 'Empresa']].copy()
+                            df_filtrado = df_filtrado.rename(columns={indicador_selecionado: "Valor"})  # Renomear para padronização
                         
-                                # Mapear os nomes das colunas para os nomes amigáveis no DataFrame
-                                df_melted['Indicador'] = df_melted['Indicador'].map(col_name_mapping)
+                            # Criar o gráfico de barras agrupadas
+                            fig = px.bar(
+                                df_filtrado,
+                                x="Ano",
+                                y="Valor",
+                                color="Empresa",
+                                barmode="group",
+                                title=f"Comparação de {indicador_selecionado_display} entre Empresas"
+                            )
                         
-                                # Plotar o gráfico de barras agrupadas
-                                fig = px.bar(
-                                    df_melted,
-                                    x="Ano",
-                                    y="Valor",
-                                    color="Empresa",
-                                    barmode="group",
-                                    facet_row="Indicador",  # Separa os gráficos por indicador
-                                    title="Comparação de Demonstrações Financeiras entre Empresas"
-                                )
+                            # Ajustar layout do gráfico
+                            fig.update_layout(
+                                xaxis_title="Ano",
+                                yaxis_title=indicador_selecionado_display,
+                                legend_title="Empresa",
+                                xaxis=dict(type='category')  # Força o eixo X a ser categórico (anos)
+                            )
                         
-                                # Ajustar layout do gráfico
-                                fig.update_layout(
-                                    xaxis_title="Ano",
-                                    yaxis_title="Valor",
-                                    legend_title="Empresa"
-                                )
+                            # Exibir o gráfico no Streamlit
+                            st.plotly_chart(fig, use_container_width=True)
                         
-                                # Renderizar o gráfico no Streamlit
-                                st.plotly_chart(fig, use_container_width=True)
-                            else:
-                                st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
                         else:
                             st.warning("Não há dados disponíveis para as empresas selecionadas nas Demonstrações Financeiras.")
-
-                        
-
-
