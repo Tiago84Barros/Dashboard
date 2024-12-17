@@ -1155,6 +1155,7 @@ if pagina == "Avançada": #_____________________________________________________
                                 # Supondo que multiplos_data tenha uma coluna 'Data' com as datas dos indicadores
                                 # Selecionamos apenas a coluna do indicador e a coluna Data
                                 df_emp = multiplos_data[['Data', col_indicador]].copy()
+                                df_emp['Ano'] = pd.to_datetime(df_emp['Data'], errors='coerce').dt.year  # Extrair apenas o ano
                                 df_emp['Empresa'] = nome_emp
                                 df_historico.append(df_emp)
                     
