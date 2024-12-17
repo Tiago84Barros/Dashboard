@@ -1196,7 +1196,7 @@ if pagina == "Avançada": #_____________________________________________________
                                 ticker = row['ticker']
                         
                                 # Carregar dados da tabela demonstracoes_financeiras
-                                dre_data = load_demonstracoes_from_db(ticker + ".SA")  # Função para carregar os dados
+                                dre_data = load_data_from_db(ticker + ".SA")  # Função para carregar os dados
                                 if dre_data is not None and not dre_data.empty:
                                     dre_data['Empresa'] = nome_emp
                                     dre_data['Ano'] = pd.to_datetime(dre_data['Data'], errors='coerce').dt.year  # Extrair apenas o ano
