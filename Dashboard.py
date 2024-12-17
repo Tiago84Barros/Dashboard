@@ -1144,6 +1144,7 @@ if pagina == "Avançada": #_____________________________________________________
                     empresas_selecionadas = st.multiselect("Selecione as empresas a serem exibidas no gráfico:", lista_empresas, default=lista_empresas)
                     
                    # Vamos construir um DataFrame com o histórico completo de cada empresa selecionada
+                   # Vamos construir um DataFrame com o histórico completo de cada empresa selecionada
                     df_historico = []
                     
                     for i, row in empresas_filtradas.iterrows():
@@ -1153,7 +1154,6 @@ if pagina == "Avançada": #_____________________________________________________
                             multiplos_data = load_multiplos_from_db(ticker + ".SA")  # Ajuste conforme sua função
                             if multiplos_data is not None and not multiplos_data.empty and col_indicador in multiplos_data.columns:
                                 # Supondo que multiplos_data tenha uma coluna 'Data' com as datas dos indicadores
-                                # Selecionamos apenas a coluna do indicador e a coluna Data
                                 df_emp = multiplos_data[['Data', col_indicador]].copy()
                                 df_emp['Ano'] = pd.to_datetime(df_emp['Data'], errors='coerce').dt.year  # Extrair apenas o ano
                                 df_emp['Empresa'] = nome_emp
@@ -1165,24 +1165,26 @@ if pagina == "Avançada": #_____________________________________________________
                         # Concatenar os DataFrames em um único DataFrame
                         df_historico = pd.concat(df_historico, ignore_index=True)
                     
+                        # Remover entradas com anos nulos (caso a conversão falhe)
+                        df_historico = df_historico.dropna(subset=['Ano'])
+                    
                         # Criar o gráfico de barras
                         fig = px.bar(
-                            df_historico, 
-                            x='Data', 
-                            y=col_indicador, 
-                            color='Empresa', 
-                            barmode='group',  # Agrupa as barras de empresas na mesma data
+                            df_historico,
+                            x='Ano',                # Usar o ano como eixo X
+                            y=col_indicador,        # Indicador selecionado como eixo Y
+                            color='Empresa',        # Diferenciar as empresas por cor
+                            barmode='group',        # Agrupar barras por ano
                             title=f"Evolução Histórica de {indicador_selecionado} por Empresa"
                         )
                     
-                        # Ajustar rótulos e layout
+                        # Ajustar layout do gráfico
                         fig.update_layout(
-                            xaxis_title="Data", 
-                            yaxis_title=indicador_selecionado, 
-                            xaxis=dict(type='category'),  # Garante que as datas apareçam como categorias
+                            xaxis_title="Ano",
+                            yaxis_title=indicador_selecionado,
+                            xaxis=dict(type='category'),  # Tratar os anos como categorias
                             legend_title="Empresa"
                         )
                     
                         # Exibir o gráfico no Streamlit
                         st.plotly_chart(fig, use_container_width=True)
-
