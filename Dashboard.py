@@ -1143,36 +1143,32 @@ if pagina == "Avançada": #_____________________________________________________
                     lista_empresas = empresas_filtradas['nome_empresa'].tolist()
                     empresas_selecionadas = st.multiselect("Selecione as empresas a serem exibidas no gráfico:", lista_empresas, default=lista_empresas)
                     
-                    # Montar o DataFrame para o gráfico
-                    df_grafico = []
+                   # Vamos construir um DataFrame com o histórico completo de cada empresa selecionada
+                    df_historico = []
                     
                     for i, row in empresas_filtradas.iterrows():
                         nome_emp = row['nome_empresa']
                         if nome_emp in empresas_selecionadas:
                             ticker = row['ticker']
-                            multiplos_data = load_multiplos_from_db(ticker + ".SA")  # Ajuste conforme sua função e sufixo
+                            multiplos_data = load_multiplos_from_db(ticker + ".SA")  # Ajuste conforme sua função
                             if multiplos_data is not None and not multiplos_data.empty and col_indicador in multiplos_data.columns:
-                                # Pegamos o valor mais recente do indicador
-                                valor = multiplos_data.iloc[-1][col_indicador]
-                                df_grafico.append({
-                                    "Empresa": nome_emp,
-                                    "Valor": valor
-                                })
+                                # Supondo que multiplos_data tenha uma coluna 'Data' com as datas dos indicadores
+                                # Selecionamos apenas a coluna do indicador e a coluna Data
+                                df_emp = multiplos_data[['Data', col_indicador]].copy()
+                                df_emp['Empresa'] = nome_emp
+                                df_historico.append(df_emp)
                     
-                    df_grafico = pd.DataFrame(df_grafico)
-                    
-                    if df_grafico.empty:
-                        st.warning("Não há dados disponíveis para as empresas selecionadas ou para o indicador escolhido.")
+                    if len(df_historico) == 0:
+                        st.warning("Não há dados históricos disponíveis para as empresas selecionadas ou para o indicador escolhido.")
                     else:
-                        # Criar gráfico de barras comparando o indicador selecionado entre as empresas
-                        fig = px.bar(df_grafico, x='Empresa', y='Valor', color='Empresa', 
-                                     title=f"{indicador_selecionado} por Empresa no Segmento Selecionado")
-                    
-                        fig.update_layout(xaxis_title="Empresas", yaxis_title=indicador_selecionado, showlegend=False)
-                    
+                        df_historico = pd.concat(df_historico, ignore_index=True)
+                        # Criar um gráfico de linha mostrando a evolução do indicador ao longo do tempo para cada empresa
+                        fig = px.line(df_historico, x='Data', y=col_indicador, color='Empresa',
+                                      title=f"Evolução do {indicador_selecionado} ao longo do tempo")
+                        fig.update_layout(xaxis_title="Data", yaxis_title=indicador_selecionado)
                         st.plotly_chart(fig, use_container_width=True)
-                        
-if pagina == "Trading":
-     st.markdown("""
-            <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Trading de Ações</h1>
-     """, unsafe_allow_html=True)
+                                            
+                    if pagina == "Trading":
+                         st.markdown("""
+                                <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Trading de Ações</h1>
+                         """, unsafe_allow_html=True)
