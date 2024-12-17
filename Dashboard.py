@@ -1119,7 +1119,7 @@ if pagina == "Avançada": #_____________________________________________________
                    # Este trecho de código deve estar dentro do bloco onde o usuário já selecionou o setor, subsetor, segmento.
                     # Ou seja, após você ter definido o DataFrame 'empresas_filtradas'.
                     
-                    st.markdown("### Comparação de Indicadores entre Empresas do Segmento") ___________________________________________________________________________________________________
+                    st.markdown("### Comparação de Indicadores entre Empresas do Segmento") #___________________________________________________________________________________________________
                     
                     # Lista de indicadores disponíveis (ajuste conforme suas colunas e nomenclaturas)
                     indicadores_disponiveis = ["Lucro Líquido", "Receita Líquida", "Patrimônio Líquido", "Margem Líquida", "ROE", "P/L", "EV_EBITDA"]
