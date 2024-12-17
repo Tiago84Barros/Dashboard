@@ -1161,14 +1161,27 @@ if pagina == "Avançada": #_____________________________________________________
                     if len(df_historico) == 0:
                         st.warning("Não há dados históricos disponíveis para as empresas selecionadas ou para o indicador escolhido.")
                     else:
+                        # Concatenar os DataFrames em um único DataFrame
                         df_historico = pd.concat(df_historico, ignore_index=True)
-                        # Criar um gráfico de linha mostrando a evolução do indicador ao longo do tempo para cada empresa
-                        fig = px.line(df_historico, x='Data', y=col_indicador, color='Empresa',
-                                      title=f"Evolução do {indicador_selecionado} ao longo do tempo")
-                        fig.update_layout(xaxis_title="Data", yaxis_title=indicador_selecionado)
+                    
+                        # Criar o gráfico de barras
+                        fig = px.bar(
+                            df_historico, 
+                            x='Data', 
+                            y=col_indicador, 
+                            color='Empresa', 
+                            barmode='group',  # Agrupa as barras de empresas na mesma data
+                            title=f"Evolução Histórica de {indicador_selecionado} por Empresa"
+                        )
+                    
+                        # Ajustar rótulos e layout
+                        fig.update_layout(
+                            xaxis_title="Data", 
+                            yaxis_title=indicador_selecionado, 
+                            xaxis=dict(type='category'),  # Garante que as datas apareçam como categorias
+                            legend_title="Empresa"
+                        )
+                    
+                        # Exibir o gráfico no Streamlit
                         st.plotly_chart(fig, use_container_width=True)
-                                            
-                    if pagina == "Trading":
-                         st.markdown("""
-                                <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Trading de Ações</h1>
-                         """, unsafe_allow_html=True)
+
