@@ -1102,42 +1102,18 @@ if pagina == "Avançada": #_____________________________________________________
                         for idx, row in df_resultados.iterrows():
                             logo_url = get_logo_url(row['ticker'])
                             with colunas[idx % 3]:
-                                st.markdown("""
-                                <style>
-                                .sector-box {
-                                    border: 1px solid #ddd;
-                                    padding: 15px;
-                                    border-radius: 10px;
-                                    margin-bottom: 10px;
-                                    display: flex;
-                                    justify-content: space-between;
-                                    align-items: center;
-                                    height: 140px;  /* Definindo uma altura fixa para os blocos */
-                                    cursor: pointer;  /* Torna o quadrado clicável */
-                                    transition: background-color 0.3s ease;  /* Animação de transição ao passar o mouse */
-                                }
-                                .sector-box:hover {
-                                    background-color: #f0f0f0;  /* Muda a cor de fundo ao passar o mouse */
-                                }
-                                .sector-info {
-                                    font-size: 14px;
-                                    color: #333;
-                                    text-align: left;
-                                    flex: 1;  /* O texto ocupa a maior parte à esquerda */
-                                    overflow: hidden;  /* Esconder o texto que ultrapassar a área */
-                                    text-overflow: ellipsis;  /* Adicionar reticências caso o texto seja muito longo */
-                                }
-                                .sector-info strong {
-                                    font-size: 16px;
-                                    color: #000;
-                                }
-                                .sector-logo {
-                                    width: 50px;
-                                    height: auto;
-                                    margin-left: 15px;  /* Adiciona espaço entre o texto e o logo */
-                                }
-                                </style>
-                            """, unsafe_allow_html=True)
+                                st.markdown("### Ranking de Empresas")
+                        colunas = st.columns(3)  # Ajuste quantas colunas quiser
+                        for idx, row in df_resultados.iterrows():
+                            logo_url = get_logo_url(row['ticker'])
+                            with colunas[idx % 3]:
+                                st.markdown(f"""
+                                <div style='border:1px solid #ddd; border-radius:10px; padding:10px; margin-bottom:10px; text-align:center;'>
+                                    <img src='{logo_url}' width='50' style='margin-bottom:5px;'><br>
+                                    <strong>{row['nome_empresa']} ({row['ticker']})</strong><br>
+                                    Score: {row['score']:.2f}
+                                </div>
+                                """, unsafe_allow_html=True)
                     else:
                         st.info("Não há dados disponíveis para empresas neste segmento.")
 
