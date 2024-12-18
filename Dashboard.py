@@ -1190,10 +1190,6 @@ if pagina == "Avançada": #_____________________________________________________
                         # Exibir o gráfico no Streamlit
                         st.plotly_chart(fig, use_container_width=True)
 
-                        st.markdown("---")
-                        st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
-
-
                         st.markdown("---") # Espaçamento entre diferentes tipos de análise
                         st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
 
