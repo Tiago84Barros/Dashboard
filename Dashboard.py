@@ -1000,53 +1000,69 @@ if pagina == "Avançada": #_____________________________________________________
                     st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
                     
                    # Criar um dataframe para armazenar o score das empresas __________________________________________________________________________________________________________________
+                   # Inicializar a lista de resultados
                     resultados = []
                     
+                    # Iterar pelas empresas
                     for i, row in empresas_filtradas.iterrows():
                         ticker = row['ticker']
                         nome_emp = row['nome_empresa']
-                        
+                    
                         # Carregar dados de múltiplos
-                        multiplos = load_multiplos_from_db(ticker+".SA")
+                        multiplos = load_multiplos_from_db(ticker + ".SA")
                         if multiplos is None or multiplos.empty:
                             continue
                     
                         # Carregar dados das demonstrações financeiras
-                        dfp = load_data_from_db(ticker+".SA")  # Assumindo que esta função existe
+                        dfp = load_data_from_db(ticker + ".SA")
                         if dfp is None or dfp.empty:
                             continue
                     
-                        # Coletar dados recentes (última linha)
-                        multiplos_recent = multiplos.iloc[-1]
-                        dfp_recent = dfp.iloc[-1]
-                        
+                        # Agregar os dados ao longo do tempo (exemplo: médias, taxas de crescimento)
+                        multiplos_mean = multiplos.mean(numeric_only=True)  # Média dos múltiplos
+                        dfp_mean = dfp.mean(numeric_only=True)  # Média dos dados financeiros
+                    
+                        # Taxas de crescimento (CAGR)
+                        def calculate_cagr(start, end, years):
+                            if pd.isna(start) or pd.isna(end) or start <= 0 or years <= 0:
+                                return np.nan
+                            return (end / start) ** (1 / years) - 1
+                    
+                        if len(dfp) >= 2:  # Garantir que há histórico suficiente
+                            anos = (pd.to_datetime(dfp['Data'].iloc[-1]).year - pd.to_datetime(dfp['Data'].iloc[0]).year)
+                            receita_cagr = calculate_cagr(dfp['Receita_Liquida'].iloc[0], dfp['Receita_Liquida'].iloc[-1], anos)
+                            lucro_cagr = calculate_cagr(dfp['Lucro_Liquido'].iloc[0], dfp['Lucro_Liquido'].iloc[-1], anos)
+                        else:
+                            receita_cagr = np.nan
+                            lucro_cagr = np.nan
+                    
                         # Seleção de métricas das demonstrações financeiras
-                        receita_liquida = dfp_recent.get('Receita_Liquida', np.nan)
-                        lucro_liquido = dfp_recent.get('Lucro_Liquido', np.nan)
-                        patrimonio_liquido = dfp_recent.get('Patrimonio_Liquido', np.nan)
-                        caixa_liquido = dfp_recent.get('Caixa_Liquido', np.nan)
-                        divida_liquida = dfp_recent.get('Divida_Liquida', np.nan)
+                        receita_liquida = dfp_mean.get('Receita_Liquida', np.nan)
+                        lucro_liquido = dfp_mean.get('Lucro_Liquido', np.nan)
+                        patrimonio_liquido = dfp_mean.get('Patrimonio_Liquido', np.nan)
+                        caixa_liquido = dfp_mean.get('Caixa_Liquido', np.nan)
+                        divida_liquida = dfp_mean.get('Divida_Liquida', np.nan)
                     
                         # Seleção de métricas de múltiplos
-                        margem_liquida = multiplos_recent.get('Margem_Liquida', np.nan)
-                        roe = multiplos_recent.get('ROE', np.nan)
-                        endividamento = multiplos_recent.get('Endividamento_Total', np.nan)
-                        pl = multiplos_recent.get('P/L', np.nan)
+                        margem_liquida = multiplos_mean.get('Margem_Liquida', np.nan)
+                        roe = multiplos_mean.get('ROE', np.nan)
+                        endividamento = multiplos_mean.get('Endividamento_Total', np.nan)
+                        pl = multiplos_mean.get('P/L', np.nan)
                     
                         # Funções de normalização
                         def simple_scale_positive(x):
                             if pd.isna(x) or x <= 0:
                                 return 0.3
-                            return min(1.0, x / (x + 10))  # Normaliza de forma simples
+                            return min(1.0, x / (x + 10))
                     
                         def simple_scale_negative(x):
                             if pd.isna(x) or x <= 0:
                                 return 0.5
-                            return max(0.3, 1.0 - (x / 100))  # Quanto menor, melhor
+                            return max(0.3, 1.0 - (x / 100))
                     
-                        # Calcular os scores para cada métrica
-                        score_receita = simple_scale_positive(receita_liquida / 1e9)  # Normaliza em bilhões
-                        score_lucro = simple_scale_positive(lucro_liquido / 1e6)  # Normaliza em milhões
+                        # Calcular os scores
+                        score_receita = simple_scale_positive(receita_liquida / 1e9)
+                        score_lucro = simple_scale_positive(lucro_liquido / 1e6)
                         score_patrimonio = simple_scale_positive(patrimonio_liquido / 1e9)
                         score_caixa = simple_scale_positive(caixa_liquido / 1e6)
                         score_divida = simple_scale_negative(divida_liquida / 1e9)
@@ -1054,11 +1070,14 @@ if pagina == "Avançada": #_____________________________________________________
                         score_roe = simple_scale_positive(roe / 100)
                         score_endividamento = simple_scale_negative(endividamento)
                         score_pl = simple_scale_negative(pl)
+                        score_receita_cagr = simple_scale_positive(receita_cagr)
+                        score_lucro_cagr = simple_scale_positive(lucro_cagr)
                     
-                        # Combinar os scores (média simples ou ponderada)
+                        # Combinar os scores com média ponderada
                         final_score = np.mean([
                             score_receita, score_lucro, score_patrimonio, score_caixa, score_divida,
-                            score_margem, score_roe, score_endividamento, score_pl
+                            score_margem, score_roe, score_endividamento, score_pl,
+                            score_receita_cagr, score_lucro_cagr
                         ])
                     
                         resultados.append({
@@ -1097,10 +1116,10 @@ if pagina == "Avançada": #_____________________________________________________
                                             Score: <span style="color: green; font-weight: bold;">{row.score:.2f}</span>
                                         </div>
                                     """, unsafe_allow_html=True)
-
-
+                    
                     else:
                         st.info("Não há dados disponíveis para empresas neste segmento.")
+
 
                    # Este trecho de código deve estar dentro do bloco onde o usuário já selecionou o setor, subsetor, segmento.
                     # Ou seja, após você ter definido o DataFrame 'empresas_filtradas'.
