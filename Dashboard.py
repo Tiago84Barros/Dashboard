@@ -1184,6 +1184,9 @@ if pagina == "Avançada": #_____________________________________________________
                         # Exibir o gráfico no Streamlit
                         st.plotly_chart(fig, use_container_width=True)
 
+                        st.markdown("---")
+                        st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
+
                         # Seção: Gráfico Comparativo de Demonstrações Financeiras _____________________________________________________________________________________________________________
                         st.markdown("### Comparação de Demonstrações Financeiras entre Empresas")
                         
