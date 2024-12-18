@@ -1012,7 +1012,7 @@ if pagina == "Avançada": #_____________________________________________________
                             continue
                     
                         # Carregar dados das demonstrações financeiras
-                        dfp = load_dfs_from_db(ticker+".SA")  # Assumindo que esta função existe
+                        dfp = load_data_from_db(ticker+".SA")  # Assumindo que esta função existe
                         if dfp is None or dfp.empty:
                             continue
                     
