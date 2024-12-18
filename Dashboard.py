@@ -999,7 +999,7 @@ if pagina == "Avançada": #_____________________________________________________
                     st.markdown("---") # Espaçamento entre diferentes tipos de análise
                     st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
                     
-                   # Criar um dataframe para armazenar o score das empresas
+                   # Criar um dataframe para armazenar o score das empresas __________________________________________________________________________________________________________________
                     resultados = []
                     
                     for i, row in empresas_filtradas.iterrows():
@@ -1070,31 +1070,34 @@ if pagina == "Avançada": #_____________________________________________________
                     # Converter resultados em dataframe e ordenar
                     if resultados:
                         df_resultados = pd.DataFrame(resultados).sort_values(by='score', ascending=False)
-
-                        # Exibir as empresas em pequenos blocos _______________________________________________________________________________________________________________________________
+                    
+                        # Exibir as empresas em pequenos blocos
                         st.markdown("### Ranking de Empresas")
                         colunas = st.columns(3)  # Ajuste o número de colunas desejado
-                        
-                        for idx, row in df_resultados.iterrows():
-                                logo_url = get_logo_url(row['ticker'])  # Função para obter o logotipo
-                            
-                                # Selecionar a coluna para exibir o bloco
-                                with colunas[idx % 3]:
-                                    # Criar layout usando colunas internas para logotipo e informações
-                                    col_logo, col_texto = st.columns([1, 3])
-                            
-                                    with col_logo:
-                                        st.image(logo_url, width=50)  # Exibir o logotipo com largura de 50px
-                            
-                                    with col_texto:
-                                        st.markdown(f"""
-                                            <div style="font-size: 16px; font-weight: bold; color: #333; margin-bottom: 5px;">
-                                                {row['nome_empresa']} ({row['ticker']})
-                                            </div>
-                                            <div style="font-size: 14px; color: #555;">
-                                                Score: <span style="color: green; font-weight: bold;">{row['score']:.2f}</span>
-                                            </div>
-                                        """, unsafe_allow_html=True)
+                    
+                        # Iterar pelos resultados em ordem sequencial
+                        for idx, row in enumerate(df_resultados.itertuples()):
+                            col = colunas[idx % len(colunas)]  # Seleciona a coluna da esquerda para a direita
+                    
+                            with col:
+                                logo_url = get_logo_url(row.ticker)  # Função para obter o logotipo
+                    
+                                # Criar layout usando colunas internas para logotipo e informações
+                                col_logo, col_texto = st.columns([1, 3])
+                    
+                                with col_logo:
+                                    st.image(logo_url, width=50)  # Exibir o logotipo com largura de 50px
+                    
+                                with col_texto:
+                                    st.markdown(f"""
+                                        <div style="font-size: 16px; font-weight: bold; color: #333; margin-bottom: 5px;">
+                                            {row.nome_empresa} ({row.ticker})
+                                        </div>
+                                        <div style="font-size: 14px; color: #555;">
+                                            Score: <span style="color: green; font-weight: bold;">{row.score:.2f}</span>
+                                        </div>
+                                    """, unsafe_allow_html=True)
+
 
                     else:
                         st.info("Não há dados disponíveis para empresas neste segmento.")
