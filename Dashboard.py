@@ -1100,7 +1100,7 @@ if pagina == "Avançada": #_____________________________________________________
                             logo_url = get_logo_url(row['ticker'])  # Função para obter o logotipo
                             with colunas[idx % 3]:
                                 st.markdown(f"""
-                                <div style='
+                                <div style="
                                     display: flex; 
                                     align-items: center; 
                                     justify-content: flex-start;
@@ -1109,21 +1109,21 @@ if pagina == "Avançada": #_____________________________________________________
                                     padding: 10px; 
                                     margin-bottom: 10px;
                                     background-color: #f9f9f9;
-                                '>
-                                    <!-- Logotipo da empresa -->
-                                    <img src='{logo_url}' style='width: 50px; height: 50px; margin-right: 15px; border-radius: 5px;'>
-                        
-                                    <!-- Informações ao lado do logotipo -->
-                                    <div style='text-align: left;'>
-                                        <p style='margin: 0; font-size: 16px; font-weight: bold; color: #333;'>
+                                ">
+                                    <!-- Logotipo -->
+                                    <img src="{logo_url}" style="width: 50px; height: 50px; margin-right: 15px; border-radius: 5px;">
+                                    
+                                    <!-- Informações -->
+                                    <div style="text-align: left;">
+                                        <p style="margin: 0; font-size: 16px; font-weight: bold; color: #333;">
                                             {row['nome_empresa']} ({row['ticker']})
                                         </p>
-                                        <p style='margin: 5px 0 0; font-size: 14px; color: #555;'>
-                                            Score: <span style='color: green; font-weight: bold;'>{row['score']:.2f}</span>
+                                        <p style="margin: 5px 0 0; font-size: 14px; color: #555;">
+                                            Score: <span style="color: green; font-weight: bold;">{row['score']:.2f}</span>
                                         </p>
                                     </div>
                                 </div>
-                                """, unsafe_allow_html=True)
+                                """, unsafe_allow_html=True)  # Permite renderizar HTML de forma segura
                     else:
                         st.info("Não há dados disponíveis para empresas neste segmento.")
 
