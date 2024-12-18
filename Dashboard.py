@@ -1266,7 +1266,7 @@ if pagina == "Avançada": #_____________________________________________________
                             top_empresas_segmento = melhores_por_segmento.groupby('SEGMENTO').apply(lambda x: x.nlargest(1, 'score')).reset_index(drop=True)
 
                             # Verificar colunas disponíveis após o merge
-                             st.write(top_empresas_segmento.columns)  # Diagnóstico para ver as colunas
+                            st.write(top_empresas_segmento.columns)  # Diagnóstico para ver as colunas
                         
                             # Exibir os resultados em um layout organizado
                             colunas = st.columns(3)  # Dividir em 3 colunas
