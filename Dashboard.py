@@ -1094,10 +1094,12 @@ if pagina == "Avançada": #_____________________________________________________
                     # Converter resultados em DF e ordenar por score                                   
                     if resultados:
                         df_resultados = pd.DataFrame(resultados).sort_values(by='score', ascending=False)
+                        # Exibir as empresas em pequenos blocos
                         st.markdown("### Ranking de Empresas")
-                        colunas = st.columns(3)  # Ajuste quantas colunas quiser
+                        colunas = st.columns(3)  # Ajuste o número de colunas desejado
+                        
                         for idx, row in df_resultados.iterrows():
-                            logo_url = get_logo_url(row['ticker'])  # Função para obter o logotipo
+                            logo_url = get_logo_url(row['ticker'])  # Função para obter a URL do logotipo
                             with colunas[idx % 3]:
                                 st.markdown(f"""
                                 <div style="
@@ -1111,7 +1113,9 @@ if pagina == "Avançada": #_____________________________________________________
                                     background-color: #f9f9f9;
                                 ">
                                     <!-- Logotipo -->
-                                    <img src="{logo_url}" style="width: 50px; height: 50px; margin-right: 15px; border-radius: 5px;">
+                                    <div style="flex-shrink: 0;">
+                                        <img src="{logo_url}" style="width: 50px; height: 50px; margin-right: 15px; border-radius: 5px;">
+                                    </div>
                                     
                                     <!-- Informações -->
                                     <div style="text-align: left;">
@@ -1123,7 +1127,8 @@ if pagina == "Avançada": #_____________________________________________________
                                         </p>
                                     </div>
                                 </div>
-                                """, unsafe_allow_html=True)  # Permite renderizar HTML de forma segura
+                                """, unsafe_allow_html=True)  # Isso renderiza o HTML corretamente
+
                     else:
                         st.info("Não há dados disponíveis para empresas neste segmento.")
 
