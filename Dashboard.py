@@ -840,8 +840,6 @@ if pagina == "Básica":
         
         # 1 - Chamar a tabela multiplos do banco de dados com todas as informações 
 
-     # _________________________________ RETIRADO O CHAMAMENTO DO BANCO DE DADOS DE MÚLTIPLOS DE DENTRO DO CAMPO IF DO FUNÇÃO BÁSICA ______________________________________________________
-    
 
         # Carregar dados históricos
         multiplos = load_multiplos_from_db(ticker)
@@ -1094,11 +1092,11 @@ if pagina == "Avançada": #_____________________________________________________
                         })
                     
                     # Converter resultados em DF e ordenar por score
-                     st.markdown("### Ranking de Empresas")
+                
                     
                     if resultados:
                         df_resultados = pd.DataFrame(resultados).sort_values(by='score', ascending=False)
-                        
+                        st.markdown("### Ranking de Empresas")
                         colunas = st.columns(3)  # Ajuste quantas colunas quiser
                         for idx, row in df_resultados.iterrows():
                             logo_url = get_logo_url(row['ticker'])
