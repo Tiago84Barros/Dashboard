@@ -999,102 +999,79 @@ if pagina == "Avançada": #_____________________________________________________
                     st.markdown("---") # Espaçamento entre diferentes tipos de análise
                     st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
                     
-                    # Criar um dataframe para armazenar o score das empresas ___________________________________________________________________________________________________________________
+                   # Criar um dataframe para armazenar o score das empresas
                     resultados = []
-        
+                    
                     for i, row in empresas_filtradas.iterrows():
                         ticker = row['ticker']
                         nome_emp = row['nome_empresa']
-        
-                        # Carregar múltiplos ou indicadores desta empresa
-                        multiplos = load_multiplos_from_db(ticker+".SA")  # Ajuste conforme sua função
-                        # Caso multipĺos não sejam encontrados, pular empresa
+                        
+                        # Carregar dados de múltiplos
+                        multiplos = load_multiplos_from_db(ticker+".SA")
                         if multiplos is None or multiplos.empty:
                             continue
-        
-                        # Aqui você define as métricas que farão parte do score
-                        # Exemplo: 
-                        # Vamos supor que seu DF multiplos possui as colunas: 
-                        # 'Margem_Liquida', 'Margem_Operacional', 'ROE', 'ROIC', 'DY', 'P/L', 'P/VP', 'Endividamento_Total', 'EV_EBITDA', etc.
-                        
-                        # Primeiro, garantimos a última linha (mais recente):
+                    
+                        # Carregar dados das demonstrações financeiras
+                        dfp = load_dfs_from_db(ticker+".SA")  # Assumindo que esta função existe
+                        if dfp is None or dfp.empty:
+                            continue
+                    
+                        # Coletar dados recentes (última linha)
                         multiplos_recent = multiplos.iloc[-1]
-        
-                        # Coletar métricas (checar se as colunas existem antes)
+                        dfp_recent = dfp.iloc[-1]
+                        
+                        # Seleção de métricas das demonstrações financeiras
+                        receita_liquida = dfp_recent.get('Receita_Liquida', np.nan)
+                        lucro_liquido = dfp_recent.get('Lucro_Liquido', np.nan)
+                        patrimonio_liquido = dfp_recent.get('Patrimonio_Liquido', np.nan)
+                        caixa_liquido = dfp_recent.get('Caixa_Liquido', np.nan)
+                        divida_liquida = dfp_recent.get('Divida_Liquida', np.nan)
+                    
+                        # Seleção de métricas de múltiplos
                         margem_liquida = multiplos_recent.get('Margem_Liquida', np.nan)
-                        margem_operacional = multiplos_recent.get('Margem_Operacional', np.nan)
                         roe = multiplos_recent.get('ROE', np.nan)
-                        roic = multiplos_recent.get('ROIC', np.nan)
-                        pl = multiplos_recent.get('P/L', np.nan)
-                        pvp = multiplos_recent.get('P/VP', np.nan)
                         endividamento = multiplos_recent.get('Endividamento_Total', np.nan)
-                        ev_ebitda = multiplos_recent.get('EV_EBITDA', np.nan)
-        
-                        # Normalizar métricas para criar um score:
-                        # Exemplo simplificado: métricas "positivas" (quanto maior melhor) e "negativas" (quanto menor melhor)
-                        # Vamos criar pesos e normalizações simples. Ajuste conforme sua estratégia.
-                        
-                        # Exemplo de normalização:
-                        # Assumindo que você tenha um universo de empresas comparável, você poderia normalizar cada indicador 
-                        # em relação à média e ao desvio padrão do segmento. Aqui faremos algo simples por falta de contexto global.
-                        
-                        # Por simplicidade: 
-                        # "positivas" = Margem Líquida, Margem Operacional, ROE, ROIC
-                        # "negativas" = P/L, P/VP, Endividamento, EV/EBITDA (quanto menor melhor)
-                        
-                        # Vamos atribuir um score de 0 a 1 para cada métrica, com base em uma função simples:
-                        # score_metrica = 1 / (1 + exp(- (valor - media)/desvio)) ou algo mais simples, por ora algo arbitrário:
-                        
-                        # Sem referência externa, faremos algo MUITO simples: 
-                        # Se a métrica positiva é negativa ou nula, score baixo. Se for alta, score alto.
-                        # Este é um placeholder. Idealmente, normalize com dados de todo o setor.
-        
+                        pl = multiplos_recent.get('P/L', np.nan)
+                    
+                        # Funções de normalização
                         def simple_scale_positive(x):
-                            if pd.isna(x):
-                                return 0.5
-                            # Arbitrário: acima de 20% = ótimo (1.0), 0% = 0.5, negativo = piora
-                            if x < 0:
+                            if pd.isna(x) or x <= 0:
                                 return 0.3
-                            elif x > 0.2:
-                                return 1.0
-                            else:
-                                # linear entre 0% e 20%
-                                return 0.5 + (x * (0.5/0.2))
-        
+                            return min(1.0, x / (x + 10))  # Normaliza de forma simples
+                    
                         def simple_scale_negative(x):
-                            if pd.isna(x):
+                            if pd.isna(x) or x <= 0:
                                 return 0.5
-                            # Arbitrário: quanto menor melhor. Se for abaixo de 5 = ótimo (1.0), se for acima de 30 = ruim (0.3)
-                            if x > 30:
-                                return 0.3
-                            elif x < 5:
-                                return 1.0
-                            else:
-                                # linear entre 5 e 30
-                                return 1.0 - ((x - 5)*(0.7/25))
-        
-                        score_marg_liq = simple_scale_positive(margem_liquida/100)  # margens em porcentagem, dividir por 100
-                        score_marg_op = simple_scale_positive(margem_operacional/100)
-                        score_roe = simple_scale_positive(roe/100)
-                        score_roic = simple_scale_positive(roic/100)
+                            return max(0.3, 1.0 - (x / 100))  # Quanto menor, melhor
+                    
+                        # Calcular os scores para cada métrica
+                        score_receita = simple_scale_positive(receita_liquida / 1e9)  # Normaliza em bilhões
+                        score_lucro = simple_scale_positive(lucro_liquido / 1e6)  # Normaliza em milhões
+                        score_patrimonio = simple_scale_positive(patrimonio_liquido / 1e9)
+                        score_caixa = simple_scale_positive(caixa_liquido / 1e6)
+                        score_divida = simple_scale_negative(divida_liquida / 1e9)
+                        score_margem = simple_scale_positive(margem_liquida / 100)
+                        score_roe = simple_scale_positive(roe / 100)
+                        score_endividamento = simple_scale_negative(endividamento)
                         score_pl = simple_scale_negative(pl)
-                        score_pvp = simple_scale_negative(pvp)
-                        score_end = simple_scale_negative(endividamento)
-                        score_ev_ebitda = simple_scale_negative(ev_ebitda)
-        
-                        # Criar um score final agregando tudo (a média simples por exemplo):
-                        final_score = np.mean([score_marg_liq, score_marg_op, score_roe, score_roic, score_pl, score_pvp, score_end, score_ev_ebitda])
-        
+                    
+                        # Combinar os scores (média simples ou ponderada)
+                        final_score = np.mean([
+                            score_receita, score_lucro, score_patrimonio, score_caixa, score_divida,
+                            score_margem, score_roe, score_endividamento, score_pl
+                        ])
+                    
                         resultados.append({
                             'nome_empresa': nome_emp,
                             'ticker': ticker,
                             'score': final_score
                         })
                     
-                    # Converter resultados em DF e ordenar por score                                   
+                    # Converter resultados em dataframe e ordenar
                     if resultados:
                         df_resultados = pd.DataFrame(resultados).sort_values(by='score', ascending=False)
-                        # Exibir as empresas em pequenos blocos
+
+                        # Exibir as empresas em pequenos blocos _______________________________________________________________________________________________________________________________
                         st.markdown("### Ranking de Empresas")
                         colunas = st.columns(3)  # Ajuste o número de colunas desejado
                         
