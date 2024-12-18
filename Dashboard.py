@@ -263,11 +263,7 @@ if pagina == "Básica":
             st.cache_data.clear()  # Limpa o cache
             st.experimental_rerun()  # Recarrega a aplicação
         
-        
-    # ________________________ parte retirada do carregamento do banco de dados para fora do if das funções básicas ________________________________________________________-
-
-    
-               
+             
         # Adicionar estilo CSS para os blocos, com o logo à direita e as informações à esquerda, e altura fixa ___________________________________________________________________________________________________________________________________________________________________________________________
         st.markdown("""
             <style>
@@ -1106,13 +1102,42 @@ if pagina == "Avançada": #_____________________________________________________
                         for idx, row in df_resultados.iterrows():
                             logo_url = get_logo_url(row['ticker'])
                             with colunas[idx % 3]:
-                                st.markdown(f"""
-                                <div style='border:1px solid #ddd; border-radius:10px; padding:10px; margin-bottom:10px; text-align:center;'>
-                                    <img src='{logo_url}' width='50' style='margin-bottom:5px;'><br>
-                                    <strong>{row['nome_empresa']} ({row['ticker']})</strong><br>
-                                    Score: {row['score']:.2f}
-                                </div>
-                                """, unsafe_allow_html=True)
+                                st.markdown("""
+                                <style>
+                                .sector-box {
+                                    border: 1px solid #ddd;
+                                    padding: 15px;
+                                    border-radius: 10px;
+                                    margin-bottom: 10px;
+                                    display: flex;
+                                    justify-content: space-between;
+                                    align-items: center;
+                                    height: 140px;  /* Definindo uma altura fixa para os blocos */
+                                    cursor: pointer;  /* Torna o quadrado clicável */
+                                    transition: background-color 0.3s ease;  /* Animação de transição ao passar o mouse */
+                                }
+                                .sector-box:hover {
+                                    background-color: #f0f0f0;  /* Muda a cor de fundo ao passar o mouse */
+                                }
+                                .sector-info {
+                                    font-size: 14px;
+                                    color: #333;
+                                    text-align: left;
+                                    flex: 1;  /* O texto ocupa a maior parte à esquerda */
+                                    overflow: hidden;  /* Esconder o texto que ultrapassar a área */
+                                    text-overflow: ellipsis;  /* Adicionar reticências caso o texto seja muito longo */
+                                }
+                                .sector-info strong {
+                                    font-size: 16px;
+                                    color: #000;
+                                }
+                                .sector-logo {
+                                    width: 50px;
+                                    height: auto;
+                                    margin-left: 15px;  /* Adiciona espaço entre o texto e o logo */
+                                }
+                                </style>
+                            """, unsafe_allow_html=True)
                     else:
                         st.info("Não há dados disponíveis para empresas neste segmento.")
 
@@ -1142,8 +1167,7 @@ if pagina == "Avançada": #_____________________________________________________
                     # Selecionar as empresas a exibir (por padrão, todas as empresas do segmento)
                     lista_empresas = empresas_filtradas['nome_empresa'].tolist()
                     empresas_selecionadas = st.multiselect("Selecione as empresas a serem exibidas no gráfico:", lista_empresas, default=lista_empresas)
-                    
-                   # Vamos construir um DataFrame com o histórico completo de cada empresa selecionada
+
                    # Vamos construir um DataFrame com o histórico completo de cada empresa selecionada
                     df_historico = []
                     
