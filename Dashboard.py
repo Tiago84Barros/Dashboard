@@ -1101,17 +1101,30 @@ if pagina == "Avançada": #_____________________________________________________
                     if resultados:
                         df_resultados = pd.DataFrame(resultados).sort_values(by='score', ascending=False)
                         
-                        # Exibir as empresas em pequenos blocos
+                       # Exibir as empresas em pequenos blocos
                         st.markdown("### Ranking de Empresas")
                         colunas = st.columns(3)  # Ajuste quantas colunas quiser
+                        
                         for idx, row in df_resultados.iterrows():
-                            logo_url = get_logo_url(row['ticker'])
+                            logo_url = get_logo_url(row['ticker'])  # Função para obter a URL do logotipo
                             with colunas[idx % 3]:
                                 st.markdown(f"""
-                                <div style='border:1px solid #ddd; border-radius:10px; padding:10px; margin-bottom:10px; text-align:center;'>
-                                    <img src='{logo_url}' width='50' style='margin-bottom:5px;'><br>
-                                    <strong>{row['nome_empresa']} ({row['ticker']})</strong><br>
-                                    Score: {row['score']:.2f}
+                                <div style='
+                                    display: flex; 
+                                    align-items: center; 
+                                    border: 1px solid #ddd; 
+                                    border-radius: 10px; 
+                                    padding: 10px; 
+                                    margin-bottom: 10px;
+                                '>
+                                    <!-- Logotipo -->
+                                    <img src='{logo_url}' width='50' height='50' style='margin-right: 15px; border-radius: 5px;'>
+                                    
+                                    <!-- Texto ao lado -->
+                                    <div style='text-align: left;'>
+                                        <strong style='font-size: 16px;'>{row['nome_empresa']} ({row['ticker']})</strong><br>
+                                        <span style='font-size: 14px; color: #555;'>Score: <strong style='color: green;'>{row['score']:.2f}</strong></span>
+                                    </div>
                                 </div>
                                 """, unsafe_allow_html=True)
                     else:
