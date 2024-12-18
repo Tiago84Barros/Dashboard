@@ -1001,6 +1001,9 @@ if pagina == "Avançada": #_____________________________________________________
                     ]
         
                     st.markdown(f"### Empresas no Segmento {segmento_selecionado}")
+
+                    st.markdown("---") # Espaçamento entre diferentes tipos de análise
+                    st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
                     
                     # Criar um dataframe para armazenar o score das empresas ___________________________________________________________________________________________________________________
                     resultados = []
@@ -1116,6 +1119,9 @@ if pagina == "Avançada": #_____________________________________________________
 
                    # Este trecho de código deve estar dentro do bloco onde o usuário já selecionou o setor, subsetor, segmento.
                     # Ou seja, após você ter definido o DataFrame 'empresas_filtradas'.
+
+                    st.markdown("---") # Espaçamento entre diferentes tipos de análises
+                    st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
                     
                     st.markdown("### Comparação de Indicadores entre Empresas do Segmento") #___________________________________________________________________________________________________
                     
@@ -1185,6 +1191,10 @@ if pagina == "Avançada": #_____________________________________________________
                         st.plotly_chart(fig, use_container_width=True)
 
                         st.markdown("---")
+                        st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
+
+
+                        st.markdown("---") # Espaçamento entre diferentes tipos de análise
                         st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
 
                         # Seção: Gráfico Comparativo de Demonstrações Financeiras _____________________________________________________________________________________________________________
