@@ -1259,14 +1259,11 @@ if pagina == "Avançada": #_____________________________________________________
 
                         # Criar uma seção para identificar as empresas com o melhor score por categoria _____________________________________________________________________________________
                         if not df_resultados.empty:
-                            st.markdown("## Empresas com Melhor Score por Segmento")
+                            st.markdown("## Empresas com Melhor Score por Categoria")
                         
                             # Encontrar a empresa com o maior score em cada SEGMENTO
                             melhores_por_segmento = df_resultados.merge(empresas_filtradas, on='ticker', how='left')
                             top_empresas_segmento = melhores_por_segmento.groupby('SEGMENTO').apply(lambda x: x.nlargest(1, 'score')).reset_index(drop=True)
-
-                            # Verificar colunas disponíveis após o merge
-                            st.write(top_empresas_segmento.columns)  # Diagnóstico para ver as colunas
                         
                             # Exibir os resultados em um layout organizado
                             colunas = st.columns(3)  # Dividir em 3 colunas
@@ -1275,7 +1272,7 @@ if pagina == "Avançada": #_____________________________________________________
                                     st.markdown(f"""
                                         <div style="border: 1px solid #ddd; border-radius: 10px; padding: 10px; margin: 10px; text-align: center; box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);">
                                             <div style="font-size: 18px; font-weight: bold; color: #333;">
-                                                {row['nome_empresa']}
+                                                {row['nome_empresa_x']}
                                             </div>
                                             <div style="font-size: 14px; color: #555; margin: 5px 0;">
                                                 Ticker: <strong>{row['ticker']}</strong>
@@ -1290,4 +1287,5 @@ if pagina == "Avançada": #_____________________________________________________
                                     """, unsafe_allow_html=True)
                         else:
                             st.warning("Nenhuma empresa encontrada para mostrar os melhores scores por categoria.")
+                        
 
