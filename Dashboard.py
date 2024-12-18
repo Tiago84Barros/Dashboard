@@ -1097,13 +1097,31 @@ if pagina == "Avançada": #_____________________________________________________
                         st.markdown("### Ranking de Empresas")
                         colunas = st.columns(3)  # Ajuste quantas colunas quiser
                         for idx, row in df_resultados.iterrows():
-                            logo_url = get_logo_url(row['ticker'])
+                            logo_url = get_logo_url(row['ticker'])  # Função para obter o logotipo
                             with colunas[idx % 3]:
                                 st.markdown(f"""
-                                <div style='border:1px solid #ddd; border-radius:10px; padding:10px; margin-bottom:10px; text-align:center;'>
-                                    <img src='{logo_url}' width='50' style='margin-bottom:5px;'><br>
-                                    <strong>{row['nome_empresa']} ({row['ticker']})</strong><br>
-                                    Score: {row['score']:.2f}
+                                <div style='
+                                    display: flex; 
+                                    align-items: center; 
+                                    justify-content: flex-start;
+                                    border: 1px solid #ddd; 
+                                    border-radius: 10px; 
+                                    padding: 10px; 
+                                    margin-bottom: 10px;
+                                    background-color: #f9f9f9;
+                                '>
+                                    <!-- Logotipo da empresa -->
+                                    <img src='{logo_url}' style='width: 50px; height: 50px; margin-right: 15px; border-radius: 5px;'>
+                        
+                                    <!-- Informações ao lado do logotipo -->
+                                    <div style='text-align: left;'>
+                                        <p style='margin: 0; font-size: 16px; font-weight: bold; color: #333;'>
+                                            {row['nome_empresa']} ({row['ticker']})
+                                        </p>
+                                        <p style='margin: 5px 0 0; font-size: 14px; color: #555;'>
+                                            Score: <span style='color: green; font-weight: bold;'>{row['score']:.2f}</span>
+                                        </p>
+                                    </div>
                                 </div>
                                 """, unsafe_allow_html=True)
                     else:
