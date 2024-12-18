@@ -1257,10 +1257,9 @@ if pagina == "Avançada": #_____________________________________________________
 
 
 
-
                         # Criar uma seção para identificar as empresas com o melhor score por categoria _____________________________________________________________________________________
                         if not df_resultados.empty:
-                            st.markdown("## Empresas com Melhor Score por Categoria")
+                            st.markdown("## Empresas com Melhor Score por Segmento")
                         
                             # Encontrar a empresa com o maior score em cada SEGMENTO
                             melhores_por_segmento = df_resultados.merge(empresas_filtradas, on='ticker', how='left')
