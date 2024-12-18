@@ -1091,17 +1091,10 @@ if pagina == "Avançada": #_____________________________________________________
                             'score': final_score
                         })
                     
-                    # Converter resultados em DF e ordenar por score
-                
-                    
+                    # Converter resultados em DF e ordenar por score                                   
                     if resultados:
                         df_resultados = pd.DataFrame(resultados).sort_values(by='score', ascending=False)
                         st.markdown("### Ranking de Empresas")
-                        colunas = st.columns(3)  # Ajuste quantas colunas quiser
-                        for idx, row in df_resultados.iterrows():
-                            logo_url = get_logo_url(row['ticker'])
-                            with colunas[idx % 3]:
-                                st.markdown("### Ranking de Empresas")
                         colunas = st.columns(3)  # Ajuste quantas colunas quiser
                         for idx, row in df_resultados.iterrows():
                             logo_url = get_logo_url(row['ticker'])
