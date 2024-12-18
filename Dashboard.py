@@ -1261,14 +1261,17 @@ if pagina == "Avançada": #_____________________________________________________
                         if not df_resultados.empty:
                             st.markdown("## Empresa com Melhor Score por Segmento")
                         
-                            # Encontrar a empresa com o maior score em cada SEGMENTO
+                            # Mesclar as informações completas das empresas
                             melhores_por_segmento = df_resultados.merge(empresas_filtradas, on='ticker', how='left')
-                            top_empresas_segmento = melhores_por_segmento.groupby('SEGMENTO').apply(lambda x: x.nlargest(1, 'score')).reset_index(drop=True)
                         
-                            # Exibir os resultados em um layout organizado
-                            colunas = st.columns(3)  # Dividir em 3 colunas para disposição
+                            # Selecionar a empresa com o maior score em cada segmento
+                            idx_melhores_scores = melhores_por_segmento.groupby('SEGMENTO')['score'].idxmax()  # Índice da maior pontuação por segmento
+                            top_empresas_segmento = melhores_por_segmento.loc[idx_melhores_scores].reset_index(drop=True)
+                        
+                            # Exibir os resultados em blocos organizados
+                            colunas = st.columns(3)  # Dividir em 3 colunas para melhor visualização
                             for idx, row in top_empresas_segmento.iterrows():
-                                with colunas[idx % 3]:
+                                with colunas[idx % 3]:  # Posicionar as empresas nas colunas
                                     st.markdown(f"""
                                         <div style="border: 1px solid #ddd; border-radius: 10px; padding: 10px; margin: 10px; text-align: center; box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);">
                                             <div style="font-size: 18px; font-weight: bold; color: #333;">
@@ -1287,4 +1290,5 @@ if pagina == "Avançada": #_____________________________________________________
                                     """, unsafe_allow_html=True)
                         else:
                             st.warning("Nenhuma empresa encontrada para mostrar os melhores scores por segmento.")
+
 
