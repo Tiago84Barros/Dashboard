@@ -1261,34 +1261,40 @@ if pagina == "Avançada": #_____________________________________________________
                         if not df_resultados.empty:
                             st.markdown("## Empresa com Melhor Score por Segmento")
                         
-                            # Mesclar as informações completas das empresas
+                            # Mesclar informações das empresas com a tabela filtrada
                             melhores_por_segmento = df_resultados.merge(empresas_filtradas, on='ticker', how='left')
                         
-                            # Selecionar a empresa com o maior score em cada segmento
-                            idx_melhores_scores = melhores_por_segmento.groupby('SEGMENTO')['score'].idxmax()  # Índice da maior pontuação por segmento
-                            top_empresas_segmento = melhores_por_segmento.loc[idx_melhores_scores].reset_index(drop=True)
+                            # Garantir que o dataframe possui os dados corretos
+                            if 'SEGMENTO' in melhores_por_segmento.columns:
+                                # Selecionar a empresa com o maior score em cada segmento
+                                top_empresas_segmento = melhores_por_segmento.groupby('SEGMENTO').apply(
+                                    lambda x: x.nlargest(1, 'score')  # Pega a linha com o maior score em cada segmento
+                                ).reset_index(drop=True)
                         
-                            # Exibir os resultados em blocos organizados
-                            colunas = st.columns(3)  # Dividir em 3 colunas para melhor visualização
-                            for idx, row in top_empresas_segmento.iterrows():
-                                with colunas[idx % 3]:  # Posicionar as empresas nas colunas
-                                    st.markdown(f"""
-                                        <div style="border: 1px solid #ddd; border-radius: 10px; padding: 10px; margin: 10px; text-align: center; box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);">
-                                            <div style="font-size: 18px; font-weight: bold; color: #333;">
-                                                {row['nome_empresa_x']}
+                                # Exibir os resultados em blocos organizados
+                                colunas = st.columns(3)  # Dividir em 3 colunas
+                                for idx, row in top_empresas_segmento.iterrows():
+                                    with colunas[idx % 3]:  # Posicionar as empresas em colunas
+                                        st.markdown(f"""
+                                            <div style="border: 1px solid #ddd; border-radius: 10px; padding: 10px; margin: 10px; text-align: center; box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);">
+                                                <div style="font-size: 18px; font-weight: bold; color: #333;">
+                                                    {row['nome_empresa_x']}
+                                                </div>
+                                                <div style="font-size: 14px; color: #555; margin: 5px 0;">
+                                                    Ticker: <strong>{row['ticker']}</strong>
+                                                </div>
+                                                <div style="font-size: 16px; color: green; font-weight: bold; margin: 5px 0;">
+                                                    Score: {row['score']:.2f}
+                                                </div>
+                                                <div style="font-size: 14px; color: #777;">
+                                                    Segmento: {row['SEGMENTO']}
+                                                </div>
                                             </div>
-                                            <div style="font-size: 14px; color: #555; margin: 5px 0;">
-                                                Ticker: <strong>{row['ticker']}</strong>
-                                            </div>
-                                            <div style="font-size: 16px; color: green; font-weight: bold; margin: 5px 0;">
-                                                Score: {row['score']:.2f}
-                                            </div>
-                                            <div style="font-size: 14px; color: #777;">
-                                                Segmento: {row['SEGMENTO']}
-                                            </div>
-                                        </div>
-                                    """, unsafe_allow_html=True)
+                                        """, unsafe_allow_html=True)
+                            else:
+                                st.error("A coluna 'SEGMENTO' não foi encontrada. Verifique o carregamento dos dados.")
                         else:
                             st.warning("Nenhuma empresa encontrada para mostrar os melhores scores por segmento.")
+
 
 
