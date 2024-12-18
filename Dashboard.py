@@ -1256,7 +1256,7 @@ if pagina == "Avançada": #_____________________________________________________
                             st.warning("Não há dados disponíveis para as empresas selecionadas nas Demonstrações Financeiras.")
 
 
-
+"""
                         # Criar uma seção para identificar as empresas com o melhor score por categoria _____________________________________________________________________________________
                         if not df_resultados.empty:
                             st.markdown("## Empresa com Melhor Score por Segmento")
@@ -1295,6 +1295,6 @@ if pagina == "Avançada": #_____________________________________________________
                                 st.error("A coluna 'SEGMENTO' não foi encontrada. Verifique o carregamento dos dados.")
                         else:
                             st.warning("Nenhuma empresa encontrada para mostrar os melhores scores por segmento.")
-
+"""
 
 
