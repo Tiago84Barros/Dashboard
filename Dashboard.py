@@ -993,6 +993,44 @@ if pagina == "Avançada": #_____________________________________________________
                         (setores['SUBSETOR'] == subsetor_selecionado) &
                         (setores['SEGMENTO'] == segmento_selecionado)
                     ]
+
+                    # Determinar o último ano disponível no banco de dados de demonstrações financeiras _______________________________________________________________________________________
+                    def get_latest_year(df):
+                        if "Data" in df.columns:
+                            return pd.to_datetime(df["Data"], errors="coerce").dt.year.max()
+                        return None
+                    
+                    # Atualizar o filtro de empresas
+                    filtered_empresas = []
+                    latest_year = None  # Variável para armazenar o último ano disponível
+                    
+                    # Filtrar empresas com informações do último ano apresentado
+                    for i, row in empresas_filtradas.iterrows():
+                        ticker = row['ticker']
+                        
+                        # Carregar os dados das demonstrações financeiras da empresa
+                        dfp = load_data_from_db(ticker + ".SA")
+                        if dfp is None or dfp.empty:
+                            continue
+                        
+                        # Determinar o último ano disponível na demonstração financeira
+                        if latest_year is None:
+                            latest_year = get_latest_year(dfp)
+                        
+                        # Verificar se a empresa possui informações do último ano
+                        dfp["Ano"] = pd.to_datetime(dfp["Data"], errors="coerce").dt.year
+                        if latest_year in dfp["Ano"].values:
+                            filtered_empresas.append(row)
+                    
+                    # Criar um DataFrame com as empresas filtradas
+                    empresas_filtradas = pd.DataFrame(filtered_empresas)
+                    
+                    # Verificar se há empresas restantes após o filtro
+                    if empresas_filtradas.empty:
+                        st.warning("Nenhuma empresa apresenta informações para o último ano disponível.")
+                    else:
+                        st.success(f"Empresas filtradas com base no último ano disponível ({latest_year}).")
+
         
                     st.markdown(f"### Empresas no Segmento {segmento_selecionado}")
 
