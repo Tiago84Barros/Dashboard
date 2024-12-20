@@ -1177,15 +1177,16 @@ if pagina == "Avançada": #_____________________________________________________
                         "P/L": "P/L",
                         "EV_EBITDA": "EV_EBITDA"
                     }
+
+                     # Selecionar as empresas a exibir
+                    lista_empresas = empresas_filtradas['nome_empresa'].tolist()
+                    empresas_selecionadas = st.multiselect("Selecione as empresas a serem exibidas no gráfico:", lista_empresas, default=lista_empresas)
                     
                     # Selecionar o indicador a ser exibido
                     indicador_selecionado = st.selectbox("Selecione o Indicador para Comparar:", indicadores_disponiveis, index=0)
                     col_indicador = nomes_to_col[indicador_selecionado]
                     
-                    # Selecionar as empresas a exibir
-                    lista_empresas = empresas_filtradas['nome_empresa'].tolist()
-                    empresas_selecionadas = st.multiselect("Selecione as empresas a serem exibidas no gráfico:", lista_empresas, default=lista_empresas)
-                    
+                                      
                     # Opção para normalizar os dados
                     normalizar = st.checkbox("Normalizar os Indicadores (Escala de 0 a 1)", value=False)
                     
