@@ -840,7 +840,6 @@ if pagina == "Básica":
         
         # 1 - Chamar a tabela multiplos do banco de dados com todas as informações 
 
-
         # Carregar dados históricos
         multiplos = load_multiplos_from_db(ticker)
         
