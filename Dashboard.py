@@ -1165,9 +1165,9 @@ if pagina == "Avançada": #_____________________________________________________
                     st.markdown("---") # Espaçamento entre diferentes tipos de análises
                     st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
                     
-                    st.markdown("### Comparação de Indicadores entre Empresas do Segmento") #___________________________________________________________________________________________________
+                    st.markdown("### Comparação de Indicadores (Múltiplos) entre Empresas do Segmento") #___________________________________________________________________________________________________
                     
-                    # Lista de indicadores disponíveis (ajuste conforme suas colunas e nomenclaturas)
+                  # Lista de indicadores disponíveis
                     indicadores_disponiveis = ["Margem Líquida", "ROE", "P/L", "EV_EBITDA"]
                     
                     # Mapeamento de nomes amigáveis para nomes de colunas no banco
@@ -1182,24 +1182,28 @@ if pagina == "Avançada": #_____________________________________________________
                     indicador_selecionado = st.selectbox("Selecione o Indicador para Comparar:", indicadores_disponiveis, index=0)
                     col_indicador = nomes_to_col[indicador_selecionado]
                     
-                    # Selecionar as empresas a exibir (por padrão, todas as empresas do segmento)
+                    # Selecionar as empresas a exibir
                     lista_empresas = empresas_filtradas['nome_empresa'].tolist()
                     empresas_selecionadas = st.multiselect("Selecione as empresas a serem exibidas no gráfico:", lista_empresas, default=lista_empresas)
-
-                   # Vamos construir um DataFrame com o histórico completo de cada empresa selecionada
-                    df_historico = []
                     
+                    # Opção para normalizar os dados
+                    normalizar = st.checkbox("Normalizar os Indicadores (Escala de 0 a 1)", value=False)
+                    
+                    # Construir o DataFrame com o histórico completo de cada empresa selecionada
+                    df_historico = []
                     for i, row in empresas_filtradas.iterrows():
                         nome_emp = row['nome_empresa']
                         if nome_emp in empresas_selecionadas:
                             ticker = row['ticker']
-                            multiplos_data = load_multiplos_from_db(ticker + ".SA")  # Ajuste conforme sua função
+                            multiplos_data = load_multiplos_from_db(ticker + ".SA")
                             if multiplos_data is not None and not multiplos_data.empty and col_indicador in multiplos_data.columns:
-                                # Supondo que multiplos_data tenha uma coluna 'Data' com as datas dos indicadores
+                                # Processar os dados da empresa
                                 df_emp = multiplos_data[['Data', col_indicador]].copy()
                                 df_emp['Ano'] = pd.to_datetime(df_emp['Data'], errors='coerce').dt.year  # Extrair apenas o ano
                                 df_emp['Empresa'] = nome_emp
                                 df_historico.append(df_emp)
+                            else:
+                                st.info(f"Empresa {nome_emp} não possui dados para o indicador {indicador_selecionado}.")
                     
                     if len(df_historico) == 0:
                         st.warning("Não há dados históricos disponíveis para as empresas selecionadas ou para o indicador escolhido.")
@@ -1207,24 +1211,34 @@ if pagina == "Avançada": #_____________________________________________________
                         # Concatenar os DataFrames em um único DataFrame
                         df_historico = pd.concat(df_historico, ignore_index=True)
                     
-                        # Remover entradas com anos nulos (caso a conversão falhe)
+                        # Remover entradas com anos nulos
                         df_historico = df_historico.dropna(subset=['Ano'])
+                    
+                        # Alinhar os dados das empresas por anos comuns
+                        anos_comuns = set.intersection(*[set(df_historico[df_historico['Empresa'] == emp]['Ano']) for emp in empresas_selecionadas])
+                        df_historico = df_historico[df_historico['Ano'].isin(anos_comuns)]
+                    
+                        # Normalizar os dados se a opção estiver marcada
+                        if normalizar:
+                            max_valor = df_historico[col_indicador].max()
+                            min_valor = df_historico[col_indicador].min()
+                            df_historico[col_indicador] = (df_historico[col_indicador] - min_valor) / (max_valor - min_valor)
                     
                         # Criar o gráfico de barras
                         fig = px.bar(
                             df_historico,
-                            x='Ano',                # Usar o ano como eixo X
-                            y=col_indicador,        # Indicador selecionado como eixo Y
-                            color='Empresa',        # Diferenciar as empresas por cor
-                            barmode='group',        # Agrupar barras por ano
+                            x='Ano',
+                            y=col_indicador,
+                            color='Empresa',
+                            barmode='group',
                             title=f"Evolução Histórica de {indicador_selecionado} por Empresa"
                         )
                     
                         # Ajustar layout do gráfico
                         fig.update_layout(
                             xaxis_title="Ano",
-                            yaxis_title=indicador_selecionado,
-                            xaxis=dict(type='category'),  # Tratar os anos como categorias
+                            yaxis_title=f"{indicador_selecionado} {'(Normalizado)' if normalizar else ''}",
+                            xaxis=dict(type='category', categoryorder='category ascending'),
                             legend_title="Empresa"
                         )
                     
