@@ -1028,9 +1028,7 @@ if pagina == "Avançada": #_____________________________________________________
                     # Verificar se há empresas restantes após o filtro
                     if empresas_filtradas.empty:
                         st.warning("Nenhuma empresa apresenta informações para o último ano disponível.")
-                    else:
-                        st.success(f"Empresas filtradas com base no último ano disponível ({latest_year}).")
-
+         
         
                     st.markdown(f"### Empresas no Segmento {segmento_selecionado}")
 
