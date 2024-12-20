@@ -1214,15 +1214,15 @@ if pagina == "Avançada": #_____________________________________________________
                         # Remover entradas com anos nulos
                         df_historico = df_historico.dropna(subset=['Ano'])
                     
-                        # Alinhar os dados das empresas por anos comuns
-                        anos_comuns = set.intersection(*[set(df_historico[df_historico['Empresa'] == emp]['Ano']) for emp in empresas_selecionadas])
-                        df_historico = df_historico[df_historico['Ano'].isin(anos_comuns)]
-                    
                         # Normalizar os dados se a opção estiver marcada
                         if normalizar:
                             max_valor = df_historico[col_indicador].max()
                             min_valor = df_historico[col_indicador].min()
                             df_historico[col_indicador] = (df_historico[col_indicador] - min_valor) / (max_valor - min_valor)
+                    
+                        # Garantir que todos os anos presentes no conjunto de dados sejam exibidos no gráfico
+                        anos_disponiveis = sorted(df_historico['Ano'].unique())
+                        df_historico['Ano'] = df_historico['Ano'].astype(str)  # Converter para string para lidar com gaps no eixo
                     
                         # Criar o gráfico de barras
                         fig = px.bar(
@@ -1238,7 +1238,7 @@ if pagina == "Avançada": #_____________________________________________________
                         fig.update_layout(
                             xaxis_title="Ano",
                             yaxis_title=f"{indicador_selecionado} {'(Normalizado)' if normalizar else ''}",
-                            xaxis=dict(type='category', categoryorder='category ascending'),
+                            xaxis=dict(type='category', categoryorder='category ascending', tickvals=anos_disponiveis),
                             legend_title="Empresa"
                         )
                     
