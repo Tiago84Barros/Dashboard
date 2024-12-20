@@ -1248,13 +1248,13 @@ if pagina == "Avançada": #_____________________________________________________
                         st.markdown("---") # Espaçamento entre diferentes tipos de análise
                         st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
 
-                        # Seção: Gráfico Comparativo de Demonstrações Financeiras _____________________________________________________________________________________________________________
+                       # Seção: Gráfico Comparativo de Demonstrações Financeiras _____________________________________________________________________________________________________________
+                       # Título da seção
                         st.markdown("### Comparação de Demonstrações Financeiras entre Empresas")
                         
                         # Função para carregar dados de demonstrações financeiras de todas as empresas selecionadas
                         def load_dre_comparativo(empresas, indicadores_dre):
                             df_comparativo = []
-                        
                             for _, row in empresas.iterrows():
                                 nome_emp = row['nome_empresa']
                                 ticker = row['ticker']
@@ -1273,7 +1273,7 @@ if pagina == "Avançada": #_____________________________________________________
                         # Carregar os dados para as empresas selecionadas
                         dre_data_comparativo = load_dre_comparativo(
                             empresas_filtradas[empresas_filtradas['nome_empresa'].isin(empresas_selecionadas)],
-                            indicadores_dre=["Receita_Liquida", "Lucro_Liquido", "Patrimonio_Liquido"]
+                            indicadores_dre=["Receita_Liquida", "Lucro_Liquido", "Patrimonio_Liquido", "Caixa_Liquido"]
                         )
                         
                         if dre_data_comparativo is not None:
@@ -1302,6 +1302,10 @@ if pagina == "Avançada": #_____________________________________________________
                             df_filtrado = dre_data_comparativo[['Ano', indicador_selecionado, 'Empresa']].copy()
                             df_filtrado = df_filtrado.rename(columns={indicador_selecionado: "Valor"})  # Renomear para padronização
                         
+                            # Garantir que todos os anos estejam presentes no eixo X
+                            anos_disponiveis = sorted(df_filtrado['Ano'].unique())
+                            df_filtrado['Ano'] = df_filtrado['Ano'].astype(str)  # Converter para string para lidar com gaps no eixo
+                        
                             # Criar o gráfico de barras agrupadas
                             fig = px.bar(
                                 df_filtrado,
@@ -1317,11 +1321,12 @@ if pagina == "Avançada": #_____________________________________________________
                                 xaxis_title="Ano",
                                 yaxis_title=indicador_selecionado_display,
                                 legend_title="Empresa",
-                                xaxis=dict(type='category')  # Força o eixo X a ser categórico (anos)
+                                xaxis=dict(type='category', categoryorder='category ascending', tickvals=anos_disponiveis)
                             )
                         
                             # Exibir o gráfico no Streamlit
                             st.plotly_chart(fig, use_container_width=True)
+
                         
                         else:
                             st.warning("Não há dados disponíveis para as empresas selecionadas nas Demonstrações Financeiras.")
