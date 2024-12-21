@@ -1050,9 +1050,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
                         # Carregar dados das demonstrações financeiras
                         dfp = load_data_from_db(ticker + ".SA")
-                        st.write(dfp.head())  # Exibir as primeiras linhas de `dfp` para inspeção
-                        st.write(dfp.columns)  # Verificar as colunas disponíveis em `dfp`
-                        
+                                      
                         if dfp is None or dfp.empty:
                             continue
                     
