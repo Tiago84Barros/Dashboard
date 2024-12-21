@@ -309,7 +309,7 @@ if pagina == "Básica":
             if 'ticker' in st.session_state:
                 ticker_input = st.text_input("DIGITE O TICKER:", value=st.session_state.ticker.split(".SA")[0], key="ticker_input").upper()
             else:
-                ticker_input = st.text_input("Digite o ticker (ex: GMAT3)", key="ticker_input").upper()
+                ticker_input = st.text_input("Digite o ticker:", key="ticker_input").upper()
         
             # Verificar se o campo de busca está vazio e remover o ticker do session_state
             if ticker_input == "":
