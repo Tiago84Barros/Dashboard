@@ -1079,7 +1079,7 @@ if pagina == "Avançada": #_____________________________________________________
                         # Normalizar métricas em relação ao setor (se disponível)
                         setor_empresas = empresas_filtradas[empresas_filtradas['SETOR'] == row['SETOR']]
                         setor_dfp = dfp[dfp['Ticker'].isin(setor_empresas['ticker'])]
-                        setor_multiplos = multiplos[multiplos['ticker'].isin(setor_empresas['ticker'])]
+                        setor_multiplos = multiplos[multiplos['Ticker'].isin(setor_empresas['ticker'])]
                     
                         # Métricas normalizadas (usar média do setor como referência)
                         def normalize_sector(value, sector_values):
