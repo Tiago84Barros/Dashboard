@@ -305,13 +305,19 @@ if pagina == "Básica":
             </style>
         """, unsafe_allow_html=True)
 
-            # Adicionar seletor para informações trimestrais ou anuais _______________________________________________________________________________________________________________
+        # Adicionar seletor para informações trimestrais ou anuais _______________________________________________________________________________________________________________
         st.markdown("### Escolha o Tipo de Demonstrações Financeiras:")
         tipo_dados = st.radio("",
             options=["Trimestrais", "Anuais"],
             index=1,  # Por padrão, seleciona "Anuais"
             horizontal=True  # Exibir as opções lado a lado
 )
+
+        # espaçamento entre os elementos
+        st.markdown("""
+            <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Avançada de Ações</h1>
+        """, unsafe_allow_html=True)
+
         
         # Inserir campo para o usuário digitar o ticker _______________________________________________________________________________________________________________________________
         col1, col2 = st.columns([4, 1])
@@ -977,7 +983,8 @@ if pagina == "Básica":
             st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
 
 if pagina == "Avançada": #_______________________________________________________________# Análise Avançada #____________________________________________________________________________________________________________
-    
+
+      # espaçamento entre os elementos
         st.markdown("""
             <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Avançada de Ações</h1>
         """, unsafe_allow_html=True)
