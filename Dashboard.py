@@ -306,13 +306,13 @@ if pagina == "Básica":
         """, unsafe_allow_html=True)
 
         # Adicionar seletor para informações trimestrais ou anuais _______________________________________________________________________________________________________________
-        st.markdown("Escolha o Tipo de Demonstrações Financeiras:")
-        
+        st.markdown("### Escolha o Tipo de Demonstrações Financeiras:")
         tipo_dados = st.radio(
-            "",
+            "Selecione o tipo de dados que deseja visualizar:",
             options=["Trimestrais", "Anuais"],
             index=1,  # Por padrão, seleciona "Anuais"
             horizontal=True  # Exibir as opções lado a lado
+        )
 
 
         # espaçamento entre os elementos
