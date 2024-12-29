@@ -307,7 +307,7 @@ if pagina == "Básica":
 
         # Adicionar seletor para informações trimestrais ou anuais _______________________________________________________________________________________________________________
        # Usar colunas para alinhar o texto e os botões de rádio horizontalmente
-        col1, col2 = st.columns([1.5, 8.5])  # Ajuste as proporções conforme necessário
+        col1, col2 = st.columns([4, 6])  # Ajuste as proporções conforme necessário
         
         with col1:
              st.markdown(
