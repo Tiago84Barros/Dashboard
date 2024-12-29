@@ -310,11 +310,7 @@ if pagina == "Básica":
         col1, col2 = st.columns([4, 6])  # Ajuste as proporções conforme necessário
         
         with col1:
-             st.markdown(
-                "<div style='line-height: 1.8; text-align: right; font-weight: bold;'>Escolha o Tipo de Demonstrações Financeiras:</div>",
-                unsafe_allow_html=True
-            )
-
+             st.markdown("Escolha o Tipo de Demonstrações Financeiras:</div>")
         
         with col2:
             tipo_dados = st.radio(
