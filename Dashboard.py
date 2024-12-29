@@ -306,19 +306,15 @@ if pagina == "Básica":
         """, unsafe_allow_html=True)
 
         # Adicionar seletor para informações trimestrais ou anuais _______________________________________________________________________________________________________________
-       # Usar colunas para alinhar o texto e os botões de rádio horizontalmente
-        col1, col2 = st.columns([4, 6])  # Ajuste as proporções conforme necessário
+         st.markdown("Escolha o Tipo de Demonstrações Financeiras:")
         
-        with col1:
-             st.markdown("Escolha o Tipo de Demonstrações Financeiras:</div>")
-        
-        with col2:
-            tipo_dados = st.radio(
-                "",
-                options=["Trimestrais", "Anuais"],
-                index=1,  # Por padrão, seleciona "Anuais"
-                horizontal=True  # Exibir as opções lado a lado
-            )
+
+        tipo_dados = st.radio(
+            "",
+            options=["Trimestrais", "Anuais"],
+            index=1,  # Por padrão, seleciona "Anuais"
+            horizontal=True  # Exibir as opções lado a lado
+
 
         # espaçamento entre os elementos
         st.markdown("""
