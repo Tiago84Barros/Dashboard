@@ -156,9 +156,9 @@ def load_setores_from_db():
 # Carregar os setores
 setores = load_setores_from_db()
 
-# Função para carregar os dados das DEMONSTRAÇÕES FINANCEIRAS (trimestrais ou anuais) do banco de dados _______________________________________________________________________________________________________________________________________________________________
+# Função para carregar os dados das DEMONSTRAÇÕES FINANCEIRAS do banco de dados _______________________________________________________________________________________________________________________________________________________________
 @st.cache_data
-def load_data_from_db(ticker, tipo_dados):
+def load_data_from_db(ticker):
     db_path = download_db_from_github(db_url)
     
     if db_path is None or not os.path.exists(db_path):
@@ -166,14 +166,11 @@ def load_data_from_db(ticker, tipo_dados):
     
     try:
         conn = sqlite3.connect(db_path)
-        
-        # Escolher tabela com base no tipo de dados
-        tabela = "Demonstracoes_Financeiras_TRI" if tipo_dados == "Trimestrais" else "Demonstracoes_Financeiras"
-        
-        # Buscar dados na tabela correta
-        query_dados = f"SELECT * FROM {tabela} WHERE Ticker = '{ticker}' OR Ticker = '{ticker.replace('.SA', '')}'"
+    
+        # Buscar dados na tabela 'Demonstracoes_Financeiras' sem o sufixo '.SA'
+        query_dados = f"SELECT * FROM Demonstracoes_Financeiras_TRI WHERE Ticker = '{ticker}' OR Ticker = '{ticker.replace('.SA', '')}'"
         df = pd.read_sql_query(query_dados, conn)
-        
+    
         return df
     except Exception as e:
         st.error(f"Erro ao conectar ao banco de dados: {e}")
@@ -305,21 +302,6 @@ if pagina == "Básica":
             </style>
         """, unsafe_allow_html=True)
 
-        # Adicionar seletor para informações trimestrais ou anuais _______________________________________________________________________________________________________________
-        st.markdown("### Escolha o Tipo de Demonstrações Financeiras:")
-        tipo_dados = st.radio(
-            "Selecione o tipo de dados que deseja visualizar:",
-            options=["Trimestrais", "Anuais"],
-            index=1,  # Por padrão, seleciona "Anuais"
-            horizontal=True  # Exibir as opções lado a lado
-        )
-
-
-        # espaçamento entre os elementos
-        st.markdown("""
-            <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Avançada de Ações</h1>
-        """, unsafe_allow_html=True)
-
         
         # Inserir campo para o usuário digitar o ticker _______________________________________________________________________________________________________________________________
         col1, col2 = st.columns([4, 1])
@@ -377,7 +359,7 @@ if pagina == "Básica":
         else:
             # Se houver um ticker, continuar com a exibição normal das informações do ticker
             ticker = st.session_state.ticker
-            indicadores = load_data_from_db(ticker, tipo_dados)
+            indicadores = load_data_from_db(ticker)
             indicadores = indicadores.drop(columns=['Ticker'])
            
         # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________________________________
