@@ -309,7 +309,8 @@ if pagina == "Básica":
         st.markdown("### Escolha o Tipo de Demonstrações Financeiras:")
         tipo_dados = st.radio("",
             options=["Trimestrais", "Anuais"],
-            index=1  # Por padrão, seleciona "Anuais"
+            index=1,  # Por padrão, seleciona "Anuais"
+            horizontal=True  # Exibir as opções lado a lado
 )
         
         # Inserir campo para o usuário digitar o ticker _______________________________________________________________________________________________________________________________
