@@ -168,7 +168,7 @@ def load_data_from_db(ticker):
         conn = sqlite3.connect(db_path)
     
         # Buscar dados na tabela 'Demonstracoes_Financeiras' sem o sufixo '.SA'
-        query_dados = f"SELECT * FROM Demonstracoes_Financeiras WHERE Ticker = '{ticker}' OR Ticker = '{ticker.replace('.SA', '')}'"
+        query_dados = f"SELECT * FROM Demonstracoes_Financeiras_TRI WHERE Ticker = '{ticker}' OR Ticker = '{ticker.replace('.SA', '')}'"
         df = pd.read_sql_query(query_dados, conn)
     
         return df
@@ -192,7 +192,7 @@ def load_multiplos_from_db(ticker):
 
         # Buscar todos os dados históricos da tabela 'multiplos' para o ticker
         query_multiplos = f"""
-        SELECT * FROM multiplos 
+        SELECT * FROM multiplos_TRI 
         WHERE Ticker = '{ticker}' OR Ticker = '{ticker.replace('.SA', '')}' 
         ORDER BY Data ASC
         """
