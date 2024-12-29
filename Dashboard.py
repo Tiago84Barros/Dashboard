@@ -156,9 +156,9 @@ def load_setores_from_db():
 # Carregar os setores
 setores = load_setores_from_db()
 
-# Função para carregar os dados das DEMONSTRAÇÕES FINANCEIRAS do banco de dados _______________________________________________________________________________________________________________________________________________________________
+# Função para carregar os dados das DEMONSTRAÇÕES FINANCEIRAS (trimestrais ou anuais) do banco de dados _______________________________________________________________________________________________________________________________________________________________
 @st.cache_data
-def load_data_from_db(ticker):
+def load_data_from_db(ticker, tipo_dados):
     db_path = download_db_from_github(db_url)
     
     if db_path is None or not os.path.exists(db_path):
@@ -166,11 +166,14 @@ def load_data_from_db(ticker):
     
     try:
         conn = sqlite3.connect(db_path)
-    
-        # Buscar dados na tabela 'Demonstracoes_Financeiras' sem o sufixo '.SA'
-        query_dados = f"SELECT * FROM Demonstracoes_Financeiras_TRI WHERE Ticker = '{ticker}' OR Ticker = '{ticker.replace('.SA', '')}'"
+        
+        # Escolher tabela com base no tipo de dados
+        tabela = "Demonstracoes_Financeiras_TRI" if tipo_dados == "Trimestrais" else "Demonstracoes_Financeiras"
+        
+        # Buscar dados na tabela correta
+        query_dados = f"SELECT * FROM {tabela} WHERE Ticker = '{ticker}' OR Ticker = '{ticker.replace('.SA', '')}'"
         df = pd.read_sql_query(query_dados, conn)
-    
+        
         return df
     except Exception as e:
         st.error(f"Erro ao conectar ao banco de dados: {e}")
@@ -365,7 +368,7 @@ if pagina == "Básica":
         else:
             # Se houver um ticker, continuar com a exibição normal das informações do ticker
             ticker = st.session_state.ticker
-            indicadores = load_data_from_db(ticker)
+            indicadores = load_data_from_db(ticker, tipo_dados)
             indicadores = indicadores.drop(columns=['Ticker'])
            
         # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________________________________
