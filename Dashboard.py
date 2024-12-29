@@ -304,7 +304,7 @@ if pagina == "Básica":
 
             # Adicionar seletor para informações trimestrais ou anuais _______________________________________________________________________________________________________________
         st.markdown("### Escolha o Tipo de Demonstrações Financeiras:")
-        tipo_dados = st.radio(
+        tipo_dados = st.radio("",
             options=["Trimestrais", "Anuais"],
             index=1  # Por padrão, seleciona "Anuais"
 )
