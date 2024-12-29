@@ -301,8 +301,16 @@ if pagina == "Básica":
             }
             </style>
         """, unsafe_allow_html=True)
+
+            # Adicionar seletor para informações trimestrais ou anuais _______________________________________________________________________________________________________________
+        st.markdown("### Escolha o Tipo de Demonstrações Financeiras:")
+        tipo_dados = st.radio(
+            "Selecione o tipo de dados que deseja visualizar:",
+            options=["Trimestrais", "Anuais"],
+            index=1  # Por padrão, seleciona "Anuais"
+)
         
-        # Inserir campo para o usuário digitar o ticker _______________________________________________________________________________________________________________________________-
+        # Inserir campo para o usuário digitar o ticker _______________________________________________________________________________________________________________________________
         col1, col2 = st.columns([4, 1])
         with col1:
             # Se houver um ticker definido via clique ou input, usá-lo como valor no campo de busca
