@@ -664,10 +664,7 @@ if pagina == "Básica":
         # st.markdown("### Tabela de Múltiplos")
         # st.dataframe(multiplos)  # Mostra a tabela interativa no dashboard
 
-         # Inserindo espaçamento entre os elementos
-        placeholder = st.empty()
-        placeholder.markdown("<div style='height: 46px;'></div>", unsafe_allow_html=True)
-        
+           
         # Adicionar estilo CSS para os quadrados que apresentarão os múltiplos _________________________________________________________________________________________________________________
          # Verificando colunas esperadas
         
