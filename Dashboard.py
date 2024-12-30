@@ -652,6 +652,11 @@ if pagina == "Básica":
         multiplos = load_multiplos_limitado_from_db(ticker)
         # st.markdown("### Tabela de Múltiplos")
         # st.dataframe(multiplos)  # Mostra a tabela interativa no dashboard
+
+       # espaçamento entre os elementos
+        st.markdown("""
+            <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Avançada de Ações</h1>
+        """, unsafe_allow_html=True)
         
         # Adicionar estilo CSS para os quadrados que apresentarão os múltiplos _________________________________________________________________________________________________________________
          # Verificando colunas esperadas
