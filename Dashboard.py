@@ -179,7 +179,7 @@ def load_data_from_db(ticker):
         if conn:
             conn.close()
 
-# Chama o banco de dados dos Múltiplos __________________________________________________________________________________________________________________________________________________
+# Função que chama o banco de dados dos Múltiplos __________________________________________________________________________________________________________________________________________________
 @st.cache_data
 def load_multiplos_from_db(ticker):
     db_path = download_db_from_github(db_url)
@@ -514,7 +514,10 @@ if pagina == "Básica":
         with col3:
             st.markdown(f"<div class='cagr-box'>Patrimônio Líquido: {format_cagr(cagrs['Patrimonio_Liquido'])}</div>", unsafe_allow_html=True)
          
-        
+        # espaçamento entre os elementos
+        st.markdown("""
+            <h1 style='text-align: center; font-size: 36px; color: #333;'' """, unsafe_allow_html=True)
+    
         # Cria o gráfico em BARRA e o seletor para escolher quais variáveis mostrar das DFPs __________________________________________________________________________________________________________________________________________________
         
         # Seletor para escolher quais variáveis visualizar no gráfico
