@@ -514,9 +514,9 @@ if pagina == "Básica":
         with col3:
             st.markdown(f"<div class='cagr-box'>Patrimônio Líquido: {format_cagr(cagrs['Patrimonio_Liquido'])}</div>", unsafe_allow_html=True)
          
-        # espaçamento entre os elementos
-        st.markdown("""
-            <h1 style='text-align: center; font-size: 36px; color: #333;'' """, unsafe_allow_html=True)
+         # Inserindo espaçamento entre os elementos
+        placeholder = st.empty()
+        placeholder.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
     
         # Cria o gráfico em BARRA e o seletor para escolher quais variáveis mostrar das DFPs __________________________________________________________________________________________________________________________________________________
         
@@ -623,6 +623,10 @@ if pagina == "Básica":
         
         else:
             st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
+
+         # Inserindo espaçamento entre os elementos
+        placeholder = st.empty()
+        placeholder.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
             
         
         # Exibir a tabela de indicadores no final ____________________________________________________________________________________________________________________________________________________
@@ -660,9 +664,9 @@ if pagina == "Básica":
         # st.markdown("### Tabela de Múltiplos")
         # st.dataframe(multiplos)  # Mostra a tabela interativa no dashboard
 
-       # espaçamento entre os elementos
-        st.markdown("""
-            <h1 style='text-align: center; font-size: 36px; color: #333;'' """, unsafe_allow_html=True)
+         # Inserindo espaçamento entre os elementos
+        placeholder = st.empty()
+        placeholder.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
         
         # Adicionar estilo CSS para os quadrados que apresentarão os múltiplos _________________________________________________________________________________________________________________
          # Verificando colunas esperadas
@@ -847,9 +851,9 @@ if pagina == "Básica":
                 </div>
                 """, unsafe_allow_html=True)
 
-       # espaçamento entre os elementos
-        st.markdown("""
-            <h1 style='text-align: center; font-size: 36px; color: #333;'' """, unsafe_allow_html=True)
+        # Inserindo espaçamento entre os elementos
+        placeholder = st.empty()
+        placeholder.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
         
         
         # Cria o gráfico em BARRA e o seletor para escolher quais variáveis mostrar dos Múltiplos __________________________________________________________________________________________________________________________________________________
