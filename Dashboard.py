@@ -219,6 +219,9 @@ with st.sidebar:
 
 if pagina == "Básica":
 
+        # Limpa o layout da página Avançada
+        st.empty()
+
         # Adicionar o título ao cabeçalho
         st.markdown("""
             <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Básica de Ações</h1>
