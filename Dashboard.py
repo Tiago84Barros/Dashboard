@@ -361,6 +361,10 @@ if pagina == "Básica":
             ticker = st.session_state.ticker
             indicadores = load_data_from_db(ticker)
             indicadores = indicadores.drop(columns=['Ticker'])
+
+        # espaçamento entre os elementos
+        st.markdown("""
+            <h1 style='text-align: center; font-size: 36px; color: #333;'' """, unsafe_allow_html=True)
            
         # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________________________________
         
@@ -840,10 +844,9 @@ if pagina == "Básica":
                 </div>
                 """, unsafe_allow_html=True)
 
-        # espaçamento entre os elementos
+       # espaçamento entre os elementos
         st.markdown("""
-            <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Avançada de Ações</h1>
-        """, unsafe_allow_html=True)
+            <h1 style='text-align: center; font-size: 36px; color: #333;'' """, unsafe_allow_html=True)
         
         
         # Cria o gráfico em BARRA e o seletor para escolher quais variáveis mostrar dos Múltiplos __________________________________________________________________________________________________________________________________________________
