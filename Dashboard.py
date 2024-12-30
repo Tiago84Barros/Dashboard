@@ -835,6 +835,11 @@ if pagina == "Básica":
                     <div class='metric-label' title='Mede a capacidade da empresa em honrar suas dívidas de curto prazo com seus ativos circulantes.'>Liquidez Corrente</div>
                 </div>
                 """, unsafe_allow_html=True)
+
+        # espaçamento entre os elementos
+        st.markdown("""
+            <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Avançada de Ações</h1>
+        """, unsafe_allow_html=True)
         
         
         # Cria o gráfico em BARRA e o seletor para escolher quais variáveis mostrar dos Múltiplos __________________________________________________________________________________________________________________________________________________
