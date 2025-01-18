@@ -192,7 +192,7 @@ def load_multiplos_from_db(ticker):
 
         # Buscar todos os dados históricos da tabela 'multiplos' para o ticker
         query_multiplos = f"""
-        SELECT * FROM multiplos_TRI 
+        SELECT * FROM multiplos
         WHERE Ticker = '{ticker}' OR Ticker = '{ticker.replace('.SA', '')}' 
         ORDER BY Data ASC
         """
@@ -661,8 +661,8 @@ if pagina == "Básica":
         
         # Carregar dados da tabela 'multiplos'
         multiplos = load_multiplos_limitado_from_db(ticker)
-        # st.markdown("### Tabela de Múltiplos")
-        # st.dataframe(multiplos)  # Mostra a tabela interativa no dashboard
+         st.markdown("### Tabela de Múltiplos")
+         st.dataframe(multiplos)  # Mostra a tabela interativa no dashboard
 
            
         # Adicionar estilo CSS para os quadrados que apresentarão os múltiplos _________________________________________________________________________________________________________________
