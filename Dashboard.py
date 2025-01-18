@@ -646,7 +646,7 @@ if pagina == "Básica":
         
                 # Buscar dados na tabela 'multiplos' para o ticker
                 query_multiplos = f"""
-                SELECT * FROM multiplos 
+                SELECT * FROM multiplos_TRI 
                 WHERE Ticker = '{ticker}' OR Ticker = '{ticker.replace('.SA', '')}' 
                 ORDER BY Data DESC LIMIT 1
                 """
@@ -764,7 +764,7 @@ if pagina == "Básica":
                 if current_price == 0 or pd.isna(dy_value): # Verifica divisão por zero ou NaN
                     dividend_yield = "-"
                 else:
-                    dividend_yield = f"{(100 * dy_value):.2f}%"
+                    dividend_yield = f"{(100 * current_price/dy_value):.2f}%"
                 st.markdown(f"""
                 <div class='metric-box'>
                     <div class='metric-value'>{dividend_yield}</div>
@@ -778,7 +778,7 @@ if pagina == "Básica":
                 if pvp_value == 0 or pd.isna(pvp_value) or np.isinf(pvp_value):  # Verifica divisão por zero ou NaN
                     pvp = "-"
                 else:
-                    pvp = f"{(pvp_value):.2f}"
+                    pvp = f"{(current_price/pvp_value):.2f}"
                 st.markdown(f"""
                 <div class='metric-box'>
                     <div class='metric-value'>{pvp}</div>
@@ -806,7 +806,7 @@ if pagina == "Básica":
                 if pl_value == 0 or pd.isna(pl_value) or np.isinf(pl_value):  # Verifica divisão por zero ou NaN
                     pl = "-"
                 else:
-                    pl = f"{(pl_value):.2f}"
+                    pl = f"{(current_price/pl_value):.2f}"
                 st.markdown(f"""
                 <div class='metric-box'>
                     <div class='metric-value'>{pl}</div>
