@@ -633,7 +633,7 @@ if pagina == "Básica":
         # st.markdown("### Tabela de Indicadores")
         # st.dataframe(indicadores)  # Mostra a tabela interativa no dashboard
         
-        # Função para carregar os dados da tabela "multiplos" do banco de dados  ________________________________________________________________________________________________________________________________________________
+        # Função para carregar os dados da tabela "multiplos_TRI" do banco de dados  ________________________________________________________________________________________________________________________________________________
         @st.cache_data
         def load_multiplos_limitado_from_db(ticker):
             db_path = download_db_from_github(db_url)
@@ -661,8 +661,8 @@ if pagina == "Básica":
         
         # Carregar dados da tabela 'multiplos'
         multiplos = load_multiplos_limitado_from_db(ticker)
-         st.markdown("### Tabela de Múltiplos")
-         st.dataframe(multiplos)  # Mostra a tabela interativa no dashboard
+        st.markdown("### Tabela de Múltiplos")
+        st.dataframe(multiplos)  # Mostra a tabela interativa no dashboard
 
            
         # Adicionar estilo CSS para os quadrados que apresentarão os múltiplos _________________________________________________________________________________________________________________
