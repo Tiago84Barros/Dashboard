@@ -764,7 +764,7 @@ if pagina == "Básica":
                 if current_price == 0 or pd.isna(dy_value): # Verifica divisão por zero ou NaN
                     dividend_yield = "-"
                 else:
-                    dividend_yield = f"{(100 * dy_value/current_price):.2f}%"
+                    dividend_yield = f"{(100 * (dy_value/current_price)):.2f}%"
                 st.markdown(f"""
                 <div class='metric-box'>
                     <div class='metric-value'>{dividend_yield}</div>
