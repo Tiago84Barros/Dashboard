@@ -771,6 +771,8 @@ if pagina == "Básica":
                     <div class='metric-label' title='Mede o retorno percentual dos dividendos pagos pela empresa em relação ao preço da ação.'>Dividend Yield</div>
                 </div>
                 """, unsafe_allow_html=True)
+                st.markdown(dy_value)
+                st.markdown(current_price)
         
             # Coluna 6 - P/VP
             with col6:
