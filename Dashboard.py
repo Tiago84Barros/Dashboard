@@ -719,7 +719,7 @@ if pagina == "Básica":
                 st.markdown(f"""
                 <div class='metric-box'>
                     <div class='metric-value'>{margem_liquida:.2f}%</div>
-                    <div class='metric-label' title='Mede a eficiência da empresa em converter receita em lucro após todas as despesas.'>Margem Líquida</div>
+                    <div class='metric-label' title='Mede a eficiência da empresa em converter receita em lucro após todas as despesas (Lucro Líquido/Receita Líquida).'>Margem Líquida</div>
                   </div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -730,7 +730,7 @@ if pagina == "Básica":
                 st.markdown(f"""
                 <div class='metric-box'>
                     <div class='metric-value'>{margem_Operacional:.2f}%</div>
-                    <div class='metric-label' title='Mede a eficiência operacional da empresa antes das despesas financeiras e impostos.'>Margem Operacional</div>
+                    <div class='metric-label' title='Mede a eficiência operacional da empresa antes das despesas financeiras e impostos (EBIT/Receita Líquida).'>Margem Operacional</div>
                   </div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -741,7 +741,7 @@ if pagina == "Básica":
                 st.markdown(f"""
                 <div class='metric-box'>
                     <div class='metric-value'>{roe:.2f}%</div>
-                    <div class='metric-label' title='ROE (Retorno sobre o Patrimônio): Indica a eficiência da empresa em gerar lucro com o capital dos acionistas.'>ROE</div>
+                    <div class='metric-label' title='ROE (Retorno sobre o Patrimônio): Indica a eficiência da empresa em gerar lucro com o capital dos acionistas (Lucro Líquido/Patrimõnio Líquido).'>ROE</div>
                 </div>
                 """, unsafe_allow_html=True)
         
@@ -751,7 +751,7 @@ if pagina == "Básica":
                 st.markdown(f"""
                 <div class='metric-box'>
                     <div class='metric-value'>{roic:.2f}%</div>
-                    <div class='metric-label' title='ROIC (Retorno sobre Capital Investido): Mede a eficiência da empresa em gerar retorno sobre o capital total investido.'>ROIC</div>
+                    <div class='metric-label' title='ROIC (Retorno sobre Capital Investido): Mede a eficiência da empresa em gerar retorno sobre o capital total investido (EBIT/(Ativo Total - Passivo Circulante).'>ROIC</div>
                 </div>
                 """, unsafe_allow_html=True)
         
@@ -768,7 +768,7 @@ if pagina == "Básica":
                 st.markdown(f"""
                 <div class='metric-box'>
                     <div class='metric-value'>{dividend_yield}</div>
-                    <div class='metric-label' title='Mede o retorno percentual dos dividendos pagos pela empresa em relação ao preço da ação.'>Dividend Yield</div>
+                    <div class='metric-label' title='Mede o retorno percentual dos dividendos pagos pela empresa em relação ao preço da ação (Dividendos/Preço da ação).'>Dividend Yield</div>
                 </div>
                 """, unsafe_allow_html=True)
         
@@ -796,7 +796,7 @@ if pagina == "Básica":
                 st.markdown(f"""
                 <div class='metric-box'>
                     <div class='metric-value'>{payout}</div>
-                    <div class='metric-label' title='Indica a porcentagem do lucro líquido que é distribuída aos acionistas na forma de dividendos.'>Payout</div>
+                    <div class='metric-label' title='Indica a porcentagem do lucro líquido que é distribuída aos acionistas na forma de dividendos (Dividendos/Lucro Líquido).'>Payout</div>
                 </div>
                 """, unsafe_allow_html=True)
         
@@ -823,7 +823,7 @@ if pagina == "Básica":
                 st.markdown(f"""
                 <div class='metric-box'>
                     <div class='metric-value'>{endividamento_total:.2f}</div>
-                     <div class='metric-label' title='Mede o nível de dívida da empresa em relação ao seu patrimônio e ativos.'>Endividamento Total</div>
+                     <div class='metric-label' title='Mede o nível de dívida da empresa em relação ao seu patrimônio e ativos (([Ativo circulante + Ativo Circulante] - Passivo Não Financeiro)/Ativo Total).'>Endividamento Total</div>
                 </div>
                 """, unsafe_allow_html=True)
         
@@ -833,7 +833,7 @@ if pagina == "Básica":
                 st.markdown(f"""
                 <div class='metric-box'>
                     <div class='metric-value'>{alavancagem_financeira:.2f}</div>
-                    <div class='metric-label' title='Mede o quanto a empresa utiliza de capital de terceiros em relação ao patrimônio líquido.'>Alavancagem Financeira</div>
+                    <div class='metric-label' title='Mede o quanto a empresa utiliza de capital de terceiros em relação ao patrimônio líquido (([Ativo circulante + Ativo Circulante] - Passivo Não Financeiro)/Patrimônio Líquido).'>Alavancagem Financeira</div>
                 </div>
                 """, unsafe_allow_html=True)
         
@@ -844,7 +844,7 @@ if pagina == "Básica":
                 st.markdown(f"""
                 <div class='metric-box'>
                     <div class='metric-value'>{Liquidez_Corrente:.2f}</div>
-                    <div class='metric-label' title='Mede a capacidade da empresa em honrar suas dívidas de curto prazo com seus ativos circulantes.'>Liquidez Corrente</div>
+                    <div class='metric-label' title='Mede a capacidade da empresa em honrar suas dívidas de curto prazo com seus ativos circulantes (Ativo Circulante/Passivo Circulante).'>Liquidez Corrente</div>
                 </div>
                 """, unsafe_allow_html=True)
 
