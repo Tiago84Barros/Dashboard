@@ -823,8 +823,7 @@ if pagina == "Básica":
                 st.markdown(f"""
                 <div class='metric-box'>
                     <div class='metric-value'>{endividamento_total:.2f}</div>
-                     <div class='metric-label' title='Mede o nível de dívida da empresa em relação ao seus ativos                         
-                    ([(Passivo circulante + Passivo Não Circulante) - Passivo Não Financeiro]/Ativo Total).'>Endividamento Total</div>
+                     <div class='metric-label' title='Mede o nível de dívida da empresa em relação ao seus ativos (Passivo Total/Ativo Total).'>Endividamento Total</div>
                 </div>
                 """, unsafe_allow_html=True)
         
@@ -834,8 +833,7 @@ if pagina == "Básica":
                 st.markdown(f"""
                 <div class='metric-box'>
                     <div class='metric-value'>{alavancagem_financeira:.2f}</div>
-                    <div class='metric-label' title='Mede o quanto a empresa utiliza de capital de terceiros em relação ao patrimônio líquido                            
-                    ([(Passivo circulante + Passivo Não Circulante] - Passivo Não Financeiro]/Patrimônio Líquido).'>Alavancagem Financeira</div>
+                    <div class='metric-label' title='Mede o quanto a empresa utiliza de capital de terceiros em relação ao patrimônio líquido (Divida Total/Patrimônio Líquido).'>Alavancagem Financeira</div>
                 </div>
                 """, unsafe_allow_html=True)
         
