@@ -741,7 +741,7 @@ if pagina == "Básica":
                 st.markdown(f"""
                 <div class='metric-box'>
                     <div class='metric-value'>{roe:.2f}%</div>
-                    <div class='metric-label' title='ROE (Retorno sobre o Patrimônio): Indica a eficiência da empresa em gerar lucro com o capital dos acionistas (Lucro Líquido/Patrimõnio Líquido).'>ROE</div>
+                    <div class='metric-label' title='ROE (Retorno sobre o Patrimônio): Indica a eficiência da empresa em gerar lucro com o capital dos acionistas (Lucro Líquido/Patrimônio Líquido).'>ROE</div>
                 </div>
                 """, unsafe_allow_html=True)
         
@@ -823,7 +823,7 @@ if pagina == "Básica":
                 st.markdown(f"""
                 <div class='metric-box'>
                     <div class='metric-value'>{endividamento_total:.2f}</div>
-                     <div class='metric-label' title='Mede o nível de dívida da empresa em relação ao seu patrimônio e ativos (([Ativo circulante + Ativo Circulante] - Passivo Não Financeiro)/Ativo Total).'>Endividamento Total</div>
+                     <div class='metric-label' title='Mede o nível de dívida da empresa em relação ao seu patrimônio e ativos <br> ([(Ativo circulante + Ativo Circulante) - Passivo Não Financeiro]/Ativo Total).'>Endividamento Total</div>
                 </div>
                 """, unsafe_allow_html=True)
         
@@ -833,7 +833,7 @@ if pagina == "Básica":
                 st.markdown(f"""
                 <div class='metric-box'>
                     <div class='metric-value'>{alavancagem_financeira:.2f}</div>
-                    <div class='metric-label' title='Mede o quanto a empresa utiliza de capital de terceiros em relação ao patrimônio líquido (([Ativo circulante + Ativo Circulante] - Passivo Não Financeiro)/Patrimônio Líquido).'>Alavancagem Financeira</div>
+                    <div class='metric-label' title='Mede o quanto a empresa utiliza de capital de terceiros em relação ao patrimônio líquido <br> ([(Ativo circulante + Ativo Circulante] - Passivo Não Financeiro]/Patrimônio Líquido).'>Alavancagem Financeira</div>
                 </div>
                 """, unsafe_allow_html=True)
         
