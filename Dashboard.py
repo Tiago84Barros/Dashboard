@@ -823,7 +823,9 @@ if pagina == "Básica":
                 st.markdown(f"""
                 <div class='metric-box'>
                     <div class='metric-value'>{endividamento_total:.2f}</div>
-                     <div class='metric-label' title='Mede o nível de dívida da empresa em relação ao seu patrimônio e ativos <br> ([(Ativo circulante + Ativo Circulante) - Passivo Não Financeiro]/Ativo Total).'>Endividamento Total</div>
+                    <div class='metric-label' title='Mede o nível de dívida da empresa em relação ao seu patrimônio e ativos ([(Ativo circulante + Ativo Circulante) - Passivo Não Financeiro]/Ativo Total).'>
+                        Endividamento Total<br><span style="font-size: 12px; color: gray;">(Dívida/Patrimônio)</span>
+                    </div>
                 </div>
                 """, unsafe_allow_html=True)
         
