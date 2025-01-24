@@ -545,7 +545,7 @@ if pagina == "Básica":
         variaveis_disponiveis_display = list(col_name_mapping.values())
         
         # Nomes padrão (amigáveis) para seleção
-        default_cols = ['Receita Líquida', 'Lucro Líquido', 'Divida Liquida']  # Ajuste conforme necessário
+        default_cols = ['Receita Líquida', 'Lucro Líquido', 'Dívida Líquida']  # Ajuste conforme necessário
         default_display = [nome for nome in variaveis_disponiveis_display if nome in default_cols]
         
         variaveis_selecionadas_display = st.multiselect(
