@@ -630,8 +630,8 @@ if pagina == "Básica":
             
         
         # Exibir a tabela de indicadores no final ____________________________________________________________________________________________________________________________________________________
-        # st.markdown("### Tabela de Indicadores")
-        # st.dataframe(indicadores)  # Mostra a tabela interativa no dashboard
+        st.markdown("### Tabela de Indicadores")
+        st.dataframe(indicadores)  # Mostra a tabela interativa no dashboard
         
         # Função para carregar os dados da tabela "multiplos_TRI" do banco de dados  ________________________________________________________________________________________________________________________________________________
         @st.cache_data
