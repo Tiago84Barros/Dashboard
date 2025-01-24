@@ -833,7 +833,7 @@ if pagina == "Básica":
                 st.markdown(f"""
                 <div class='metric-box'>
                     <div class='metric-value'>{alavancagem_financeira:.2f}</div>
-                    <div class='metric-label' title='Mede o quanto a empresa utiliza de capital de terceiros em relação ao patrimônio líquido (Divida Total/Patrimônio Líquido).'>Alavancagem Financeira</div>
+                    <div class='metric-label' title='Mede o quanto a empresa utiliza de capital de terceiros em relação ao patrimônio líquido (Divida Líquida/Patrimônio Líquido).'>Alavancagem Financeira</div>
                 </div>
                 """, unsafe_allow_html=True)
         
