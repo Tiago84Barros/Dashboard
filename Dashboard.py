@@ -521,7 +521,7 @@ if pagina == "Básica":
         # Cria o gráfico em BARRA e o seletor para escolher quais variáveis mostrar das DFPs __________________________________________________________________________________________________________________________________________________
         
         # Seletor para escolher quais variáveis visualizar no gráfico
-        st.markdown("### Selecione os Indicadores para Visualizar no Gráfico")
+        st.markdown("### Selecione os balanços para Visualizar no Gráfico")
         
         # Criar mapeamento de nomes de colunas para nomes amigáveis
         col_name_mapping = {col: col.replace('_', ' ').title() for col in indicadores.columns if col != 'Data'}
@@ -630,8 +630,8 @@ if pagina == "Básica":
             
         
         # Exibir a tabela de indicadores no final ____________________________________________________________________________________________________________________________________________________
-        st.markdown("### Tabela de Indicadores")
-        st.dataframe(indicadores)  # Mostra a tabela interativa no dashboard
+        #st.markdown("### Tabela de Indicadores")
+        #st.dataframe(indicadores)  # Mostra a tabela interativa no dashboard
         
         # Função para carregar os dados da tabela "multiplos_TRI" do banco de dados  ________________________________________________________________________________________________________________________________________________
         @st.cache_data
