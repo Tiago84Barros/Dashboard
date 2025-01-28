@@ -521,7 +521,7 @@ if pagina == "Básica":
         # Cria o gráfico em BARRA e o seletor para escolher quais variáveis mostrar das DFPs __________________________________________________________________________________________________________________________________________________
         
         # Seletor para escolher quais variáveis visualizar no gráfico
-        st.markdown("### Selecione os balanços para Visualizar no Gráfico")
+        st.markdown("### Selecione os Balanços para Visualizar no Gráfico")
         
         # Criar mapeamento de nomes de colunas para nomes amigáveis
         col_name_mapping = {col: col.replace('_', ' ').title() for col in indicadores.columns if col != 'Data'}
@@ -589,7 +589,7 @@ if pagina == "Básica":
                     y='Valor',
                     color='Indicador',
                     barmode='group',
-                    title='Evolução dos Indicadores Selecionados'
+                    title='Evolução dos Balanços Selecionados'
                 )
         
                 fig.update_layout(
