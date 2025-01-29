@@ -436,7 +436,7 @@ if pagina == "Básica":
                 else:
                     rate = calculate_growth_rate(indicadores, column)
                     growth_rates[column] = rate
-        print("Keys em growth_rates:", growth_rates.keys())
+        st.markdown("Keys em growth_rates:", growth_rates.keys())
         # Da algumas informações referentes a empresa no momento da escolha do ticker _____________________________________________________________________________________________________________________________________________________________________
         
         if ticker:
