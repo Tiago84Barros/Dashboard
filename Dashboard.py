@@ -436,7 +436,7 @@ if pagina == "Básica":
                 else:
                     rate = calculate_growth_rate(indicadores, column)
                     growth_rates[column] = rate
-                    
+        print("Keys em growth_rates:", growth_rates.keys())
         # Da algumas informações referentes a empresa no momento da escolha do ticker _____________________________________________________________________________________________________________________________________________________________________
         
         if ticker:
@@ -513,9 +513,8 @@ if pagina == "Básica":
                 return f"{value:.2%}"
             else:
                 return "-"
-                
-        print("Keys em growth_rates:", growth_rates.keys())
-        # Exibir os valores do CAGR em quadrados
+                      
+        # Exibir os valores da regressão linear em quadrados
         st.markdown("### Visão Geral (Taxa de Crescimento Anual)")
         col1, col2, col3 = st.columns(3)
         
