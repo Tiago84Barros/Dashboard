@@ -1180,13 +1180,13 @@ if pagina == "Avançada": #_____________________________________________________
                             
                         # Calcular métricas simplificadas
                         metrics_dict = calcular_metricas_historicas_simplificadas(multiplos, df_dre)
-
-                       data_emp = {
-                        'ticker': ticker,
-                        'nome_empresa': nome_emp,
-                        'Setor': row['SETOR'],
-                        'Subsetor': row['SUBSETOR'],
-                        'Segmento': row['SEGMENTO']
+                        
+                        data_emp = {
+                            'ticker': ticker,
+                            'nome_empresa': nome_emp,
+                            'Setor': row['SETOR'],
+                            'Subsetor': row['SUBSETOR'],
+                            'Segmento': row['SEGMENTO']
                         }
                         data_emp.update(metrics_dict)
                         
