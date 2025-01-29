@@ -366,64 +366,77 @@ if pagina == "Básica":
         placeholder = st.empty()
         placeholder.markdown("<div style='height: 46px;'></div>", unsafe_allow_html=True)
            
-        # Função para calcular o crescimento médio (CAGR) _______________________________________________________________________________________________________________________________________________________________
-        
-        def calculate_cagr(df, column):
+        # -----------------------------------------------------------------------------
+        # Função para calcular a taxa de crescimento via regressão logarítmica
+        # -----------------------------------------------------------------------------
+        def calculate_growth_rate(df, column):
+            """
+            Calcula a taxa de crescimento anual (percentual) de 'column'
+            usando regressão linear no log dos valores ao longo do tempo.
+            """
             try:
-                # Verificando se a coluna 'Data' existe e está no formato correto
+                # Garantir que existe a coluna 'Data'
                 if 'Data' not in df.columns:
                     raise ValueError("A coluna 'Data' não foi encontrada no DataFrame.")
         
+                # Converter datas
                 df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
-        
-                # Verificar se houve falha na conversão de datas
                 if df['Data'].isnull().any():
                     raise ValueError("A coluna 'Data' contém valores inválidos que não puderam ser convertidos para data.")
         
-                # Verificar se a coluna está vazia ou possui apenas valores nulos
+                # Verificar se a coluna está completamente nula
                 if df[column].isnull().all():
                     raise ValueError(f"A coluna '{column}' está vazia ou contém apenas valores nulos.")
-        
-                # Valores inicial e final da coluna de interesse
-                initial_value = df[column].iloc[0]
-                final_value = df[column].iloc[-1]
-        
-                # Verificando possíveis erros nos valores
-                if initial_value == 0:
-                    raise ValueError(f"Valor inicial do indicador '{column}' é zero. Não é possível calcular CAGR.")
                 
-                if final_value == 0:
-                    raise ValueError(f"Valor final do indicador '{column}' é zero. Não é possível calcular CAGR.")
+                # Ordenar pela data
+                df = df.sort_values(by='Data')
         
-                # Calculando o número de anos (diferença de tempo em anos)
-                num_years = (df['Data'].iloc[-1] - df['Data'].iloc[0]).days / 365.25
-        
-                if num_years <= 0 or pd.isna(num_years):
-                    raise ValueError(f"O número de anos calculado é inválido: {num_years}. Verifique as datas fornecidas.")
-        
-                # Cálculo do CAGR
-                cagr = (final_value / initial_value) ** (1 / num_years) - 1
+                # Filtrar somente valores válidos (não nulos e positivos, pois faremos log)
+                mask_valid = df[column].notnull() & (df[column] > 0)
+                df_valid = df.loc[mask_valid]
+                
+                # Verificar se temos pelo menos 2 pontos para a regressão
+                if df_valid.shape[0] < 2:
+                    raise ValueError(f"Dados insuficientes na coluna '{column}' para regressão logarítmica.")
+                
+                # Tempo (X) em anos, tomando como referência a primeira data válida
+                X = (df_valid['Data'] - df_valid['Data'].iloc[0]).dt.days / 365.25
+                if X.nunique() == 0:
+                    raise ValueError("Não há variação de tempo suficiente para calcular a taxa de crescimento.")
+                
+                # Log dos valores (y)
+                y_log = np.log(df_valid[column].values)
+                
+                # Ajuste da regressão linear: slope, intercept
+                slope, intercept = np.polyfit(X, y_log, deg=1)
+                
+                # slope => taxa de crescimento contínua; convertemos para taxa nominal anual
+                growth_rate = np.exp(slope) - 1
+                
+                return growth_rate
             
-                return cagr
-        
             except Exception as e:
-                #st.error(f"Erro ao calcular o CAGR para '{column}': {e}")
-                return np.nan  # Retorna NaN em caso de erro
+                # Se algo der errado, retorna NaN
+                # st.error(f"Erro ao calcular a taxa de crescimento para '{column}': {e}")
+                return np.nan
         
         
-        # Calcular o CAGR para cada indicador
-        cagrs = {}
+        # -----------------------------------------------------------------------------
+        # Calcular a taxa de crescimento para cada indicador
+        # -----------------------------------------------------------------------------
+        growth_rates = {}
         
         for column in indicadores.columns:
             if column != 'Data':  # Ignorar a coluna de datas
-                # Checar se há dados suficientes para cálculo
                 col_data = indicadores[column]
-                if col_data.isnull().all() or (col_data == 0).all():
-                    cagrs[column] = None  # Ignorar colunas inválidas
+        
+                # Caso a coluna seja só nulos ou zeros, descartar
+                if col_data.isnull().all() or (col_data.fillna(0) == 0).all():
+                    growth_rates[column] = None
                 else:
-                    cagr = calculate_cagr(indicadores, column)
-                    cagrs[column] = cagr
-            
+                    rate = calculate_growth_rate(indicadores, column)
+                    growth_rates[column] = rate
+                    
         # Da algumas informações referentes a empresa no momento da escolha do ticker _____________________________________________________________________________________________________________________________________________________________________
         
         if ticker:
@@ -502,17 +515,25 @@ if pagina == "Básica":
                 return "-"
         
         # Exibir os valores do CAGR em quadrados
-        st.markdown("### Visão Geral (CAGR)")
+        st.markdown("### Visão Geral (Taxa de Crescimento Anual)")
         col1, col2, col3 = st.columns(3)
         
+        col1, col2, col3 = st.columns(3)
         with col1:
-            st.markdown(f"<div class='cagr-box'>Receita Líquida: {format_cagr(cagrs['Receita_Liquida'])}</div>", unsafe_allow_html=True)
-        
+            st.markdown(
+                f"<div class='growth-box'>Receita Líquida: {format_growth_rate(growth_rates['Receita_Liquida'])}</div>",
+                unsafe_allow_html=True
+            )
         with col2:
-            st.markdown(f"<div class='cagr-box'>Lucro Líquido: {format_cagr(cagrs['Lucro_Liquido'])}</div>", unsafe_allow_html=True)
-        
+            st.markdown(
+                f"<div class='growth-box'>Lucro Líquido: {format_growth_rate(growth_rates['Lucro_Liquido'])}</div>",
+                unsafe_allow_html=True
+            )
         with col3:
-            st.markdown(f"<div class='cagr-box'>Patrimônio Líquido: {format_cagr(cagrs['Patrimonio_Liquido'])}</div>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div class='growth-box'>Patrimônio Líquido: {format_growth_rate(growth_rates['Patrimonio_Liquido'])}</div>",
+                unsafe_allow_html=True
+            )
          
          # Inserindo espaçamento entre os elementos
         placeholder = st.empty()
