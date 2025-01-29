@@ -988,7 +988,7 @@ if pagina == "Avançada": #_____________________________________________________
     #                FUNÇÕES AUXILIARES
     # ===============================================
     
-    def slope_regressao_log(df, col):
+    def slope_regressao_log(df, col): # Finalidade de encontrar a taxa de crescimento de variáveis (mais robusto que o CAGR)
         """
         Faz regressão linear de ln(col) vs Ano, retornando o slope (beta).
         Filtra valores <= 0, pois ln(<=0) não é definido.
@@ -1010,23 +1010,23 @@ if pagina == "Avançada": #_____________________________________________________
         slope = model.coef_[0]
         return slope
     
-    def slope_to_growth_percent(slope):
+    def slope_to_growth_percent(slope): # transforma o valor absoluto do valor encontrado na regressão para porcentagem
         """
         Converte slope da regressão log em taxa de crescimento aproximada (%).
         Ex.: se slope=0.07, growth ~ e^0.07 - 1 ~ 7.25%
         """
         return np.exp(slope) - 1
     
-    def calcular_media_e_std(df, col):
+    def calcular_media_e_std(df, col): # Calcula a média e o desvio padrão de algumas variáveis do dataframe de Multiplos e Demonstrações Financeiras
         """
-        Retorna (mean, std) para a coluna col. Se não tiver dados, (0.0, 0.0).
+        Retorna (mean, std) para a coluna col. Se não tiver dados, (0.0, 0.0). (std - é o desvio padrão)
         """
         df_valid = df.dropna(subset=[col])
         if df_valid.empty:
             return (0.0, 0.0)
         return (df_valid[col].mean(), df_valid[col].std())
     
-    def winsorize(series, lower_quantile=0.05, upper_quantile=0.95):
+    def winsorize(series, lower_quantile=0.05, upper_quantile=0.95): # Retira valores que distoam muito dos valores médios e podem comprometer os cálculos causando distorções
         """
         Trunca outliers abaixo do 5º percentil e acima do 95º percentil.
         """
@@ -1037,7 +1037,7 @@ if pagina == "Avançada": #_____________________________________________________
         u_val = s.quantile(upper_quantile)
         return series.clip(l_val, u_val)
     
-    def min_max_normalize(series, melhor_alto=True):
+    def min_max_normalize(series, melhor_alto=True): # Normaliza o conjunto de variáveis para todos manterem o mesmo intervalo e facilitar a determinação de um score
         """
         Normaliza a série em [0, 1]. Se 'melhor_alto=False', inverte.
         """
@@ -1126,8 +1126,7 @@ if pagina == "Avançada": #_____________________________________________________
         # ----
         
         return metrics
-  
-    
+      
     
     # espaçamento entre os elementos
         st.markdown("""
@@ -1156,161 +1155,165 @@ if pagina == "Avançada": #_____________________________________________________
                         (setores['SEGMENTO'] == segmento_selecionado)
                     ]
 
-                    # Determinar o último ano disponível no banco de dados de demonstrações financeiras _______________________________________________________________________________________
-                    def get_latest_year(df):
-                        if "Data" in df.columns:
-                            return pd.to_datetime(df["Data"], errors="coerce").dt.year.max()
-                        return None
-                    
-                    # Atualizar o filtro de empresas
-                    filtered_empresas = []
-                    latest_year = None  # Variável para armazenar o último ano disponível
-                    
-                    # Filtrar empresas com informações do último ano apresentado
-                    for i, row in empresas_filtradas.iterrows():
-                        ticker = row['ticker']
-                        
-                        # Carregar os dados das demonstrações financeiras da empresa
-                        dfp = load_data_from_db(ticker + ".SA")
-                        if dfp is None or dfp.empty:
-                            continue
-                        
-                        # Determinar o último ano disponível na demonstração financeira
-                        if latest_year is None:
-                            latest_year = get_latest_year(dfp)
-                        
-                        # Verificar se a empresa possui informações do último ano
-                        dfp["Ano"] = pd.to_datetime(dfp["Data"], errors="coerce").dt.year
-                        if latest_year in dfp["Ano"].values:
-                            filtered_empresas.append(row)
-                    
-                    # Criar um DataFrame com as empresas filtradas
-                    empresas_filtradas = pd.DataFrame(filtered_empresas)
-                    
-                    # Verificar se há empresas restantes após o filtro
                     if empresas_filtradas.empty:
-                        st.warning("Nenhuma empresa apresenta informações para o último ano disponível.")
-         
-        
-                    st.markdown(f"### Empresas no Segmento {segmento_selecionado}")
+                        st.warning("Não há empresas nesse segmento.")
+                    return
 
-                    st.markdown("---") # Espaçamento entre diferentes tipos de análise
-                    st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
-                    
-                    # Criar um dataframe para armazenar o score das empresas _________________________________________________________________________________________________________________
-                    # Inicializar a lista de resultados
+                    st.markdown(f"### Empresas no Segmento {segmento_selecionado}")
+                    st.markdown("---")
+
+                    # Lista p/ armazenar dados agregados
                     resultados = []
-                    
-                    # Iterar pelas empresas
+                                                  
                     for i, row in empresas_filtradas.iterrows():
                         ticker = row['ticker']
                         nome_emp = row['nome_empresa']
-                    
-                        # Carregar dados de múltiplos
+
+                         # Carregar histórico das tabelas
                         multiplos = load_multiplos_from_db(ticker + ".SA")
+                        df_dre    = load_data_from_db(ticker + ".SA")
+
                         if multiplos is None or multiplos.empty:
                             continue
-                    
-                        # Carregar dados das demonstrações financeiras
-                        dfp = load_data_from_db(ticker + ".SA")
-                                      
-                        if dfp is None or dfp.empty:
+                        if df_dre is None or df_dre.empty:
                             continue
-                    
-                        # Filtrar apenas dados recentes (ex.: do último ano)
-                        multiplos_recent = multiplos[multiplos['Data'] == multiplos['Data'].max()]
-                        dfp_recent = dfp[dfp['Data'] == dfp['Data'].max()]
-                    
-                        if multiplos_recent.empty or dfp_recent.empty:
-                            continue
-                    
-                        # Seleção de métricas das demonstrações financeiras
-                        receita_liquida = dfp_recent['Receita_Liquida'].iloc[0]
-                        lucro_liquido = dfp_recent['Lucro_Liquido'].iloc[0]
-                        patrimonio_liquido = dfp_recent['Patrimonio_Liquido'].iloc[0]
-                        caixa_liquido = dfp_recent['Caixa_Liquido'].iloc[0]
-                        divida_liquida = dfp_recent['Divida_Liquida'].iloc[0]
-                    
-                        # Seleção de métricas de múltiplos
-                        margem_liquida = multiplos_recent['Margem_Liquida'].iloc[0]
-                        roe = multiplos_recent['ROE'].iloc[0]
-                        endividamento = multiplos_recent['Endividamento_Total'].iloc[0]
-                        pl = multiplos_recent['P/L'].iloc[0]
-                    
-                        # Normalizar métricas em relação ao setor (se disponível)
-                        setor_empresas = empresas_filtradas[empresas_filtradas['SETOR'] == row['SETOR']]
-                        setor_dfp = dfp[dfp['Ticker'].isin(setor_empresas['ticker'])]
-                        setor_multiplos = multiplos[multiplos['Ticker'].isin(setor_empresas['ticker'])]
-                    
-                        # Métricas normalizadas (usar média do setor como referência)
-                        def normalize_sector(value, sector_values):
-                            if pd.isna(value) or sector_values.empty:
-                                return 0.5  # Valor padrão se dados faltarem
-                            sector_mean = sector_values.mean()
-                            sector_std = sector_values.std()
-                            return (value - sector_mean) / sector_std if sector_std > 0 else 0.5
-                    
-                        score_receita = normalize_sector(receita_liquida, setor_dfp['Receita_Liquida'])
-                        score_lucro = normalize_sector(lucro_liquido, setor_dfp['Lucro_Liquido'])
-                        score_patrimonio = normalize_sector(patrimonio_liquido, setor_dfp['Patrimonio_Liquido'])
-                        score_caixa = normalize_sector(caixa_liquido, setor_dfp['Caixa_Liquido'])
-                        score_divida = normalize_sector(divida_liquida, setor_dfp['Divida_Liquida'])
-                        score_margem = normalize_sector(margem_liquida, setor_multiplos['Margem_Liquida'])
-                        score_roe = normalize_sector(roe, setor_multiplos['ROE'])
-                        score_endividamento = normalize_sector(endividamento, setor_multiplos['Endividamento_Total'])
-                        score_pl = normalize_sector(pl, setor_multiplos['P/L'])
-                    
-                        # Combinar os scores com média ponderada
-                        final_score = np.mean([
-                            score_receita, score_lucro, score_patrimonio, score_caixa, score_divida,
-                            score_margem, score_roe, score_endividamento, score_pl
-                        ])
-                    
-                        resultados.append({
-                            'nome_empresa': nome_emp,
-                            'ticker': ticker,
-                            'score': final_score
-                        })
-                    
-                    # Converter resultados em dataframe e ordenar
-                    if resultados:
-                        df_resultados = pd.DataFrame(resultados).sort_values(by='score', ascending=False)
-                    
-                        # Exibir as empresas em pequenos blocos
-                        st.markdown("### Ranking de Empresas")
-                        colunas = st.columns(3)  # Ajuste o número de colunas desejado
-                    
-                        # Iterar pelos resultados em ordem sequencial
-                        for idx, row in enumerate(df_resultados.itertuples()):
-                            col = colunas[idx % len(colunas)]  # Seleciona a coluna da esquerda para a direita
-                    
-                            with col:
-                                logo_url = get_logo_url(row.ticker)  # Função para obter o logotipo
-                    
-                                # Criar layout usando colunas internas para logotipo e informações
-                                col_logo, col_texto = st.columns([1, 3])
-                    
-                                with col_logo:
-                                    st.image(logo_url, width=50)  # Exibir o logotipo com largura de 50px
-                    
-                                with col_texto:
-                                    st.markdown(f"""
-                                        <div style="font-size: 16px; font-weight: bold; color: #333; margin-bottom: 5px;">
-                                            {row.nome_empresa} ({row.ticker})
-                                        </div>
-                                        <div style="font-size: 14px; color: #555;">
-                                            Score: <span style="color: green; font-weight: bold;">{row.score:.2f}</span>
-                                        </div>
-                                    """, unsafe_allow_html=True)
-                    
-                    else:
-                        st.info("Não há dados disponíveis para empresas neste segmento.")
+                            
+                        # Calcular métricas simplificadas
+                        metrics_dict = calcular_metricas_historicas_simplificadas(multiplos, df_dre)
 
-                   # Este trecho de código deve estar dentro do bloco onde o usuário já selecionou o setor, subsetor, segmento.
-                    # Ou seja, após você ter definido o DataFrame 'empresas_filtradas'.
+                       data_emp = {
+                        'ticker': ticker,
+                        'nome_empresa': nome_emp,
+                        'Setor': row['SETOR'],
+                        'Subsetor': row['SUBSETOR'],
+                        'Segmento': row['SEGMENTO']
+                        }
+                        data_emp.update(metrics_dict)
+                        
+                        resultados.append(data_emp)   
+                        
+                    if not resultados:
+                        st.info("Não há dados para as empresas deste segmento.")
+                        return
+                     
+                    df_empresas = pd.DataFrame(resultados)
 
-                    st.markdown("---") # Espaçamento entre diferentes tipos de análises
-                    st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
+                    # ================================================
+                    #  DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE
+                    # ================================================
+                    # Exemplo: decidimos usar algumas colunas
+                    indicadores_score = {
+                        # Margem Líquida média (maior = melhor)
+                        'MargemLiq_mean': {
+                            'peso': 0.10, 
+                            'melhor_alto': True
+                        },
+                        # ROE médio
+                        'ROE_mean': {
+                            'peso': 0.15, 
+                            'melhor_alto': True
+                        },
+                        # P/L médio (menor é melhor)
+                        'PL_mean': {
+                            'peso': 0.15,
+                            'melhor_alto': False
+                        },
+                        # DY médio (maior é melhor)
+                        'DY_mean': {
+                            'peso': 0.10,
+                            'melhor_alto': True
+                        },
+                        # Endividamento médio (menor é melhor)
+                        'Endividamento_mean': {
+                            'peso': 0.10,
+                            'melhor_alto': False
+                        },
+                        # Slope log de Receita Líquida
+                        'ReceitaLiq_slope_log': {
+                            'peso': 0.20,
+                            'melhor_alto': True
+                        },
+                        # Slope log de Lucro Líquido
+                        'LucroLiq_slope_log': {
+                            'peso': 0.20,
+                            'melhor_alto': True
+                        },
+                        # Espaço para adicionar + variáveis no futuro
+                    }
+
+                    # ================================================
+                    #  NORMALIZAR E CALCULAR SCORE (WINSORIZE + MinMax)
+                    # ================================================
+                    # Agrupando por Segmento caso você tenha mais de um
+                    for seg, grupo in df_empresas.groupby('Segmento'):
+                        idx = grupo.index
+                        
+                        df_empresas.loc[idx, 'Score'] = 0.0
+                        
+                        for col, config in indicadores_score.items():
+                            if col not in df_empresas.columns:
+                                continue
+                            
+                            # Passo 1: Winsorize p/ evitar outliers
+                            df_empresas.loc[idx, col] = winsorize(df_empresas.loc[idx, col])
+                            
+                            # Passo 2: Normalizar
+                            col_norm = col + "_norm"
+                            df_empresas.loc[idx, col_norm] = min_max_normalize(
+                                df_empresas.loc[idx, col],
+                                config['melhor_alto']
+                            )
+                            
+                            # Passo 3: Soma ponderada
+                            df_empresas.loc[idx, 'Score'] += (
+                                df_empresas.loc[idx, col_norm] * config['peso']
+                            )
+                        
+                        # Rank dentro do segmento
+                        df_empresas.loc[idx, 'RankNoSegmento'] = df_empresas.loc[idx, 'Score'] \
+                                                                 .rank(method='dense', ascending=False)
+    
+                    # Ordenar resultado
+                    df_empresas.sort_values(['Segmento','Score'], ascending=[True,False], inplace=True)
+                    
+                    st.markdown("### Ranking de Empresas (Score Simplificado)")
+                    colunas_layout = st.columns(3)
+                    
+                    for idx, row in enumerate(df_empresas.itertuples()):
+                        col = colunas_layout[idx % len(colunas_layout)]
+                        with col:
+                            # Se houver função get_logo_url:
+                            logo_url = get_logo_url(row.ticker)
+                            col_logo, col_texto = st.columns([1, 3])
+                            
+                            with col_logo:
+                                st.image(logo_url, width=50)
+                            
+                            with col_texto:
+                                st.markdown(f"""
+                                    <div style="font-size: 16px; font-weight: bold; color: #333; margin-bottom: 5px;">
+                                        {row.nome_empresa} ({row.ticker})
+                                    </div>
+                                    <div style="font-size: 14px; color: #555;">
+                                        Score: <span style="color: green; font-weight: bold;">{row.Score:.2f}</span>
+                                        <br/>
+                                        Rank: {int(row.RankNoSegmento)}
+                                    </div>
+                                """, unsafe_allow_html=True)
+                    
+                    # (Opcional) exibir df_empresas em modo tabela
+                    # st.dataframe(df_empresas)
+    
+                    st.markdown("---")
+                    st.markdown("#### Observação:")
+                    st.write("""
+                        Esse score inicial considera poucas variáveis (Margem, ROE, P/L, etc.) 
+                        e a tendência de crescimento (slope log) de Receita e Lucro. 
+                        Caso deseje adicionar mais variáveis (ex.: Patrimônio, Caixa, etc.), 
+                        basta inserir nos dicionários e na função de cálculo.
+                    """)
+                             
+                    
                     
                     st.markdown("### Comparação de Indicadores (Múltiplos) entre Empresas do Segmento") #___________________________________________________________________________________________________
                     
