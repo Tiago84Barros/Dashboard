@@ -984,7 +984,152 @@ if pagina == "Básica":
 
 if pagina == "Avançada": #_______________________________________________________________# Análise Avançada #____________________________________________________________________________________________________________
 
-      # espaçamento entre os elementos
+    # ===============================================
+    #                FUNÇÕES AUXILIARES
+    # ===============================================
+    
+    def slope_regressao_log(df, col):
+        """
+        Faz regressão linear de ln(col) vs Ano, retornando o slope (beta).
+        Filtra valores <= 0, pois ln(<=0) não é definido.
+        Retorna 0.0 se não houver dados suficientes.
+        """
+        df_valid = df.dropna(subset=['Ano', col]).copy()
+        # Apenas valores positivos
+        df_valid = df_valid[df_valid[col] > 0]
+        if len(df_valid) < 2:
+            return 0.0
+        
+        # ln(col)
+        df_valid['ln_col'] = np.log(df_valid[col])
+        
+        X = df_valid[['Ano']].values
+        y = df_valid['ln_col'].values
+        model = LinearRegression()
+        model.fit(X, y)
+        slope = model.coef_[0]
+        return slope
+    
+    def slope_to_growth_percent(slope):
+        """
+        Converte slope da regressão log em taxa de crescimento aproximada (%).
+        Ex.: se slope=0.07, growth ~ e^0.07 - 1 ~ 7.25%
+        """
+        return np.exp(slope) - 1
+    
+    def calcular_media_e_std(df, col):
+        """
+        Retorna (mean, std) para a coluna col. Se não tiver dados, (0.0, 0.0).
+        """
+        df_valid = df.dropna(subset=[col])
+        if df_valid.empty:
+            return (0.0, 0.0)
+        return (df_valid[col].mean(), df_valid[col].std())
+    
+    def winsorize(series, lower_quantile=0.05, upper_quantile=0.95):
+        """
+        Trunca outliers abaixo do 5º percentil e acima do 95º percentil.
+        """
+        s = series.dropna()
+        if s.empty:
+            return series
+        l_val = s.quantile(lower_quantile)
+        u_val = s.quantile(upper_quantile)
+        return series.clip(l_val, u_val)
+    
+    def min_max_normalize(series, melhor_alto=True):
+        """
+        Normaliza a série em [0, 1]. Se 'melhor_alto=False', inverte.
+        """
+        series = series.replace([np.inf, -np.inf], np.nan)
+        valid = series.dropna()
+        if valid.empty:
+            return pd.Series([0.5]*len(series), index=series.index)
+    
+        min_val = valid.min()
+        max_val = valid.max()
+        if min_val == max_val:
+            return pd.Series([0.5]*len(series), index=series.index)
+    
+        normalized = (series - min_val) / (max_val - min_val)
+        if not melhor_alto:
+            normalized = 1 - normalized
+        
+        return normalized.fillna(0.5)
+     
+    
+    # ===============================================
+    # FUNÇÃO PRINCIPAL: Calcular Métricas Históricas
+    # ===============================================
+    def calcular_metricas_historicas_simplificadas(df_mult, df_dre):
+        """
+        Calcula métricas essenciais para um conjunto pequeno de variáveis.
+        - Múltiplos: Margem_Liquida, ROE, P/L, DY, Endividamento_Total
+        - DRE: Receita Líquida, Lucro Líquido (com slope log)
+        
+        Retorna um dicionário que representa a 'linha' de métricas da empresa.
+        """
+        # Converter Data -> Ano
+        df_mult['Ano'] = pd.to_datetime(df_mult['Data'], errors='coerce').dt.year
+        df_dre['Ano']  = pd.to_datetime(df_dre['Data'], errors='coerce').dt.year
+        
+        # Ordenar por Ano
+        df_mult.sort_values('Ano', inplace=True)
+        df_dre.sort_values('Ano', inplace=True)
+        
+        # Dicionário final
+        metrics = {}
+        
+        # =============== MÚLTIPLOS ===============
+        # 1) Margem_Liquida (mean, std)
+        ml_mean, ml_std = calcular_media_e_std(df_mult, 'Margem_Liquida')
+        metrics['MargemLiq_mean'] = ml_mean
+        metrics['MargemLiq_std']  = ml_std
+        
+        # 2) ROE (mean, std)
+        roe_mean, roe_std = calcular_media_e_std(df_mult, 'ROE')
+        metrics['ROE_mean'] = roe_mean
+        metrics['ROE_std']  = roe_std
+        
+        # 3) P/L (mean, std) - preferimos valores menores (mas iremos avaliar no score)
+        pl_mean, pl_std = calcular_media_e_std(df_mult, 'P/L')
+        metrics['PL_mean'] = pl_mean
+        metrics['PL_std']  = pl_std
+        
+        # 4) DY (mean, std) - maior = melhor (?)
+        dy_mean, dy_std = calcular_media_e_std(df_mult, 'DY')
+        metrics['DY_mean'] = dy_mean
+        metrics['DY_std']  = dy_std
+        
+        # 5) Endividamento_Total (mean, std)
+        endiv_mean, endiv_std = calcular_media_e_std(df_mult, 'Endividamento_Total')
+        metrics['Endividamento_mean'] = endiv_mean
+        metrics['Endividamento_std']  = endiv_std
+        
+        # =============== DEMONSTRAÇÕES ===============
+        # Receita Líquida -> slope log (para crescimento)
+        slope_rec = slope_regressao_log(df_dre, 'Receita Líquida')
+        metrics['ReceitaLiq_slope_log'] = slope_rec
+        metrics['ReceitaLiq_growth_approx'] = slope_to_growth_percent(slope_rec)
+        
+        # Lucro Líquido -> slope log (para crescimento)
+        slope_lucro = slope_regressao_log(df_dre, 'Lucro Líquido')
+        metrics['LucroLiq_slope_log'] = slope_lucro
+        metrics['LucroLiq_growth_approx'] = slope_to_growth_percent(slope_lucro)
+        
+        # ----
+        # (Espaço para adicionar variáveis adicionais depois)
+        # Exemplo:
+        # - Patrimônio Líquido (mean, slope, etc.)
+        # - Caixa Líquido (mean)
+        # etc.
+        # ----
+        
+        return metrics
+  
+    
+    
+    # espaçamento entre os elementos
         st.markdown("""
             <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Avançada de Ações</h1>
         """, unsafe_allow_html=True)
