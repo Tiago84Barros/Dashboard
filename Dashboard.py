@@ -436,7 +436,7 @@ if pagina == "Básica":
                 else:
                     rate = calculate_growth_rate(indicadores, column)
                     growth_rates[column] = rate
-        st.markdown("Keys em growth_rates:", growth_rates.keys())
+     
         # Da algumas informações referentes a empresa no momento da escolha do ticker _____________________________________________________________________________________________________________________________________________________________________
         
         if ticker:
@@ -508,11 +508,13 @@ if pagina == "Básica":
             </style>
         """, unsafe_allow_html=True)
         
-        def format_cagr(value):
+        def format_growth_rate(value):
+            """Formata a taxa de crescimento em percentual, ou '-' caso inválida."""
             if isinstance(value, (int, float)) and not pd.isna(value) and not np.isinf(value):
                 return f"{value:.2%}"
             else:
                 return "-"
+                 
                       
         # Exibir os valores da regressão linear em quadrados
         st.markdown("### Visão Geral (Taxa de Crescimento Anual)")
