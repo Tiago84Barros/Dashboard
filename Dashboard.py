@@ -1134,12 +1134,12 @@ if pagina == "Avançada": #_____________________________________________________
         
         # =============== DEMONSTRAÇÕES ===============
         # Receita Líquida -> slope log (para crescimento)
-        slope_rec = slope_regressao_log(df_dre, 'Receita Líquida')
+        slope_rec = slope_regressao_log(df_dre, 'Receita_Liquida')
         metrics['ReceitaLiq_slope_log'] = slope_rec
         metrics['ReceitaLiq_growth_approx'] = slope_to_growth_percent(slope_rec)
         
         # Lucro Líquido -> slope log (para crescimento)
-        slope_lucro = slope_regressao_log(df_dre, 'Lucro Líquido')
+        slope_lucro = slope_regressao_log(df_dre, 'Lucro_Liquido')
         metrics['LucroLiq_slope_log'] = slope_lucro
         metrics['LucroLiq_growth_approx'] = slope_to_growth_percent(slope_lucro)
         
