@@ -1328,14 +1328,12 @@ if pagina == "Avançada": #_____________________________________________________
                 # (Opcional) exibir df_empresas em modo tabela
                 # st.dataframe(df_empresas)
 
-                st.markdown("---")
-                st.markdown("#### Observação:")
-                st.write("""
-                    Esse score inicial considera poucas variáveis (Margem, ROE, P/L, etc.) 
-                    e a tendência de crescimento (slope log) de Receita e Lucro. 
-                    Caso deseje adicionar mais variáveis (ex.: Patrimônio, Caixa, etc.), 
-                    basta inserir nos dicionários e na função de cálculo.
-                """)
+                
+                # Esse score inicial considera poucas variáveis (Margem, ROE, P/L, etc.) 
+                # e a tendência de crescimento (slope log) de Receita e Lucro. 
+                # Caso deseje adicionar mais variáveis (ex.: Patrimônio, Caixa, etc.), 
+                # basta inserir nos dicionários e na função de cálculo.
+            
                          
                 
                 
