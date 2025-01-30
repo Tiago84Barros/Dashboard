@@ -1336,8 +1336,8 @@ if pagina == "Avançada": #_____________________________________________________
             
                          
                  # Inserindo espaçamento entre os elementos
-                 st.markdown("---") # Espaçamento entre diferentes tipos de análise
-                 st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
+                st.markdown("---") # Espaçamento entre diferentes tipos de análise
+                st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
                 
                 st.markdown("### Comparação de Indicadores (Múltiplos) entre Empresas do Segmento") #___________________________________________________________________________________________________
                 
