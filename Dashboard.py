@@ -1155,355 +1155,355 @@ if pagina == "Avançada": #_____________________________________________________
       
     
     # espaçamento entre os elementos
-        st.markdown("""
-            <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Avançada de Ações</h1>
-        """, unsafe_allow_html=True)
+    st.markdown("""
+        <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Avançada de Ações</h1>
+    """, unsafe_allow_html=True)
 
-        # Passo 1: Selecionar o Setor _________________________________________________________________________________________________________________________________________________________
-        setores_unicos = setores['SETOR'].dropna().unique()
-        setor_selecionado = st.selectbox("Selecione o Setor:", sorted(setores_unicos))
-        
-        if setor_selecionado:
-            # Filtrar subsetores do setor selecionado __________________________________________________________________________________________________________________________________________
-            subsetores_filtrados = setores[setores['SETOR'] == setor_selecionado]['SUBSETOR'].dropna().unique()
-            subsetor_selecionado = st.selectbox("Selecione o Subsetor:", sorted(subsetores_filtrados))
-        
-            if subsetor_selecionado:
-                # Filtrar segmentos do subsetor selecionado ____________________________________________________________________________________________________________________________________
-                segmentos_filtrados = setores[(setores['SETOR'] == setor_selecionado) & (setores['SUBSETOR'] == subsetor_selecionado)]['SEGMENTO'].dropna().unique()
-                segmento_selecionado = st.selectbox("Selecione o Segmento:", sorted(segmentos_filtrados))
-        
-                if segmento_selecionado:
-                    # Filtrar as empresas do (Setor, Subsetor, Segmento) escolhido
-                    empresas_filtradas = setores[
-                        (setores['SETOR'] == setor_selecionado) &
-                        (setores['SUBSETOR'] == subsetor_selecionado) &
-                        (setores['SEGMENTO'] == segmento_selecionado)
-                    ]
+    # Passo 1: Selecionar o Setor _________________________________________________________________________________________________________________________________________________________
+    setores_unicos = setores['SETOR'].dropna().unique()
+    setor_selecionado = st.selectbox("Selecione o Setor:", sorted(setores_unicos))
+    
+    if setor_selecionado:
+        # Filtrar subsetores do setor selecionado __________________________________________________________________________________________________________________________________________
+        subsetores_filtrados = setores[setores['SETOR'] == setor_selecionado]['SUBSETOR'].dropna().unique()
+        subsetor_selecionado = st.selectbox("Selecione o Subsetor:", sorted(subsetores_filtrados))
+    
+        if subsetor_selecionado:
+            # Filtrar segmentos do subsetor selecionado ____________________________________________________________________________________________________________________________________
+            segmentos_filtrados = setores[(setores['SETOR'] == setor_selecionado) & (setores['SUBSETOR'] == subsetor_selecionado)]['SEGMENTO'].dropna().unique()
+            segmento_selecionado = st.selectbox("Selecione o Segmento:", sorted(segmentos_filtrados))
+    
+            if segmento_selecionado:
+                # Filtrar as empresas do (Setor, Subsetor, Segmento) escolhido
+                empresas_filtradas = setores[
+                    (setores['SETOR'] == setor_selecionado) &
+                    (setores['SUBSETOR'] == subsetor_selecionado) &
+                    (setores['SEGMENTO'] == segmento_selecionado)
+                ]
 
-                    if empresas_filtradas.empty:
-                        st.warning("Não há empresas nesse segmento.")
-                        return
+                if empresas_filtradas.empty:
+                    st.warning("Não há empresas nesse segmento.")
+                    return
 
-                    st.markdown(f"### Empresas no Segmento {segmento_selecionado}")
-                    st.markdown("---")
+                st.markdown(f"### Empresas no Segmento {segmento_selecionado}")
+                st.markdown("---")
 
-                    # Lista p/ armazenar dados agregados
-                    resultados = []
-                                                  
-                    for i, row in empresas_filtradas.iterrows():
+                # Lista p/ armazenar dados agregados
+                resultados = []
+                                              
+                for i, row in empresas_filtradas.iterrows():
+                    ticker = row['ticker']
+                    nome_emp = row['nome_empresa']
+
+                     # Carregar histórico das tabelas
+                    multiplos = load_multiplos_from_db(ticker + ".SA")
+                    df_dre    = load_data_from_db(ticker + ".SA")
+
+                    if multiplos is None or multiplos.empty:
+                        continue
+                    if df_dre is None or df_dre.empty:
+                        continue
+                        
+                    # Calcular métricas simplificadas
+                    metrics_dict = calcular_metricas_historicas_simplificadas(multiplos, df_dre)
+                    
+                    data_emp = {
+                        'ticker': ticker,
+                        'nome_empresa': nome_emp,
+                        'Setor': row['SETOR'],
+                        'Subsetor': row['SUBSETOR'],
+                        'Segmento': row['SEGMENTO']
+                    }
+                    data_emp.update(metrics_dict)
+                    
+                    resultados.append(data_emp)   
+                    
+                if not resultados:
+                    st.info("Não há dados para as empresas deste segmento.")
+                    return
+                 
+                df_empresas = pd.DataFrame(resultados)
+
+                # ================================================
+                #  DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE
+                # ================================================
+                # Exemplo: decidimos usar algumas colunas
+                indicadores_score = {
+                    # Margem Líquida média (maior = melhor)
+                    'MargemLiq_mean': {
+                        'peso': 0.10, 
+                        'melhor_alto': True
+                    },
+                    # ROE médio
+                    'ROE_mean': {
+                        'peso': 0.15, 
+                        'melhor_alto': True
+                    },
+                    # P/L médio (menor é melhor)
+                    'PL_mean': {
+                        'peso': 0.15,
+                        'melhor_alto': False
+                    },
+                    # DY médio (maior é melhor)
+                    'DY_mean': {
+                        'peso': 0.10,
+                        'melhor_alto': True
+                    },
+                    # Endividamento médio (menor é melhor)
+                    'Endividamento_mean': {
+                        'peso': 0.10,
+                        'melhor_alto': False
+                    },
+                    # Slope log de Receita Líquida
+                    'ReceitaLiq_slope_log': {
+                        'peso': 0.20,
+                        'melhor_alto': True
+                    },
+                    # Slope log de Lucro Líquido
+                    'LucroLiq_slope_log': {
+                        'peso': 0.20,
+                        'melhor_alto': True
+                    },
+                    # Espaço para adicionar + variáveis no futuro
+                }
+
+                # ================================================
+                #  NORMALIZAR E CALCULAR SCORE (WINSORIZE + MinMax)
+                # ================================================
+                # Agrupando por Segmento caso você tenha mais de um
+                for seg, grupo in df_empresas.groupby('Segmento'):
+                    idx = grupo.index
+                    
+                    df_empresas.loc[idx, 'Score'] = 0.0
+                    
+                    for col, config in indicadores_score.items():
+                        if col not in df_empresas.columns:
+                            continue
+                        
+                        # Passo 1: Winsorize p/ evitar outliers
+                        df_empresas.loc[idx, col] = winsorize(df_empresas.loc[idx, col])
+                        
+                        # Passo 2: Normalizar
+                        col_norm = col + "_norm"
+                        df_empresas.loc[idx, col_norm] = min_max_normalize(
+                            df_empresas.loc[idx, col],
+                            config['melhor_alto']
+                        )
+                        
+                        # Passo 3: Soma ponderada
+                        df_empresas.loc[idx, 'Score'] += (
+                            df_empresas.loc[idx, col_norm] * config['peso']
+                        )
+                    
+                    # Rank dentro do segmento
+                    df_empresas.loc[idx, 'RankNoSegmento'] = df_empresas.loc[idx, 'Score'] \
+                                                             .rank(method='dense', ascending=False)
+
+                # Ordenar resultado
+                df_empresas.sort_values(['Segmento','Score'], ascending=[True,False], inplace=True)
+                
+                st.markdown("### Ranking de Empresas (Score Simplificado)")
+                colunas_layout = st.columns(3)
+                
+                for idx, row in enumerate(df_empresas.itertuples()):
+                    col = colunas_layout[idx % len(colunas_layout)]
+                    with col:
+                        # Se houver função get_logo_url:
+                        logo_url = get_logo_url(row.ticker)
+                        col_logo, col_texto = st.columns([1, 3])
+                        
+                        with col_logo:
+                            st.image(logo_url, width=50)
+                        
+                        with col_texto:
+                            st.markdown(f"""
+                                <div style="font-size: 16px; font-weight: bold; color: #333; margin-bottom: 5px;">
+                                    {row.nome_empresa} ({row.ticker})
+                                </div>
+                                <div style="font-size: 14px; color: #555;">
+                                    Score: <span style="color: green; font-weight: bold;">{row.Score:.2f}</span>
+                                    <br/>
+                                    Rank: {int(row.RankNoSegmento)}
+                                </div>
+                            """, unsafe_allow_html=True)
+                
+                # (Opcional) exibir df_empresas em modo tabela
+                # st.dataframe(df_empresas)
+
+                st.markdown("---")
+                st.markdown("#### Observação:")
+                st.write("""
+                    Esse score inicial considera poucas variáveis (Margem, ROE, P/L, etc.) 
+                    e a tendência de crescimento (slope log) de Receita e Lucro. 
+                    Caso deseje adicionar mais variáveis (ex.: Patrimônio, Caixa, etc.), 
+                    basta inserir nos dicionários e na função de cálculo.
+                """)
+                         
+                
+                
+                st.markdown("### Comparação de Indicadores (Múltiplos) entre Empresas do Segmento") #___________________________________________________________________________________________________
+                
+              # Lista de indicadores disponíveis
+                indicadores_disponiveis = ["Margem Líquida", "ROE", "P/L", "EV_EBITDA"]
+                
+                # Mapeamento de nomes amigáveis para nomes de colunas no banco
+                nomes_to_col = {
+                    "Margem Líquida": "Margem_Liquida",
+                    "ROE": "ROE",
+                    "P/L": "P/L",
+                    "EV_EBITDA": "EV_EBITDA"
+                }
+
+                 # Selecionar as empresas a exibir
+                lista_empresas = empresas_filtradas['nome_empresa'].tolist()
+                empresas_selecionadas = st.multiselect("Selecione as empresas a serem exibidas no gráfico:", lista_empresas, default=lista_empresas)
+                
+                # Selecionar o indicador a ser exibido
+                indicador_selecionado = st.selectbox("Selecione o Indicador para Comparar:", indicadores_disponiveis, index=0)
+                col_indicador = nomes_to_col[indicador_selecionado]
+                
+                                  
+                # Opção para normalizar os dados
+                normalizar = st.checkbox("Normalizar os Indicadores (Escala de 0 a 1)", value=False)
+                
+                # Construir o DataFrame com o histórico completo de cada empresa selecionada
+                df_historico = []
+                for i, row in empresas_filtradas.iterrows():
+                    nome_emp = row['nome_empresa']
+                    if nome_emp in empresas_selecionadas:
                         ticker = row['ticker']
-                        nome_emp = row['nome_empresa']
+                        multiplos_data = load_multiplos_from_db(ticker + ".SA")
+                        if multiplos_data is not None and not multiplos_data.empty and col_indicador in multiplos_data.columns:
+                            # Processar os dados da empresa
+                            df_emp = multiplos_data[['Data', col_indicador]].copy()
+                            df_emp['Ano'] = pd.to_datetime(df_emp['Data'], errors='coerce').dt.year  # Extrair apenas o ano
+                            df_emp['Empresa'] = nome_emp
+                            df_historico.append(df_emp)
+                        else:
+                            st.info(f"Empresa {nome_emp} não possui dados para o indicador {indicador_selecionado}.")
+                
+                if len(df_historico) == 0:
+                    st.warning("Não há dados históricos disponíveis para as empresas selecionadas ou para o indicador escolhido.")
+                else:
+                    # Concatenar os DataFrames em um único DataFrame
+                    df_historico = pd.concat(df_historico, ignore_index=True)
+                
+                    # Remover entradas com anos nulos
+                    df_historico = df_historico.dropna(subset=['Ano'])
+                
+                    # Normalizar os dados se a opção estiver marcada
+                    if normalizar:
+                        max_valor = df_historico[col_indicador].max()
+                        min_valor = df_historico[col_indicador].min()
+                        df_historico[col_indicador] = (df_historico[col_indicador] - min_valor) / (max_valor - min_valor)
+                
+                    # Garantir que todos os anos presentes no conjunto de dados sejam exibidos no gráfico
+                    anos_disponiveis = sorted(df_historico['Ano'].unique())
+                    df_historico['Ano'] = df_historico['Ano'].astype(str)  # Converter para string para lidar com gaps no eixo
+                
+                    # Criar o gráfico de barras
+                    fig = px.bar(
+                        df_historico,
+                        x='Ano',
+                        y=col_indicador,
+                        color='Empresa',
+                        barmode='group',
+                        title=f"Evolução Histórica de {indicador_selecionado} por Empresa"
+                    )
+                
+                    # Ajustar layout do gráfico
+                    fig.update_layout(
+                        xaxis_title="Ano",
+                        yaxis_title=f"{indicador_selecionado} {'(Normalizado)' if normalizar else ''}",
+                        xaxis=dict(type='category', categoryorder='category ascending', tickvals=anos_disponiveis),
+                        legend_title="Empresa"
+                    )
+                
+                    # Exibir o gráfico no Streamlit
+                    st.plotly_chart(fig, use_container_width=True)
 
-                         # Carregar histórico das tabelas
-                        multiplos = load_multiplos_from_db(ticker + ".SA")
-                        df_dre    = load_data_from_db(ticker + ".SA")
+                    st.markdown("---") # Espaçamento entre diferentes tipos de análise
+                    st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
 
-                        if multiplos is None or multiplos.empty:
-                            continue
-                        if df_dre is None or df_dre.empty:
-                            continue
-                            
-                        # Calcular métricas simplificadas
-                        metrics_dict = calcular_metricas_historicas_simplificadas(multiplos, df_dre)
-                        
-                        data_emp = {
-                            'ticker': ticker,
-                            'nome_empresa': nome_emp,
-                            'Setor': row['SETOR'],
-                            'Subsetor': row['SUBSETOR'],
-                            'Segmento': row['SEGMENTO']
-                        }
-                        data_emp.update(metrics_dict)
-                        
-                        resultados.append(data_emp)   
-                        
-                    if not resultados:
-                        st.info("Não há dados para as empresas deste segmento.")
-                        return
-                     
-                    df_empresas = pd.DataFrame(resultados)
-
-                    # ================================================
-                    #  DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE
-                    # ================================================
-                    # Exemplo: decidimos usar algumas colunas
-                    indicadores_score = {
-                        # Margem Líquida média (maior = melhor)
-                        'MargemLiq_mean': {
-                            'peso': 0.10, 
-                            'melhor_alto': True
-                        },
-                        # ROE médio
-                        'ROE_mean': {
-                            'peso': 0.15, 
-                            'melhor_alto': True
-                        },
-                        # P/L médio (menor é melhor)
-                        'PL_mean': {
-                            'peso': 0.15,
-                            'melhor_alto': False
-                        },
-                        # DY médio (maior é melhor)
-                        'DY_mean': {
-                            'peso': 0.10,
-                            'melhor_alto': True
-                        },
-                        # Endividamento médio (menor é melhor)
-                        'Endividamento_mean': {
-                            'peso': 0.10,
-                            'melhor_alto': False
-                        },
-                        # Slope log de Receita Líquida
-                        'ReceitaLiq_slope_log': {
-                            'peso': 0.20,
-                            'melhor_alto': True
-                        },
-                        # Slope log de Lucro Líquido
-                        'LucroLiq_slope_log': {
-                            'peso': 0.20,
-                            'melhor_alto': True
-                        },
-                        # Espaço para adicionar + variáveis no futuro
-                    }
-
-                    # ================================================
-                    #  NORMALIZAR E CALCULAR SCORE (WINSORIZE + MinMax)
-                    # ================================================
-                    # Agrupando por Segmento caso você tenha mais de um
-                    for seg, grupo in df_empresas.groupby('Segmento'):
-                        idx = grupo.index
-                        
-                        df_empresas.loc[idx, 'Score'] = 0.0
-                        
-                        for col, config in indicadores_score.items():
-                            if col not in df_empresas.columns:
-                                continue
-                            
-                            # Passo 1: Winsorize p/ evitar outliers
-                            df_empresas.loc[idx, col] = winsorize(df_empresas.loc[idx, col])
-                            
-                            # Passo 2: Normalizar
-                            col_norm = col + "_norm"
-                            df_empresas.loc[idx, col_norm] = min_max_normalize(
-                                df_empresas.loc[idx, col],
-                                config['melhor_alto']
-                            )
-                            
-                            # Passo 3: Soma ponderada
-                            df_empresas.loc[idx, 'Score'] += (
-                                df_empresas.loc[idx, col_norm] * config['peso']
-                            )
-                        
-                        # Rank dentro do segmento
-                        df_empresas.loc[idx, 'RankNoSegmento'] = df_empresas.loc[idx, 'Score'] \
-                                                                 .rank(method='dense', ascending=False)
-    
-                    # Ordenar resultado
-                    df_empresas.sort_values(['Segmento','Score'], ascending=[True,False], inplace=True)
+                   # Seção: Gráfico Comparativo de Demonstrações Financeiras _____________________________________________________________________________________________________________
+                   # Título da seção
+                    st.markdown("### Comparação de Demonstrações Financeiras entre Empresas")
                     
-                    st.markdown("### Ranking de Empresas (Score Simplificado)")
-                    colunas_layout = st.columns(3)
-                    
-                    for idx, row in enumerate(df_empresas.itertuples()):
-                        col = colunas_layout[idx % len(colunas_layout)]
-                        with col:
-                            # Se houver função get_logo_url:
-                            logo_url = get_logo_url(row.ticker)
-                            col_logo, col_texto = st.columns([1, 3])
-                            
-                            with col_logo:
-                                st.image(logo_url, width=50)
-                            
-                            with col_texto:
-                                st.markdown(f"""
-                                    <div style="font-size: 16px; font-weight: bold; color: #333; margin-bottom: 5px;">
-                                        {row.nome_empresa} ({row.ticker})
-                                    </div>
-                                    <div style="font-size: 14px; color: #555;">
-                                        Score: <span style="color: green; font-weight: bold;">{row.Score:.2f}</span>
-                                        <br/>
-                                        Rank: {int(row.RankNoSegmento)}
-                                    </div>
-                                """, unsafe_allow_html=True)
-                    
-                    # (Opcional) exibir df_empresas em modo tabela
-                    # st.dataframe(df_empresas)
-    
-                    st.markdown("---")
-                    st.markdown("#### Observação:")
-                    st.write("""
-                        Esse score inicial considera poucas variáveis (Margem, ROE, P/L, etc.) 
-                        e a tendência de crescimento (slope log) de Receita e Lucro. 
-                        Caso deseje adicionar mais variáveis (ex.: Patrimônio, Caixa, etc.), 
-                        basta inserir nos dicionários e na função de cálculo.
-                    """)
-                             
-                    
-                    
-                    st.markdown("### Comparação de Indicadores (Múltiplos) entre Empresas do Segmento") #___________________________________________________________________________________________________
-                    
-                  # Lista de indicadores disponíveis
-                    indicadores_disponiveis = ["Margem Líquida", "ROE", "P/L", "EV_EBITDA"]
-                    
-                    # Mapeamento de nomes amigáveis para nomes de colunas no banco
-                    nomes_to_col = {
-                        "Margem Líquida": "Margem_Liquida",
-                        "ROE": "ROE",
-                        "P/L": "P/L",
-                        "EV_EBITDA": "EV_EBITDA"
-                    }
-
-                     # Selecionar as empresas a exibir
-                    lista_empresas = empresas_filtradas['nome_empresa'].tolist()
-                    empresas_selecionadas = st.multiselect("Selecione as empresas a serem exibidas no gráfico:", lista_empresas, default=lista_empresas)
-                    
-                    # Selecionar o indicador a ser exibido
-                    indicador_selecionado = st.selectbox("Selecione o Indicador para Comparar:", indicadores_disponiveis, index=0)
-                    col_indicador = nomes_to_col[indicador_selecionado]
-                    
-                                      
-                    # Opção para normalizar os dados
-                    normalizar = st.checkbox("Normalizar os Indicadores (Escala de 0 a 1)", value=False)
-                    
-                    # Construir o DataFrame com o histórico completo de cada empresa selecionada
-                    df_historico = []
-                    for i, row in empresas_filtradas.iterrows():
-                        nome_emp = row['nome_empresa']
-                        if nome_emp in empresas_selecionadas:
+                    # Função para carregar dados de demonstrações financeiras de todas as empresas selecionadas
+                    def load_dre_comparativo(empresas, indicadores_dre):
+                        df_comparativo = []
+                        for _, row in empresas.iterrows():
+                            nome_emp = row['nome_empresa']
                             ticker = row['ticker']
-                            multiplos_data = load_multiplos_from_db(ticker + ".SA")
-                            if multiplos_data is not None and not multiplos_data.empty and col_indicador in multiplos_data.columns:
-                                # Processar os dados da empresa
-                                df_emp = multiplos_data[['Data', col_indicador]].copy()
-                                df_emp['Ano'] = pd.to_datetime(df_emp['Data'], errors='coerce').dt.year  # Extrair apenas o ano
-                                df_emp['Empresa'] = nome_emp
-                                df_historico.append(df_emp)
-                            else:
-                                st.info(f"Empresa {nome_emp} não possui dados para o indicador {indicador_selecionado}.")
                     
-                    if len(df_historico) == 0:
-                        st.warning("Não há dados históricos disponíveis para as empresas selecionadas ou para o indicador escolhido.")
-                    else:
-                        # Concatenar os DataFrames em um único DataFrame
-                        df_historico = pd.concat(df_historico, ignore_index=True)
+                            # Carregar dados da tabela demonstracoes_financeiras
+                            dre_data = load_data_from_db(ticker + ".SA")  # Função para carregar os dados
+                            if dre_data is not None and not dre_data.empty:
+                                dre_data['Empresa'] = nome_emp
+                                dre_data['Ano'] = pd.to_datetime(dre_data['Data'], errors='coerce').dt.year  # Extrair apenas o ano
+                                df_comparativo.append(dre_data)
                     
-                        # Remover entradas com anos nulos
-                        df_historico = df_historico.dropna(subset=['Ano'])
+                        if df_comparativo:
+                            return pd.concat(df_comparativo, ignore_index=True)
+                        return None
                     
-                        # Normalizar os dados se a opção estiver marcada
-                        if normalizar:
-                            max_valor = df_historico[col_indicador].max()
-                            min_valor = df_historico[col_indicador].min()
-                            df_historico[col_indicador] = (df_historico[col_indicador] - min_valor) / (max_valor - min_valor)
+                    # Carregar os dados para as empresas selecionadas
+                    dre_data_comparativo = load_dre_comparativo(
+                        empresas_filtradas[empresas_filtradas['nome_empresa'].isin(empresas_selecionadas)],
+                        indicadores_dre=["Receita_Liquida", "Lucro_Liquido", "Patrimonio_Liquido", "Caixa_Liquido"]
+                    )
                     
-                        # Garantir que todos os anos presentes no conjunto de dados sejam exibidos no gráfico
-                        anos_disponiveis = sorted(df_historico['Ano'].unique())
-                        df_historico['Ano'] = df_historico['Ano'].astype(str)  # Converter para string para lidar com gaps no eixo
+                    if dre_data_comparativo is not None:
+                        # Criar mapeamento de nomes de colunas para nomes amigáveis
+                        col_name_mapping = {
+                            "Receita_Liquida": "Receita Líquida",
+                            "Lucro_Liquido": "Lucro Líquido",
+                            "Patrimonio_Liquido": "Patrimônio Líquido",
+                            "Caixa_Liquido": "Caixa Líquido",
+                            "Fluxo_Caixa": "Fluxo de Caixa"
+                        }
+                        display_name_to_col = {v: k for k, v in col_name_mapping.items()}
+                        variaveis_disponiveis_display = list(col_name_mapping.values())
                     
-                        # Criar o gráfico de barras
+                        # Selecionar um único indicador para visualizar
+                        indicador_selecionado_display = st.selectbox(
+                            "Escolha o Indicador:",
+                            variaveis_disponiveis_display,
+                            index=0
+                        )
+                    
+                        # Converter o nome amigável selecionado para o nome original
+                        indicador_selecionado = display_name_to_col[indicador_selecionado_display]
+                    
+                        # Filtrar os dados apenas para o indicador selecionado
+                        df_filtrado = dre_data_comparativo[['Ano', indicador_selecionado, 'Empresa']].copy()
+                        df_filtrado = df_filtrado.rename(columns={indicador_selecionado: "Valor"})  # Renomear para padronização
+                    
+                        # Garantir que todos os anos estejam presentes no eixo X
+                        anos_disponiveis = sorted(df_filtrado['Ano'].unique())
+                        df_filtrado['Ano'] = df_filtrado['Ano'].astype(str)  # Converter para string para lidar com gaps no eixo
+                    
+                        # Criar o gráfico de barras agrupadas
                         fig = px.bar(
-                            df_historico,
-                            x='Ano',
-                            y=col_indicador,
-                            color='Empresa',
-                            barmode='group',
-                            title=f"Evolução Histórica de {indicador_selecionado} por Empresa"
+                            df_filtrado,
+                            x="Ano",
+                            y="Valor",
+                            color="Empresa",
+                            barmode="group",
+                            title=f"Comparação de {indicador_selecionado_display} entre Empresas"
                         )
                     
                         # Ajustar layout do gráfico
                         fig.update_layout(
                             xaxis_title="Ano",
-                            yaxis_title=f"{indicador_selecionado} {'(Normalizado)' if normalizar else ''}",
-                            xaxis=dict(type='category', categoryorder='category ascending', tickvals=anos_disponiveis),
-                            legend_title="Empresa"
+                            yaxis_title=indicador_selecionado_display,
+                            legend_title="Empresa",
+                            xaxis=dict(type='category', categoryorder='category ascending', tickvals=anos_disponiveis)
                         )
                     
                         # Exibir o gráfico no Streamlit
                         st.plotly_chart(fig, use_container_width=True)
 
-                        st.markdown("---") # Espaçamento entre diferentes tipos de análise
-                        st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
-
-                       # Seção: Gráfico Comparativo de Demonstrações Financeiras _____________________________________________________________________________________________________________
-                       # Título da seção
-                        st.markdown("### Comparação de Demonstrações Financeiras entre Empresas")
-                        
-                        # Função para carregar dados de demonstrações financeiras de todas as empresas selecionadas
-                        def load_dre_comparativo(empresas, indicadores_dre):
-                            df_comparativo = []
-                            for _, row in empresas.iterrows():
-                                nome_emp = row['nome_empresa']
-                                ticker = row['ticker']
-                        
-                                # Carregar dados da tabela demonstracoes_financeiras
-                                dre_data = load_data_from_db(ticker + ".SA")  # Função para carregar os dados
-                                if dre_data is not None and not dre_data.empty:
-                                    dre_data['Empresa'] = nome_emp
-                                    dre_data['Ano'] = pd.to_datetime(dre_data['Data'], errors='coerce').dt.year  # Extrair apenas o ano
-                                    df_comparativo.append(dre_data)
-                        
-                            if df_comparativo:
-                                return pd.concat(df_comparativo, ignore_index=True)
-                            return None
-                        
-                        # Carregar os dados para as empresas selecionadas
-                        dre_data_comparativo = load_dre_comparativo(
-                            empresas_filtradas[empresas_filtradas['nome_empresa'].isin(empresas_selecionadas)],
-                            indicadores_dre=["Receita_Liquida", "Lucro_Liquido", "Patrimonio_Liquido", "Caixa_Liquido"]
-                        )
-                        
-                        if dre_data_comparativo is not None:
-                            # Criar mapeamento de nomes de colunas para nomes amigáveis
-                            col_name_mapping = {
-                                "Receita_Liquida": "Receita Líquida",
-                                "Lucro_Liquido": "Lucro Líquido",
-                                "Patrimonio_Liquido": "Patrimônio Líquido",
-                                "Caixa_Liquido": "Caixa Líquido",
-                                "Fluxo_Caixa": "Fluxo de Caixa"
-                            }
-                            display_name_to_col = {v: k for k, v in col_name_mapping.items()}
-                            variaveis_disponiveis_display = list(col_name_mapping.values())
-                        
-                            # Selecionar um único indicador para visualizar
-                            indicador_selecionado_display = st.selectbox(
-                                "Escolha o Indicador:",
-                                variaveis_disponiveis_display,
-                                index=0
-                            )
-                        
-                            # Converter o nome amigável selecionado para o nome original
-                            indicador_selecionado = display_name_to_col[indicador_selecionado_display]
-                        
-                            # Filtrar os dados apenas para o indicador selecionado
-                            df_filtrado = dre_data_comparativo[['Ano', indicador_selecionado, 'Empresa']].copy()
-                            df_filtrado = df_filtrado.rename(columns={indicador_selecionado: "Valor"})  # Renomear para padronização
-                        
-                            # Garantir que todos os anos estejam presentes no eixo X
-                            anos_disponiveis = sorted(df_filtrado['Ano'].unique())
-                            df_filtrado['Ano'] = df_filtrado['Ano'].astype(str)  # Converter para string para lidar com gaps no eixo
-                        
-                            # Criar o gráfico de barras agrupadas
-                            fig = px.bar(
-                                df_filtrado,
-                                x="Ano",
-                                y="Valor",
-                                color="Empresa",
-                                barmode="group",
-                                title=f"Comparação de {indicador_selecionado_display} entre Empresas"
-                            )
-                        
-                            # Ajustar layout do gráfico
-                            fig.update_layout(
-                                xaxis_title="Ano",
-                                yaxis_title=indicador_selecionado_display,
-                                legend_title="Empresa",
-                                xaxis=dict(type='category', categoryorder='category ascending', tickvals=anos_disponiveis)
-                            )
-                        
-                            # Exibir o gráfico no Streamlit
-                            st.plotly_chart(fig, use_container_width=True)
-
-                        
-                        else:
-                            st.warning("Não há dados disponíveis para as empresas selecionadas nas Demonstrações Financeiras.")
+                    
+                    else:
+                        st.warning("Não há dados disponíveis para as empresas selecionadas nas Demonstrações Financeiras.")
