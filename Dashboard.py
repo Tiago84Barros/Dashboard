@@ -1336,7 +1336,7 @@ if pagina == "Avançada": #_____________________________________________________
             
                          
                  # Inserindo espaçamento entre os elementos
-                placeholder = st.empty()
+                st.markdown("---") # Espaçamento entre diferentes tipos de análise
                 placeholder.markdown("<div style='height: 46px;'></div>", unsafe_allow_html=True)
                 
                 st.markdown("### Comparação de Indicadores (Múltiplos) entre Empresas do Segmento") #___________________________________________________________________________________________________
