@@ -1335,7 +1335,9 @@ if pagina == "Avançada": #_____________________________________________________
                 # basta inserir nos dicionários e na função de cálculo.
             
                          
-                
+                 # Inserindo espaçamento entre os elementos
+                placeholder = st.empty()
+                placeholder.markdown("<div style='height: 46px;'></div>", unsafe_allow_html=True)
                 
                 st.markdown("### Comparação de Indicadores (Múltiplos) entre Empresas do Segmento") #___________________________________________________________________________________________________
                 
