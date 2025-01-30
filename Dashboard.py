@@ -486,19 +486,21 @@ if pagina == "Básica":
           
         # Mostrar Métricas Resumidas ____________________________________________________________________________________________________________________________________________________________________________
         
-        # Adicionar estilo CSS para criar quadrados para o CAGR
+        # -----------------------------------------------------------------------------
+        # Adicionar estilo CSS para os quadrados de exibição
+        # -----------------------------------------------------------------------------
         st.markdown("""
             <style>
-            .cagr-box {
-                border: 1px solid #ddd;
+            .growth-box {
+                border: 2px solid #ddd;
                 padding: 20px;
                 border-radius: 10px;
                 margin-bottom: 10px;
                 display: flex;
                 justify-content: center;
                 align-items: center;
-                height: 100px;  /* Definindo a altura do bloco */
-                width: 100%;  /* Largura completa */
+                height: 100px;
+                width: 100%;
                 text-align: center;
                 font-size: 20px;
                 font-weight: bold;
@@ -507,6 +509,7 @@ if pagina == "Básica":
             }
             </style>
         """, unsafe_allow_html=True)
+
         
         def format_growth_rate(value):
             """Formata a taxa de crescimento em percentual, ou '-' caso inválida."""
