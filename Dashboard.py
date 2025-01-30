@@ -1219,8 +1219,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
                 if not resultados:
                     st.info("Não há dados para as empresas deste segmento.")
-                    return
-                 
+                                     
                 df_empresas = pd.DataFrame(resultados)
 
                 # ================================================
