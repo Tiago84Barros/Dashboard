@@ -1198,6 +1198,10 @@ if pagina == "Avançada": #_____________________________________________________
                     multiplos = load_multiplos_from_db(ticker + ".SA")
                     df_dre    = load_data_from_db(ticker + ".SA")
 
+                    st.write("Colunas em df_dre:", df_dre.columns.tolist())
+                    st.write("Colunas em multiplos:", multiplos.columns.tolist())
+
+
                     if multiplos is None or multiplos.empty:
                         continue
                     if df_dre is None or df_dre.empty:
