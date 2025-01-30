@@ -520,7 +520,7 @@ if pagina == "Básica":
                  
                       
         # Exibir os valores da regressão linear em quadrados
-        st.markdown("### Visão Geral (Taxa de Crescimento Anual)")
+        st.markdown("### Visão Geral (Taxa de Crescimento Médio Anual)")
         col1, col2, col3 = st.columns(3)
         
         col1, col2, col3 = st.columns(3)
