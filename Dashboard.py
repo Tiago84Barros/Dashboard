@@ -1183,7 +1183,7 @@ if pagina == "Avançada": #_____________________________________________________
 
                     if empresas_filtradas.empty:
                         st.warning("Não há empresas nesse segmento.")
-                    return
+                        return
 
                     st.markdown(f"### Empresas no Segmento {segmento_selecionado}")
                     st.markdown("---")
