@@ -1118,7 +1118,7 @@ if pagina == "Avançada": #_____________________________________________________
         metrics['ROE_std']  = roe_std
 
         # 3) ROIC (mean, std)
-        roe_mean, roe_std = calcular_media_e_std(df_mult, 'ROIC')
+        roic_mean, roe_std = calcular_media_e_std(df_mult, 'ROIC')
         metrics['ROIC_mean'] = roic_mean
         metrics['ROIC_std']  = roic_std
         
