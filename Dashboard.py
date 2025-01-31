@@ -1149,7 +1149,7 @@ if pagina == "Avançada": #_____________________________________________________
         metrics['LucroLiq_growth_approx'] = slope_to_growth_percent(slope_lucro)
 
         # Patrimônio Líquido -> slope log (para crescimento)
-        slope_lucro = slope_regressao_log(df_dre, 'Patrimonio_Liquido')
+        slope_Patrimonio = slope_regressao_log(df_dre, 'Patrimonio_Liquido')
         metrics['PatrimonioLiq_slope_log'] = slope_patr
         metrics['PatrimonioLiq_growth_approx'] = slope_to_growth_percent(slope_patr)
         
