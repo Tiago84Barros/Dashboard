@@ -1207,6 +1207,7 @@ if pagina == "Avançada": #_____________________________________________________
                      # Carregar histórico das tabelas
                     multiplos = load_multiplos_from_db(ticker + ".SA")
                     df_dre    = load_data_from_db(ticker + ".SA")
+                    st.markdown(multiplos)
 
                     if multiplos is None or multiplos.empty:
                         continue
