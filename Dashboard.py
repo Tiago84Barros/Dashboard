@@ -6,7 +6,11 @@ import yfinance as yf
 from sklearn.linear_model import LinearRegression
 import numpy as np
 import sqlite3
+import openai
 import os
+
+# Carregar chave da API do OpenAI do ambiente (segurança no GitHub)____________________________________________________________________________________________________________________________
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Função para obter a URL do logotipo a partir do repositório no GitHub ___________________________________________________________________________________________________________________________________________
 
@@ -1346,7 +1350,7 @@ if pagina == "Avançada": #_____________________________________________________
                             """, unsafe_allow_html=True)
                 
                 # (Opcional) exibir df_empresas em modo tabela
-                # st.dataframe(df_empresas)
+                 st.dataframe(df_empresas)
 
                 
                 # Esse score inicial considera poucas variáveis (Margem, ROE, P/L, etc.) 
@@ -1359,10 +1363,10 @@ if pagina == "Avançada": #_____________________________________________________
                 st.markdown("---") # Espaçamento entre diferentes tipos de análise
                 st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
                 
-                st.markdown("### Comparação de Indicadores (Múltiplos) entre Empresas do Segmento") #___________________________________________________________________________________________________
+                st.markdown("### Comparação de Indicadores (Múltiplos) entre Empresas do Segmento") #______Gráfico dos Múltiplos_____________________________________________________________________________________________
                 
-              # Lista de indicadores disponíveis
-                indicadores_disponiveis = ["Margem Líquida", "ROE", "P/L", "EV_EBITDA"]
+                # Lista de indicadores disponíveis
+                indicadores_disponiveis = ["Margem Líquida", "ROE", "P/L"]
                 
                 # Mapeamento de nomes amigáveis para nomes de colunas no banco
                 nomes_to_col = {
@@ -1439,151 +1443,202 @@ if pagina == "Avançada": #_____________________________________________________
                 
                     # Exibir o gráfico no Streamlit
                     st.plotly_chart(fig, use_container_width=True)
-
+                
                     st.markdown("---") # Espaçamento entre diferentes tipos de análise
                     st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
-
-                   # Seção: Gráfico Comparativo de Demonstrações Financeiras _____________________________________________________________________________________________________________
-                   # Título da seção
-                    st.markdown("### Comparação de Demonstrações Financeiras entre Empresas")
-                    
-                    # Função para carregar dados de demonstrações financeiras de todas as empresas selecionadas
-                    def load_dre_comparativo(empresas, indicadores_dre):
-                        df_comparativo = []
-                        for _, row in empresas.iterrows():
-                            nome_emp = row['nome_empresa']
-                            ticker = row['ticker']
-                    
-                            # Carregar dados da tabela demonstracoes_financeiras
-                            dre_data = load_data_from_db(ticker + ".SA")  # Função para carregar os dados
-                            if dre_data is not None and not dre_data.empty:
-                                dre_data['Empresa'] = nome_emp
-                                dre_data['Ano'] = pd.to_datetime(dre_data['Data'], errors='coerce').dt.year  # Extrair apenas o ano
-                                df_comparativo.append(dre_data)
-                    
-                        if df_comparativo:
-                            return pd.concat(df_comparativo, ignore_index=True)
-                        return None
-                    
-                    # Carregar os dados para as empresas selecionadas
-                    dre_data_comparativo = load_dre_comparativo(
-                        empresas_filtradas[empresas_filtradas['nome_empresa'].isin(empresas_selecionadas)],
-                        indicadores_dre=["Receita_Liquida", "Lucro_Liquido", "Patrimonio_Liquido", "Caixa_Liquido"]
+                
+                # Seção: Gráfico Comparativo de Demonstrações Financeiras ________________Gráfico das Demonstrações Financeiras__________________________________________________________________
+                # Título da seção
+                st.markdown("### Comparação de Demonstrações Financeiras entre Empresas")
+                
+                # Função para carregar dados de demonstrações financeiras de todas as empresas selecionadas
+                def load_dre_comparativo(empresas, indicadores_dre):
+                    df_comparativo = []
+                    for _, row in empresas.iterrows():
+                        nome_emp = row['nome_empresa']
+                        ticker = row['ticker']
+                
+                        # Carregar dados da tabela demonstracoes_financeiras
+                        dre_data = load_data_from_db(ticker + ".SA")  # Função para carregar os dados
+                        if dre_data is not None and not dre_data.empty:
+                            dre_data['Empresa'] = nome_emp
+                            dre_data['Ano'] = pd.to_datetime(dre_data['Data'], errors='coerce').dt.year  # Extrair apenas o ano
+                            df_comparativo.append(dre_data)
+                
+                    if df_comparativo:
+                        return pd.concat(df_comparativo, ignore_index=True)
+                    return None
+                
+                # Carregar os dados para as empresas selecionadas
+                dre_data_comparativo = load_dre_comparativo(
+                    empresas_filtradas[empresas_filtradas['nome_empresa'].isin(empresas_selecionadas)],
+                    indicadores_dre=["Receita_Liquida", "Lucro_Liquido", "Patrimonio_Liquido", "Caixa_Liquido"]
+                )
+                
+                if dre_data_comparativo is not None:
+                    # Criar mapeamento de nomes de colunas para nomes amigáveis
+                    col_name_mapping = {
+                        "Receita_Liquida": "Receita Líquida",
+                        "Lucro_Liquido": "Lucro Líquido",
+                        "Patrimonio_Liquido": "Patrimônio Líquido",
+                        "Caixa_Liquido": "Caixa Líquido",
+                        "Fluxo_Caixa": "Fluxo de Caixa"
+                    }
+                    display_name_to_col = {v: k for k, v in col_name_mapping.items()}
+                    variaveis_disponiveis_display = list(col_name_mapping.values())
+                
+                    # Selecionar um único indicador para visualizar
+                    indicador_selecionado_display = st.selectbox(
+                        "Escolha o Indicador:",
+                        variaveis_disponiveis_display,
+                        index=0
                     )
-                    
-                    if dre_data_comparativo is not None:
-                        # Criar mapeamento de nomes de colunas para nomes amigáveis
-                        col_name_mapping = {
-                            "Receita_Liquida": "Receita Líquida",
-                            "Lucro_Liquido": "Lucro Líquido",
-                            "Patrimonio_Liquido": "Patrimônio Líquido",
-                            "Caixa_Liquido": "Caixa Líquido",
-                            "Fluxo_Caixa": "Fluxo de Caixa"
-                        }
-                        display_name_to_col = {v: k for k, v in col_name_mapping.items()}
-                        variaveis_disponiveis_display = list(col_name_mapping.values())
-                    
-                        # Selecionar um único indicador para visualizar
-                        indicador_selecionado_display = st.selectbox(
-                            "Escolha o Indicador:",
-                            variaveis_disponiveis_display,
-                            index=0
-                        )
-                    
-                        # Converter o nome amigável selecionado para o nome original
-                        indicador_selecionado = display_name_to_col[indicador_selecionado_display]
-                    
-                        # Filtrar os dados apenas para o indicador selecionado
-                        df_filtrado = dre_data_comparativo[['Ano', indicador_selecionado, 'Empresa']].copy()
-                        df_filtrado = df_filtrado.rename(columns={indicador_selecionado: "Valor"})  # Renomear para padronização
-                    
-                        # Garantir que todos os anos estejam presentes no eixo X
-                        anos_disponiveis = sorted(df_filtrado['Ano'].unique())
-                        df_filtrado['Ano'] = df_filtrado['Ano'].astype(str)  # Converter para string para lidar com gaps no eixo
-                    
-                        # Criar o gráfico de barras agrupadas
-                        fig = px.bar(
-                            df_filtrado,
-                            x="Ano",
-                            y="Valor",
-                            color="Empresa",
-                            barmode="group",
-                            title=f"Comparação de {indicador_selecionado_display} entre Empresas"
-                        )
-                    
-                        # Ajustar layout do gráfico
-                        fig.update_layout(
-                            xaxis_title="Ano",
-                            yaxis_title=indicador_selecionado_display,
-                            legend_title="Empresa",
-                            xaxis=dict(type='category', categoryorder='category ascending', tickvals=anos_disponiveis)
-                        )
-                    
-                        # Exibir o gráfico no Streamlit
-                        st.plotly_chart(fig, use_container_width=True)
+                
+                    # Converter o nome amigável selecionado para o nome original
+                    indicador_selecionado = display_name_to_col[indicador_selecionado_display]
+                
+                    # Filtrar os dados apenas para o indicador selecionado
+                    df_filtrado = dre_data_comparativo[['Ano', indicador_selecionado, 'Empresa']].copy()
+                    df_filtrado = df_filtrado.rename(columns={indicador_selecionado: "Valor"})  # Renomear para padronização
+                
+                    # Garantir que todos os anos estejam presentes no eixo X
+                    anos_disponiveis = sorted(df_filtrado['Ano'].unique())
+                    df_filtrado['Ano'] = df_filtrado['Ano'].astype(str)  # Converter para string para lidar com gaps no eixo
+                
+                    # Criar o gráfico de barras agrupadas
+                    fig = px.bar(
+                        df_filtrado,
+                        x="Ano",
+                        y="Valor",
+                        color="Empresa",
+                        barmode="group",
+                        title=f"Comparação de {indicador_selecionado_display} entre Empresas"
+                    )
+                
+                    # Ajustar layout do gráfico
+                    fig.update_layout(
+                        xaxis_title="Ano",
+                        yaxis_title=indicador_selecionado_display,
+                        legend_title="Empresa",
+                        xaxis=dict(type='category', categoryorder='category ascending', tickvals=anos_disponiveis)
+                    )
+                
+                    # Exibir o gráfico no Streamlit
+                    st.plotly_chart(fig, use_container_width=True)
 
-                    
+                
+                else:
+                    st.warning("Não há dados disponíveis para as empresas selecionadas nas Demonstrações Financeiras.")
+
+                # =====================================
+                # RESUMO DA EMPRESA LÍDER NO RANKING
+                # =====================================
+                if not df_empresas.empty:
+                    # Selecionar a empresa em primeiro lugar
+                    empresa_lider = df_empresas.iloc[0]  # Primeira linha do DataFrame (maior Score)
+                    nome_lider = empresa_lider['nome_empresa']
+                    score_lider = empresa_lider['Score']
+                
+                    # Cálculo da média dos indicadores no setor para comparação
+                    media_setor = df_empresas.mean(numeric_only=True)
+                
+                    # Listar os principais fatores que contribuíram para o primeiro lugar
+                    fatores_positivos = []
+                    fatores_negativos = []
+                
+                    for col, config in indicadores_score.items():
+                        if col in df_empresas.columns:
+                            valor_empresa = empresa_lider[col]
+                            valor_media = media_setor[col]
+                
+                            # Diferença percentual em relação à média do setor
+                            diferenca_percentual = ((valor_empresa - valor_media) / valor_media) * 100 if valor_media != 0 else 0
+                
+                            # Se a empresa foi significativamente melhor que a média do setor
+                            if config['melhor_alto']:
+                                if valor_empresa > valor_media * 1.10:  # 10% acima da média
+                                    fatores_positivos.append(f"🔹 **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↑ {diferenca_percentual:.1f}% acima da média do setor)")
+                                elif valor_empresa < valor_media * 0.90:  # 10% abaixo da média
+                                    fatores_negativos.append(f"⚠️ **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↓ {diferenca_percentual:.1f}% abaixo da média)")
+                            else:  # Se menor for melhor (ex: P/L, Endividamento)
+                                if valor_empresa < valor_media * 0.90:  # 10% abaixo da média é positivo
+                                    fatores_positivos.append(f"🔹 **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↓ {abs(diferenca_percentual):.1f}% menor que a média do setor)")
+                                elif valor_empresa > valor_media * 1.10:
+                                    fatores_negativos.append(f"⚠️ **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↑ {diferenca_percentual:.1f}% acima da média)")
+                
+                    # Gerar o texto do resumo
+                    st.markdown("---")
+                    st.markdown(f"## 🏆 Empresa Líder: **{nome_lider}**")
+                    st.markdown(f"### 🌟 Score Final: **{score_lider:.2f}**")
+                
+                    if fatores_positivos:
+                        st.markdown("### ✅ Destaques Positivos")
+                        for fator in fatores_positivos:
+                            st.markdown(f"- {fator}")
+                
+                    if fatores_negativos:
+                        st.markdown("### ⚠️ Pontos de Atenção")
+                        for fator in fatores_negativos:
+                            st.markdown(f"- {fator}")
+                
+                    # Conclusão automática baseada nos dados
+                    st.markdown("### 📌 Conclusão")
+                    if len(fatores_positivos) > len(fatores_negativos):
+                        st.markdown(f"**{nome_lider} se destacou no setor devido a sua performance acima da média em diversos indicadores financeiros e operacionais.**")
                     else:
-                        st.warning("Não há dados disponíveis para as empresas selecionadas nas Demonstrações Financeiras.")
-
-                    # =====================================
-                    # RESUMO DA EMPRESA LÍDER NO RANKING
-                    # =====================================
-                    if not df_empresas.empty:
-                        # Selecionar a empresa em primeiro lugar
-                        empresa_lider = df_empresas.iloc[0]  # Primeira linha do DataFrame (maior Score)
-                        nome_lider = empresa_lider['nome_empresa']
-                        score_lider = empresa_lider['Score']
+                        st.markdown(f"Embora {nome_lider} tenha ficado em primeiro lugar, alguns fatores precisam de atenção para manter essa liderança no futuro.")
+                
+                    st.markdown("---")
+                
                     
-                        # Cálculo da média dos indicadores no setor para comparação
-                        media_setor = df_empresas.mean(numeric_only=True)
-                    
-                        # Listar os principais fatores que contribuíram para o primeiro lugar
-                        fatores_positivos = []
-                        fatores_negativos = []
-                    
-                        for col, config in indicadores_score.items():
-                            if col in df_empresas.columns:
-                                valor_empresa = empresa_lider[col]
-                                valor_media = media_setor[col]
-                    
-                                # Diferença percentual em relação à média do setor
-                                diferenca_percentual = ((valor_empresa - valor_media) / valor_media) * 100 if valor_media != 0 else 0
-                    
-                                # Se a empresa foi significativamente melhor que a média do setor
-                                if config['melhor_alto']:
-                                    if valor_empresa > valor_media * 1.10:  # 10% acima da média
-                                        fatores_positivos.append(f"🔹 **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↑ {diferenca_percentual:.1f}% acima da média do setor)")
-                                    elif valor_empresa < valor_media * 0.90:  # 10% abaixo da média
-                                        fatores_negativos.append(f"⚠️ **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↓ {diferenca_percentual:.1f}% abaixo da média)")
-                                else:  # Se menor for melhor (ex: P/L, Endividamento)
-                                    if valor_empresa < valor_media * 0.90:  # 10% abaixo da média é positivo
-                                        fatores_positivos.append(f"🔹 **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↓ {abs(diferenca_percentual):.1f}% menor que a média do setor)")
-                                    elif valor_empresa > valor_media * 1.10:
-                                        fatores_negativos.append(f"⚠️ **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↑ {diferenca_percentual:.1f}% acima da média)")
-                    
-                        # Gerar o texto do resumo
-                        st.markdown("---")
-                        st.markdown(f"## 🏆 Empresa Líder: **{nome_lider}**")
-                        st.markdown(f"### 🌟 Score Final: **{score_lider:.2f}**")
-                    
-                        if fatores_positivos:
-                            st.markdown("### ✅ Destaques Positivos")
-                            for fator in fatores_positivos:
-                                st.markdown(f"- {fator}")
-                    
-                        if fatores_negativos:
-                            st.markdown("### ⚠️ Pontos de Atenção")
-                            for fator in fatores_negativos:
-                                st.markdown(f"- {fator}")
-                    
-                        # Conclusão automática baseada nos dados
-                        st.markdown("### 📌 Conclusão")
-                        if len(fatores_positivos) > len(fatores_negativos):
-                            st.markdown(f"**{nome_lider} se destacou no setor devido a sua performance acima da média em diversos indicadores financeiros e operacionais.**")
-                        else:
-                            st.markdown(f"Embora {nome_lider} tenha ficado em primeiro lugar, alguns fatores precisam de atenção para manter essa liderança no futuro.")
-                    
-                        st.markdown("---")
+                ### USO da API do CHATGPT ___________________________________________________________________________________________________________________________________________
                        
-                    
+                def analisar_vantagem_competitiva(empresa, setor, dados_financeiros, dados_macro):
+                    """
+                    Analisa vantagens competitivas e faz um valuation baseado no histórico financeiro e macroeconômico.
+                    """
+                    prompt = f"""
+                    Você é um analista financeiro especializado em valuation e análise competitiva de empresas.
+                
+                    Dados financeiros históricos da empresa {empresa} no setor {setor}:
+                    {dados_financeiros}
+                
+                    Dados macroeconômicos históricos:
+                    {dados_macro}
+                
+                    Com base nesses dados:
+                    1. Analise as principais vantagens competitivas da empresa em relação ao setor.
+                    2. Identifique os fatores de risco e desafios futuros.
+                    3. Calcule um valuation aproximado usando o método de Fluxo de Caixa Descontado (DCF)
+                       e determine um preço justo para a ação.
+                
+                    Apresente a análise de forma clara e estruturada.
+                    """
+                
+                    response = openai.ChatCompletion.create(
+                        model="gpt-4",
+                        messages=[{"role": "system", "content": "Você é um analista financeiro especializado."},
+                                  {"role": "user", "content": prompt}],
+                        temperature=0.7
+                    )
+                
+                    return response["choices"][0]["message"]["content"]
+
+                def calcular_valuation_dcf(df_fluxo_caixa, taxa_desconto, crescimento):
+                    """
+                    Calcula o valuation da empresa usando o modelo de Fluxo de Caixa Descontado (DCF).
+                    """
+                    fluxos = df_fluxo_caixa['Fluxo_Caixa'].tolist()
+                
+                    if len(fluxos) < 5:
+                        fluxo_caixa_atual = fluxos[-1] if fluxos else 0
+                    else:
+                        fluxo_caixa_atual = sum(fluxos[-5:]) / 5  # Média dos últimos 5 anos
+                
+                    valor_presente = sum(fluxo_caixa_atual / ((1 + taxa_desconto) ** i) for i in range(1, 6))
+                    valor_terminal = (fluxo_caixa_atual * (1 + crescimento)) / (taxa_desconto - crescimento)
+                    valor_justo = valor_presente + valor_terminal
+                
+                    return valor_justo
+                 
+
