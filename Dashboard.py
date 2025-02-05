@@ -9,9 +9,6 @@ import sqlite3
 import openai
 import os
 
-# Carregar chave da API do OpenAI do ambiente (segurança no GitHub)____________________________________________________________________________________________________________________________
-openai.api_key = os.getenv("OPENAI_API_KEY")
-
 # Função para obter a URL do logotipo a partir do repositório no GitHub ___________________________________________________________________________________________________________________________________________
 
 def get_logo_url(ticker):
@@ -1592,6 +1589,15 @@ if pagina == "Avançada": #_____________________________________________________
                 
                     
                 ### USO da API do CHATGPT ___________________________________________________________________________________________________________________________________________
+
+                # ================================================
+                # CONFIGURAR A API DO CHATGPT (USANDO VARIÁVEL DE AMBIENTE NO GITHUB)
+                # ================================================
+                openai.api_key = os.getenv("OPENAI_API_KEY")
+
+                # ================================================
+                # FUNÇÃO PARA ANALISAR VANTAGEM COMPETITIVA E VALUATION
+                # ================================================
                        
                 def analisar_vantagem_competitiva(empresa, setor, dados_financeiros, dados_macro):
                     """
@@ -1624,6 +1630,10 @@ if pagina == "Avançada": #_____________________________________________________
                 
                     return response["choices"][0]["message"]["content"]
 
+                # ================================================
+                # FUNÇÃO PARA CALCULAR O VALUATION DCF (PREÇO JUSTO)
+                # ================================================
+
                 def calcular_valuation_dcf(df_fluxo_caixa, taxa_desconto, crescimento):
                     """
                     Calcula o valuation da empresa usando o modelo de Fluxo de Caixa Descontado (DCF).
@@ -1640,5 +1650,34 @@ if pagina == "Avançada": #_____________________________________________________
                     valor_justo = valor_presente + valor_terminal
                 
                     return valor_justo
+                
+                empresa_lider = df_empresas.iloc[0]['nome_empresa']
+                df_fluxo_caixa = dre_data_comparativo[dre_data_comparativo['Empresa'] == empresa_lider]
+                
+                taxa_desconto = 0.08  # 8% ao ano
+                crescimento = 0.04  # 4% ao ano
+                
+                preco_justo = calcular_valuation_dcf(df_fluxo_caixa, taxa_desconto, crescimento)
+                
+                st.markdown(f"### 💰 Valuation (DCF) da {empresa_lider}")
+                st.markdown(f"**Preço Justo Estimado:** R$ {preco_justo:.2f}")
+
+                # Interface do Streamlit
+                st.markdown("## 📊 Análise Avançada")
+                st.markdown(f"### 🏆 Empresa Líder: **{empresa_lider}**")
+
+                # ================================================
+                # BOTÃO PARA EXECUTAR ANÁLISE DO CHATGPT
+                # ================================================
+                
+                # Criando um botão para ativar a análise
+                if st.button("🔍 Gerar Análise da Empresa"):
+                    with st.spinner("Gerando análise... isso pode levar alguns segundos..."):
+                        analise = analisar_vantagem_competitiva(empresa_lider, setor_lider, dados_financeiros, dados_macro)
+                    
+                    st.markdown("### 📈 Análise de Vantagem Competitiva")
+                    st.write(analise)
+
+
                  
 
