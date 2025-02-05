@@ -1712,6 +1712,7 @@ if pagina == "Avançada": #_____________________________________________________
                     return valor_justo
                 
                 empresa_lider = df_empresas.iloc[0]['nome_empresa']
+                st.markdown(empresa_lider)
                 df_fluxo_caixa = dre_data_comparativo[dre_data_comparativo['Empresa'] == empresa_lider]
                 
                 taxa_desconto = 0.08  # 8% ao ano
