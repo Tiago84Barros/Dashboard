@@ -1206,7 +1206,7 @@ if pagina == "Avançada": #_____________________________________________________
         metrics['Endividamento_std']  = endiv_std
 
         # 7) Alavancagem_Financeira (mean, std)
-        alfin_mean, ml_std = calcular_media_e_std(df_mult, 'Alavancagem_Financeira')
+        alfin_mean, alfin_std = calcular_media_e_std(df_mult, 'Alavancagem_Financeira')
         metrics['Alavancagem_mean'] = alfin_mean
         metrics['Alavancagem_std']  = alfin_std
 
