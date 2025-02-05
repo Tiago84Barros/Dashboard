@@ -1348,7 +1348,7 @@ if pagina == "Avançada": #_____________________________________________________
 
                 # ================================================
                 #  NORMALIZAR E CALCULAR SCORE (WINSORIZE + MinMax)
-                # ================================================
+                # ================================================____________________________________________________________________________________________________________________________
                 # Agrupando por Segmento caso você tenha mais de um
                 for seg, grupo in df_empresas.groupby('Segmento'):
                     idx = grupo.index
@@ -1407,7 +1407,7 @@ if pagina == "Avançada": #_____________________________________________________
                             """, unsafe_allow_html=True)
                 
                 # (Opcional) exibir df_empresas em modo tabela
-                #st.dataframe(df_empresas)
+                st.dataframe(df_empresas)
 
                 
                 # Esse score inicial considera poucas variáveis (Margem, ROE, P/L, etc.) 
