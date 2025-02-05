@@ -1493,7 +1493,7 @@ if pagina == "Avançada": #_____________________________________________________
                     "ROIC": "ROIC",
                     "P/L": "P/L",
                     "Liquidez Corrente": "Liquidez_Corrente",
-                    #"Alavancagem Financeira": "Alavancagem_Financeira,
+                    "Alavancagem Financeira": "Alavancagem_Financeira",
                     "Endividamento Total": "Endividamento_Total"
                     
                 }
@@ -1594,7 +1594,7 @@ if pagina == "Avançada": #_____________________________________________________
                 # Carregar os dados para as empresas selecionadas
                 dre_data_comparativo = load_dre_comparativo(
                     empresas_filtradas[empresas_filtradas['nome_empresa'].isin(empresas_selecionadas)],
-                    indicadores_dre=["Receita_Liquida", "EBIT', "Lucro_Liquido", "Patrimonio_Liquido", "Divida_Liquida", "Caixa_Liquido"]
+                    indicadores_dre=["Receita_Liquida", "EBIT", "Lucro_Liquido", "Patrimonio_Liquido", "Divida_Liquida", "Caixa_Liquido"]
                 )
                 
                 if dre_data_comparativo is not None:
