@@ -1494,7 +1494,7 @@ if pagina == "Avançada": #_____________________________________________________
                     "P/L": "P/L",
                     "Liquidez Corrente": "Liquidez_Corrente",
                     "Alavancagem Financeira": "Alavancagem_Financeira,
-                    "Endividamento Total": "Endividamento_Total",
+                    "Endividamento Total": "Endividamento_Total"
                     
                 }
 
