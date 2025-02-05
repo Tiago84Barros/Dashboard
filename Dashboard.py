@@ -1483,14 +1483,19 @@ if pagina == "Avançada": #_____________________________________________________
                 st.markdown("### Comparação de Indicadores (Múltiplos) entre Empresas do Segmento") #______Gráfico dos Múltiplos_____________________________________________________________________________________________
                 
                 # Lista de indicadores disponíveis
-                indicadores_disponiveis = ["Margem Líquida", "ROE", "P/L"]
+                indicadores_disponiveis = ["Margem Líquida", "Margem Operacional", "ROE", "ROIC", "P/L", "Liquidez Corrente", "Alavancagem Financeira", "Endividamento Total"]
                 
                 # Mapeamento de nomes amigáveis para nomes de colunas no banco
                 nomes_to_col = {
                     "Margem Líquida": "Margem_Liquida",
+                    "Margem Operacional": "Margem_Operacional",
                     "ROE": "ROE",
+                    "ROIC": "ROIC",
                     "P/L": "P/L",
-                    "EV_EBITDA": "EV_EBITDA"
+                    "Liquidez Corrente": "Liquidez_Corrente",
+                    "Alavancagem Financeira": "Alavancagem_Financeira,
+                    "Endividamento Total": "Endividamento_Total",
+                    
                 }
 
                  # Selecionar as empresas a exibir
@@ -1589,17 +1594,19 @@ if pagina == "Avançada": #_____________________________________________________
                 # Carregar os dados para as empresas selecionadas
                 dre_data_comparativo = load_dre_comparativo(
                     empresas_filtradas[empresas_filtradas['nome_empresa'].isin(empresas_selecionadas)],
-                    indicadores_dre=["Receita_Liquida", "Lucro_Liquido", "Patrimonio_Liquido", "Caixa_Liquido"]
+                    indicadores_dre=["Receita_Liquida", "EBIT', "Lucro_Liquido", "Patrimonio_Liquido", "Divida_Liquida", "Caixa_Liquido"]
                 )
                 
                 if dre_data_comparativo is not None:
                     # Criar mapeamento de nomes de colunas para nomes amigáveis
                     col_name_mapping = {
                         "Receita_Liquida": "Receita Líquida",
+                        "EBIT": "EBIT",
                         "Lucro_Liquido": "Lucro Líquido",
                         "Patrimonio_Liquido": "Patrimônio Líquido",
+                        "Divida_Liquida": "Dívida Líquida",
                         "Caixa_Liquido": "Caixa Líquido",
-                        "Fluxo_Caixa": "Fluxo de Caixa"
+                  
                     }
                     display_name_to_col = {v: k for k, v in col_name_mapping.items()}
                     variaveis_disponiveis_display = list(col_name_mapping.values())
