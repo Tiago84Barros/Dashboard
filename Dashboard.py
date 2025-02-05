@@ -1169,31 +1169,51 @@ if pagina == "Avançada": #_____________________________________________________
         ml_mean, ml_std = calcular_media_e_std(df_mult, 'Margem_Liquida')
         metrics['MargemLiq_mean'] = ml_mean
         metrics['MargemLiq_std']  = ml_std
+
+        # 2) Margem_Operacional (mean, std)
+        mo_mean, mo_std = calcular_media_e_std(df_mult, 'Margem_Operacional')
+        metrics['MargemOp_mean'] = mo_mean
+        metrics['MargemOp_std']  = mo_std
         
-        # 2) ROE (mean, std)
+        # 3) ROE (mean, std)
         roe_mean, roe_std = calcular_media_e_std(df_mult, 'ROE')
         metrics['ROE_mean'] = roe_mean
         metrics['ROE_std']  = roe_std
 
-        # 3) ROIC (mean, std)
+        # 4) ROIC (mean, std)
         roic_mean, roic_std = calcular_media_e_std(df_mult, 'ROIC')
         metrics['ROIC_mean'] = roic_mean
         metrics['ROIC_std']  = roic_std
+
+        # 5) PVP (mean, std)
+        pvp_mean, pvp_std = calcular_media_e_std(df_mult, 'P/VP')
+        metrics['pvp_mean'] = pvp_mean
+        metrics['pvp_std']  = pvp_std
         
-        # 4) P/L (mean, std) - preferimos valores menores (mas iremos avaliar no score)
-        pl_mean, pl_std = calcular_media_e_std(df_mult, 'P/L')
-        metrics['PL_mean'] = pl_mean
-        metrics['PL_std']  = pl_std
+        # ) P/L (mean, std) - preferimos valores menores (mas iremos avaliar no score)
+        #pl_mean, pl_std = calcular_media_e_std(df_mult, 'P/L')
+        #metrics['PL_mean'] = pl_mean
+        #metrics['PL_std']  = pl_std
         
-        # 5) DY (mean, std) - maior = melhor (?)
-        dy_mean, dy_std = calcular_media_e_std(df_mult, 'DY')
-        metrics['DY_mean'] = dy_mean
-        metrics['DY_std']  = dy_std
+        # ) DY (mean, std) - maior = melhor (?)
+        #dy_mean, dy_std = calcular_media_e_std(df_mult, 'DY')
+        #metrics['DY_mean'] = dy_mean
+        #metrics['DY_std']  = dy_std
         
         # 6) Endividamento_Total (mean, std)
         endiv_mean, endiv_std = calcular_media_e_std(df_mult, 'Endividamento_Total')
         metrics['Endividamento_mean'] = endiv_mean
         metrics['Endividamento_std']  = endiv_std
+
+        # 7) Alavancagem_Financeira (mean, std)
+        alfin_mean, ml_std = calcular_media_e_std(df_mult, 'Alavancagem_Financeira')
+        metrics['Alavancagem_mean'] = alfin_mean
+        metrics['Alavancagem_std']  = alfin_std
+
+        # 8) Liquidez Corrente (mean, std)
+        lc_mean, lc_std = calcular_media_e_std(df_mult, 'Liquidez_Corrente')
+        metrics['Liquidez_mean'] = lc_mean
+        metrics['Liquidez_std']  = lc_std
         
         # =============== DEMONSTRAÇÕES ===============
         # Receita Líquida -> slope log (para crescimento)
@@ -1210,6 +1230,16 @@ if pagina == "Avançada": #_____________________________________________________
         slope_patrimonio = slope_regressao_log(df_dre, 'Patrimonio_Liquido')
         metrics['PatrimonioLiq_slope_log'] = slope_patrimonio
         metrics['PatrimonioLiq_growth_approx'] = slope_to_growth_percent(slope_patrimonio)
+
+        # Dívida Líquida -> slope log (para crescimento)
+        slope_divida= slope_regressao_log(df_dre, 'Divida_Liquida')
+        metrics['DividaLiq_slope_log'] = slope_divida
+        metrics['DividaLiq_growth_approx'] = slope_to_growth_percent(slope_divida)
+
+        # Caixa Líquido -> slope log (para crescimento)
+        slope_caixa = slope_regressao_log(df_dre, 'Caixa_Liquido')
+        metrics['CaixaLiq_slope_log'] = slope_caixa
+        metrics['CaixaLiq_growth_approx'] = slope_to_growth_percent(slope_caixa)
         
         # ----
         # (Espaço para adicionar variáveis adicionais depois)
@@ -1300,12 +1330,17 @@ if pagina == "Avançada": #_____________________________________________________
                 indicadores_score = {
                     # Margem Líquida média (maior = melhor)
                     'MargemLiq_mean': {
-                        'peso': 0.15, 
+                        'peso': 0.20, 
+                        'melhor_alto': True
+                    },
+                    # Margem Operacional Média
+                    'MOP_mean': {
+                        'peso': 0.20, 
                         'melhor_alto': True
                     },
                     # ROE médio
                     'ROE_mean': {
-                        'peso': 0.10, 
+                        'peso': 0.20, 
                         'melhor_alto': True
                     },
                      # ROIC médio
@@ -1313,20 +1348,35 @@ if pagina == "Avançada": #_____________________________________________________
                         'peso': 0.25, 
                         'melhor_alto': True
                     },
-                    # P/L médio (menor é melhor)
-                    'PL_mean': {
-                        'peso': 0.10,
+                     # PVP médio (menor é melhor)
+                    'PVP_mean': {
+                        'peso': 0.25, 
                         'melhor_alto': False
                     },
+                    # P/L médio (menor é melhor)
+                    #'PL_mean': {
+                    #    'peso': 0.10,
+                    #    'melhor_alto': False
+                    #},
                     # DY médio (maior é melhor)
-                    'DY_mean': {
-                        'peso': 0.05,
-                        'melhor_alto': True
-                    },
+                    #'DY_mean': {
+                    #    'peso': 0.05,
+                    #    'melhor_alto': True
+                    #},
                     # Endividamento médio (menor é melhor)
                     'Endividamento_mean': {
                         'peso': 0.10,
                         'melhor_alto': False
+                    },
+                    # Alavancagem média (menor é melhor)
+                    'Alavancagem_mean': {
+                        'peso': 0.10,
+                        'melhor_alto': False
+                    },
+                    # Liquidez Corrente média (maior é melhor)
+                    'Liquidez_mean': {
+                        'peso': 0.10,
+                        'melhor_alto': True
                     },
                     # Slope log de Receita Líquida
                     'ReceitaLiq_slope_log': {
@@ -1340,6 +1390,16 @@ if pagina == "Avançada": #_____________________________________________________
                     },
                      # Slope log de Patrimônio Líquido
                     'PatrimonioLiq_slope_log': {
+                        'peso': 0.20,
+                        'melhor_alto': True
+                    },
+                    # Slope log de Dívida Líquida
+                    'DividaLiq_slope_log': {
+                        'peso': 0.10,
+                        'melhor_alto': False
+                    },
+                    # Slope log de Dívida Líquida
+                    'CaixaLiq_slope_log': {
                         'peso': 0.20,
                         'melhor_alto': True
                     },
