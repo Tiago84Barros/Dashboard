@@ -180,7 +180,7 @@ def load_data_from_db(ticker):
         if conn:
             conn.close()
 
-# Função que chama o banco de dados dos Múltiplos __________________________________________________________________________________________________________________________________________________
+# Função que carrega o banco de dados dos MÚLTIPLOS __________________________________________________________________________________________________________________________________________________
 @st.cache_data
 def load_multiplos_from_db(ticker):
     db_path = download_db_from_github(db_url)
@@ -205,6 +205,63 @@ def load_multiplos_from_db(ticker):
     finally:
         if conn:
             conn.close()
+
+# Função para carregar DADOS MACROECONÔMICOS históricos do banco de dados ____________________________________________________________________________________________________________________
+# Função para carregar e resumir os dados macroeconômicos históricos
+@st.cache_data
+def load_macro_summary():
+    db_path = download_db_from_github(db_url)
+    
+    if db_path is None or not os.path.exists(db_path):
+        return "Não há dados macroeconômicos disponíveis no banco de dados."
+
+    try:
+        conn = sqlite3.connect(db_path)
+
+        # Buscar todos os dados da tabela 'macroeconomia'
+        query_macro = "SELECT * FROM info_economica ORDER BY Data ASC"
+        df_macro = pd.read_sql_query(query_macro, conn)
+
+        # Fechar a conexão
+        conn.close()
+
+        if df_macro.empty:
+            return "Não há dados macroeconômicos disponíveis."
+
+        # Converter a coluna de Data para datetime e extrair o ano
+        df_macro['Ano'] = pd.to_datetime(df_macro['Data'], errors='coerce').dt.year
+
+        # Criar um resumo estatístico para os principais indicadores
+        resumo = {
+            "Taxa Selic Média (%)": df_macro["Selic"].mean(),
+            "Taxa Selic Desvio-Padrão": df_macro["Selic"].std(),
+            "Câmbio Médio (R$/USD)": df_macro["Cambio"].mean(),
+            "Inflação IPCA Média (%)": df_macro["IPCA"].mean(),
+            "Inflação IPCA Desvio-Padrão": df_macro["IPCA"].std(),
+            "Índice de Confiança do Consumidor (ICC) Médio": df_macro["ICC"].mean(),
+            "PIB Crescimento Médio (%)": df_macro["PIB"].mean(),
+            "Balança Comercial Média (US$ bi)": df_macro["Balança_Comercial"].mean()
+        }
+
+        # Criar uma string para enviar ao ChatGPT
+        resumo_texto = f"""
+        Resumo histórico dos principais indicadores macroeconômicos:
+        - Taxa Selic média anual: {resumo["Taxa Selic Média (%)"]:.2f}% (Desvio padrão: {resumo["Taxa Selic Desvio-Padrão"]:.2f})
+        - Câmbio médio (R$/USD): {resumo["Câmbio Médio (R$/USD)"]:.2f}
+        - Inflação IPCA média anual: {resumo["Inflação IPCA Média (%)"]:.2f}% (Desvio padrão: {resumo["Inflação IPCA Desvio-Padrão"]:.2f})
+        - Índice de Confiança do Consumidor (ICC) médio: {resumo["Índice de Confiança do Consumidor (ICC) Médio"]:.2f}
+        - Crescimento médio do PIB: {resumo["PIB Crescimento Médio (%)"]:.2f}%
+        - Balança Comercial média: US$ {resumo["Balança Comercial Média (US$ bi)"]:.2f} bilhões
+        
+        Esses indicadores fornecem um contexto econômico para avaliar a performance das empresas analisadas.
+        """
+
+        return resumo_texto
+
+    except Exception as e:
+        return f"Erro ao carregar os dados macroeconômicos: {e}"
+
+
 
 # Sidebar com ícones de navegação __________________________________________________________________________________________________________________________________________________________
 
@@ -1233,6 +1290,9 @@ if pagina == "Avançada": #_____________________________________________________
                                      
                 df_empresas = pd.DataFrame(resultados)
 
+                # Carregar dados macroeconômicos do banco de dados
+                dados_macro = load_macro_summary()
+                
                 # ================================================
                 #  DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE
                 # ================================================
