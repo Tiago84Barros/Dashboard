@@ -1273,7 +1273,7 @@ if pagina == "Avançada": #_____________________________________________________
                     },
                     # Margem Operacional Média
                     'MOP_mean': {
-                        'peso': 0.20, 
+                        'peso': 0.25, 
                         'melhor_alto': True
                     },
                     # ROE médio
@@ -1288,7 +1288,7 @@ if pagina == "Avançada": #_____________________________________________________
                     },
                      # PVP médio (menor é melhor)
                     'PVP_mean': {
-                        'peso': 0.25, 
+                        'peso': 0.15, 
                         'melhor_alto': False
                     },
                     # P/L médio (menor é melhor)
@@ -1313,7 +1313,7 @@ if pagina == "Avançada": #_____________________________________________________
                     },
                     # Liquidez Corrente média (maior é melhor)
                     'Liquidez_mean': {
-                        'peso': 0.10,
+                        'peso': 0.15,
                         'melhor_alto': True
                     },
                     # Slope log de Receita Líquida
@@ -1323,7 +1323,7 @@ if pagina == "Avançada": #_____________________________________________________
                     },
                     # Slope log de Lucro Líquido
                     'LucroLiq_slope_log': {
-                        'peso': 0.20,
+                        'peso': 0.30,
                         'melhor_alto': True
                     },
                      # Slope log de Patrimônio Líquido
@@ -1591,7 +1591,7 @@ if pagina == "Avançada": #_____________________________________________________
                 
                 else:
                     st.warning("Não há dados disponíveis para as empresas selecionadas nas Demonstrações Financeiras.")
-
+                 
                 # =====================================
                 # RESUMO DA EMPRESA LÍDER NO RANKING
                 # =====================================
@@ -1613,10 +1613,16 @@ if pagina == "Avançada": #_____________________________________________________
                             valor_empresa = empresa_lider[col]
                             valor_media = media_setor[col]
                 
-                            # Diferença percentual em relação à média do setor
-                            diferenca_percentual = ((valor_empresa - valor_media) / valor_media) * 100 if valor_media != 0 else 0
+                            # Evitar divisões problemáticas (valores negativos ou muito pequenos)
+                            if valor_media is None or pd.isna(valor_media) or abs(valor_media) < 1e-6:
+                                diferenca_percentual = 0
+                            else:
+                                diferenca_percentual = ((valor_empresa - valor_media) / abs(valor_media)) * 100
                 
-                            # Se a empresa foi significativamente melhor que a média do setor
+                            # Truncar valores extremos para evitar distorções
+                            diferenca_percentual = max(min(diferenca_percentual, 500), -500)  # Limite de ±500%
+                
+                            # Aplicar lógica de vantagem/desvantagem corretamente
                             if config['melhor_alto']:
                                 if valor_empresa > valor_media * 1.10:  # 10% acima da média
                                     fatores_positivos.append(f"🔹 **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↑ {diferenca_percentual:.1f}% acima da média do setor)")
@@ -1651,6 +1657,7 @@ if pagina == "Avançada": #_____________________________________________________
                         st.markdown(f"Embora {nome_lider} tenha ficado em primeiro lugar, alguns fatores precisam de atenção para manter essa liderança no futuro.")
                 
                     st.markdown("---")
+
                 
                     
                 ### USO da API do CHATGPT ___________________________________________________________________________________________________________________________________________
