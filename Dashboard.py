@@ -1597,14 +1597,14 @@ if pagina == "Avançada": #_____________________________________________________
                 # =====================================
                 if not df_empresas.empty:
                     # Selecionar a empresa em primeiro lugar
-                    empresa_lider = df_empresas.iloc[0]  # Primeira linha do DataFrame (maior Score)
+                    empresa_lider = df_empresas.iloc[0]
                     nome_lider = empresa_lider['nome_empresa']
                     score_lider = empresa_lider['Score']
                 
-                    # Cálculo da média dos indicadores no setor para comparação
+                    # Cálculo da média dos indicadores no setor
                     media_setor = df_empresas.mean(numeric_only=True)
                 
-                    # Listar os principais fatores que contribuíram para o primeiro lugar
+                    # Listar fatores positivos e negativos
                     fatores_positivos = []
                     fatores_negativos = []
                     principais_contribuintes = []
@@ -1614,35 +1614,55 @@ if pagina == "Avançada": #_____________________________________________________
                             valor_empresa = empresa_lider[col]
                             valor_media = media_setor[col]
                 
-                            # Evitar divisões problemáticas (valores negativos ou muito pequenos)
+                            # Evitar divisões problemáticas
                             if valor_media is None or pd.isna(valor_media) or abs(valor_media) < 1e-6:
                                 diferenca_percentual = 0
                             else:
                                 diferenca_percentual = ((valor_empresa - valor_media) / abs(valor_media)) * 100
                 
-                            # Truncar valores extremos para evitar distorções
-                            diferenca_percentual = max(min(diferenca_percentual, 500), -500)  # Limite de ±500%
+                            diferenca_percentual = max(min(diferenca_percentual, 500), -500)
                 
                             # Adicionar ao ranking de principais contribuintes
                             principais_contribuintes.append((col.replace('_', ' '), diferenca_percentual, valor_empresa))
                 
                             # Aplicar lógica de vantagem/desvantagem corretamente
                             if config['melhor_alto']:
-                                if valor_empresa > valor_media * 1.05:  # **Agora destaca se for 5% acima da média**
-                                    fatores_positivos.append(f"🔹 **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↑ {diferenca_percentual:.1f}% acima da média do setor)")
-                                elif valor_empresa < valor_media * 0.95:  # **Agora considera negativo se for 5% abaixo**
+                                if valor_empresa > valor_media * 1.05:
+                                    fatores_positivos.append(f"🔹 **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↑ {diferenca_percentual:.1f}% acima da média)")
+                                elif valor_empresa < valor_media * 0.95:
                                     fatores_negativos.append(f"⚠️ **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↓ {diferenca_percentual:.1f}% abaixo da média)")
-                            else:  # Se menor for melhor (ex: P/L, Endividamento)
-                                if valor_empresa < valor_media * 0.95:  # 5% abaixo da média é positivo
-                                    fatores_positivos.append(f"🔹 **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↓ {abs(diferenca_percentual):.1f}% menor que a média do setor)")
+                            else:
+                                if valor_empresa < valor_media * 0.95:
+                                    fatores_positivos.append(f"🔹 **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↓ {abs(diferenca_percentual):.1f}% menor que a média)")
                                 elif valor_empresa > valor_media * 1.05:
                                     fatores_negativos.append(f"⚠️ **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↑ {diferenca_percentual:.1f}% acima da média)")
                 
                     # Se não houver fatores positivos claros, mostrar os **3 principais indicadores** que mais contribuíram para o score
+                    if not fatores_positivos:
+                        principais_contribuintes = sorted(principais_contribuintes, key=lambda x: abs(x[1]), reverse=True)[:3]
+                        fatores_positivos = [f"🔹 **{item[0]}**: {item[2]:.2f} (↕ {item[1]:.1f}% em relação à média)" for item in principais_contribuintes]
+                
+                    # Exibir resumo no dashboard
+                    st.markdown("---")
+                    st.markdown(f"## 🏆 Empresa Líder: **{nome_lider}**")
+                    st.markdown(f"### 🌟 Score Final: **{score_lider:.2f}**")
+                
+                    if fatores_positivos:
+                        st.markdown("### ✅ Destaques Positivos")
+                        for fator in fatores_positivos:
+                            st.markdown(f"- {fator}")
+                
+                    if fatores_negativos:
+                        st.markdown("### ⚠️ Pontos de Atenção")
+                        for fator in fatores_negativos:
+                            st.markdown(f"- {fator}")
+                
+                    # Conclusão automática baseada nos dados
+                    st.markdown("### 📌 Conclusão")
                     if len(fatores_positivos) > len(fatores_negativos):
-                        st.markdown(f"**{nome_lider} se destacou no setor devido a sua performance acima da média em diversos indicadores financeiros e operacionais.**")
+                        st.markdown(f"**{nome_lider} se destacou no setor devido à sua performance acima da média em diversos indicadores financeiros e operacionais.**")
                     else:
-                        st.markdown(f"Embora {nome_lider} tenha ficado em primeiro lugar, alguns fatores precisam de atenção para manter essa liderança no futuro.")
+                        st.markdown(f"**Embora {nome_lider} tenha ficado em primeiro lugar, alguns fatores precisam de atenção para manter essa liderança no futuro.**")
                 
                     st.markdown("---")
 
