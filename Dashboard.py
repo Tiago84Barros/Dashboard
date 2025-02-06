@@ -1145,11 +1145,11 @@ if pagina == "Avançada": #_____________________________________________________
     # ===============================================
     # FUNÇÃO PRINCIPAL: Calcular Métricas Históricas
     # ===============================================
-    def calcular_metricas_historicas_simplificadas(df_mult, df_dre):
+   def calcular_metricas_historicas_simplificadas(df_mult, df_dre):
         """
         Calcula métricas essenciais para um conjunto pequeno de variáveis.
-        - Múltiplos: Margem_Liquida, ROE, P/L, DY, Endividamento_Total
-        - DRE: Receita Líquida, Lucro Líquido (com slope log)
+        - Múltiplos: Margem_Liquida, Margem_Operacional, ROE, ROIC, P/VP, Endividamento_Total, Alavancagem_Financeira, Liquidez_Corrente
+        - DRE: Receita Líquida, Lucro Líquido, Patrimônio Líquido, Dívida Líquida, Caixa Líquido (com slope log)
         
         Retorna um dicionário que representa a 'linha' de métricas da empresa.
         """
@@ -1165,92 +1165,31 @@ if pagina == "Avançada": #_____________________________________________________
         metrics = {}
         
         # =============== MÚLTIPLOS ===============
-        # 1) Margem_Liquida (mean, std)
-        ml_mean, ml_std = calcular_media_e_std(df_mult, 'Margem_Liquida')
-        metrics['MargemLiq_mean'] = ml_mean
-        metrics['MargemLiq_std']  = ml_std
-
-        # 2) Margem_Operacional (mean, std)
-        mo_mean, mo_std = calcular_media_e_std(df_mult, 'Margem_Operacional')
-        metrics['MargemOp_mean'] = mo_mean
-        metrics['MargemOp_std']  = mo_std
-        
-        # 3) ROE (mean, std)
-        roe_mean, roe_std = calcular_media_e_std(df_mult, 'ROE')
-        metrics['ROE_mean'] = roe_mean
-        metrics['ROE_std']  = roe_std
-
-        # 4) ROIC (mean, std)
-        roic_mean, roic_std = calcular_media_e_std(df_mult, 'ROIC')
-        metrics['ROIC_mean'] = roic_mean
-        metrics['ROIC_std']  = roic_std
-
-        # 5) PVP (mean, std)
-        pvp_mean, pvp_std = calcular_media_e_std(df_mult, 'P/VP')
-        metrics['pvp_mean'] = pvp_mean
-        metrics['pvp_std']  = pvp_std
-        
-        # ) P/L (mean, std) - preferimos valores menores (mas iremos avaliar no score)
-        #pl_mean, pl_std = calcular_media_e_std(df_mult, 'P/L')
-        #metrics['PL_mean'] = pl_mean
-        #metrics['PL_std']  = pl_std
-        
-        # ) DY (mean, std) - maior = melhor (?)
-        #dy_mean, dy_std = calcular_media_e_std(df_mult, 'DY')
-        #metrics['DY_mean'] = dy_mean
-        #metrics['DY_std']  = dy_std
-        
-        # 6) Endividamento_Total (mean, std)
-        endiv_mean, endiv_std = calcular_media_e_std(df_mult, 'Endividamento_Total')
-        metrics['Endividamento_mean'] = endiv_mean
-        metrics['Endividamento_std']  = endiv_std
-
-        # 7) Alavancagem_Financeira (mean, std)
-        alfin_mean, alfin_std = calcular_media_e_std(df_mult, 'Alavancagem_Financeira')
-        metrics['Alavancagem_mean'] = alfin_mean
-        metrics['Alavancagem_std']  = alfin_std
-
-        # 8) Liquidez Corrente (mean, std)
-        lc_mean, lc_std = calcular_media_e_std(df_mult, 'Liquidez_Corrente')
-        metrics['Liquidez_mean'] = lc_mean
-        metrics['Liquidez_std']  = lc_std
+        for col in ['Margem_Liquida', 'Margem_Operacional', 'ROE', 'ROIC', 'P/VP', 'Endividamento_Total', 'Alavancagem_Financeira', 'Liquidez_Corrente']:
+            mean, std = calcular_media_e_std(df_mult, col)
+            metrics[f'{col}_mean'] = mean
+            metrics[f'{col}_std'] = std
         
         # =============== DEMONSTRAÇÕES ===============
-        # Receita Líquida -> slope log (para crescimento)
-        slope_rec = slope_regressao_log(df_dre, 'Receita_Liquida')
-        metrics['ReceitaLiq_slope_log'] = slope_rec
-        metrics['ReceitaLiq_growth_approx'] = slope_to_growth_percent(slope_rec)
+        for col in ['Receita_Liquida', 'Lucro_Liquido', 'Patrimonio_Liquido', 'Divida_Liquida', 'Caixa_Liquido']:
+            slope = slope_regressao_log(df_dre, col)
+            metrics[f'{col}_slope_log'] = slope
+            metrics[f'{col}_growth_approx'] = slope_to_growth_percent(slope)
         
-        # Lucro Líquido -> slope log (para crescimento)
-        slope_lucro = slope_regressao_log(df_dre, 'Lucro_Liquido')
-        metrics['LucroLiq_slope_log'] = slope_lucro
-        metrics['LucroLiq_growth_approx'] = slope_to_growth_percent(slope_lucro)
-
-        # Patrimônio Líquido -> slope log (para crescimento)
-        slope_patrimonio = slope_regressao_log(df_dre, 'Patrimonio_Liquido')
-        metrics['PatrimonioLiq_slope_log'] = slope_patrimonio
-        metrics['PatrimonioLiq_growth_approx'] = slope_to_growth_percent(slope_patrimonio)
-
-        # Dívida Líquida -> slope log (para crescimento)
-        slope_divida= slope_regressao_log(df_dre, 'Divida_Liquida')
-        metrics['DividaLiq_slope_log'] = slope_divida
-        metrics['DividaLiq_growth_approx'] = slope_to_growth_percent(slope_divida)
-
-        # Caixa Líquido -> slope log (para crescimento)
-        slope_caixa = slope_regressao_log(df_dre, 'Caixa_Liquido')
-        metrics['CaixaLiq_slope_log'] = slope_caixa
-        metrics['CaixaLiq_growth_approx'] = slope_to_growth_percent(slope_caixa)
+        # Penalização por alta volatilidade (desvio padrão relativo à média)
+        for col in ['Margem_Liquida', 'ROE', 'ROIC', 'Endividamento_Total', 'Liquidez_Corrente']:
+            if metrics[f'{col}_mean'] != 0:
+                coef_var = metrics[f'{col}_std'] / abs(metrics[f'{col}_mean'])
+                metrics[f'{col}_volatility_penalty'] = min(1.0, coef_var)  # Penalização limitada a 100%
+            else:
+                metrics[f'{col}_volatility_penalty'] = 1.0  # Penalização máxima se a média for zero
         
-        # ----
-        # (Espaço para adicionar variáveis adicionais depois)
-        # Exemplo:
-        # - Patrimônio Líquido (mean, slope, etc.)
-        # - Caixa Líquido (mean)
-        # etc.
-        # ----
+        # Bonificação por histórico longo
+        num_anos = df_dre['Ano'].nunique()
+        metrics['historico_bonus'] = min(1.0, num_anos / 10)  # Bonificação máxima se empresa tiver 10+ anos de dados
         
         return metrics
-      
+   
     
     # espaçamento entre os elementos
     st.markdown("""
