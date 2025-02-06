@@ -1145,7 +1145,7 @@ if pagina == "Avançada": #_____________________________________________________
     # ===============================================
     # FUNÇÃO PRINCIPAL: Calcular Métricas Históricas
     # ===============================================
-   def calcular_metricas_historicas_simplificadas(df_mult, df_dre):
+    def calcular_metricas_historicas_simplificadas(df_mult, df_dre):
         """
         Calcula métricas essenciais para um conjunto pequeno de variáveis.
         - Múltiplos: Margem_Liquida, Margem_Operacional, ROE, ROIC, P/VP, Endividamento_Total, Alavancagem_Financeira, Liquidez_Corrente
@@ -1189,8 +1189,7 @@ if pagina == "Avançada": #_____________________________________________________
         metrics['historico_bonus'] = min(1.0, num_anos / 10)  # Bonificação máxima se empresa tiver 10+ anos de dados
         
         return metrics
-   
-    
+       
     # espaçamento entre os elementos
     st.markdown("""
         <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Avançada de Ações</h1>
