@@ -1405,7 +1405,7 @@ if pagina == "Avançada": #_____________________________________________________
                             """, unsafe_allow_html=True)
                 
                 # (Opcional) exibir df_empresas em modo tabela
-                st.dataframe(df_empresas)
+                #st.dataframe(df_empresas)
 
                 
                 # Esse score inicial considera poucas variáveis (Margem, ROE, P/L, etc.) 
