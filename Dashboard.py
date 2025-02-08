@@ -1593,27 +1593,40 @@ if pagina == "Avançada": #_____________________________________________________
                     st.warning("Não há dados disponíveis para as empresas selecionadas nas Demonstrações Financeiras.")
                  
                 # =====================================
-                # RESUMO DA EMPRESA LÍDER NO RANKING
+                # RESUMO DA EMPRESA LÍDER NO RANKING (COM DEPURAÇÃO)
                 # =====================================
                 if not df_empresas.empty:
+                    # Mostrar o DataFrame completo antes de qualquer filtragem
+                    st.write("### 🔍 DataFrame Original (Todas as Empresas)")
+                    st.dataframe(df_empresas)
+                
                     # Selecionar a empresa em primeiro lugar
                     empresa_lider = df_empresas.iloc[0]
                     nome_lider = empresa_lider['nome_empresa']
                     score_lider = empresa_lider['Score']
                 
+                    st.write(f"### 🏆 Empresa Líder Selecionada: {nome_lider}")
+                    st.write(f"✅ Score da Empresa Líder: {score_lider}")
+                
                     # Cálculo da média dos indicadores no setor
                     media_setor = df_empresas.mean(numeric_only=True)
-                    st.markdown(df_empresas)
-                                  
+                
+                    st.write("### 📊 Média Setorial Calculada")
+                    st.dataframe(media_setor)
+                
                     # Categorias de indicadores
                     indicadores_desempenho = []
                     indicadores_endividamento = []
                     indicadores_crescimento = []
                 
-                    # Lista de métricas para cada categoria (Removidos ROA, Fluxo de Caixa e Dívida/EBITDA)
+                    # Lista de métricas para cada categoria
                     lista_desempenho = ['Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida']
                     lista_endividamento = ['Divida_Total', 'Passivo_Circulante', 'Liquidez_Corrente']
                     lista_crescimento = ['Crescimento_Receita', 'Crescimento_Lucro']
+                
+                    # Mostrar todas as colunas disponíveis antes da filtragem
+                    st.write("### 📌 Colunas Disponíveis no DataFrame")
+                    st.write(df_empresas.columns)
                 
                     # Percorrer todos os indicadores disponíveis e categorizar corretamente
                     for col in df_empresas.columns:
@@ -1623,6 +1636,12 @@ if pagina == "Avançada": #_____________________________________________________
                             diferenca_percentual = ((valor_empresa - valor_media) / abs(valor_media)) * 100
                 
                             diferenca_percentual = max(min(diferenca_percentual, 500), -500)
+                
+                            # Verificar valores antes da categorização
+                            st.write(f"🔍 **Analisando Indicador:** {col}")
+                            st.write(f"📌 Valor da Empresa: {valor_empresa}")
+                            st.write(f"📌 Média Setorial: {valor_media}")
+                            st.write(f"📌 Diferença Percentual: {diferenca_percentual:.1f}%")
                 
                             if col in lista_desempenho:
                                 indicadores_desempenho.append(
@@ -1636,6 +1655,12 @@ if pagina == "Avançada": #_____________________________________________________
                                 indicadores_crescimento.append(
                                     f"🚀 **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↕ {diferenca_percentual:.1f}% em relação à média: {valor_media:.2f})"
                                 )
+                
+                    # Mostrar os indicadores organizados
+                    st.write("### 📊 Indicadores Organizados")
+                    st.write(f"**Indicadores de Desempenho:** {indicadores_desempenho}")
+                    st.write(f"**Indicadores de Endividamento:** {indicadores_endividamento}")
+                    st.write(f"**Indicadores de Crescimento:** {indicadores_crescimento}")
                 
                     # Exibir resumo no dashboard
                     st.markdown("---")
