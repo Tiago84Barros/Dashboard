@@ -1603,6 +1603,7 @@ if pagina == "Avançada": #_____________________________________________________
                 
                     # Cálculo da média dos indicadores no setor
                     media_setor = df_empresas.mean(numeric_only=True)
+                    st.markdown(df_empresas)
                                   
                     # Categorias de indicadores
                     indicadores_desempenho = []
@@ -1611,7 +1612,6 @@ if pagina == "Avançada": #_____________________________________________________
                 
                     # Lista de métricas para cada categoria (Removidos ROA, Fluxo de Caixa e Dívida/EBITDA)
                     lista_desempenho = ['Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida']
-                    st.markdown(lista_desempenho)
                     lista_endividamento = ['Divida_Total', 'Passivo_Circulante', 'Liquidez_Corrente']
                     lista_crescimento = ['Crescimento_Receita', 'Crescimento_Lucro']
                 
