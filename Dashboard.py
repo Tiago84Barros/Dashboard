@@ -1255,8 +1255,9 @@ if pagina == "Avançada": #_____________________________________________________
                     ticker = row['ticker']
                     nome_emp = row['nome_empresa']
 
-                     # Carregar histórico das tabelas
+                     # Carregar histórico das tabelas ________________________________________________________________________________________________
                     multiplos = load_multiplos_from_db(ticker + ".SA")
+                    st.dataframe(multiplos)
                     df_dre    = load_data_from_db(ticker + ".SA")
                
                     if multiplos is None or multiplos.empty:
@@ -1264,15 +1265,16 @@ if pagina == "Avançada": #_____________________________________________________
                     if df_dre is None or df_dre.empty:
                         continue
 
-                    # **Remover outliers antes de calcular métricas**
+                    # **Remover outliers antes de calcular métricas** __________________________________________________________________________________
                     colunas_para_filtrar = ['Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida', 
                                             'Divida_Total', 'Passivo_Circulante', 'Liquidez_Corrente', 
                                             'Crescimento_Receita', 'Crescimento_Lucro']
 
                     multiplos = remover_outliers_iqr(multiplos, colunas_para_filtrar)
+                    st.dataframe(multiplos)
                     df_dre = remover_outliers_iqr(df_dre, colunas_para_filtrar)
                         
-                    # Calcular métricas simplificadas
+                    # Calcular métricas simplificadas ______________________________________________________________________________________________________
                     metrics_dict = calcular_metricas_historicas_simplificadas(multiplos, df_dre)
                     
                     data_emp = {
