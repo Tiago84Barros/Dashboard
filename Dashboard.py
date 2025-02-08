@@ -1609,26 +1609,20 @@ if pagina == "Avançada": #_____________________________________________________
                     indicadores_endividamento = []
                     indicadores_crescimento = []
                 
-                    # Lista de métricas para cada categoria
+                    # Lista de métricas para cada categoria (Removidos ROA, Fluxo de Caixa e Dívida/EBITDA)
                     lista_desempenho = ['Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida']
-                    lista_endividamento = ['Divida_Total', 'Passivo_Circulante', 'Liquidez_Corrente', 'Divida_EBITDA']
-                    lista_crescimento = ['Crescimento_Receita', 'Crescimento_Lucro', 'ROA', 'Fluxo_Caixa_Operacional']
+                    lista_endividamento = ['Divida_Total', 'Passivo_Circulante', 'Liquidez_Corrente']
+                    lista_crescimento = ['Crescimento_Receita', 'Crescimento_Lucro']
                 
-                    # Percorrer todos os indicadores disponíveis
+                    # Percorrer todos os indicadores disponíveis e categorizar corretamente
                     for col in df_empresas.columns:
                         if col in media_setor.index:
                             valor_empresa = empresa_lider[col]
                             valor_media = media_setor[col]
-                
-                            # Evitar divisões problemáticas
-                            if valor_media is None or pd.isna(valor_media) or abs(valor_media) < 1e-6:
-                                diferenca_percentual = 0
-                            else:
-                                diferenca_percentual = ((valor_empresa - valor_media) / abs(valor_media)) * 100
+                            diferenca_percentual = ((valor_empresa - valor_media) / abs(valor_media)) * 100
                 
                             diferenca_percentual = max(min(diferenca_percentual, 500), -500)
                 
-                            # Categorizar o indicador corretamente
                             if col in lista_desempenho:
                                 indicadores_desempenho.append(
                                     f"📈 **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↕ {diferenca_percentual:.1f}% em relação à média: {valor_media:.2f})"
