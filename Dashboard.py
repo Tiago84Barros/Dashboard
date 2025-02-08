@@ -1104,8 +1104,12 @@ if pagina == "Avançada": #_____________________________________________________
     def calcular_media_e_std(df, col): # Calcula a média e o desvio padrão de algumas variáveis do dataframe de Multiplos e Demonstrações Financeiras
         """
         Retorna (mean, std) para a coluna col. Se não tiver dados, (0.0, 0.0). (std - é o desvio padrão)
+        Calcula a média e o desvio padrão de uma coluna específica do dataframe.
+        Se houver valores NaN ou infinitos, eles serão removidos antes do cálculo.
         """
         df_valid = df.dropna(subset=[col])
+        df_valid = df_valid[np.isfinite(df_valid[col])]  # Remove valores infinitos
+        
         if df_valid.empty:
             return (0.0, 0.0)
         return (df_valid[col].mean(), df_valid[col].std())
