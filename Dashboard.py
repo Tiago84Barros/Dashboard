@@ -1604,15 +1604,34 @@ if pagina == "Avançada": #_____________________________________________________
                     # Cálculo da média dos indicadores no setor
                     media_setor = df_empresas.mean(numeric_only=True)
                 
-                    # Listar fatores positivos e negativos
-                    fatores_positivos = []
-                    fatores_negativos = []
-                    principais_contribuintes = []
+                    # Criar dicionário para armazenar cálculos adicionais
+                    calculos_adicionais = {}
                 
+                    # **Cálculo de Dívida/EBITDA**
+                    if 'Divida_Total' in df_empresas.columns and 'EBITDA' in df_empresas.columns:
+                        df_empresas['Divida_EBITDA'] = df_empresas['Divida_Total'] / df_empresas['EBITDA']
+                        calculos_adicionais['Divida_EBITDA'] = empresa_lider['Divida_Total'] / empresa_lider['EBITDA']
+                
+                    # **Cálculo de ROA (Return on Assets)**
+                    if 'Lucro_Liquido' in df_empresas.columns and 'Ativo_Total' in df_empresas.columns:
+                        df_empresas['ROA'] = df_empresas['Lucro_Liquido'] / df_empresas['Ativo_Total']
+                        calculos_adicionais['ROA'] = empresa_lider['Lucro_Liquido'] / empresa_lider['Ativo_Total']
+                
+                    # **Cálculo de Fluxo de Caixa Operacional**
+                    if 'Fluxo_Caixa_Operacional' not in df_empresas.columns and 'EBITDA' in df_empresas.columns:
+                        df_empresas['Fluxo_Caixa_Operacional'] = df_empresas['EBITDA']  # Aproximação sem CapEx
+                        calculos_adicionais['Fluxo_Caixa_Operacional'] = empresa_lider['EBITDA']
+                
+                    # Categorias de indicadores
+                    indicadores_desempenho = []
+                    indicadores_endividamento = []
+                    indicadores_crescimento = []
+                
+                    # Listar principais indicadores em cada categoria
                     for col, config in indicadores_score.items():
-                        if col in df_empresas.columns:
-                            valor_empresa = empresa_lider[col]
-                            valor_media = media_setor[col]
+                        if col in df_empresas.columns or col in calculos_adicionais:
+                            valor_empresa = empresa_lider[col] if col in df_empresas.columns else calculos_adicionais[col]
+                            valor_media = media_setor[col] if col in df_empresas.columns else df_empresas[col].mean()
                 
                             # Evitar divisões problemáticas
                             if valor_media is None or pd.isna(valor_media) or abs(valor_media) < 1e-6:
@@ -1622,67 +1641,53 @@ if pagina == "Avançada": #_____________________________________________________
                 
                             diferenca_percentual = max(min(diferenca_percentual, 500), -500)
                 
-                            # Adicionar ao ranking de principais contribuintes
-                            principais_contribuintes.append((col.replace('_', ' '), diferenca_percentual, valor_empresa, valor_media))
-                
-                            # Aplicar lógica de vantagem/desvantagem corretamente
-                            if config['melhor_alto']:
-                                if valor_empresa > valor_media * 1.05:
-                                    fatores_positivos.append(
-                                        f"🔹 **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↑ {diferenca_percentual:.1f}% acima da média: {valor_media:.2f})"
-                                    )
-                                elif valor_empresa < valor_media * 0.95:
-                                    fatores_negativos.append(
-                                        f"⚠️ **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↓ {diferenca_percentual:.1f}% abaixo da média: {valor_media:.2f})"
-                                    )
-                            else:
-                                if valor_empresa < valor_media * 0.95:
-                                    fatores_positivos.append(
-                                        f"🔹 **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↓ {abs(diferenca_percentual):.1f}% menor que a média: {valor_media:.2f})"
-                                    )
-                                elif valor_empresa > valor_media * 1.05:
-                                    fatores_negativos.append(
-                                        f"⚠️ **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↑ {diferenca_percentual:.1f}% acima da média: {valor_media:.2f})"
-                                    )
-                
-                    # Se não houver fatores positivos claros, mostrar os **5 principais indicadores** que mais contribuíram para o score
-                    if not fatores_positivos:
-                        principais_contribuintes = sorted(principais_contribuintes, key=lambda x: abs(x[1]), reverse=True)[:5]
-                        fatores_positivos = [
-                            f"🔹 **{item[0]}**: {item[2]:.2f} (↕ {item[1]:.1f}% em relação à média: {item[3]:.2f})"
-                            for item in principais_contribuintes
-                        ]
+                            # Organizando os indicadores nas categorias corretas
+                            if col in ['Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida']:
+                                indicadores_desempenho.append(
+                                    f"📈 **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↕ {diferenca_percentual:.1f}% em relação à média: {valor_media:.2f})"
+                                )
+                            elif col in ['Divida_Total', 'Passivo_Circulante', 'Liquidez_Corrente', 'Divida_EBITDA']:
+                                indicadores_endividamento.append(
+                                    f"💰 **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↕ {diferenca_percentual:.1f}% em relação à média: {valor_media:.2f})"
+                                )
+                            elif col in ['Crescimento_Receita', 'Crescimento_Lucro', 'ROA', 'Fluxo_Caixa_Operacional']:
+                                indicadores_crescimento.append(
+                                    f"🚀 **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↕ {diferenca_percentual:.1f}% em relação à média: {valor_media:.2f})"
+                                )
                 
                     # Exibir resumo no dashboard
                     st.markdown("---")
                     st.markdown(f"## 🏆 Empresa Líder: **{nome_lider}**")
                     st.markdown(f"### 🌟 Score Final: **{score_lider:.2f}**")
                 
-                    if fatores_positivos:
-                        st.markdown("### ✅ Destaques Positivos")
-                        for fator in fatores_positivos:
-                            st.markdown(f"- {fator}")
+                    # **Indicadores de Desempenho**
+                    if indicadores_desempenho:
+                        st.markdown("### 📊 Indicadores de Desempenho")
+                        for indicador in indicadores_desempenho:
+                            st.markdown(f"- {indicador}")
                 
-                    if fatores_negativos:
-                        st.markdown("### ⚠️ Pontos de Atenção")
-                        for fator in fatores_negativos:
-                            st.markdown(f"- {fator}")
+                    # **Indicadores de Endividamento**
+                    if indicadores_endividamento:
+                        st.markdown("### 💰 Indicadores de Endividamento")
+                        for indicador in indicadores_endividamento:
+                            st.markdown(f"- {indicador}")
                 
-                    # Exibir os principais contribuintes para o score
-                    st.markdown("### 📊 Principais Diferenciais da Empresa")
-                    principais_contribuintes = sorted(principais_contribuintes, key=lambda x: abs(x[1]), reverse=True)[:5]
-                    for item in principais_contribuintes:
-                        st.markdown(f"- **{item[0]}**: {item[2]:.2f} (↕ {item[1]:.1f}% em relação à média: {item[3]:.2f})")
+                    # **Indicadores de Crescimento**
+                    if indicadores_crescimento:
+                        st.markdown("### 🚀 Indicadores de Crescimento")
+                        for indicador in indicadores_crescimento:
+                            st.markdown(f"- {indicador}")
                 
                     # Conclusão automática baseada nos dados
                     st.markdown("### 📌 Conclusão")
-                    if len(fatores_positivos) > len(fatores_negativos):
-                        st.markdown(f"**{nome_lider} se destacou no setor devido à sua performance superior em diversos indicadores financeiros e operacionais.**")
+                    if len(indicadores_desempenho) > len(indicadores_endividamento) + len(indicadores_crescimento):
+                        st.markdown(f"**{nome_lider} se destacou principalmente pelo seu desempenho operacional, superando as empresas concorrentes em múltiplos indicadores financeiros.**")
+                    elif len(indicadores_crescimento) > len(indicadores_desempenho):
+                        st.markdown(f"**{nome_lider} apresenta forte tendência de crescimento, com expansão significativa em receita e lucro ao longo do tempo.**")
                     else:
-                        st.markdown(f"**Embora {nome_lider} tenha ficado em primeiro lugar, alguns fatores precisam de atenção para manter essa liderança no futuro.**")
+                        st.markdown(f"**Embora {nome_lider} tenha ficado em primeiro lugar, seu nível de endividamento e liquidez devem ser monitorados para garantir estabilidade financeira.**")
                 
                     st.markdown("---")
-
 
                 
                     
