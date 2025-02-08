@@ -1159,6 +1159,7 @@ if pagina == "Avançada": #_____________________________________________________
         
         # Ordenar por Ano
         df_mult.sort_values('Ano', inplace=True)
+        st.dataframe(df_mult)
         df_dre.sort_values('Ano', inplace=True)
         
         # Dicionário final
