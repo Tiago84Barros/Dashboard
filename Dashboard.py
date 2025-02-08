@@ -1604,34 +1604,21 @@ if pagina == "Avançada": #_____________________________________________________
                     # Cálculo da média dos indicadores no setor
                     media_setor = df_empresas.mean(numeric_only=True)
                 
-                    # Criar dicionário para armazenar cálculos adicionais
-                    calculos_adicionais = {}
-                
-                    # **Cálculo de Dívida/EBITDA**
-                    if 'Divida_Total' in df_empresas.columns and 'EBITDA' in df_empresas.columns:
-                        df_empresas['Divida_EBITDA'] = df_empresas['Divida_Total'] / df_empresas['EBITDA']
-                        calculos_adicionais['Divida_EBITDA'] = empresa_lider['Divida_Total'] / empresa_lider['EBITDA']
-                
-                    # **Cálculo de ROA (Return on Assets)**
-                    if 'Lucro_Liquido' in df_empresas.columns and 'Ativo_Total' in df_empresas.columns:
-                        df_empresas['ROA'] = df_empresas['Lucro_Liquido'] / df_empresas['Ativo_Total']
-                        calculos_adicionais['ROA'] = empresa_lider['Lucro_Liquido'] / empresa_lider['Ativo_Total']
-                
-                    # **Cálculo de Fluxo de Caixa Operacional**
-                    if 'Fluxo_Caixa_Operacional' not in df_empresas.columns and 'EBITDA' in df_empresas.columns:
-                        df_empresas['Fluxo_Caixa_Operacional'] = df_empresas['EBITDA']  # Aproximação sem CapEx
-                        calculos_adicionais['Fluxo_Caixa_Operacional'] = empresa_lider['EBITDA']
-                
                     # Categorias de indicadores
                     indicadores_desempenho = []
                     indicadores_endividamento = []
                     indicadores_crescimento = []
                 
-                    # Listar principais indicadores em cada categoria
-                    for col, config in indicadores_score.items():
-                        if col in df_empresas.columns or col in calculos_adicionais:
-                            valor_empresa = empresa_lider[col] if col in df_empresas.columns else calculos_adicionais[col]
-                            valor_media = media_setor[col] if col in df_empresas.columns else df_empresas[col].mean()
+                    # Lista de métricas para cada categoria
+                    lista_desempenho = ['Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida']
+                    lista_endividamento = ['Divida_Total', 'Passivo_Circulante', 'Liquidez_Corrente', 'Divida_EBITDA']
+                    lista_crescimento = ['Crescimento_Receita', 'Crescimento_Lucro', 'ROA', 'Fluxo_Caixa_Operacional']
+                
+                    # Percorrer todos os indicadores disponíveis
+                    for col in df_empresas.columns:
+                        if col in media_setor.index:
+                            valor_empresa = empresa_lider[col]
+                            valor_media = media_setor[col]
                 
                             # Evitar divisões problemáticas
                             if valor_media is None or pd.isna(valor_media) or abs(valor_media) < 1e-6:
@@ -1641,16 +1628,16 @@ if pagina == "Avançada": #_____________________________________________________
                 
                             diferenca_percentual = max(min(diferenca_percentual, 500), -500)
                 
-                            # Organizando os indicadores nas categorias corretas
-                            if col in ['Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida']:
+                            # Categorizar o indicador corretamente
+                            if col in lista_desempenho:
                                 indicadores_desempenho.append(
                                     f"📈 **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↕ {diferenca_percentual:.1f}% em relação à média: {valor_media:.2f})"
                                 )
-                            elif col in ['Divida_Total', 'Passivo_Circulante', 'Liquidez_Corrente', 'Divida_EBITDA']:
+                            elif col in lista_endividamento:
                                 indicadores_endividamento.append(
                                     f"💰 **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↕ {diferenca_percentual:.1f}% em relação à média: {valor_media:.2f})"
                                 )
-                            elif col in ['Crescimento_Receita', 'Crescimento_Lucro', 'ROA', 'Fluxo_Caixa_Operacional']:
+                            elif col in lista_crescimento:
                                 indicadores_crescimento.append(
                                     f"🚀 **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↕ {diferenca_percentual:.1f}% em relação à média: {valor_media:.2f})"
                                 )
@@ -1688,6 +1675,7 @@ if pagina == "Avançada": #_____________________________________________________
                         st.markdown(f"**Embora {nome_lider} tenha ficado em primeiro lugar, seu nível de endividamento e liquidez devem ser monitorados para garantir estabilidade financeira.**")
                 
                     st.markdown("---")
+
 
                 
                     
