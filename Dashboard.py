@@ -1313,7 +1313,7 @@ if pagina == "Avançada": #_____________________________________________________
                     'PatrimonioLiq_slope_log': {'peso': 0.20, 'melhor_alto': True},
                     'DividaLiq_slope_log': {'peso': 0.10, 'melhor_alto': False},
                     'CaixaLiq_slope_log': {'peso': 0.20, 'melhor_alto': True},
-
+                }
                 # ================================================
                 #  NORMALIZAR E CALCULAR SCORE (WINSORIZE + MinMax)
                 # ================================================____________________________________________________________________________________________________________________________
