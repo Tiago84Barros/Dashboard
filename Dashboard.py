@@ -1603,7 +1603,7 @@ if pagina == "Avançada": #_____________________________________________________
                 
                     # Cálculo da média dos indicadores no setor
                     media_setor = df_empresas.mean(numeric_only=True)
-                    st.markdown(media_setot)
+                    st.markdown(media_setor)
                 
                     # Categorias de indicadores
                     indicadores_desempenho = []
