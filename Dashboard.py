@@ -1072,6 +1072,24 @@ if pagina == "Avançada": #_____________________________________________________
     #                FUNÇÕES AUXILIARES
     # ===============================================
     
+   # Função para remover outliers usando o método IQR
+    def remover_outliers_iqr(df, colunas):
+        df_filtrado = df.copy()
+        
+        for col in colunas:
+            if col in df.columns:
+                Q1 = df[col].quantile(0.25)
+                Q3 = df[col].quantile(0.75)
+                IQR = Q3 - Q1
+                limite_inferior = Q1 - 1.5 * IQR
+                limite_superior = Q3 + 1.5 * IQR
+    
+                # Aplicar filtro para manter apenas valores dentro do intervalo esperado
+                df_filtrado = df_filtrado[(df_filtrado[col] >= limite_inferior) & (df_filtrado[col] <= limite_superior)]
+        
+        return df_filtrado
+    
+    
     def slope_regressao_log(df, col): # Finalidade de encontrar a taxa de crescimento de variáveis (mais robusto que o CAGR)
         """
         Faz regressão linear de ln(col) vs Ano, retornando o slope (beta).
@@ -1105,7 +1123,6 @@ if pagina == "Avançada": #_____________________________________________________
         """
         Retorna (mean, std) para a coluna col. Se não tiver dados, (0.0, 0.0). (std - é o desvio padrão)
         Calcula a média e o desvio padrão de uma coluna específica do dataframe.
-        Se houver valores NaN ou infinitos, eles serão removidos antes do cálculo.
         """
         df_valid = df.dropna(subset=[col])
         df_valid = df_valid[np.isfinite(df_valid[col])]  # Remove valores infinitos
@@ -1200,6 +1217,10 @@ if pagina == "Avançada": #_____________________________________________________
         <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Avançada de Ações</h1>
     """, unsafe_allow_html=True)
 
+    # ===============================================
+    #         CARREGAR E FILTRAR OS DADOS
+    # ===============================================
+
     # Passo 1: Selecionar o Setor _________________________________________________________________________________________________________________________________________________________
     setores_unicos = setores['SETOR'].dropna().unique()
     setor_selecionado = st.selectbox("Selecione o Setor:", sorted(setores_unicos))
@@ -1243,6 +1264,14 @@ if pagina == "Avançada": #_____________________________________________________
                         continue
                     if df_dre is None or df_dre.empty:
                         continue
+
+                    # **Remover outliers antes de calcular métricas**
+                    colunas_para_filtrar = ['Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida', 
+                                            'Divida_Total', 'Passivo_Circulante', 'Liquidez_Corrente', 
+                                            'Crescimento_Receita', 'Crescimento_Lucro']
+
+                    multiplos = remover_outliers_iqr(multiplos, colunas_para_filtrar)
+                    df_dre = remover_outliers_iqr(df_dre, colunas_para_filtrar)
                         
                     # Calcular métricas simplificadas
                     metrics_dict = calcular_metricas_historicas_simplificadas(multiplos, df_dre)
@@ -1269,85 +1298,21 @@ if pagina == "Avançada": #_____________________________________________________
                 # ================================================
                 #  DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE
                 # ================================================
-                # Exemplo: decidimos usar algumas colunas
+              # Definir indicadores para score
                 indicadores_score = {
-                    # Margem Líquida média (maior = melhor)
-                    'MargemLiq_mean': {
-                        'peso': 0.20, 
-                        'melhor_alto': True
-                    },
-                    # Margem Operacional Média
-                    'MOP_mean': {
-                        'peso': 0.25, 
-                        'melhor_alto': True
-                    },
-                    # ROE médio
-                    'ROE_mean': {
-                        'peso': 0.20, 
-                        'melhor_alto': True
-                    },
-                     # ROIC médio
-                    'ROIC_mean': {
-                        'peso': 0.25, 
-                        'melhor_alto': True
-                    },
-                     # PVP médio (menor é melhor)
-                    'PVP_mean': {
-                        'peso': 0.15, 
-                        'melhor_alto': False
-                    },
-                    # P/L médio (menor é melhor)
-                    #'PL_mean': {
-                    #    'peso': 0.10,
-                    #    'melhor_alto': False
-                    #},
-                    # DY médio (maior é melhor)
-                    #'DY_mean': {
-                    #    'peso': 0.05,
-                    #    'melhor_alto': True
-                    #},
-                    # Endividamento médio (menor é melhor)
-                    'Endividamento_mean': {
-                        'peso': 0.10,
-                        'melhor_alto': False
-                    },
-                    # Alavancagem média (menor é melhor)
-                    'Alavancagem_mean': {
-                        'peso': 0.10,
-                        'melhor_alto': False
-                    },
-                    # Liquidez Corrente média (maior é melhor)
-                    'Liquidez_mean': {
-                        'peso': 0.15,
-                        'melhor_alto': True
-                    },
-                    # Slope log de Receita Líquida
-                    'ReceitaLiq_slope_log': {
-                        'peso': 0.20,
-                        'melhor_alto': True
-                    },
-                    # Slope log de Lucro Líquido
-                    'LucroLiq_slope_log': {
-                        'peso': 0.30,
-                        'melhor_alto': True
-                    },
-                     # Slope log de Patrimônio Líquido
-                    'PatrimonioLiq_slope_log': {
-                        'peso': 0.20,
-                        'melhor_alto': True
-                    },
-                    # Slope log de Dívida Líquida
-                    'DividaLiq_slope_log': {
-                        'peso': 0.10,
-                        'melhor_alto': False
-                    },
-                    # Slope log de Dívida Líquida
-                    'CaixaLiq_slope_log': {
-                        'peso': 0.20,
-                        'melhor_alto': True
-                    },
-                    # Espaço para adicionar + variáveis no futuro
-                }
+                    'MargemLiq_mean': {'peso': 0.20, 'melhor_alto': True},
+                    'MOP_mean': {'peso': 0.25, 'melhor_alto': True},
+                    'ROE_mean': {'peso': 0.20, 'melhor_alto': True},
+                    'ROIC_mean': {'peso': 0.25, 'melhor_alto': True},
+                    'PVP_mean': {'peso': 0.15, 'melhor_alto': False},
+                    'Endividamento_mean': {'peso': 0.10, 'melhor_alto': False},
+                    'Alavancagem_mean': {'peso': 0.10, 'melhor_alto': False},
+                    'Liquidez_mean': {'peso': 0.15, 'melhor_alto': True},
+                    'ReceitaLiq_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                    'LucroLiq_slope_log': {'peso': 0.30, 'melhor_alto': True},
+                    'PatrimonioLiq_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                    'DividaLiq_slope_log': {'peso': 0.10, 'melhor_alto': False},
+                    'CaixaLiq_slope_log': {'peso': 0.20, 'melhor_alto': True},
 
                 # ================================================
                 #  NORMALIZAR E CALCULAR SCORE (WINSORIZE + MinMax)
