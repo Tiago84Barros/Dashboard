@@ -322,7 +322,7 @@ if pagina == "Básica":
             st.experimental_rerun()  # Recarrega a aplicação
         
              
-        # Adicionar estilo CSS para os blocos, com o logo à direita e as informações à esquerda, e altura fixa ___________________________________________________________________________________________________________________________________________________________________________________________
+        # Adicionar estilo CSS para criação dos blocos de descrição das empresas, com o logo à direita e as informações à esquerda, e altura fixa ___________________________________________________________________________________________________________________________________________________________________________________________
         st.markdown("""
             <style>
             .sector-box {
