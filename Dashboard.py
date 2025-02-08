@@ -1623,24 +1623,35 @@ if pagina == "Avançada": #_____________________________________________________
                             diferenca_percentual = max(min(diferenca_percentual, 500), -500)
                 
                             # Adicionar ao ranking de principais contribuintes
-                            principais_contribuintes.append((col.replace('_', ' '), diferenca_percentual, valor_empresa))
+                            principais_contribuintes.append((col.replace('_', ' '), diferenca_percentual, valor_empresa, valor_media))
                 
                             # Aplicar lógica de vantagem/desvantagem corretamente
                             if config['melhor_alto']:
                                 if valor_empresa > valor_media * 1.05:
-                                    fatores_positivos.append(f"🔹 **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↑ {diferenca_percentual:.1f}% acima da média)")
+                                    fatores_positivos.append(
+                                        f"🔹 **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↑ {diferenca_percentual:.1f}% acima da média: {valor_media:.2f})"
+                                    )
                                 elif valor_empresa < valor_media * 0.95:
-                                    fatores_negativos.append(f"⚠️ **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↓ {diferenca_percentual:.1f}% abaixo da média)")
+                                    fatores_negativos.append(
+                                        f"⚠️ **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↓ {diferenca_percentual:.1f}% abaixo da média: {valor_media:.2f})"
+                                    )
                             else:
                                 if valor_empresa < valor_media * 0.95:
-                                    fatores_positivos.append(f"🔹 **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↓ {abs(diferenca_percentual):.1f}% menor que a média)")
+                                    fatores_positivos.append(
+                                        f"🔹 **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↓ {abs(diferenca_percentual):.1f}% menor que a média: {valor_media:.2f})"
+                                    )
                                 elif valor_empresa > valor_media * 1.05:
-                                    fatores_negativos.append(f"⚠️ **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↑ {diferenca_percentual:.1f}% acima da média)")
+                                    fatores_negativos.append(
+                                        f"⚠️ **{col.replace('_', ' ')}**: {valor_empresa:.2f} (↑ {diferenca_percentual:.1f}% acima da média: {valor_media:.2f})"
+                                    )
                 
-                    # Se não houver fatores positivos claros, mostrar os **3 principais indicadores** que mais contribuíram para o score
+                    # Se não houver fatores positivos claros, mostrar os **5 principais indicadores** que mais contribuíram para o score
                     if not fatores_positivos:
-                        principais_contribuintes = sorted(principais_contribuintes, key=lambda x: abs(x[1]), reverse=True)[:3]
-                        fatores_positivos = [f"🔹 **{item[0]}**: {item[2]:.2f} (↕ {item[1]:.1f}% em relação à média)" for item in principais_contribuintes]
+                        principais_contribuintes = sorted(principais_contribuintes, key=lambda x: abs(x[1]), reverse=True)[:5]
+                        fatores_positivos = [
+                            f"🔹 **{item[0]}**: {item[2]:.2f} (↕ {item[1]:.1f}% em relação à média: {item[3]:.2f})"
+                            for item in principais_contribuintes
+                        ]
                 
                     # Exibir resumo no dashboard
                     st.markdown("---")
@@ -1657,14 +1668,21 @@ if pagina == "Avançada": #_____________________________________________________
                         for fator in fatores_negativos:
                             st.markdown(f"- {fator}")
                 
+                    # Exibir os principais contribuintes para o score
+                    st.markdown("### 📊 Principais Diferenciais da Empresa")
+                    principais_contribuintes = sorted(principais_contribuintes, key=lambda x: abs(x[1]), reverse=True)[:5]
+                    for item in principais_contribuintes:
+                        st.markdown(f"- **{item[0]}**: {item[2]:.2f} (↕ {item[1]:.1f}% em relação à média: {item[3]:.2f})")
+                
                     # Conclusão automática baseada nos dados
                     st.markdown("### 📌 Conclusão")
                     if len(fatores_positivos) > len(fatores_negativos):
-                        st.markdown(f"**{nome_lider} se destacou no setor devido à sua performance acima da média em diversos indicadores financeiros e operacionais.**")
+                        st.markdown(f"**{nome_lider} se destacou no setor devido à sua performance superior em diversos indicadores financeiros e operacionais.**")
                     else:
                         st.markdown(f"**Embora {nome_lider} tenha ficado em primeiro lugar, alguns fatores precisam de atenção para manter essa liderança no futuro.**")
                 
                     st.markdown("---")
+
 
                 
                     
