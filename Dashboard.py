@@ -1275,7 +1275,7 @@ if pagina == "Avançada": #_____________________________________________________
                         
                     # Calcular métricas simplificadas ______________________________________________________________________________________________________
                     metrics_dict = calcular_metricas_historicas_simplificadas(multiplos_corrigido, df_dre_corrigido)
-                    st.dataframe(metrics_dict)
+                    
                     
                     data_emp = {
                         'ticker': ticker,
@@ -1292,6 +1292,7 @@ if pagina == "Avançada": #_____________________________________________________
                     st.info("Não há dados para as empresas deste segmento.")
                                      
                 df_empresas = pd.DataFrame(resultados)
+                st.dataframe(df_empresas)
 
                 # Carregar dados macroeconômicos do banco de dados
                 dados_macro = load_macro_summary()
