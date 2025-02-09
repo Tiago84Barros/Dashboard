@@ -1270,12 +1270,12 @@ if pagina == "Avançada": #_____________________________________________________
                                             'Divida_Total', 'Passivo_Circulante', 'Liquidez_Corrente', 
                                             'Crescimento_Receita', 'Crescimento_Lucro']
 
-                    multiplos = remover_outliers_iqr(multiplos, colunas_para_filtrar)
-                    st.dataframe(multiplos)
-                    df_dre = remover_outliers_iqr(df_dre, colunas_para_filtrar)
+                    multiplos_corrigido = remover_outliers_iqr(multiplos, colunas_para_filtrar)
+                    df_dre_corrigido = remover_outliers_iqr(df_dre, colunas_para_filtrar)
                         
                     # Calcular métricas simplificadas ______________________________________________________________________________________________________
-                    metrics_dict = calcular_metricas_historicas_simplificadas(multiplos, df_dre)
+                    metrics_dict = calcular_metricas_historicas_simplificadas(multiplos_corrigido, df_dre_corrigido)
+                    st.dataframe(metrics_dict)
                     
                     data_emp = {
                         'ticker': ticker,
