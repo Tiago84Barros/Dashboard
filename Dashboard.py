@@ -1271,6 +1271,7 @@ if pagina == "Avançada": #_____________________________________________________
 
                     multiplos_corrigido = remover_outliers_iqr(multiplos, colunas_para_filtrar)
                     df_dre_corrigido = remover_outliers_iqr(df_dre, colunas_para_filtrar)
+                    st.dataframe(df_dre_corrigido)
                         
                     # Calcular métricas simplificadas ______________________________________________________________________________________________________
                     metrics_dict = calcular_metricas_historicas_simplificadas(multiplos_corrigido, df_dre_corrigido)
