@@ -1271,9 +1271,7 @@ if pagina == "Avançada": #_____________________________________________________
 
                     multiplos_corrigido = remover_outliers_iqr(multiplos, colunas_para_filtrar)
                     df_dre_corrigido = remover_outliers_iqr(df_dre, colunas_para_filtrar)
-                    st.dataframe(df_dre_corrigido)
-                    st.dataframe(multiplos_corrigido)
-                        
+              
                     # Calcular métricas simplificadas ______________________________________________________________________________________________________
                     metrics_dict = calcular_metricas_historicas_simplificadas(multiplos_corrigido, df_dre_corrigido)
                     
@@ -1293,8 +1291,28 @@ if pagina == "Avançada": #_____________________________________________________
                     st.info("Não há dados para as empresas deste segmento.")
                                      
                 df_empresas = pd.DataFrame(resultados)
-                st.dataframe(df_empresas)
-
+             
                 # Carregar dados macroeconômicos do banco de dados
                 dados_macro = load_macro_summary()
+
+                # ================================================
+                #  DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE
+                # ================================================___________________________________________________________________________________________________________________________
+                # Definir indicadores para score
+                indicadores_score = {
+                    'MargemLiq_mean': {'peso': 0.20, 'melhor_alto': True},
+                    'MOP_mean': {'peso': 0.25, 'melhor_alto': True},
+                    'ROE_mean': {'peso': 0.20, 'melhor_alto': True},
+                    'ROIC_mean': {'peso': 0.25, 'melhor_alto': True},
+                    'PVP_mean': {'peso': 0.15, 'melhor_alto': False},
+                    'Endividamento_mean': {'peso': 0.10, 'melhor_alto': False},
+                    'Alavancagem_mean': {'peso': 0.10, 'melhor_alto': False},
+                    'Liquidez_mean': {'peso': 0.15, 'melhor_alto': True},
+                    'ReceitaLiq_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                    'LucroLiq_slope_log': {'peso': 0.30, 'melhor_alto': True},
+                    'PatrimonioLiq_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                    'DividaLiq_slope_log': {'peso': 0.10, 'melhor_alto': False},
+                    'CaixaLiq_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                }
+                st.dataframe(indicadores_score)
               
