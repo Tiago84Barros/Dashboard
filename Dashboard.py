@@ -1072,7 +1072,7 @@ if pagina == "Avançada": #_____________________________________________________
     #                FUNÇÕES AUXILIARES
     # ===============================================
     
-   # Função para remover outliers usando o método IQR
+   # Função para remover outliers usando o método IQR __________________________________________________________________________________________________________________
     def remover_outliers_iqr(df, colunas):
         df_filtrado = df.copy()
         
@@ -1090,7 +1090,7 @@ if pagina == "Avançada": #_____________________________________________________
         return df_filtrado
     
     
-    def slope_regressao_log(df, col): # Finalidade de encontrar a taxa de crescimento de variáveis (mais robusto que o CAGR)
+    def slope_regressao_log(df, col): # Finalidade de encontrar a taxa de crescimento de variáveis (mais robusto que o CAGR) ______________________________________________________________
         """
         Faz regressão linear de ln(col) vs Ano, retornando o slope (beta).
         Filtra valores <= 0, pois ln(<=0) não é definido.
@@ -1112,14 +1112,14 @@ if pagina == "Avançada": #_____________________________________________________
         slope = model.coef_[0]
         return slope
     
-    def slope_to_growth_percent(slope): # transforma o valor absoluto do valor encontrado na regressão para porcentagem
+    def slope_to_growth_percent(slope): # transforma o valor absoluto do valor encontrado na regressão para porcentagem ____________________________________________________________________
         """
         Converte slope da regressão log em taxa de crescimento aproximada (%).
         Ex.: se slope=0.07, growth ~ e^0.07 - 1 ~ 7.25%
         """
         return np.exp(slope) - 1
     
-    def calcular_media_e_std(df, col): # Calcula a média e o desvio padrão de algumas variáveis do dataframe de Multiplos e Demonstrações Financeiras
+    def calcular_media_e_std(df, col): # Calcula a média e o desvio padrão de algumas variáveis do dataframe de Multiplos e Demonstrações Financeiras ____________________________________
         """
         Retorna (mean, std) para a coluna col. Se não tiver dados, (0.0, 0.0). (std - é o desvio padrão)
         Calcula a média e o desvio padrão de uma coluna específica do dataframe.
@@ -1131,7 +1131,7 @@ if pagina == "Avançada": #_____________________________________________________
             return (0.0, 0.0)
         return (df_valid[col].mean(), df_valid[col].std())
     
-    def winsorize(series, lower_quantile=0.05, upper_quantile=0.95): # Retira valores que distoam muito dos valores médios e podem comprometer os cálculos causando distorções
+    def winsorize(series, lower_quantile=0.05, upper_quantile=0.95): # Retira valores que distoam muito dos valores médios e podem comprometer os cálculos causando distorções ____________
         """
         Trunca outliers abaixo do 5º percentil e acima do 95º percentil.
         """
@@ -1142,7 +1142,7 @@ if pagina == "Avançada": #_____________________________________________________
         u_val = s.quantile(upper_quantile)
         return series.clip(l_val, u_val)
     
-    def min_max_normalize(series, melhor_alto=True): # Normaliza o conjunto de variáveis para todos manterem o mesmo intervalo e facilitar a determinação de um score
+    def min_max_normalize(series, melhor_alto=True): # Normaliza o conjunto de variáveis para todos manterem o mesmo intervalo e facilitar a determinação de um score _______________________
         """
         Normaliza a série em [0, 1]. Se 'melhor_alto=False', inverte.
         """
@@ -1258,6 +1258,8 @@ if pagina == "Avançada": #_____________________________________________________
                      # Carregar histórico das tabelas ________________________________________________________________________________________________
                     multiplos = load_multiplos_from_db(ticker + ".SA")
                     df_dre    = load_data_from_db(ticker + ".SA")
+                    st.dataframe(multiplos)
+                    st.dataframe(df_dre)
                
                     if multiplos is None or multiplos.empty:
                         continue
