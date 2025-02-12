@@ -1330,7 +1330,7 @@ if pagina == "Avançada": #_____________________________________________________
                         
                         # Passo 1: Winsorize p/ evitar outliers _________________________________________________________________________________________
                         df_empresas.loc[idx, col] = winsorize(df_empresas.loc[idx, col])
-                        
+                        st.dataframe(df_empresas)
                         # Passo 2: Normalizar ___________________________________________________________________________________________________________
                         col_norm = col + "_norm"
                         df_empresas.loc[idx, col_norm] = min_max_normalize(
