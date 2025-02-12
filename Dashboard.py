@@ -1388,5 +1388,179 @@ if pagina == "Avançada": #_____________________________________________________
                  # Inserindo espaçamento entre os elementos
                 st.markdown("---") # Espaçamento entre diferentes tipos de análise
                 st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
+
+                st.markdown("### Comparação de Indicadores (Múltiplos) entre Empresas do Segmento") #______Gráfico dos Múltiplos_____________________________________________________________________________________________
+                
+                # Lista de indicadores disponíveis
+                indicadores_disponiveis = ["Margem Líquida", "Margem Operacional", "ROE", "ROIC", "P/L", "Liquidez Corrente", "Alavancagem Financeira", "Endividamento Total"]
+                
+                # Mapeamento de nomes amigáveis para nomes de colunas no banco
+                nomes_to_col = {
+                    "Margem Líquida": "Margem_Liquida",
+                    "Margem Operacional": "Margem_Operacional",
+                    "ROE": "ROE",
+                    "ROIC": "ROIC",
+                    "P/L": "P/L",
+                    "Liquidez Corrente": "Liquidez_Corrente",
+                    "Alavancagem Financeira": "Alavancagem_Financeira",
+                    "Endividamento Total": "Endividamento_Total"
+                    
+                }
+
+                 # Selecionar as empresas a exibir
+                lista_empresas = empresas_filtradas['nome_empresa'].tolist()
+                empresas_selecionadas = st.multiselect("Selecione as empresas a serem exibidas no gráfico:", lista_empresas, default=lista_empresas)
+                
+                # Selecionar o indicador a ser exibido
+                indicador_selecionado = st.selectbox("Selecione o Indicador para Comparar:", indicadores_disponiveis, index=0)
+                col_indicador = nomes_to_col[indicador_selecionado]
+                
+                                  
+                # Opção para normalizar os dados
+                normalizar = st.checkbox("Normalizar os Indicadores (Escala de 0 a 1)", value=False)
+                
+                # Construir o DataFrame com o histórico completo de cada empresa selecionada
+                df_historico = []
+                for i, row in empresas_filtradas.iterrows():
+                    nome_emp = row['nome_empresa']
+                    if nome_emp in empresas_selecionadas:
+                        ticker = row['ticker']
+                        multiplos_data = load_multiplos_from_db(ticker + ".SA")
+                        if multiplos_data is not None and not multiplos_data.empty and col_indicador in multiplos_data.columns:
+                            # Processar os dados da empresa
+                            df_emp = multiplos_data[['Data', col_indicador]].copy()
+                            df_emp['Ano'] = pd.to_datetime(df_emp['Data'], errors='coerce').dt.year  # Extrair apenas o ano
+                            df_emp['Empresa'] = nome_emp
+                            df_historico.append(df_emp)
+                        else:
+                            st.info(f"Empresa {nome_emp} não possui dados para o indicador {indicador_selecionado}.")
+                
+                if len(df_historico) == 0:
+                    st.warning("Não há dados históricos disponíveis para as empresas selecionadas ou para o indicador escolhido.")
+                else:
+                    # Concatenar os DataFrames em um único DataFrame
+                    df_historico = pd.concat(df_historico, ignore_index=True)
+                
+                    # Remover entradas com anos nulos
+                    df_historico = df_historico.dropna(subset=['Ano'])
+                
+                    # Normalizar os dados se a opção estiver marcada
+                    if normalizar:
+                        max_valor = df_historico[col_indicador].max()
+                        min_valor = df_historico[col_indicador].min()
+                        df_historico[col_indicador] = (df_historico[col_indicador] - min_valor) / (max_valor - min_valor)
+                
+                    # Garantir que todos os anos presentes no conjunto de dados sejam exibidos no gráfico
+                    anos_disponiveis = sorted(df_historico['Ano'].unique())
+                    df_historico['Ano'] = df_historico['Ano'].astype(str)  # Converter para string para lidar com gaps no eixo
+                
+                    # Criar o gráfico de barras
+                    fig = px.bar(
+                        df_historico,
+                        x='Ano',
+                        y=col_indicador,
+                        color='Empresa',
+                        barmode='group',
+                        title=f"Evolução Histórica de {indicador_selecionado} por Empresa"
+                    )
+                
+                    # Ajustar layout do gráfico
+                    fig.update_layout(
+                        xaxis_title="Ano",
+                        yaxis_title=f"{indicador_selecionado} {'(Normalizado)' if normalizar else ''}",
+                        xaxis=dict(type='category', categoryorder='category ascending', tickvals=anos_disponiveis),
+                        legend_title="Empresa"
+                    )
+                
+                    # Exibir o gráfico no Streamlit
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                    st.markdown("---") # Espaçamento entre diferentes tipos de análise
+                    st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
+                
+                # Seção: Gráfico Comparativo de Demonstrações Financeiras ________________Gráfico das Demonstrações Financeiras__________________________________________________________________
+                # Título da seção
+                st.markdown("### Comparação de Demonstrações Financeiras entre Empresas")
+                
+                # Função para carregar dados de demonstrações financeiras de todas as empresas selecionadas
+                def load_dre_comparativo(empresas, indicadores_dre):
+                    df_comparativo = []
+                    for _, row in empresas.iterrows():
+                        nome_emp = row['nome_empresa']
+                        ticker = row['ticker']
+                
+                        # Carregar dados da tabela demonstracoes_financeiras
+                        dre_data = load_data_from_db(ticker + ".SA")  # Função para carregar os dados
+                        if dre_data is not None and not dre_data.empty:
+                            dre_data['Empresa'] = nome_emp
+                            dre_data['Ano'] = pd.to_datetime(dre_data['Data'], errors='coerce').dt.year  # Extrair apenas o ano
+                            df_comparativo.append(dre_data)
+                
+                    if df_comparativo:
+                        return pd.concat(df_comparativo, ignore_index=True)
+                    return None
+                
+                # Carregar os dados para as empresas selecionadas
+                dre_data_comparativo = load_dre_comparativo(
+                    empresas_filtradas[empresas_filtradas['nome_empresa'].isin(empresas_selecionadas)],
+                    indicadores_dre=["Receita_Liquida", "EBIT", "Lucro_Liquido", "Patrimonio_Liquido", "Divida_Liquida", "Caixa_Liquido"]
+                )
+                
+                if dre_data_comparativo is not None:
+                    # Criar mapeamento de nomes de colunas para nomes amigáveis
+                    col_name_mapping = {
+                        "Receita_Liquida": "Receita Líquida",
+                        "EBIT": "EBIT",
+                        "Lucro_Liquido": "Lucro Líquido",
+                        "Patrimonio_Liquido": "Patrimônio Líquido",
+                        "Divida_Liquida": "Dívida Líquida",
+                        "Caixa_Liquido": "Caixa Líquido",
+                  
+                    }
+                    display_name_to_col = {v: k for k, v in col_name_mapping.items()}
+                    variaveis_disponiveis_display = list(col_name_mapping.values())
+                
+                    # Selecionar um único indicador para visualizar
+                    indicador_selecionado_display = st.selectbox(
+                        "Escolha o Indicador:",
+                        variaveis_disponiveis_display,
+                        index=0
+                    )
+                
+                    # Converter o nome amigável selecionado para o nome original
+                    indicador_selecionado = display_name_to_col[indicador_selecionado_display]
+                
+                    # Filtrar os dados apenas para o indicador selecionado
+                    df_filtrado = dre_data_comparativo[['Ano', indicador_selecionado, 'Empresa']].copy()
+                    df_filtrado = df_filtrado.rename(columns={indicador_selecionado: "Valor"})  # Renomear para padronização
+                
+                    # Garantir que todos os anos estejam presentes no eixo X
+                    anos_disponiveis = sorted(df_filtrado['Ano'].unique())
+                    df_filtrado['Ano'] = df_filtrado['Ano'].astype(str)  # Converter para string para lidar com gaps no eixo
+                
+                    # Criar o gráfico de barras agrupadas
+                    fig = px.bar(
+                        df_filtrado,
+                        x="Ano",
+                        y="Valor",
+                        color="Empresa",
+                        barmode="group",
+                        title=f"Comparação de {indicador_selecionado_display} entre Empresas"
+                    )
+                
+                    # Ajustar layout do gráfico
+                    fig.update_layout(
+                        xaxis_title="Ano",
+                        yaxis_title=indicador_selecionado_display,
+                        legend_title="Empresa",
+                        xaxis=dict(type='category', categoryorder='category ascending', tickvals=anos_disponiveis)
+                    )
+                
+                    # Exibir o gráfico no Streamlit
+                    st.plotly_chart(fig, use_container_width=True)
+
+                
+                else:
+                    st.warning("Não há dados disponíveis para as empresas selecionadas nas Demonstrações Financeiras.")
           
               
