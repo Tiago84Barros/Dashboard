@@ -1314,5 +1314,79 @@ if pagina == "Avançada": #_____________________________________________________
                     'DividaLiq_slope_log': {'peso': 0.10, 'melhor_alto': False},
                     'CaixaLiq_slope_log': {'peso': 0.20, 'melhor_alto': True},
                 }
-                st.dataframe(indicadores_score)
+
+                # ================================================
+                #  NORMALIZAR E CALCULAR SCORE (WINSORIZE + MinMax)
+                # ================================================____________________________________________________________________________________________________________________________
+                # Agrupando por Segmento caso você tenha mais de um
+                for seg, grupo in df_empresas.groupby('Segmento'):
+                    idx = grupo.index
+                    
+                    df_empresas.loc[idx, 'Score'] = 0.0
+                    
+                    for col, config in indicadores_score.items():
+                        if col not in df_empresas.columns:
+                            continue
+                        
+                        # Passo 1: Winsorize p/ evitar outliers _________________________________________________________________________________________
+                        df_empresas.loc[idx, col] = winsorize(df_empresas.loc[idx, col])
+                        
+                        # Passo 2: Normalizar ___________________________________________________________________________________________________________
+                        col_norm = col + "_norm"
+                        df_empresas.loc[idx, col_norm] = min_max_normalize(
+                            df_empresas.loc[idx, col],
+                            config['melhor_alto']
+                        )
+                        
+                        # Passo 3: Soma ponderada _______________________________________________________________________________________________________
+                        df_empresas.loc[idx, 'Score'] += (
+                            df_empresas.loc[idx, col_norm] * config['peso']
+                        )
+                    
+                    # Rank dentro do segmento ____________________________________________________________________________________________________________
+                    df_empresas.loc[idx, 'RankNoSegmento'] = df_empresas.loc[idx, 'Score'] \
+                                                             .rank(method='dense', ascending=False)
+
+                # Ordenar resultado ________________________________________________________________________________________________________________________
+                df_empresas.sort_values(['Segmento','Score'], ascending=[True,False], inplace=True)
+                
+                st.markdown("### Ranking de Empresas (Score Simplificado)")
+                colunas_layout = st.columns(3)
+                
+                for idx, row in enumerate(df_empresas.itertuples()):
+                    col = colunas_layout[idx % len(colunas_layout)]
+                    with col:
+                        # Se houver função get_logo_url:
+                        logo_url = get_logo_url(row.ticker)
+                        col_logo, col_texto = st.columns([1, 3])
+                        
+                        with col_logo:
+                            st.image(logo_url, width=50)
+                        
+                        with col_texto:
+                            st.markdown(f"""
+                                <div style="font-size: 16px; font-weight: bold; color: #333; margin-bottom: 5px;">
+                                    {row.nome_empresa} ({row.ticker})
+                                </div>
+                                <div style="font-size: 14px; color: #555;">
+                                    Score: <span style="color: green; font-weight: bold;">{row.Score:.2f}</span>
+                                    <br/>
+                                    Rank: {int(row.RankNoSegmento)}
+                                </div>
+                            """, unsafe_allow_html=True)
+                
+                # (Opcional) exibir df_empresas em modo tabela
+                #st.dataframe(df_empresas)
+
+                
+                # Esse score inicial considera poucas variáveis (Margem, ROE, P/L, etc.) 
+                # e a tendência de crescimento (slope log) de Receita e Lucro. 
+                # Caso deseje adicionar mais variáveis (ex.: Patrimônio, Caixa, etc.), 
+                # basta inserir nos dicionários e na função de cálculo.
+            
+                         
+                 # Inserindo espaçamento entre os elementos
+                st.markdown("---") # Espaçamento entre diferentes tipos de análise
+                st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
+          
               
