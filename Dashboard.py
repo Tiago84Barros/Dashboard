@@ -1158,8 +1158,8 @@ if pagina == "Avançada": #_____________________________________________________
                 continue
             df_empresas[col] = winsorize(df_empresas[col])  # Aplicando Winsorize para suavizar outliers
             df_empresas[col + '_norm'] = z_score_normalize(df_empresas[col], config['melhor_alto'])
-            st.dataframe(df_empresas)
             df_empresas['Score_Ajustado'] += df_empresas[col + '_norm'] * config['peso']
+            st.dataframe(df_empresas)
         df_empresas['Rank_Ajustado'] = df_empresas['Score_Ajustado'].rank(method='dense', ascending=False)
         return df_empresas
               
