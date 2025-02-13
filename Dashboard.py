@@ -1071,11 +1071,11 @@ if pagina == "Avançada": #_____________________________________________________
     # ===============================================
     #                FUNÇÕES AUXILIARES
     # ===============================================
-    
+
+       
    # Função para remover outliers usando o método IQR __________________________________________________________________________________________________________________
-    def remover_outliers_iqr(df, colunas):
+   def remover_outliers_iqr(df, colunas):
         df_filtrado = df.copy()
-        
         for col in colunas:
             if col in df.columns:
                 Q1 = df[col].quantile(0.25)
@@ -1083,11 +1083,21 @@ if pagina == "Avançada": #_____________________________________________________
                 IQR = Q3 - Q1
                 limite_inferior = Q1 - 1.5 * IQR
                 limite_superior = Q3 + 1.5 * IQR
-    
-                # Aplicar filtro para manter apenas valores dentro do intervalo esperado
                 df_filtrado = df_filtrado[(df_filtrado[col] >= limite_inferior) & (df_filtrado[col] <= limite_superior)]
-        
         return df_filtrado
+
+   # Função que realiza a normalização dos dados (comparabilidade dos múltiplos, reduzindo distorções causadas por concentração de valores em um extremo)______________
+   def z_score_normalize(series, melhor_alto=True):
+        series = series.replace([np.inf, -np.inf], np.nan)
+        valid = series.dropna()
+        if valid.empty:
+            return pd.Series([0.0] * len(series), index=series.index)
+        mean_val = valid.mean()
+        std_val = valid.std()
+        if std_val == 0:
+            return pd.Series([0.0] * len(series), index=series.index)
+        normalized = (series - mean_val) / std_val
+        return normalized.fillna(0.0) if melhor_alto else -normalized.fillna(0.0)
     
     
     def slope_regressao_log(df, col): # Finalidade de encontrar a taxa de crescimento de variáveis (mais robusto que o CAGR) ______________________________________________________________
@@ -1142,25 +1152,18 @@ if pagina == "Avançada": #_____________________________________________________
         u_val = s.quantile(upper_quantile)
         return series.clip(l_val, u_val)
     
-    def min_max_normalize(series, melhor_alto=True): # Normaliza o conjunto de variáveis para todos manterem o mesmo intervalo e facilitar a determinação de um score _______________________
-        """
-        Normaliza a série em [0, 1]. Se 'melhor_alto=False', inverte.
-        """
-        series = series.replace([np.inf, -np.inf], np.nan)
-        valid = series.dropna()
-        if valid.empty:
-            return pd.Series([0.5]*len(series), index=series.index)
-    
-        min_val = valid.min()
-        max_val = valid.max()
-        if min_val == max_val:
-            return pd.Series([0.5]*len(series), index=series.index)
-    
-        normalized = (series - min_val) / (max_val - min_val)
-        if not melhor_alto:
-            normalized = 1 - normalized
+    def calcular_score(df_empresas): # ___________________________ Calculando o Score das empresas __________________________________________________________________________________________
+        df_empresas['Score_Ajustado'] = 0.0
+        for col, config in indicadores_score_ajustados.items():
+            if col not in df_empresas.columns:
+                continue
+            df_empresas[col] = winsorize(df_empresas[col])  # Aplicando Winsorize para suavizar outliers
+            df_empresas[col + '_norm'] = z_score_normalize(df_empresas[col], config['melhor_alto'])
+            df_empresas['Score_Ajustado'] += df_empresas[col + '_norm'] * config['peso']
+        df_empresas['Rank_Ajustado'] = df_empresas['Score_Ajustado'].rank(method='dense', ascending=False)
+        return df_empresas
         
-        return normalized.fillna(0.5)
+      
      
     
     # ===============================================
@@ -1301,21 +1304,21 @@ if pagina == "Avançada": #_____________________________________________________
                 #  DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE
                 # ================================================___________________________________________________________________________________________________________________________
                 # Definir indicadores para score
-                indicadores_score = {
-                    'MargemLiq_mean': {'peso': 0.20, 'melhor_alto': True},
-                    'MOP_mean': {'peso': 0.25, 'melhor_alto': True},
+               indicadores_score_ajustados = {
+                    'MargemLiq_mean': {'peso': 0.15, 'melhor_alto': True},
+                    'MOP_mean': {'peso': 0.20, 'melhor_alto': True},
                     'ROE_mean': {'peso': 0.20, 'melhor_alto': True},
-                    'ROIC_mean': {'peso': 0.25, 'melhor_alto': True},
-                    'PVP_mean': {'peso': 0.15, 'melhor_alto': False},
-                    'Endividamento_mean': {'peso': 0.10, 'melhor_alto': False},
-                    'Alavancagem_mean': {'peso': 0.10, 'melhor_alto': False},
+                    'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},
+                    'PVP_mean': {'peso': 0.10, 'melhor_alto': False},
+                    'Endividamento_mean': {'peso': 0.15, 'melhor_alto': False},
+                    'Alavancagem_mean': {'peso': 0.15, 'melhor_alto': False},
                     'Liquidez_mean': {'peso': 0.15, 'melhor_alto': True},
-                    'ReceitaLiq_slope_log': {'peso': 0.20, 'melhor_alto': True},
-                    'LucroLiq_slope_log': {'peso': 0.30, 'melhor_alto': True},
-                    'PatrimonioLiq_slope_log': {'peso': 0.20, 'melhor_alto': True},
-                    'DividaLiq_slope_log': {'peso': 0.10, 'melhor_alto': False},
-                    'CaixaLiq_slope_log': {'peso': 0.20, 'melhor_alto': True},
-                }
+                    'ReceitaLiq_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                    'LucroLiq_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                    'PatrimonioLiq_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                    'DividaLiq_slope_log': {'peso': 0.15, 'melhor_alto': False},
+                    'CaixaLiq_slope_log': {'peso': 0.15, 'melhor_alto': True},
+               }
 
                 # ================================================
                 #  NORMALIZAR E CALCULAR SCORE (WINSORIZE + MinMax)
@@ -1333,18 +1336,11 @@ if pagina == "Avançada": #_____________________________________________________
                         # Passo 1: Winsorize p/ evitar outliers _________________________________________________________________________________________
                         df_empresas.loc[idx, col] = winsorize(df_empresas.loc[idx, col])
                         st.dataframe(df_empresas)
-                        # Passo 2: Normalizar ___________________________________________________________________________________________________________
-                        col_norm = col + "_norm"
-                        df_empresas.loc[idx, col_norm] = min_max_normalize(
-                            df_empresas.loc[idx, col],
-                            config['melhor_alto']
-                        )
                         
-                        # Passo 3: Soma ponderada _______________________________________________________________________________________________________
-                        df_empresas.loc[idx, 'Score'] += (
-                            df_empresas.loc[idx, col_norm] * config['peso']
-                        )
-                    
+                        
+                     # Determinando o SCORE das empresas
+                    df_empresas = calcular_score(df_empresas)
+                
                     # Rank dentro do segmento ____________________________________________________________________________________________________________
                     df_empresas.loc[idx, 'RankNoSegmento'] = df_empresas.loc[idx, 'Score'] \
                                                              .rank(method='dense', ascending=False)
