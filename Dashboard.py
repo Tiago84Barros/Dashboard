@@ -1313,15 +1313,15 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     df_empresas.loc[idx, 'Score'] = 0.0   
                 
-                def calcular_score(df_empresas): # ___________________________ Calculando o Score das empresas __________________________________________________________________________________________
-                    for col, config in indicadores_score_ajustados.items():
-                        if col not in df_empresas.columns:
-                            continue
-                        df_empresas[col] = winsorize(df_empresas[col])  # Aplicando Winsorize para suavizar outliers
-                        df_empresas[col + '_norm'] = z_score_normalize(df_empresas[col], config['melhor_alto'])
-                        df_empresas['Score_Ajustado'] += df_empresas[col + '_norm'] * config['peso']
-                        df_empresas['Rank_Ajustado'] = df_empresas['Score_Ajustado'].rank(method='dense', ascending=False)
-                    return df_empresas
+                    def calcular_score(df_empresas): # ___________________________ Calculando o Score das empresas __________________________________________________________________________________________
+                        for col, config in indicadores_score_ajustados.items():
+                            if col not in df_empresas.columns:
+                                continue
+                            df_empresas[col] = winsorize(df_empresas[col])  # Aplicando Winsorize para suavizar outliers
+                            df_empresas[col + '_norm'] = z_score_normalize(df_empresas[col], config['melhor_alto'])
+                            df_empresas['Score_Ajustado'] += df_empresas[col + '_norm'] * config['peso']
+                            df_empresas['Rank_Ajustado'] = df_empresas['Score_Ajustado'].rank(method='dense', ascending=False)
+                        return df_empresas
                                                                                   
                 # Determinando o SCORE das empresas
                 df_empresas = calcular_score(df_empresas)
