@@ -1073,8 +1073,8 @@ if pagina == "Avançada": #_____________________________________________________
     # ===============================================
 
        
-   # Função para remover outliers usando o método IQR __________________________________________________________________________________________________________________
-   def remover_outliers_iqr(df, colunas):
+    # Função para remover outliers usando o método IQR __________________________________________________________________________________________________________________
+    def remover_outliers_iqr(df, colunas):
         df_filtrado = df.copy()
         for col in colunas:
             if col in df.columns:
@@ -1086,8 +1086,8 @@ if pagina == "Avançada": #_____________________________________________________
                 df_filtrado = df_filtrado[(df_filtrado[col] >= limite_inferior) & (df_filtrado[col] <= limite_superior)]
         return df_filtrado
 
-   # Função que realiza a normalização dos dados (comparabilidade dos múltiplos, reduzindo distorções causadas por concentração de valores em um extremo)______________
-   def z_score_normalize(series, melhor_alto=True):
+    # Função que realiza a normalização dos dados (comparabilidade dos múltiplos, reduzindo distorções causadas por concentração de valores em um extremo)______________
+    def z_score_normalize(series, melhor_alto=True):
         series = series.replace([np.inf, -np.inf], np.nan)
         valid = series.dropna()
         if valid.empty:
@@ -1100,7 +1100,7 @@ if pagina == "Avançada": #_____________________________________________________
         return normalized.fillna(0.0) if melhor_alto else -normalized.fillna(0.0)
     
     
-   def slope_regressao_log(df, col): # Finalidade de encontrar a taxa de crescimento de variáveis (mais robusto que o CAGR) ______________________________________________________________
+    def slope_regressao_log(df, col): # Finalidade de encontrar a taxa de crescimento de variáveis (mais robusto que o CAGR) ______________________________________________________________
         """
         Faz regressão linear de ln(col) vs Ano, retornando o slope (beta).
         Filtra valores <= 0, pois ln(<=0) não é definido.
