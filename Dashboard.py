@@ -1280,6 +1280,7 @@ if pagina == "Avançada": #_____________________________________________________
                     st.info("Não há dados para as empresas deste segmento.")
                                    
                 df_empresas = pd.DataFrame(resultados)  # Coloca as informações agrupadas no dataframe df_empresas
+                st.dataframe(df_empresas)
                             
                 # Carregar dados macroeconômicos do banco de dados
                 dados_macro = load_macro_summary()
@@ -1303,8 +1304,7 @@ if pagina == "Avançada": #_____________________________________________________
                     'Divida_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': False},
                     'Caixa_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
                 }
-                st.dataframe(df_empresas)
-
+               
                 def calcular_score(df_empresas, indicadores_score_ajustados):
                     if df_empresas.empty:
                         st.warning("O DataFrame está vazio. Não há dados para calcular o score.")
