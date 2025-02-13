@@ -1100,7 +1100,7 @@ if pagina == "Avançada": #_____________________________________________________
         return normalized.fillna(0.0) if melhor_alto else -normalized.fillna(0.0)
     
     
-    def slope_regressao_log(df, col): # Finalidade de encontrar a taxa de crescimento de variáveis (mais robusto que o CAGR) ______________________________________________________________
+   def slope_regressao_log(df, col): # Finalidade de encontrar a taxa de crescimento de variáveis (mais robusto que o CAGR) ______________________________________________________________
         """
         Faz regressão linear de ln(col) vs Ano, retornando o slope (beta).
         Filtra valores <= 0, pois ln(<=0) não é definido.
