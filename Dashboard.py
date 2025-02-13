@@ -1286,12 +1286,12 @@ if pagina == "Avançada": #_____________________________________________________
                     }
                     data_emp.update(metrics_dict)
                     resultados.append(data_emp)   
-                    st.dataframe(resultados)
-                    
+                            
                 if not resultados:
                     st.info("Não há dados para as empresas deste segmento.")
                                    
-                df_empresas = pd.DataFrame(resultados)        
+                df_empresas = pd.DataFrame(resultados)  # Coloca as informações agrupadas no dataframe df_empresas
+                
                 # Carregar dados macroeconômicos do banco de dados
                 dados_macro = load_macro_summary()
 
