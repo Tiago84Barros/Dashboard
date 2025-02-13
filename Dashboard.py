@@ -1337,8 +1337,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
                         # Verificar se a coluna foi criada corretamente 
                         st.write(f"Normalização aplicada para {col}:")
-                        st.dataframe(df_empresas[[col, col + '_norm']])
-                                       
+                                                       
                         
                      # Determinando o SCORE das empresas
                     df_empresas = calcular_score(df_empresas)
