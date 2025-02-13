@@ -1291,6 +1291,7 @@ if pagina == "Avançada": #_____________________________________________________
                     st.info("Não há dados para as empresas deste segmento.")
                                    
                 df_empresas = pd.DataFrame(resultados)  # Coloca as informações agrupadas no dataframe df_empresas
+                st.dataframe(df_empresas)
                 
                 # Carregar dados macroeconômicos do banco de dados
                 dados_macro = load_macro_summary()
