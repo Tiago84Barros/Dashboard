@@ -1286,6 +1286,7 @@ if pagina == "Avançada": #_____________________________________________________
                     }
                     data_emp.update(metrics_dict)
                     resultados.append(data_emp)   
+                    st.dataframe(resultados)
                     
                 if not resultados:
                     st.info("Não há dados para as empresas deste segmento.")
