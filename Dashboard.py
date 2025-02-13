@@ -1323,6 +1323,7 @@ if pagina == "Avançada": #_____________________________________________________
                     idx = grupo.index
                     
                     df_empresas.loc[idx, 'Score'] = 0.0  
+                    st.dataframe(df_empresas)
                                                                                   
                     for col, config in indicadores_score_ajustados.items():
                         if col not in df_empresas.columns:
