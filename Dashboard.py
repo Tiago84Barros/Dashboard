@@ -1323,20 +1323,20 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     df_empresas.loc[idx, 'Score'] = 0.0                    
                                                                   
-                        for col, config in indicadores_score_ajustados.items():
-                            if col not in df_empresas.columns:
-                                st.warning(f"A coluna '{col}' não existe em df_empresas e será ignorada no cálculo do score.")
-                                continue  # Pular esta coluna se não estiver presente
-                        
-                            # Aplicar Winsorize para suavizar outliers ____________________________________________________________________________________
-                            df_empresas[col] = winsorize(df_empresas[col])
-                        
-                            # Criar a coluna normalizada corretamente ______________________________________________________________________________________
-                            df_empresas[col + '_norm'] = z_score_normalize(df_empresas[col], config['melhor_alto'])
-                        
-                            # Verificar se a coluna foi criada corretamente 
-                            st.write(f"Normalização aplicada para {col}:")
-                            st.dataframe(df_empresas[[col, col + '_norm']])
+                    for col, config in indicadores_score_ajustados.items():
+                        if col not in df_empresas.columns:
+                            st.warning(f"A coluna '{col}' não existe em df_empresas e será ignorada no cálculo do score.")
+                            continue  # Pular esta coluna se não estiver presente
+                    
+                        # Aplicar Winsorize para suavizar outliers ____________________________________________________________________________________
+                        df_empresas[col] = winsorize(df_empresas[col])
+                    
+                        # Criar a coluna normalizada corretamente ______________________________________________________________________________________
+                        df_empresas[col + '_norm'] = z_score_normalize(df_empresas[col], config['melhor_alto'])
+                    
+                        # Verificar se a coluna foi criada corretamente 
+                        st.write(f"Normalização aplicada para {col}:")
+                        st.dataframe(df_empresas[[col, col + '_norm']])
                                        
                         
                      # Determinando o SCORE das empresas
