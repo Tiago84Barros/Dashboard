@@ -1323,12 +1323,12 @@ if pagina == "Avançada": #_____________________________________________________
                         df_empresas['Rank_Ajustado'] = df_empresas['Score_Ajustado'].rank(method='dense', ascending=False)
                     return df_empresas
                                                                                   
-                    # Determinando o SCORE das empresas
-                    df_empresas = calcular_score(df_empresas)
-                                   
-                    # Rank dentro do segmento ____________________________________________________________________________________________________________
-                    df_empresas.loc[idx, 'RankNoSegmento'] = df_empresas.loc[idx, 'Score'] \
-                                                             .rank(method='dense', ascending=False)
+                # Determinando o SCORE das empresas
+                df_empresas = calcular_score(df_empresas)
+                               
+                # Rank dentro do segmento ____________________________________________________________________________________________________________
+                df_empresas.loc[idx, 'RankNoSegmento'] = df_empresas.loc[idx, 'Score'] \
+                                                         .rank(method='dense', ascending=False)
 
                 # Ordenar resultado ________________________________________________________________________________________________________________________
                 df_empresas.sort_values(['Segmento','Score'], ascending=[True,False], inplace=True)
