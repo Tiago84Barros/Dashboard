@@ -1310,9 +1310,9 @@ if pagina == "Avançada": #_____________________________________________________
                     'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
                     'Receita_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': True},
                     'Lucro_Liquido_slope_log': {'peso': 0.20, 'melhor_alto': True},
-                    'Patrimonio_Liquido_log': {'peso': 0.15, 'melhor_alto': True},
+                    'Patrimonio_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
                     'Divida_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': False},
-                    'Caixa_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                    'Caixa_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
                 }
 
                 # ================================================
