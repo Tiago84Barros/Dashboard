@@ -1341,29 +1341,33 @@ if pagina == "Avançada": #_____________________________________________________
                 # Ordenar resultado pelo Score Ajustado
                 df_empresas.sort_values(['Segmento', 'Score_Ajustado'], ascending=[True, False], inplace=True)
                 
-                # Exibir Ranking de Empresas em quadrados estilizados
+                # Exibir Ranking de Empresas em quadrados estilizados lado a lado
                 st.markdown("### Ranking de Empresas (Score Ajustado)")
                 
+                colunas_layout = st.columns(3)
                 for idx, row in enumerate(df_empresas.itertuples()):
-                    st.markdown(
-                        f"""
-                        <div style="
-                            border: 2px solid #ddd;
-                            border-radius: 10px;
-                            padding: 15px;
-                            margin: 10px;
-                            background-color: #f9f9f9;
-                            box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
-                            text-align: center;
-                        ">
-                            <h4 style="color: #333;">{row.nome_empresa} ({row.ticker})</h4>
-                            <p style="font-size: 18px; color: green; font-weight: bold;">Score: {row.Score_Ajustado:.2f}</p>
-                            <p style="font-size: 16px;">Rank: {int(row.Rank_Ajustado)}</p>
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
-
+                    col = colunas_layout[idx % len(colunas_layout)]
+                    with col:
+                        logo_url = get_logo_url(row.ticker)
+                        st.markdown(
+                            f"""
+                            <div style="
+                                border: 2px solid #ddd;
+                                border-radius: 10px;
+                                padding: 15px;
+                                margin: 10px;
+                                background-color: #f9f9f9;
+                                box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
+                                text-align: center;
+                            ">
+                                <img src="{logo_url}" style="width: 50px; height: 50px; margin-bottom: 10px;">
+                                <h4 style="color: #333;">{row.nome_empresa} ({row.ticker})</h4>
+                                <p style="font-size: 18px; color: green; font-weight: bold;">Score: {row.Score_Ajustado:.2f}</p>
+                                <p style="font-size: 16px;">Rank: {int(row.Rank_Ajustado)}</p>
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
                  
                 
                 # (Opcional) exibir df_empresas em modo tabela
