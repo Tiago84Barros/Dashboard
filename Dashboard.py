@@ -1329,7 +1329,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     df_empresas.loc[idx, 'Score'] = 0.0
                     
-                    for col, config in indicadores_score.items():
+                    for col, config in indicadores_score_ajustados.items():
                         if col not in df_empresas.columns:
                             continue
                         
