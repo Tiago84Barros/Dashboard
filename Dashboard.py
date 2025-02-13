@@ -1304,7 +1304,7 @@ if pagina == "Avançada": #_____________________________________________________
                 #  DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE
                 # ================================================___________________________________________________________________________________________________________________________
                 # Definir indicadores para score
-               indicadores_score_ajustados = {
+                indicadores_score_ajustados = {
                     'MargemLiq_mean': {'peso': 0.15, 'melhor_alto': True},
                     'MOP_mean': {'peso': 0.20, 'melhor_alto': True},
                     'ROE_mean': {'peso': 0.20, 'melhor_alto': True},
@@ -1318,7 +1318,7 @@ if pagina == "Avançada": #_____________________________________________________
                     'PatrimonioLiq_slope_log': {'peso': 0.15, 'melhor_alto': True},
                     'DividaLiq_slope_log': {'peso': 0.15, 'melhor_alto': False},
                     'CaixaLiq_slope_log': {'peso': 0.15, 'melhor_alto': True},
-               }
+                }
 
                 # ================================================
                 #  NORMALIZAR E CALCULAR SCORE (WINSORIZE + MinMax)
