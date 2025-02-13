@@ -1255,6 +1255,8 @@ if pagina == "Avançada": #_____________________________________________________
                     if df_dre is None or df_dre.empty:
                         continue
 
+                    st.dataframe(multiplos)
+
                     # **Remover outliers antes de calcular métricas** __________________________________________________________________________________
                     colunas_para_filtrar = ['Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida', 
                                             'Divida_Total', 'Passivo_Circulante', 'Liquidez_Corrente', 
@@ -1280,8 +1282,7 @@ if pagina == "Avançada": #_____________________________________________________
                     st.info("Não há dados para as empresas deste segmento.")
                                    
                 df_empresas = pd.DataFrame(resultados)  # Coloca as informações agrupadas no dataframe df_empresas
-                st.dataframe(df_empresas)
-                            
+                                            
                 # Carregar dados macroeconômicos do banco de dados
                 dados_macro = load_macro_summary()
 
