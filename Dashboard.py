@@ -1153,7 +1153,6 @@ if pagina == "Avançada": #_____________________________________________________
         return series.clip(l_val, u_val)
     
     def calcular_score(df_empresas): # ___________________________ Calculando o Score das empresas __________________________________________________________________________________________
-        df_empresas['Score_Ajustado'] = 0.0
         for col, config in indicadores_score_ajustados.items():
             if col not in df_empresas.columns:
                 continue
@@ -1244,7 +1243,7 @@ if pagina == "Avançada": #_____________________________________________________
                     (setores['SUBSETOR'] == subsetor_selecionado) &
                     (setores['SEGMENTO'] == segmento_selecionado)
                 ]
-
+                st.dataframe(empresas_selecionado)
                 if empresas_filtradas.empty:
                     st.warning("Não há empresas nesse segmento.")
 
@@ -1261,9 +1260,7 @@ if pagina == "Avançada": #_____________________________________________________
                      # Carregar histórico das tabelas ________________________________________________________________________________________________
                     multiplos = load_multiplos_from_db(ticker + ".SA")
                     df_dre    = load_data_from_db(ticker + ".SA")
-                    st.dataframe(multiplos)
-                    st.dataframe(df_dre)
-               
+                
                     if multiplos is None or multiplos.empty:
                         continue
                     if df_dre is None or df_dre.empty:
@@ -1294,9 +1291,8 @@ if pagina == "Avançada": #_____________________________________________________
                     
                 if not resultados:
                     st.info("Não há dados para as empresas deste segmento.")
-                                     
-                df_empresas = pd.DataFrame(resultados)
-             
+                                   
+                            
                 # Carregar dados macroeconômicos do banco de dados
                 dados_macro = load_macro_summary()
 
@@ -1335,8 +1331,7 @@ if pagina == "Avançada": #_____________________________________________________
                         
                         # Passo 1: Winsorize p/ evitar outliers _________________________________________________________________________________________
                         df_empresas.loc[idx, col] = winsorize(df_empresas.loc[idx, col])
-                        st.dataframe(df_empresas)
-                        
+                                   
                         
                      # Determinando o SCORE das empresas
                     df_empresas = calcular_score(df_empresas)
