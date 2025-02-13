@@ -1256,6 +1256,7 @@ if pagina == "Avançada": #_____________________________________________________
                         continue
 
                     st.dataframe(multiplos)
+                    st.dataframe(df_dre)
 
                     # **Remover outliers antes de calcular métricas** __________________________________________________________________________________
                     colunas_para_filtrar = ['Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida', 
