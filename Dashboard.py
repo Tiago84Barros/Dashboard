@@ -1321,7 +1321,7 @@ if pagina == "Avançada": #_____________________________________________________
                     idx = grupo.index
                     
                     df_empresas.loc[idx, 'Score'] = 0.0  
-                    st.dataframe(df_empresas)
+                    
                                                                                   
                     for col, config in indicadores_score_ajustados.items():
                         if col not in df_empresas.columns:
@@ -1333,7 +1333,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
                         # Criar a coluna normalizada corretamente ______________________________________________________________________________________
                         df_empresas[col + '_norm'] = z_score_normalize(df_empresas[col], config['melhor_alto'])
-                                                                                          
+                        st.dataframe(df_empresas)                                                                 
                         
                      # Determinando o SCORE das empresas
                     df_empresas = calcular_score(df_empresas)
