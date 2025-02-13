@@ -1303,6 +1303,7 @@ if pagina == "Avançada": #_____________________________________________________
                     'Divida_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': False},
                     'Caixa_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
                 }
+                st.dataframe(df_empresas)
 
                 def calcular_score(df_empresas, indicadores_score_ajustados):
                     if df_empresas.empty:
