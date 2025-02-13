@@ -1300,19 +1300,19 @@ if pagina == "Avançada": #_____________________________________________________
                 # ================================================___________________________________________________________________________________________________________________________
                 # Definir indicadores para score
                 indicadores_score_ajustados = {
-                    'MargemLiq_mean': {'peso': 0.15, 'melhor_alto': True},
-                    'MOP_mean': {'peso': 0.20, 'melhor_alto': True},
+                    'Margem_Liquida_mean': {'peso': 0.15, 'melhor_alto': True},
+                    'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},
                     'ROE_mean': {'peso': 0.20, 'melhor_alto': True},
                     'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},
-                    'PVP_mean': {'peso': 0.10, 'melhor_alto': False},
-                    'Endividamento_mean': {'peso': 0.15, 'melhor_alto': False},
-                    'Alavancagem_mean': {'peso': 0.15, 'melhor_alto': False},
-                    'Liquidez_mean': {'peso': 0.15, 'melhor_alto': True},
-                    'ReceitaLiq_slope_log': {'peso': 0.15, 'melhor_alto': True},
-                    'LucroLiq_slope_log': {'peso': 0.20, 'melhor_alto': True},
-                    'PatrimonioLiq_slope_log': {'peso': 0.15, 'melhor_alto': True},
-                    'DividaLiq_slope_log': {'peso': 0.15, 'melhor_alto': False},
-                    'CaixaLiq_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                    'P/VP_mean': {'peso': 0.10, 'melhor_alto': False},
+                    'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                    'Alavancagem_Financeira_mean': {'peso': 0.15, 'melhor_alto': False},
+                    'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                    'Receita_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                    'Lucro_Liquido_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                    'Patrimonio_Liquido_log': {'peso': 0.15, 'melhor_alto': True},
+                    'Divida_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': False},
+                    'Caixa_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': True},
                 }
 
                 # ================================================
@@ -1323,8 +1323,7 @@ if pagina == "Avançada": #_____________________________________________________
                     idx = grupo.index
                     
                     df_empresas.loc[idx, 'Score'] = 0.0  
-                    st.dataframe(df_empresas)
-                                                                  
+                                                                                  
                     for col, config in indicadores_score_ajustados.items():
                         if col not in df_empresas.columns:
                             st.warning(f"A coluna '{col}' não existe em df_empresas e será ignorada no cálculo do score.")
