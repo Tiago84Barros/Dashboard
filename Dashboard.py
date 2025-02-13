@@ -1243,7 +1243,7 @@ if pagina == "Avançada": #_____________________________________________________
                     (setores['SUBSETOR'] == subsetor_selecionado) &
                     (setores['SEGMENTO'] == segmento_selecionado)
                 ]
-                st.dataframe(empresas_selecionado)
+           
                 if empresas_filtradas.empty:
                     st.warning("Não há empresas nesse segmento.")
 
@@ -1276,8 +1276,7 @@ if pagina == "Avançada": #_____________________________________________________
               
                     # Calcular métricas simplificadas ______________________________________________________________________________________________________
                     metrics_dict = calcular_metricas_historicas_simplificadas(multiplos_corrigido, df_dre_corrigido)
-                    
-                    
+                                        
                     data_emp = {
                         'ticker': ticker,
                         'nome_empresa': nome_emp,
@@ -1286,7 +1285,7 @@ if pagina == "Avançada": #_____________________________________________________
                         'Segmento': row['SEGMENTO']
                     }
                     data_emp.update(metrics_dict)
-                    
+                    st.dataframe(data_emp)
                     resultados.append(data_emp)   
                     
                 if not resultados:
