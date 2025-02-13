@@ -1291,8 +1291,7 @@ if pagina == "Avançada": #_____________________________________________________
                     st.info("Não há dados para as empresas deste segmento.")
                                    
                 df_empresas = pd.DataFrame(resultados)  # Coloca as informações agrupadas no dataframe df_empresas
-                st.dataframe(df_empresas)
-                
+                            
                 # Carregar dados macroeconômicos do banco de dados
                 dados_macro = load_macro_summary()
 
@@ -1323,7 +1322,8 @@ if pagina == "Avançada": #_____________________________________________________
                 for seg, grupo in df_empresas.groupby('Segmento'):
                     idx = grupo.index
                     
-                    df_empresas.loc[idx, 'Score'] = 0.0                    
+                    df_empresas.loc[idx, 'Score'] = 0.0  
+                    st.dataframe(df_empresas)
                                                                   
                     for col, config in indicadores_score_ajustados.items():
                         if col not in df_empresas.columns:
