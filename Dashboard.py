@@ -1129,16 +1129,18 @@ if pagina == "Avançada": #_____________________________________________________
         """
         return np.exp(slope) - 1
     
-    def calcular_media_e_std(df, col): # Calcula a média e o desvio padrão de algumas variáveis do dataframe de Multiplos e Demonstrações Financeiras ____________________________________
+    def calcular_media_e_std(df, col):
         """
-        Retorna (mean, std) para a coluna col. Se não tiver dados, (0.0, 0.0). (std - é o desvio padrão)
-        Calcula a média e o desvio padrão de uma coluna específica do dataframe.
+        Retorna a média e o desvio padrão da coluna `col` do DataFrame `df`.
+        Remove valores nulos e infinitos antes do cálculo.
         """
-        df_valid = df.dropna(subset=[col])
+        df_valid = df.dropna(subset=[col])  # Remove valores NaN
+        df_valid = df_valid[pd.to_numeric(df_valid[col], errors='coerce').notna()]  # Garante que os dados são numéricos
         df_valid = df_valid[np.isfinite(df_valid[col])]  # Remove valores infinitos
         
         if df_valid.empty:
             return (0.0, 0.0)
+        
         return (df_valid[col].mean(), df_valid[col].std())
     
     def winsorize(series, lower_quantile=0.05, upper_quantile=0.95): # Retira valores que distoam muito dos valores médios e podem comprometer os cálculos causando distorções ____________
