@@ -1161,9 +1161,7 @@ if pagina == "Avançada": #_____________________________________________________
             df_empresas['Score_Ajustado'] += df_empresas[col + '_norm'] * config['peso']
         df_empresas['Rank_Ajustado'] = df_empresas['Score_Ajustado'].rank(method='dense', ascending=False)
         return df_empresas
-        
-      
-     
+              
     
     # ===============================================
     # FUNÇÃO PRINCIPAL: Calcular Métricas Históricas
@@ -1335,13 +1333,11 @@ if pagina == "Avançada": #_____________________________________________________
                     
                         # Criar a coluna normalizada corretamente ______________________________________________________________________________________
                         df_empresas[col + '_norm'] = z_score_normalize(df_empresas[col], config['melhor_alto'])
-                    
-                        # Verificar se a coluna foi criada corretamente 
-                        st.write(f"Normalização aplicada para {col}:")
-                                                       
+                                                                                          
                         
                      # Determinando o SCORE das empresas
                     df_empresas = calcular_score(df_empresas)
+                    st.dataframe(df_empresas)
                 
                     # Rank dentro do segmento ____________________________________________________________________________________________________________
                     df_empresas.loc[idx, 'RankNoSegmento'] = df_empresas.loc[idx, 'Score'] \
