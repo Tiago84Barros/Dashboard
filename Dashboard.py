@@ -1301,62 +1301,71 @@ if pagina == "Avançada": #_____________________________________________________
                     'Divida_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': False},
                     'Caixa_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
                 }
-                  
-               
 
-                # ================================================
-                #  NORMALIZAR E CALCULAR SCORE (WINSORIZE + MinMax)
-                # ================================================____________________________________________________________________________________________________________________________
-                # Agrupando por Segmento caso você tenha mais de um
-                for seg, grupo in df_empresas.groupby('Segmento'):
-                    idx = grupo.index
-                    
-                    df_empresas.loc[idx, 'Score'] = 0.0   
+                def calcular_score(df_empresas, indicadores_score_ajustados):
+                    if df_empresas.empty:
+                        st.warning("O DataFrame está vazio. Não há dados para calcular o score.")
+                        return df_empresas
                 
-                def calcular_score(df_empresas): # ___________________________ Calculando o Score das empresas __________________________________________________________________________________________
+                    # Inicializar Score_Ajustado
+                    df_empresas['Score_Ajustado'] = 0.0
+                
                     for col, config in indicadores_score_ajustados.items():
                         if col not in df_empresas.columns:
+                            st.warning(f"A coluna '{col}' não existe em df_empresas e será ignorada.")
+                            df_empresas[col] = 0.0  # Criar coluna com valor 0
+                            df_empresas[col + '_norm'] = 0.0  # Criar versão normalizada
                             continue
-                        df_empresas[col] = winsorize(df_empresas[col])  # Aplicando Winsorize para suavizar outliers
-                        df_empresas[col + '_norm'] = z_score_normalize(df_empresas[col], config['melhor_alto'])
-                        df_empresas['Score_Ajustado'] += df_empresas[col + '_norm'] * config['peso']
-                        df_empresas['Rank_Ajustado'] = df_empresas['Score_Ajustado'].rank(method='dense', ascending=False)
-                    return df_empresas
-                                                                                  
-                # Determinando o SCORE das empresas
-                df_empresas = calcular_score(df_empresas)
-                               
-                # Rank dentro do segmento ____________________________________________________________________________________________________________
-                df_empresas.loc[idx, 'RankNoSegmento'] = df_empresas.loc[idx, 'Score'] \
-                                                         .rank(method='dense', ascending=False)
-
-                # Ordenar resultado ________________________________________________________________________________________________________________________
-                df_empresas.sort_values(['Segmento','Score'], ascending=[True,False], inplace=True)
                 
-                st.markdown("### Ranking de Empresas (Score Simplificado)")
+                        # Aplicar Winsorize para suavizar outliers
+                        df_empresas[col] = winsorize(df_empresas[col])
+                
+                        # Criar coluna normalizada
+                        df_empresas[col + '_norm'] = z_score_normalize(df_empresas[col], config['melhor_alto'])
+                
+                        # Se a normalização falhar, criar a coluna `_norm`
+                        if col + '_norm' not in df_empresas.columns:
+                            st.error(f"Erro ao criar '{col}_norm'. Criando com valor padrão.")
+                            df_empresas[col + '_norm'] = 0.0
+                
+                        # Somar ao Score Ajustado
+                        df_empresas['Score_Ajustado'] += df_empresas[col + '_norm'] * config['peso']
+                
+                    # Criar ranking dentro do segmento
+                    df_empresas['Rank_Ajustado'] = df_empresas['Score_Ajustado'].rank(method='dense', ascending=False)
+                
+                    return df_empresas
+                    
+                df_empresas = calcular_score(df_empresas, indicadores_score_ajustados)
+
+                # Ordenar resultado pelo Score Ajustado
+                df_empresas.sort_values(['Segmento', 'Score_Ajustado'], ascending=[True, False], inplace=True)
+                
+                # Exibir Ranking de Empresas
+                st.markdown("### Ranking de Empresas (Score Ajustado)")
                 colunas_layout = st.columns(3)
                 
                 for idx, row in enumerate(df_empresas.itertuples()):
                     col = colunas_layout[idx % len(colunas_layout)]
                     with col:
-                        # Se houver função get_logo_url:
                         logo_url = get_logo_url(row.ticker)
                         col_logo, col_texto = st.columns([1, 3])
-                        
+                
                         with col_logo:
                             st.image(logo_url, width=50)
-                        
+                
                         with col_texto:
                             st.markdown(f"""
                                 <div style="font-size: 16px; font-weight: bold; color: #333; margin-bottom: 5px;">
                                     {row.nome_empresa} ({row.ticker})
                                 </div>
                                 <div style="font-size: 14px; color: #555;">
-                                    Score: <span style="color: green; font-weight: bold;">{row.Score:.2f}</span>
+                                    Score: <span style="color: green; font-weight: bold;">{row.Score_Ajustado:.2f}</span>
                                     <br/>
-                                    Rank: {int(row.RankNoSegmento)}
+                                    Rank: {int(row.Rank_Ajustado)}
                                 </div>
                             """, unsafe_allow_html=True)
+                 
                 
                 # (Opcional) exibir df_empresas em modo tabela
                 #st.dataframe(df_empresas)
