@@ -1285,7 +1285,6 @@ if pagina == "Avançada": #_____________________________________________________
                         'Segmento': row['SEGMENTO']
                     }
                     data_emp.update(metrics_dict)
-                    st.dataframe(data_emp)
                     resultados.append(data_emp)   
                     
                 if not resultados:
@@ -1327,7 +1326,7 @@ if pagina == "Avançada": #_____________________________________________________
                     for col, config in indicadores_score_ajustados.items():
                         if col not in df_empresas.columns:
                             continue
-                        
+                        st.dataframe(df_empresas) 
                         # Passo 1: Winsorize p/ evitar outliers _________________________________________________________________________________________
                         df_empresas.loc[idx, col] = winsorize(df_empresas.loc[idx, col])
                                    
