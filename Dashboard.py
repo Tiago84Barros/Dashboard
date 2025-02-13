@@ -1338,8 +1338,7 @@ if pagina == "Avançada": #_____________________________________________________
                         
                      # Determinando o SCORE das empresas
                     df_empresas = calcular_score(df_empresas)
-                    st.dataframe(df_empresas)
-                
+                                   
                     # Rank dentro do segmento ____________________________________________________________________________________________________________
                     df_empresas.loc[idx, 'RankNoSegmento'] = df_empresas.loc[idx, 'Score'] \
                                                              .rank(method='dense', ascending=False)
