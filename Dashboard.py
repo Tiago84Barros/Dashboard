@@ -1134,14 +1134,50 @@ if pagina == "Avançada": #_____________________________________________________
         Retorna a média e o desvio padrão da coluna `col` do DataFrame `df`.
         Remove valores nulos e infinitos antes do cálculo.
         """
-        df_valid = df.dropna(subset=[col])  # Remove valores NaN
-        df_valid = df_valid[pd.to_numeric(df_valid[col], errors='coerce').notna()]  # Garante que os dados são numéricos
-        df_valid = df_valid[np.isfinite(df_valid[col])]  # Remove valores infinitos
-        
-        if df_valid.empty:
-            return (0.0, 0.0)
-        
-        return (df_valid[col].mean(), df_valid[col].std())
+        st.subheader(f"🚀 Depuração: Analisando a coluna `{col}`")
+
+    # Exibir os primeiros valores da coluna
+    st.write("📌 **Amostra inicial da coluna**")
+    st.write(df[col].head(10))  # Mostra os primeiros 10 valores
+
+    # Exibir tipo de dados
+    st.write("📌 **Tipo de dado original**:", df[col].dtype)
+
+    # Exibir valores únicos (até 20, para evitar sobrecarga)
+    st.write("📌 **Valores únicos (amostra de até 20 valores)**")
+    st.write(df[col].unique()[:20])
+
+    # Remover valores NaN
+    df_valid = df.dropna(subset=[col])
+    st.write("📌 **Após remoção de NaN:**", df_valid.shape)
+
+    # Converter para numérico
+    df_valid[col] = pd.to_numeric(df_valid[col], errors='coerce')
+    st.write("📌 **Após conversão para numérico:**", df_valid.shape)
+
+    # Exibir valores NaN gerados pela conversão
+    st.write("📌 **Valores NaN gerados na conversão:**", df_valid[col].isna().sum())
+
+    # Remover valores NaN novamente
+    df_valid = df_valid.dropna(subset=[col])
+    st.write("📌 **Após remover NaN gerados na conversão:**", df_valid.shape)
+
+    # Remover valores infinitos
+    df_valid = df_valid[np.isfinite(df_valid[col])]
+    st.write("📌 **Após remover valores infinitos:**", df_valid.shape)
+
+    # Caso o DataFrame fique vazio após os tratamentos
+    if df_valid.empty:
+        st.warning("⚠️ Nenhum dado válido restante após limpeza!")
+        return (0.0, 0.0)
+
+    # Calcular e exibir estatísticas finais
+    media = df_valid[col].mean()
+    std = df_valid[col].std()
+
+    st.write(f"✅ **Média Final:** {media}")
+    st.write(f"✅ **Desvio Padrão Final:** {std}")
+
     
     def winsorize(series, lower_quantile=0.05, upper_quantile=0.95): # Retira valores que distoam muito dos valores médios e podem comprometer os cálculos causando distorções ____________
         """
