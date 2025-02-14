@@ -1584,5 +1584,65 @@ if pagina == "Avançada": #_____________________________________________________
                 
                 else:
                     st.warning("Não há dados disponíveis para as empresas selecionadas nas Demonstrações Financeiras.")
-          
+
+                def gerar_resumo_melhor_empresa(df_empresas):
+                    """
+                    Gera um resumo da melhor empresa ranqueada em relação à média do mercado.
+                    """
+                
+                    if df_empresas.empty:
+                        st.warning("O DataFrame de empresas está vazio. Não há dados para gerar o resumo.")
+                        return
+                    
+                    # Identificar a melhor empresa (aquela com Rank_Ajustado == 1)
+                    melhor_empresa = df_empresas[df_empresas["Rank_Ajustado"] == 1]
+                    
+                    if melhor_empresa.empty:
+                        st.warning("Nenhuma empresa está ranqueada como a melhor. Verifique os dados.")
+                        return
+                    
+                    melhor_empresa = melhor_empresa.iloc[0]  # Pegamos a primeira entrada (caso haja empates)
+                
+                    # Calcular a média do mercado para comparação
+                    colunas_metricas = [
+                        "Margem_Liquida_mean", "ROE_mean", "ROIC_mean", 
+                        "P/VP_mean", "Endividamento_Total_mean", "Liquidez_Corrente_mean",
+                        "Receita_Liquida_slope_log", "Lucro_Liquido_slope_log"
+                    ]
+                    
+                    df_mercado = df_empresas[colunas_metricas].mean()
+                
+                    # Gerar texto do resumo
+                    st.subheader(f"📊 Resumo de Desempenho: {melhor_empresa['nome_empresa']} ({melhor_empresa['ticker']})")
+                
+                    st.write(f"""
+                    **A empresa melhor ranqueada no segmento é** `{melhor_empresa['nome_empresa']} ({melhor_empresa['ticker']})`.  
+                    Essa empresa se destaca em relação à média do mercado pelos seguintes fatores:
+                    """)
+                
+                    for col in colunas_metricas:
+                        valor_empresa = melhor_empresa[col]
+                        media_mercado = df_mercado[col]
+                        diff = (valor_empresa - media_mercado) / media_mercado * 100 if media_mercado != 0 else 0
+                        
+                        emoji = "📈" if diff > 0 else "📉"
+                        st.write(f"- {emoji} **{col.replace('_mean', '').replace('_slope_log', '')}:** {valor_empresa:.2f} (Mercado: {media_mercado:.2f}, Diferença: {diff:.1f}%)")
+                
+                    # Criando um gráfico comparativo
+                    df_comparacao = pd.DataFrame({
+                        "Indicador": colunas_metricas,
+                        "Melhor Empresa": [melhor_empresa[col] for col in colunas_metricas],
+                        "Média do Mercado": [df_mercado[col] for col in colunas_metricas]
+                    })
+                
+                    fig = px.bar(
+                        df_comparacao.melt(id_vars="Indicador", var_name="Categoria", value_name="Valor"),
+                        x="Indicador",
+                        y="Valor",
+                        color="Categoria",
+                        barmode="group",
+                        title=f"📊 Comparação: {melhor_empresa['nome_empresa']} vs. Média do Mercado"
+                    )
+                
+                    st.plotly_chart(fig, use_container_width=True)          
               
