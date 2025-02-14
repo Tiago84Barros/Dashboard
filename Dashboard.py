@@ -1128,55 +1128,82 @@ if pagina == "Avançada": #_____________________________________________________
         Ex.: se slope=0.07, growth ~ e^0.07 - 1 ~ 7.25%
         """
         return np.exp(slope) - 1
-    
+
+
     def calcular_media_e_std(df, col):
         """
         Retorna a média e o desvio padrão da coluna `col` do DataFrame `df`.
-        Remove valores nulos e infinitos antes do cálculo.
+        Remove valores nulos e infinitos antes do cálculo e exibe informações
+        de depuração via Streamlit.
         """
+    
         st.subheader(f"🚀 Depuração: Analisando a coluna `{col}`")
-
-        # Exibir os primeiros valores da coluna
+    
+        # 1️⃣ Verificando se a coluna existe
+        if col not in df.columns:
+            st.error(f"⚠️ A coluna `{col}` não existe no DataFrame!")
+            return (0.0, 0.0)
+    
+        # 2️⃣ Exibir os primeiros valores da coluna
         st.write("📌 **Amostra inicial da coluna**")
-        st.write(df[col].head(10))  # Mostra os primeiros 10 valores
+        st.write(df[[col]].head(10))  # Mostra os primeiros 10 valores
     
-        # Exibir tipo de dados
-        st.write("📌 **Tipo de dado original**:", df[col].dtype)
+        # 3️⃣ Exibir tipo de dados da coluna
+        st.write("📌 **Tipo de dado original:**", df[col].dtype)
     
-        # Exibir valores únicos (até 20, para evitar sobrecarga)
-        st.write("📌 **Valores únicos (amostra de até 20 valores)**")
+        # 4️⃣ Exibir valores únicos (até 20 valores para evitar sobrecarga)
+        st.write("📌 **Valores únicos (amostra de até 20 valores):**")
         st.write(df[col].unique()[:20])
     
-        # Remover valores NaN
+        # 5️⃣ Removendo valores NaN
         df_valid = df.dropna(subset=[col])
         st.write("📌 **Após remoção de NaN:**", df_valid.shape)
     
-        # Converter para numérico
+        # 6️⃣ Convertendo a coluna para numérico, tratando erros
         df_valid[col] = pd.to_numeric(df_valid[col], errors='coerce')
         st.write("📌 **Após conversão para numérico:**", df_valid.shape)
     
-        # Exibir valores NaN gerados pela conversão
-        st.write("📌 **Valores NaN gerados na conversão:**", df_valid[col].isna().sum())
+        # 7️⃣ Verificando quantos valores se tornaram NaN após conversão
+        nan_count = df_valid[col].isna().sum()
+        st.write(f"📌 **Valores NaN gerados na conversão:** {nan_count}")
     
-        # Remover valores NaN novamente
+        # 8️⃣ Removendo valores NaN novamente
         df_valid = df_valid.dropna(subset=[col])
         st.write("📌 **Após remover NaN gerados na conversão:**", df_valid.shape)
     
-        # Remover valores infinitos
+        # 9️⃣ Removendo valores infinitos
         df_valid = df_valid[np.isfinite(df_valid[col])]
         st.write("📌 **Após remover valores infinitos:**", df_valid.shape)
     
-        # Caso o DataFrame fique vazio após os tratamentos
+        # 🔟 Caso o DataFrame fique vazio após os tratamentos
         if df_valid.empty:
             st.warning("⚠️ Nenhum dado válido restante após limpeza!")
             return (0.0, 0.0)
     
-        # Calcular e exibir estatísticas finais
+        # 🔥 11️⃣ Calcular e exibir estatísticas finais
         media = df_valid[col].mean()
         std = df_valid[col].std()
     
         st.write(f"✅ **Média Final:** {media}")
         st.write(f"✅ **Desvio Padrão Final:** {std}")
+    
+        return (media, std)
+    
+    # Simulando um DataFrame com possíveis problemas
+    df_exemplo = pd.DataFrame({
+        "Receita_Liquida": [1000, 2000, np.nan, "erro", 5000, np.inf, -np.inf, 7000]
+    })
+    
+    # Criando a interface no Streamlit
+    st.title("🔍 Depuração da Função `calcular_media_e_std`")
+    
+    # Chamando a função e exibindo os resultados no Streamlit
+    coluna_analisada = "Receita_Liquida"
+    media, std = calcular_media_e_std(df_exemplo, coluna_analisada)
+    
+    st.subheader("🎯 Resultado Final")
+    st.write(f"📊 Média: {media}")
+    st.write(f"📊 Desvio Padrão: {std}")
 
     
     def winsorize(series, lower_quantile=0.05, upper_quantile=0.95): # Retira valores que distoam muito dos valores médios e podem comprometer os cálculos causando distorções ____________
