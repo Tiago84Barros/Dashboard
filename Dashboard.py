@@ -1166,24 +1166,8 @@ if pagina == "Avançada": #_____________________________________________________
         std = df_valid[col].std()
           
         return (media, std)
-    
-    # Simulando um DataFrame com possíveis problemas
-    df_exemplo = pd.DataFrame({
-        "Receita_Liquida": [1000, 2000, np.nan, "erro", 5000, np.inf, -np.inf, 7000]
-    })
-    
-    # Criando a interface no Streamlit
-    st.title("🔍 Depuração da Função `calcular_media_e_std`")
-    
-    # Chamando a função e exibindo os resultados no Streamlit
-    coluna_analisada = "Receita_Liquida"
-    media, std = calcular_media_e_std(df_exemplo, coluna_analisada)
-    
-    st.subheader("🎯 Resultado Final")
-    st.write(f"📊 Média: {media}")
-    st.write(f"📊 Desvio Padrão: {std}")
 
-    
+      
     def winsorize(series, lower_quantile=0.05, upper_quantile=0.95): # Retira valores que distoam muito dos valores médios e podem comprometer os cálculos causando distorções ____________
         """
         Trunca outliers abaixo do 5º percentil e acima do 95º percentil.
