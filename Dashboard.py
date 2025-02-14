@@ -1135,58 +1135,36 @@ if pagina == "Avançada": #_____________________________________________________
         Retorna a média e o desvio padrão da coluna `col` do DataFrame `df`.
         Remove valores nulos e infinitos antes do cálculo e exibe informações
         de depuração via Streamlit.
-        """
-    
-        st.subheader(f"🚀 Depuração: Analisando a coluna `{col}`")
-    
+        """   
+        
         # 1️⃣ Verificando se a coluna existe
         if col not in df.columns:
             st.error(f"⚠️ A coluna `{col}` não existe no DataFrame!")
             return (0.0, 0.0)
     
-        # 2️⃣ Exibir os primeiros valores da coluna
-        st.write("📌 **Amostra inicial da coluna**")
-        st.write(df[[col]].head(10))  # Mostra os primeiros 10 valores
-    
-        # 3️⃣ Exibir tipo de dados da coluna
-        st.write("📌 **Tipo de dado original:**", df[col].dtype)
-    
-        # 4️⃣ Exibir valores únicos (até 20 valores para evitar sobrecarga)
-        st.write("📌 **Valores únicos (amostra de até 20 valores):**")
-        st.write(df[col].unique()[:20])
-    
         # 5️⃣ Removendo valores NaN
         df_valid = df.dropna(subset=[col])
-        st.write("📌 **Após remoção de NaN:**", df_valid.shape)
-    
+      
         # 6️⃣ Convertendo a coluna para numérico, tratando erros
         df_valid[col] = pd.to_numeric(df_valid[col], errors='coerce')
-        st.write("📌 **Após conversão para numérico:**", df_valid.shape)
     
         # 7️⃣ Verificando quantos valores se tornaram NaN após conversão
         nan_count = df_valid[col].isna().sum()
-        st.write(f"📌 **Valores NaN gerados na conversão:** {nan_count}")
     
         # 8️⃣ Removendo valores NaN novamente
         df_valid = df_valid.dropna(subset=[col])
-        st.write("📌 **Após remover NaN gerados na conversão:**", df_valid.shape)
     
         # 9️⃣ Removendo valores infinitos
         df_valid = df_valid[np.isfinite(df_valid[col])]
-        st.write("📌 **Após remover valores infinitos:**", df_valid.shape)
     
         # 🔟 Caso o DataFrame fique vazio após os tratamentos
         if df_valid.empty:
-            st.warning("⚠️ Nenhum dado válido restante após limpeza!")
             return (0.0, 0.0)
     
         # 🔥 11️⃣ Calcular e exibir estatísticas finais
         media = df_valid[col].mean()
         std = df_valid[col].std()
-    
-        st.write(f"✅ **Média Final:** {media}")
-        st.write(f"✅ **Desvio Padrão Final:** {std}")
-    
+          
         return (media, std)
     
     # Simulando um DataFrame com possíveis problemas
