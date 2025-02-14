@@ -1585,7 +1585,7 @@ if pagina == "Avançada": #_____________________________________________________
                 else:
                     st.warning("Não há dados disponíveis para as empresas selecionadas nas Demonstrações Financeiras.")
 
-                def gerar_resumo_melhor_empresa(df_empresas):
+                def gerar_resumo_melhor_empresa(df_empresas): _____________________________________ Resumo de desempenho da melhor ranqueada___________________________________________________
                     """
                     Gera um resumo da melhor empresa ranqueada em relação à média do mercado.
                     """
@@ -1645,4 +1645,6 @@ if pagina == "Avançada": #_____________________________________________________
                     )
                 
                     st.plotly_chart(fig, use_container_width=True)          
-              
+
+                gerar_resumo_melhor_empresa(df_empresas)
+
