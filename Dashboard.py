@@ -1255,9 +1255,6 @@ if pagina == "Avançada": #_____________________________________________________
                     if df_dre is None or df_dre.empty:
                         continue
 
-                    st.dataframe(multiplos)
-                    st.dataframe(df_dre)
-
                     # **Remover outliers antes de calcular métricas** __________________________________________________________________________________
                     colunas_para_filtrar = ['Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida', 
                                             'Divida_Total', 'Passivo_Circulante', 'Liquidez_Corrente', 
