@@ -1678,3 +1678,83 @@ if pagina == "Avançada": #_____________________________________________________
                     anos = (ibov.index[-1] - ibov.index[0]).days / 365
                     retorno_ibov_anual = (ibov["Retorno_Acumulado"].iloc[-1] ** (1 / anos)) - 1
                     st.write(f"🎯 **Retorno Anualizado do IBOVESPA:** {retorno_ibov_anual:.2%}")
+
+ #================================================================================= USANDO A EMPRESA LIDER, IBOV, E AS EMPRESAS CONCORRENTES ===========================================================
+                    # 🏆 SELECIONANDO EMPRESAS LÍDERES POR SEGMENTO 🏆
+                    # Filtrando a melhor empresa de cada segmento (Rank 1)
+                    df_lideres = df_empresas[df_empresas["Rank_Ajustado"] == 1]
+                    
+                    # Calculando o retorno médio das líderes setoriais
+                    retorno_lideres_medio = df_lideres["Retorno_12M"].mean()
+                    
+                    # 🔹 BAIXANDO DADOS DO IBOVESPA 🔹
+                    st.subheader("📈 Dados Históricos do IBOVESPA")
+                    ibov = yf.download("^BVSP", start="2020-01-01", end="2024-01-01")
+                    
+                    if ibov.empty:
+                        st.error("❌ Erro: Não foi possível obter dados do IBOVESPA.")
+                    else:
+                        # Calculando retornos do IBOV usando apenas o fechamento
+                        ibov["Retorno_Diario"] = ibov["Close"].pct_change()
+                        ibov["Retorno_Acumulado"] = (1 + ibov["Retorno_Diario"]).cumprod()
+                    
+                        # 📊 Gráfico da performance do IBOVESPA
+                        st.subheader("📊 Performance Histórica do IBOVESPA (Base: Fechamento)")
+                        
+                        fig, ax = plt.subplots(figsize=(10, 5))
+                        ax.plot(ibov.index, ibov["Retorno_Acumulado"], label="IBOVESPA", color="blue")
+                        ax.set_title("Evolução do IBOVESPA (Preço de Fechamento)")
+                        ax.set_xlabel("Data")
+                        ax.set_ylabel("Retorno Acumulado")
+                        ax.legend()
+                        st.pyplot(fig)
+                    
+                        # Calculando o retorno anualizado do IBOVESPA
+                        anos = (ibov.index[-1] - ibov.index[0]).days / 365
+                        retorno_ibov_anual = (ibov["Retorno_Acumulado"].iloc[-1] ** (1 / anos)) - 1
+                    
+                        # 🔹 Comparação de Retorno das Líderes vs IBOVESPA 🔹
+                        st.subheader("📊 Comparação de Retorno: Líderes Setoriais vs. IBOVESPA")
+                        st.write(f"🚀 **Retorno Médio das Líderes Setoriais:** {retorno_lideres_medio:.2%}")
+                        st.write(f"📊 **Retorno Anualizado do IBOVESPA:** {retorno_ibov_anual:.2%}")
+                    
+                        # 📊 Criando gráfico comparativo
+                        fig, ax = plt.subplots(figsize=(8, 5))
+                        categorias = ["Líderes Setoriais", "IBOVESPA"]
+                        valores = [retorno_lideres_medio, retorno_ibov_anual]
+                    
+                        ax.bar(categorias, valores, color=["green", "blue"])
+                        ax.set_xlabel("Grupo")
+                        ax.set_ylabel("Retorno (%)")
+                        ax.set_title("📊 Retorno das Empresas Líderes vs. IBOVESPA")
+                    
+                        st.pyplot(fig)
+                    
+                        # 🔹 COMPARAÇÃO DAS LÍDERES COM CONCORRENTES 🔹
+                        st.subheader("📌 Comparação Líderes vs. Concorrentes")
+                    
+                        for segmento in df_lideres["Segmento"].unique():
+                            lider = df_lideres[df_lideres["Segmento"] == segmento].iloc[0]  # Pegamos a líder do segmento
+                            concorrentes = df_empresas[(df_empresas["Segmento"] == segmento) & (df_empresas["Rank_Ajustado"] != 1)]
+                    
+                            if concorrentes.empty:
+                                st.write(f"⚠️ Não há concorrentes disponíveis para `{lider['nome_empresa']}` no segmento {segmento}.")
+                                continue
+                    
+                            # Calculando o retorno médio dos concorrentes do segmento
+                            retorno_concorrentes = concorrentes["Retorno_12M"].mean()
+                    
+                            # Criando gráfico comparativo
+                            fig, ax = plt.subplots(figsize=(8, 5))
+                            categorias = [lider["nome_empresa"], "Concorrentes"]
+                            valores = [lider["Retorno_12M"], retorno_concorrentes]
+                    
+                            ax.bar(categorias, valores, color=["gold", "red"])
+                            ax.set_xlabel("Empresa/Grupo")
+                            ax.set_ylabel("Retorno (%)")
+                            ax.set_title(f"📊 Comparação no Segmento {segmento}")
+                    
+                            st.write(f"📊 **{segmento}** - Comparação entre `{lider['nome_empresa']}` e concorrentes")
+                            st.write(f"🏆 **{lider['nome_empresa']} Retorno:** {lider['Retorno_12M']:.2%}")
+                            st.write(f"📉 **Concorrentes Médios:** {retorno_concorrentes:.2%}")
+                            st.pyplot(fig)
