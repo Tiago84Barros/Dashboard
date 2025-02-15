@@ -1650,25 +1650,30 @@ if pagina == "Avançada": #_____________________________________________________
 
            # ============================================= CRIANDO UM BENCHMARK PARA TESTAR SE O SCORE DA EMPRESA ESCOLHIDA REALMENTE SUPERA O IBOVESPA ===============================================
  
-                # Baixando dados históricos do IBOVESPA (índice "^BVSP" no Yahoo Finance)
+                # Baixando os dados do IBOVESPA usando apenas o preço de fechamento
+                st.subheader("📈 Dados Históricos do IBOVESPA")
+                
                 ibov = yf.download("^BVSP", start="2020-01-01", end="2024-01-01")
                 
-                # Calculando os retornos diários do IBOV
-                ibov["Retorno_Diario"] = ibov["Adj Close"].pct_change()
+                # Verificar se os dados foram baixados corretamente
+                if ibov.empty:
+                    st.error("❌ Erro: Não foi possível obter dados do IBOVESPA. Verifique a conexão ou o ticker.")
+                else:
+                    # Utilizando apenas o preço de fechamento para cálculos
+                    ibov["Retorno_Diario"] = ibov["Close"].pct_change()
+                    ibov["Retorno_Acumulado"] = (1 + ibov["Retorno_Diario"]).cumprod()
                 
-                # Calculando o retorno acumulado anual
-                ibov["Retorno_Acumulado"] = (1 + ibov["Retorno_Diario"]).cumprod()
+                    # Exibir gráfico da evolução do IBOVESPA
+                    st.subheader("📊 Performance Histórica do IBOVESPA (Base: Fechamento)")
+                    fig, ax = plt.subplots(figsize=(10, 5))
+                    ax.plot(ibov.index, ibov["Retorno_Acumulado"], label="IBOVESPA", color="blue")
+                    ax.set_title("Evolução do IBOVESPA (Preço de Fechamento)")
+                    ax.set_xlabel("Data")
+                    ax.set_ylabel("Retorno Acumulado")
+                    ax.legend()
+                    st.pyplot(fig)
                 
-                # Exibindo no Streamlit
-                st.subheader("📊 Performance Histórica do IBOVESPA")
-                fig, ax = plt.subplots(figsize=(10, 5))
-                ax.plot(ibov.index, ibov["Retorno_Acumulado"], label="IBOVESPA", color="blue")
-                ax.set_title("Evolução do IBOVESPA")
-                ax.set_xlabel("Data")
-                ax.set_ylabel("Retorno Acumulado")
-                ax.legend()
-                st.pyplot(fig)
-                
-                # Último retorno anualizado do IBOVESPA
-                retorno_ibov_anual = (ibov["Retorno_Acumulado"].iloc[-1] ** (1 / (len(ibov) / 252))) - 1
-                st.write(f"🎯 **Retorno Anualizado do IBOVESPA:** {retorno_ibov_anual:.2%}")
+                    # Calculando o retorno anualizado do IBOVESPA
+                    anos = (ibov.index[-1] - ibov.index[0]).days / 365
+                    retorno_ibov_anual = (ibov["Retorno_Acumulado"].iloc[-1] ** (1 / anos)) - 1
+                    st.write(f"🎯 **Retorno Anualizado do IBOVESPA:** {retorno_ibov_anual:.2%}")
