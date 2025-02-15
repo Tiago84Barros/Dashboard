@@ -1648,3 +1648,27 @@ if pagina == "Avançada": #_____________________________________________________
 
                 gerar_resumo_melhor_empresa(df_empresas)
 
+           # ============================================= CRIANDO UM BENCHMARK PARA TESTAR SE O SCORE DA EMPRESA ESCOLHIDA REALMENTE SUPERA O IBOVESPA ===============================================
+ 
+                # Baixando dados históricos do IBOVESPA (índice "^BVSP" no Yahoo Finance)
+                ibov = yf.download("^BVSP", start="2020-01-01", end="2024-01-01")
+                
+                # Calculando os retornos diários do IBOV
+                ibov["Retorno_Diario"] = ibov["Adj Close"].pct_change()
+                
+                # Calculando o retorno acumulado anual
+                ibov["Retorno_Acumulado"] = (1 + ibov["Retorno_Diario"]).cumprod()
+                
+                # Exibindo no Streamlit
+                st.subheader("📊 Performance Histórica do IBOVESPA")
+                fig, ax = plt.subplots(figsize=(10, 5))
+                ax.plot(ibov.index, ibov["Retorno_Acumulado"], label="IBOVESPA", color="blue")
+                ax.set_title("Evolução do IBOVESPA")
+                ax.set_xlabel("Data")
+                ax.set_ylabel("Retorno Acumulado")
+                ax.legend()
+                st.pyplot(fig)
+                
+                # Último retorno anualizado do IBOVESPA
+                retorno_ibov_anual = (ibov["Retorno_Acumulado"].iloc[-1] ** (1 / (len(ibov) / 252))) - 1
+                st.write(f"🎯 **Retorno Anualizado do IBOVESPA:** {retorno_ibov_anual:.2%}")
