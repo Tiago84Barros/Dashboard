@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 import plotly.express as px
+import matplotlib.pyplot as plt
 import yfinance as yf
 from sklearn.linear_model import LinearRegression
 import numpy as np
