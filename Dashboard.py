@@ -1694,6 +1694,7 @@ if pagina == "Avançada": #_____________________________________________________
             
                 # ✅ OBTENDO OS TICKERS PARA DOWNLOAD NO YAHOO FINANCE
                 tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()
+                tickers = [ticker + ".SA" if not ticker.endswith(".SA") else ticker for ticker in tickers]
                 
                 # 🔹 1. BAIXANDO DADOS DO IBOVESPA E EMPRESAS
                 st.write(f"📈 Baixando dados para `{lider['nome_empresa']}` e concorrentes...")
@@ -1704,7 +1705,7 @@ if pagina == "Avançada": #_____________________________________________________
                     continue
             
                 try:
-                    precos = yf.download(tickers + ".SA", start="2020-01-01", end="2024-01-01")["Close"]
+                    precos = yf.download(tickers, start="2020-01-01", end="2024-01-01")["Close"]
                 except Exception as e:
                     st.error(f"❌ Erro ao baixar dados das empresas: {e}")
                     continue
