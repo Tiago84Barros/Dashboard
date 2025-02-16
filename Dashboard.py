@@ -1696,15 +1696,14 @@ if pagina == "Avançada": #_____________________________________________________
                 tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()
                 tickers = [ticker + ".SA" if not ticker.endswith(".SA") else ticker for ticker in tickers]
                 
-                # 🔹 1. BAIXANDO DADOS DO IBOVESPA E EMPRESAS
-                st.write(f"📈 Baixando dados para `{lider['nome_empresa']}` e concorrentes...")
+                # 🔹 1. BAIXANDO IBOVESPA
                 try:
                     ibov = yf.download("^BVSP", start="2020-01-01", end="2024-01-01")["Close"]
                 except Exception as e:
-                    st.error(f"❌ Erro ao baixar dados do IBOVESPA: {e}")
+                    st.error(f"❌ Erro ao baixar IBOVESPA: {e}")
                     continue
                                   
-              # 🔹 3. FILTRANDO TICKERS VÁLIDOS (REMOVENDO OS QUE NÃO EXISTEM NO YAHOO)
+                # 🔹 2. FILTRANDO TICKERS VÁLIDOS
                 tickers_validos = []
                 for ticker in tickers:
                     try:
@@ -1714,27 +1713,35 @@ if pagina == "Avançada": #_____________________________________________________
                     except:
                         st.warning(f"⚠️ Dados não disponíveis para {ticker}. Removendo da análise.")
             
-                tickers = tickers_validos  # Usamos apenas os tickers válidos
-                st.dataframe(tickers)
+                tickers = tickers_validos  
                 if not tickers:
                     st.error("❌ Nenhum ticker válido para download!")
                     continue
-            
-                # 🔹 4. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS
+                        
+                # 🔹 3. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS
                 try:
                     precos = yf.download(tickers, start="2020-01-01", end="2024-01-01")["Close"]
                 except Exception as e:
                     st.error(f"❌ Erro ao baixar os preços das empresas: {e}")
                     continue
             
-                # 🔹 5. GARANTIR QUE OS DADOS NÃO ESTÃO VAZIOS
+                # 🔹 4. GARANTIR QUE OS DADOS NÃO ESTÃO VAZIOS
                 if precos.empty:
                     st.error("❌ Nenhum dado foi baixado! Verifique os tickers e a conexão.")
                     continue
+
+                # 🔹 5. TRATANDO O FORMATO DO DATAFRAME
+                if isinstance(precos.columns, pd.MultiIndex):
+                    precos.columns = precos.columns.get_level_values(0)  # Remove MultiIndex se existir
             
-                # 🔹 6. CALCULANDO RETORNOS ACUMULADOS
-                ibov_retorno_acumulado = (ibov / ibov.iloc[0]) - 1
-                precos_retorno_acumulado = (precos / precos.iloc[0]) - 1
+                precos_retorno_acumulado = (precos / precos.iloc[0]) - 1  # Retorno acumulado
+            
+                 # 🔹 6. VERIFICAR SE O TICKER DA LÍDER EXISTE NO DATAFRAME
+                tickers_disponiveis = list(precos_retorno_acumulado.columns)
+                if lider["ticker"] not in tickers_disponiveis:
+                    st.error(f"❌ O ticker `{lider['ticker']}` não foi encontrado nos dados baixados!")
+                    st.write("📌 Tickers disponíveis no DataFrame:", tickers_disponiveis)
+                    continue
             
                 # 🔹 7. GERANDO GRÁFICO COMPARATIVO
                 fig, ax = plt.subplots(figsize=(12, 6))
@@ -1743,6 +1750,7 @@ if pagina == "Avançada": #_____________________________________________________
                 precos_retorno_acumulado.plot(ax=ax, alpha=0.4, linewidth=1, linestyle="--")
             
                 # Plotando IBOVESPA
+                ibov_retorno_acumulado = (ibov / ibov.iloc[0]) - 1
                 ibov_retorno_acumulado.plot(ax=ax, color="black", linestyle="-", linewidth=2, label="IBOVESPA")
             
                 # Destacando a empresa líder
