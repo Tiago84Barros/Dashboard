@@ -1747,4 +1747,37 @@ if pagina == "Avançada": #_____________________________________________________
                 df_retorno = pd.concat([df_retorno, df_ibov], ignore_index=True)
                 
                 st.subheader("📊 Retorno Final das Empresas e IBOVESPA")
-                st.dataframe(df_retorno)
+                # Formatar a coluna "Retorno (%)" para duas casas decimais
+                df_retorno["Retorno (%)"] = df_retorno["Retorno (%)"].apply(lambda x: f"{x:.2f}%")
+                
+                # Construir um HTML estilizado para exibir
+                st.subheader("📊 Retorno Final das Empresas e IBOVESPA")
+                
+                html_content = """
+                <div style='background-color:#f9f9f9; padding:15px; border-radius:10px; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);'>
+                    <h3 style='color:#333; margin-top:0;'>Resumo de Retornos</h3>
+                    <table style='width:100%; border-collapse: collapse;'>
+                        <thead style='background-color:#ddd;'>
+                            <tr>
+                                <th style='padding:8px; text-align:left;'>Ticker</th>
+                                <th style='padding:8px; text-align:left;'>Retorno Acumulado</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                """
+                
+                for idx, row in df_retorno.iterrows():
+                    html_content += f"""
+                    <tr>
+                        <td style='padding:8px; border-bottom:1px solid #ccc;'>{row['Ticker']}</td>
+                        <td style='padding:8px; border-bottom:1px solid #ccc;'>{row['Retorno (%)']}</td>
+                    </tr>
+                    """
+                
+                html_content += """
+                        </tbody>
+                    </table>
+                </div>
+                """
+                
+                st.markdown(html_content, unsafe_allow_html=True)
