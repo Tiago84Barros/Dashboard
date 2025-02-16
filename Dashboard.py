@@ -1649,8 +1649,8 @@ if pagina == "Avançada": #_____________________________________________________
 
                 gerar_resumo_melhor_empresa(df_empresas)
 
-           # ============================================= CRIANDO UM BENCHMARK PARA TESTAR SE O SCORE DA EMPRESA ESCOLHIDA REALMENTE SUPERA O IBOVESPA ===============================================
-           # ============================================= MOSTRANDO O ÍNDICE IBOVESPA NO INTERVALO DE 2020 A 2024 ===========================================================================
+           # ================================ CRIANDO UM BENCHMARK PARA TESTAR SE O SCORE DA EMPRESA ESCOLHIDA REALMENTE SUPERA O IBOVESPA E/OU AS EMPRESAS CONCORRENTES ===============================================
+         
             
             # 📌 VERIFICANDO SE `df_empresas` EXISTE E TEM DADOS
             if 'df_empresas' not in locals() or df_empresas.empty:
