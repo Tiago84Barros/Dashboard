@@ -1707,13 +1707,14 @@ if pagina == "Avançada": #_____________________________________________________
                 for ticker in tickers:
                     try:
                         preco_teste = yf.download(ticker, start="2020-01-01", end="2024-01-01")["Close"]
+                        st.dataframe(preco_teste)
                         if not preco_teste.empty:
                             tickers_validos.append(ticker)
                     except:
                         st.warning(f"⚠️ Dados não disponíveis para {ticker}. Removendo da análise.")
             
                 tickers = tickers_validos  
-                st.dataframe(preco_teste)
+                
                 if not tickers:
                     st.error("❌ Nenhum ticker válido para download!")
                     continue
