@@ -1743,7 +1743,8 @@ if pagina == "Avançada": #_____________________________________________________
                 retorno_ibov_final = ibov_retorno_acumulado.iloc[-1] * 100
             
                 df_retorno = pd.DataFrame({"Ticker": retorno_final.index, "Retorno (%)": retorno_final.values})
-                df_retorno = df_retorno.append({"Ticker": "IBOVESPA", "Retorno (%)": retorno_ibov_final}, ignore_index=True)
+                df_ibov = pd.DataFrame([{"Ticker": "IBOVESPA", "Retorno (%)": retorno_ibov_final}])  
+                df_retorno = pd.concat([df_retorno, df_ibov], ignore_index=True)
                 
                 st.subheader("📊 Retorno Final das Empresas e IBOVESPA")
                 st.dataframe(df_retorno)
