@@ -1741,33 +1741,8 @@ if pagina == "Avançada": #_____________________________________________________
                 # 🔹 8. EXIBIR RETORNOS FINAIS
                 retorno_final = precos_retorno_acumulado.iloc[-1] * 100
                 retorno_ibov_final = ibov_retorno_acumulado.iloc[-1] * 100
+                df_retorno = df_retorno.append({"Ticker": "IBOVESPA", "Retorno (%)": retorno_ibov_final}, ignore_index=True)
+                st.dataframe(df_retorno)
             
-                df_retorno = pd.DataFrame({"Ticker": retorno_final.index, "Retorno (%)": retorno_final.values})
-                df_ibov = pd.DataFrame([{"Ticker": "IBOVESPA", "Retorno (%)": retorno_ibov_final}])  
-                df_retorno = pd.concat([df_retorno, df_ibov], ignore_index=True)
-                
-                st.subheader("📊 Retorno Final das Empresas e IBOVESPA")
-                # Formatar a coluna "Retorno (%)" para duas casas decimais
-                def parse_ibov(value):
-                    """
-                    Extrai apenas o número de algo como:
-                    'Ticker ^BVSP    13.166572\nName: 2023-12-28 00:00:00, dtype: float64'
-                    """
-                    # Converte tudo em string e tenta pegar a última parte
-                    parts = str(value).split()
-                    # parts[-1] provavelmente é 'float64' ou 'dtype:' e não é o que queremos
-                    # parts[-2] pode ser o valor numérico, se o texto for padronizado
-                    # Então é necessário testar:
-                    for p in reversed(parts):
-                        # Tenta converter
-                        try:
-                            return float(p)
-                        except:
-                            continue
-                    return 0.0  # Se nada for encontrado
-            
-            # Aplicar no DataFrame
-            df_retorno["Retorno (%)"] = df_retorno["Retorno (%)"].apply(parse_ibov)
-            
-            # Agora formatar
-            df_retorno["Retorno (%)"] = df_retorno["Retorno (%)"].apply(lambda x: f"{x:.2f}%")
+                     
+                       
