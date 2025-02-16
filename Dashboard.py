@@ -1651,80 +1651,95 @@ if pagina == "Avançada": #_____________________________________________________
 
            # ============================================= CRIANDO UM BENCHMARK PARA TESTAR SE O SCORE DA EMPRESA ESCOLHIDA REALMENTE SUPERA O IBOVESPA ===============================================
            # ============================================= MOSTRANDO O ÍNDICE IBOVESPA NO INTERVALO DE 2020 A 2024 ===========================================================================
-
+            
+            # 📌 VERIFICANDO SE `df_empresas` EXISTE E TEM DADOS
+            if 'df_empresas' not in locals() or df_empresas.empty:
+                st.error("❌ O DataFrame `df_empresas` não está definido ou está vazio!")
+                st.stop()
+            
+            # 📌 VERIFICANDO SE `Rank_Ajustado` EXISTE
+            if "Rank_Ajustado" not in df_empresas.columns:
+                st.error("❌ A coluna `Rank_Ajustado` não existe no DataFrame `df_empresas`. Verifique a estrutura!")
+                st.write("📌 Colunas disponíveis:", df_empresas.columns.tolist())
+                st.stop()
+            
+            # 📌 FILTRANDO EMPRESAS LÍDERES (RANK 1)
+            df_lideres = df_empresas[df_empresas["Rank_Ajustado"] == 1]
+            
+            # 📌 VERIFICANDO SE `df_lideres` ESTÁ VAZIO
+            if df_lideres.empty:
+                st.error("❌ Nenhuma empresa líder encontrada! Verifique os valores de `Rank_Ajustado`.")
+                st.write("📌 Exibindo as 5 primeiras linhas de `df_empresas` para depuração:")
+                st.dataframe(df_empresas.head())  # Mostra os dados disponíveis
+                st.stop()
+            
+            # 📌 VERIFICANDO SE `Segmento` EXISTE EM `df_lideres`
+            if "Segmento" not in df_lideres.columns:
+                st.error("❌ A coluna `Segmento` não existe em `df_lideres`!")
+                st.write("📌 Colunas disponíveis em `df_lideres`:", df_lideres.columns.tolist())
+                st.stop()
+            
+            # 📌 LOOP PARA COMPARAÇÃO ENTRE A LÍDER, CONCORRENTES E IBOVESPA
+            for segmento in df_lideres["Segmento"].unique():
+                st.subheader(f"📊 Comparação no Segmento: {segmento}")
+            
+                # ✅ SELECIONANDO EMPRESA LÍDER
+                lider = df_lideres[df_lideres["Segmento"] == segmento].iloc[0]  
+                concorrentes = df_empresas[(df_empresas["Segmento"] == segmento) & (df_empresas["Rank_Ajustado"] != 1)]
+            
+                if concorrentes.empty:
+                    st.warning(f"⚠️ Não há concorrentes disponíveis para `{lider['nome_empresa']}` no segmento {segmento}.")
+                    continue
+            
+                # ✅ OBTENDO OS TICKERS PARA DOWNLOAD NO YAHOO FINANCE
+                tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()
+            
+                # 🔹 1. BAIXANDO DADOS DO IBOVESPA E EMPRESAS
+                st.write(f"📈 Baixando dados para `{lider['nome_empresa']}` e concorrentes...")
+                try:
+                    ibov = yf.download("^BVSP", start="2020-01-01", end="2024-01-01")["Close"]
+                except Exception as e:
+                    st.error(f"❌ Erro ao baixar dados do IBOVESPA: {e}")
+                    continue
+            
+                try:
+                    precos = yf.download(tickers, start="2020-01-01", end="2024-01-01")["Close"]
+                except Exception as e:
+                    st.error(f"❌ Erro ao baixar dados das empresas: {e}")
+                    continue
+            
+                if ibov.empty or precos.empty:
+                    st.error("❌ Erro: Não foi possível baixar dados suficientes para a análise.")
+                    continue
+            
+                # 🔹 2. CALCULANDO RETORNOS ACUMULADOS
+                ibov_retorno_acumulado = (ibov / ibov.iloc[0]) - 1
+                precos_retorno_acumulado = (precos / precos.iloc[0]) - 1
+            
+                # 🔹 3. GERANDO GRÁFICO COMPARATIVO
+                fig, ax = plt.subplots(figsize=(12, 6))
+            
+                # Plotando concorrentes
+                precos_retorno_acumulado.plot(ax=ax, alpha=0.4, linewidth=1, linestyle="--")
                 
-                # 📌 VERIFICANDO SE `df_lideres` EXISTE E TEM DADOS
-                if 'df_lideres' not in locals() or df_lideres.empty:
-                    st.error("❌ O DataFrame `df_lideres` não está definido ou está vazio!")
-                    st.stop()
+                # Plotando IBOVESPA
+                ibov_retorno_acumulado.plot(ax=ax, color="black", linestyle="-", linewidth=2, label="IBOVESPA")
                 
-                # 📌 VERIFICANDO SE `segmento` EXISTE EM `df_lideres`
-                if "Segmento" not in df_lideres.columns:
-                    st.error("❌ A coluna `Segmento` não existe em `df_lideres`. Verifique a estrutura do DataFrame!")
-                    st.write("📌 Colunas disponíveis:", df_lideres.columns.tolist())
-                    st.stop()
-                
-                # 📌 LOOP PARA CADA SEGMENTO E COMPARAÇÃO COM IBOVESPA
-                for segmento in df_lideres["Segmento"].unique():
-                    st.subheader(f"📊 Comparação no Segmento: {segmento}")
-                
-                    # ✅ SELECIONANDO EMPRESA LÍDER
-                    lider = df_lideres[df_lideres["Segmento"] == segmento].iloc[0]  
-                    concorrentes = df_empresas[(df_empresas["Segmento"] == segmento) & (df_empresas["Rank_Ajustado"] != 1)]
-                
-                    if concorrentes.empty:
-                        st.warning(f"⚠️ Não há concorrentes disponíveis para `{lider['nome_empresa']}` no segmento {segmento}.")
-                        continue
-                
-                    # ✅ OBTENDO OS TICKERS PARA DOWNLOAD NO YAHOO FINANCE
-                    tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()
-                
-                    # 🔹 1. BAIXANDO DADOS DO IBOVESPA E EMPRESAS
-                    st.write(f"📈 Baixando dados para `{lider['nome_empresa']}` e concorrentes...")
-                    try:
-                        ibov = yf.download("^BVSP", start="2020-01-01", end="2024-01-01")["Close"]
-                    except Exception as e:
-                        st.error(f"❌ Erro ao baixar dados do IBOVESPA: {e}")
-                        continue
-                
-                    try:
-                        precos = yf.download(tickers, start="2020-01-01", end="2024-01-01")["Close"]
-                    except Exception as e:
-                        st.error(f"❌ Erro ao baixar dados das empresas: {e}")
-                        continue
-                
-                    if ibov.empty or precos.empty:
-                        st.error("❌ Erro: Não foi possível baixar dados suficientes para a análise.")
-                        continue
-                
-                    # 🔹 2. CALCULANDO RETORNOS ACUMULADOS
-                    ibov_retorno_acumulado = (ibov / ibov.iloc[0]) - 1
-                    precos_retorno_acumulado = (precos / precos.iloc[0]) - 1
-                
-                    # 🔹 3. GERANDO GRÁFICO COMPARATIVO
-                    fig, ax = plt.subplots(figsize=(12, 6))
-                
-                    # Plotando concorrentes
-                    precos_retorno_acumulado.plot(ax=ax, alpha=0.4, linewidth=1, linestyle="--")
-                    
-                    # Plotando IBOVESPA
-                    ibov_retorno_acumulado.plot(ax=ax, color="black", linestyle="-", linewidth=2, label="IBOVESPA")
-                    
-                    # Destacando a empresa líder
-                    precos_retorno_acumulado[lider["ticker"]].plot(ax=ax, color="red", linewidth=2, label=f"{lider['nome_empresa']} (Líder)")
-                
-                    ax.set_title(f"📊 Comparação do Retorno Acumulado no Segmento: {segmento}")
-                    ax.set_xlabel("Data")
-                    ax.set_ylabel("Retorno Acumulado (%)")
-                    ax.legend()
-                    st.pyplot(fig)
-                
-                    # 🔹 4. EXIBINDO O RETORNO FINAL
-                    retorno_final = precos_retorno_acumulado.iloc[-1] * 100
-                    retorno_ibov_final = ibov_retorno_acumulado.iloc[-1] * 100
-                
-                    df_retorno = pd.DataFrame({"Ticker": retorno_final.index, "Retorno (%)": retorno_final.values})
-                    df_retorno = df_retorno.append({"Ticker": "IBOVESPA", "Retorno (%)": retorno_ibov_final}, ignore_index=True)
-                
-                    st.subheader("📊 Retorno Final das Empresas e IBOVESPA")
-                    st.dataframe(df_retorno)
+                # Destacando a empresa líder
+                precos_retorno_acumulado[lider["ticker"]].plot(ax=ax, color="red", linewidth=2, label=f"{lider['nome_empresa']} (Líder)")
+            
+                ax.set_title(f"📊 Comparação do Retorno Acumulado no Segmento: {segmento}")
+                ax.set_xlabel("Data")
+                ax.set_ylabel("Retorno Acumulado (%)")
+                ax.legend()
+                st.pyplot(fig)
+            
+                # 🔹 4. EXIBINDO O RETORNO FINAL
+                retorno_final = precos_retorno_acumulado.iloc[-1] * 100
+                retorno_ibov_final = ibov_retorno_acumulado.iloc[-1] * 100
+            
+                df_retorno = pd.DataFrame({"Ticker": retorno_final.index, "Retorno (%)": retorno_final.values})
+                df_retorno = df_retorno.append({"Ticker": "IBOVESPA", "Retorno (%)": retorno_ibov_final}, ignore_index=True)
+            
+                st.subheader("📊 Retorno Final das Empresas e IBOVESPA")
+                st.dataframe(df_retorno)
