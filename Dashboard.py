@@ -1714,10 +1714,6 @@ if pagina == "Avançada": #_____________________________________________________
                 if precos.empty:
                     st.error("❌ Nenhum dado foi baixado! Verifique os tickers e a conexão.")
                     continue
-
-                # 🔹 4. TRATANDO O FORMATO DO DATAFRAME
-                if isinstance(precos.columns, pd.MultiIndex):
-                    precos.columns = precos.columns.get_level_values(0)  # Remove MultiIndex se existir
             
                 precos_retorno_acumulado = (precos / precos.iloc[0]) - 1  # Retorno acumulado
                 st.dataframe(precos_retorno_acumulado)
