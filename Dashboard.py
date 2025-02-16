@@ -1716,19 +1716,8 @@ if pagina == "Avançada": #_____________________________________________________
                     continue
             
                 precos_retorno_acumulado = (precos / precos.iloc[0]) - 1  # Retorno acumulado
-                st.dataframe(precos_retorno_acumulado)
                 
-            
-                 # 🔹 6. VERIFICAR SE O TICKER DA LÍDER EXISTE NO DATAFRAME
-                tickers_disponiveis = list(precos_retorno_acumulado.columns)
-                st.dataframe(tickers_disponiveis)
-                
-                if lider["ticker"] not in tickers_disponiveis:
-                    st.dataframe(lider)
-                    st.error(f"❌ O ticker `{lider['ticker']}` não foi encontrado nos dados baixados!")
-                    st.write("📌 Tickers disponíveis no DataFrame:", tickers_disponiveis)
-                    continue
-            
+                       
                 # 🔹 7. GERANDO GRÁFICO COMPARATIVO
                 fig, ax = plt.subplots(figsize=(12, 6))
             
