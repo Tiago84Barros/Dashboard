@@ -1716,6 +1716,7 @@ if pagina == "Avançada": #_____________________________________________________
                     continue
             
                 precos_retorno_acumulado = (precos / precos.iloc[0]) - 1  # Retorno acumulado
+                precos_retorno_acumulado.columns = precos_retorno_acumulado.columns.str.replace(".SA", "", regex=False) # Remove o ".SA" dos tickers
                 
                        
                 # 🔹 7. GERANDO GRÁFICO COMPARATIVO
