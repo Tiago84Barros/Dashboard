@@ -1665,8 +1665,7 @@ if pagina == "Avançada": #_____________________________________________________
             
             # 📌 FILTRANDO EMPRESAS LÍDERES (RANK 1)
             df_lideres = df_empresas[df_empresas["Rank_Ajustado"] == 1]
-            st.dataframe(df_lideres)
-            
+                        
             # 📌 VERIFICANDO SE `df_lideres` ESTÁ VAZIO
             if df_lideres.empty:
                 st.error("❌ Nenhuma empresa líder encontrada! Verifique os valores de `Rank_Ajustado`.")
@@ -1686,6 +1685,7 @@ if pagina == "Avançada": #_____________________________________________________
             
                 # ✅ SELECIONANDO EMPRESA LÍDER
                 lider = df_lideres[df_lideres["Segmento"] == segmento].iloc[0]  
+                st.dataframe(lider)
                 concorrentes = df_empresas[(df_empresas["Segmento"] == segmento) & (df_empresas["Rank_Ajustado"] != 1)]
             
                 if concorrentes.empty:
