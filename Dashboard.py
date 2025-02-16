@@ -1702,24 +1702,25 @@ if pagina == "Avançada": #_____________________________________________________
                     st.error(f"❌ Erro ao baixar IBOVESPA: {e}")
                     continue
                                          
-                # 🔹 3. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS
+                # 🔹 2. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS
                 try:
                     precos = yf.download(tickers, start="2020-01-01", end="2024-01-01")["Close"]
-                    st.dataframe(precos)
+
                 except Exception as e:
                     st.error(f"❌ Erro ao baixar os preços das empresas: {e}")
                     continue
             
-                # 🔹 4. GARANTIR QUE OS DADOS NÃO ESTÃO VAZIOS
+                # 🔹 3. GARANTIR QUE OS DADOS NÃO ESTÃO VAZIOS
                 if precos.empty:
                     st.error("❌ Nenhum dado foi baixado! Verifique os tickers e a conexão.")
                     continue
 
-                # 🔹 5. TRATANDO O FORMATO DO DATAFRAME
+                # 🔹 4. TRATANDO O FORMATO DO DATAFRAME
                 if isinstance(precos.columns, pd.MultiIndex):
                     precos.columns = precos.columns.get_level_values(0)  # Remove MultiIndex se existir
             
                 precos_retorno_acumulado = (precos / precos.iloc[0]) - 1  # Retorno acumulado
+                st.dataframe(precos_retorno_acumulado)
             
                  # 🔹 6. VERIFICAR SE O TICKER DA LÍDER EXISTE NO DATAFRAME
                 tickers_disponiveis = list(precos_retorno_acumulado.columns)
