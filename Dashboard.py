@@ -1665,6 +1665,7 @@ if pagina == "Avançada": #_____________________________________________________
             
             # 📌 FILTRANDO EMPRESAS LÍDERES (RANK 1)
             df_lideres = df_empresas[df_empresas["Rank_Ajustado"] == 1]
+            st.dataframe(df_lideres)
             
             # 📌 VERIFICANDO SE `df_lideres` ESTÁ VAZIO
             if df_lideres.empty:
