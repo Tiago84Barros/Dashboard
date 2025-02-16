@@ -1683,14 +1683,10 @@ if pagina == "Avançada": #_____________________________________________________
             for segmento in df_lideres["Segmento"].unique():
                 st.subheader(f"📊 Comparação no Segmento: {segmento}")
             
-                # ✅ SELECIONANDO EMPRESA LÍDER
-                lider = df_lideres[df_lideres["Segmento"] == segmento].iloc[0]
-                lider_ticker = lider["ticker"]  # Agora já garantido que tem .SA
-                
+                # ✅ SELECIONANDO EMPRESA LÍDER E CONCORRENTES
+                lider = df_lideres[df_lideres["Segmento"] == segmento].iloc[0]                              
                 concorrentes = df_empresas[(df_empresas["Segmento"] == segmento) & (df_empresas["Rank_Ajustado"] != 1)]
-                tickers = [lider_ticker] + concorrentes["ticker"].tolist()
-                tickers = [ticker + ".SA" if not ticker.endswith(".SA") else ticker for ticker in tickers]
-            
+                         
                 if concorrentes.empty:
                     st.warning(f"⚠️ Não há concorrentes disponíveis para `{lider['nome_empresa']}` no segmento {segmento}.")
                     continue
@@ -1698,6 +1694,7 @@ if pagina == "Avançada": #_____________________________________________________
                 # ✅ OBTENDO OS TICKERS PARA DOWNLOAD NO YAHOO FINANCE
                 tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()
                 tickers = [ticker + ".SA" if not ticker.endswith(".SA") else ticker for ticker in tickers]
+                st.dataframe(tickers)
                 
                 # 🔹 1. BAIXANDO IBOVESPA
                 try:
