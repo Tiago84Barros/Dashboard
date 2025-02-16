@@ -1685,7 +1685,7 @@ if pagina == "Avançada": #_____________________________________________________
             
                 # ✅ SELECIONANDO EMPRESA LÍDER
                 lider = df_lideres[df_lideres["Segmento"] == segmento].iloc[0]  
-                st.dataframe(lider)
+                
                 concorrentes = df_empresas[(df_empresas["Segmento"] == segmento) & (df_empresas["Rank_Ajustado"] != 1)]
             
                 if concorrentes.empty:
@@ -1694,7 +1694,7 @@ if pagina == "Avançada": #_____________________________________________________
             
                 # ✅ OBTENDO OS TICKERS PARA DOWNLOAD NO YAHOO FINANCE
                 tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()
-            
+                st.dataframe(tickers)
                 # 🔹 1. BAIXANDO DADOS DO IBOVESPA E EMPRESAS
                 st.write(f"📈 Baixando dados para `{lider['nome_empresa']}` e concorrentes...")
                 try:
