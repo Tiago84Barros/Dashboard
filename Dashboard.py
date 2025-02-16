@@ -1650,7 +1650,9 @@ if pagina == "Avançada": #_____________________________________________________
                 gerar_resumo_melhor_empresa(df_empresas)
 
            # ============================================= CRIANDO UM BENCHMARK PARA TESTAR SE O SCORE DA EMPRESA ESCOLHIDA REALMENTE SUPERA O IBOVESPA ===============================================
- 
+           # ============================================= MOSTRANDO O ÍNDICE IBOVESPA NO INTERVALO DE 2020 A 2024 ===========================================================================
+
+                
                 # Baixando os dados do IBOVESPA usando apenas o preço de fechamento
                 st.subheader("📈 Dados Históricos do IBOVESPA")
                 
@@ -1683,6 +1685,7 @@ if pagina == "Avançada": #_____________________________________________________
                     # 🏆 SELECIONANDO EMPRESAS LÍDERES POR SEGMENTO 🏆
                     # Filtrando a melhor empresa de cada segmento (Rank 1)
                     df_lideres = df_empresas[df_empresas["Rank_Ajustado"] == 1]
+                    st.dataframe(df_lideres)
                     
                     # Calculando o retorno médio das líderes setoriais
                     retorno_lideres_medio = df_lideres["Retorno_12M"].mean()
