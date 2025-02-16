@@ -1748,36 +1748,26 @@ if pagina == "Avançada": #_____________________________________________________
                 
                 st.subheader("📊 Retorno Final das Empresas e IBOVESPA")
                 # Formatar a coluna "Retorno (%)" para duas casas decimais
-                df_retorno["Retorno (%)"] = df_retorno["Retorno (%)"].apply(lambda x: f"{x:.2f}%")
-                
-                # Construir um HTML estilizado para exibir
-                st.subheader("📊 Retorno Final das Empresas e IBOVESPA")
-                
-                html_content = """
-                <div style='background-color:#f9f9f9; padding:15px; border-radius:10px; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);'>
-                    <h3 style='color:#333; margin-top:0;'>Resumo de Retornos</h3>
-                    <table style='width:100%; border-collapse: collapse;'>
-                        <thead style='background-color:#ddd;'>
-                            <tr>
-                                <th style='padding:8px; text-align:left;'>Ticker</th>
-                                <th style='padding:8px; text-align:left;'>Retorno Acumulado</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                """
-                
-                for idx, row in df_retorno.iterrows():
-                    html_content += f"""
-                    <tr>
-                        <td style='padding:8px; border-bottom:1px solid #ccc;'>{row['Ticker']}</td>
-                        <td style='padding:8px; border-bottom:1px solid #ccc;'>{row['Retorno (%)']}</td>
-                    </tr>
+                def parse_ibov(value):
                     """
-                
-                html_content += """
-                        </tbody>
-                    </table>
-                </div>
-                """
-                
-                st.markdown(html_content, unsafe_allow_html=True)
+                    Extrai apenas o número de algo como:
+                    'Ticker ^BVSP    13.166572\nName: 2023-12-28 00:00:00, dtype: float64'
+                    """
+                    # Converte tudo em string e tenta pegar a última parte
+                    parts = str(value).split()
+                    # parts[-1] provavelmente é 'float64' ou 'dtype:' e não é o que queremos
+                    # parts[-2] pode ser o valor numérico, se o texto for padronizado
+                    # Então é necessário testar:
+                    for p in reversed(parts):
+                        # Tenta converter
+                        try:
+                            return float(p)
+                        except:
+                            continue
+                    return 0.0  # Se nada for encontrado
+            
+            # Aplicar no DataFrame
+            df_retorno["Retorno (%)"] = df_retorno["Retorno (%)"].apply(parse_ibov)
+            
+            # Agora formatar
+            df_retorno["Retorno (%)"] = df_retorno["Retorno (%)"].apply(lambda x: f"{x:.2f}%")
