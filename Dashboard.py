@@ -1724,6 +1724,7 @@ if pagina == "Avançada": #_____________________________________________________
                 st.dataframe(tickers_disponiveis)
                 
                 if lider["ticker"] not in tickers_disponiveis:
+                    st.dataframe(lider)
                     st.error(f"❌ O ticker `{lider['ticker']}` não foi encontrado nos dados baixados!")
                     st.write("📌 Tickers disponíveis no DataFrame:", tickers_disponiveis)
                     continue
