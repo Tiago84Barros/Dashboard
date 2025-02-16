@@ -1701,27 +1701,11 @@ if pagina == "Avançada": #_____________________________________________________
                 except Exception as e:
                     st.error(f"❌ Erro ao baixar IBOVESPA: {e}")
                     continue
-                                  
-                # 🔹 2. FILTRANDO TICKERS VÁLIDOS
-                tickers_validos = []
-                for ticker in tickers:
-                    try:
-                        preco_teste = yf.download(ticker, start="2020-01-01", end="2024-01-01")["Close"]
-                        st.dataframe(preco_teste)
-                        if not preco_teste.empty:
-                            tickers_validos.append(ticker)
-                    except:
-                        st.warning(f"⚠️ Dados não disponíveis para {ticker}. Removendo da análise.")
-            
-                tickers = tickers_validos  
-                
-                if not tickers:
-                    st.error("❌ Nenhum ticker válido para download!")
-                    continue
-                        
+                                         
                 # 🔹 3. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS
                 try:
                     precos = yf.download(tickers, start="2020-01-01", end="2024-01-01")["Close"]
+                    st.dataframe(precos)
                 except Exception as e:
                     st.error(f"❌ Erro ao baixar os preços das empresas: {e}")
                     continue
