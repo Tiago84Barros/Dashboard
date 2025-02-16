@@ -1713,7 +1713,7 @@ if pagina == "Avançada": #_____________________________________________________
                         st.warning(f"⚠️ Dados não disponíveis para {ticker}. Removendo da análise.")
             
                 tickers = tickers_validos  
-                st.dataframe(tickers)
+                st.dataframe(preco_teste)
                 if not tickers:
                     st.error("❌ Nenhum ticker válido para download!")
                     continue
