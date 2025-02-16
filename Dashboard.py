@@ -1703,7 +1703,14 @@ if pagina == "Avançada": #_____________________________________________________
                 except Exception as e:
                     st.error(f"❌ Erro ao baixar dados do IBOVESPA: {e}")
                     continue
-            
+                # 🔹 2. TESTAR DOWNLOAD DE UM ÚNICO TICKER ANTES DO LOTE
+                try:
+                    preco_teste = yf.download(tickers[0], start="2020-01-01", end="2024-01-01")["Close"]
+                    st.write(f"✅ Teste bem-sucedido para {tickers[0]}")
+                except Exception as e:
+                    st.error(f"❌ Erro ao testar {tickers[0]}: {e}")
+                    continue
+                        
                 try:
                     precos = yf.download(tickers, start="2020-01-01", end="2024-01-01")["Close"]
                 except Exception as e:
