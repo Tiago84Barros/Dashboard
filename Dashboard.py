@@ -1685,7 +1685,9 @@ if pagina == "Avançada": #_____________________________________________________
                     # 🏆 SELECIONANDO EMPRESAS LÍDERES POR SEGMENTO 🏆
                     # Filtrando a melhor empresa de cada segmento (Rank 1)
                     df_lideres = df_empresas[df_empresas["Rank_Ajustado"] == 1]
-                    st.dataframe(df_lideres)
+                    
+                    # 🔎 1. VERIFICAR COLUNAS DISPONÍVEIS
+                    st.write("📌 Colunas disponíveis em `df_lideres`:", df_lideres.columns.tolist())
                     
                     # Calculando o retorno médio das líderes setoriais
                     retorno_lideres_medio = df_lideres["Retorno_12M"].mean()
