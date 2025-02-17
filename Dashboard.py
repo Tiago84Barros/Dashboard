@@ -1802,13 +1802,12 @@ if pagina == "Avançada": #_____________________________________________________
                 
                 # Função para criar um bloco de empresa
                 def create_company_block(ticker, retorno):
-                    # Definir cor de fundo e borda se for IBOVESPA
                     if ticker == "IBOVESPA":
                         background_color = "#f0f2f6"  # Cor de fundo para o IBOVESPA
-                        border_color = "#4a4a4a"      # Borda escura para destaque
+                        border_color = "#4a4a4a"  # Borda escura para destaque
                     else:
                         background_color = "#ffffff"  # Cor de fundo padrão
-                        border_color = "#d3d3d3"      # Borda cinza
+                        border_color = "#d3d3d3"  # Borda cinza
                 
                     # Cor do texto baseada no retorno
                     if retorno > 0:
@@ -1823,10 +1822,10 @@ if pagina == "Avançada": #_____________________________________________________
                         border: 2px solid {border_color};
                         border-radius: 10px;
                         padding: 15px;
-                        margin: 10px 0;
-                        width: 150px;              /* Defina a largura fixa */
+                        margin: 10px;
                         text-align: center;
                         box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
+                        flex: 1;
                     ">
                         <h3 style="margin: 0; color: #4a4a4a;">{ticker}</h3>
                         <p style="font-size: 18px; margin: 5px 0; color: {retorno_color}; font-weight: bold;">
@@ -1839,16 +1838,14 @@ if pagina == "Avançada": #_____________________________________________________
                 # Título da seção
                 st.subheader("📊 Retorno Final das Empresas e IBOVESPA")
                 
-                # Montar um container flex
-                html_content = """
-                <div style='display: flex; flex-wrap: wrap; gap: 10px;'>
-                """
+                # Criar colunas para os blocos
+                num_columns = 3  # Número de colunas (ajuste conforme necessário)
+                columns = st.columns(num_columns)
                 
-                # Construir cada bloco e concatenar
+                # Exibir blocos lado a lado
                 for index, row in df_retorno.iterrows():
-                    html_content += create_company_block(row["Ticker"], row["Retorno (%)"])
-                
-                html_content += "</div>"
-                
-                # Renderizar tudo de uma vez
-                st.markdown(html_content, unsafe_allow_html=True)
+                    with columns[index % num_columns]:  # Distribui os blocos nas colunas
+                        st.markdown(
+                            create_company_block(row["Ticker"], row["Retorno (%)"]),
+                            unsafe_allow_html=True
+                        )
