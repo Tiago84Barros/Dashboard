@@ -1698,14 +1698,14 @@ if pagina == "Avançada": #_____________________________________________________
                 
                     # 1. BAIXANDO IBOVESPA ____________________________________________________________________________________________________________________________________
                     try:
-                        ibov = yf.download("^BVSP", start="2019-01-01", end="2025-01-01")["Close"]
+                        ibov = yf.download("^BVSP", start="2018-01-01", end="2025-01-01")["Close"]
                     except Exception as e:
                         st.error(f"❌ Erro ao baixar IBOVESPA: {e}")
                         continue
                 
                     # 2. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS ______________________________________________________________________________________________________________
                     try:
-                        precos = yf.download(tickers, start="2019-01-01", end="2025-01-01")["Close"]
+                        precos = yf.download(tickers, start="2018-01-01", end="2025-01-01")["Close"]
                     except Exception as e:
                         st.error(f"❌ Erro ao baixar os preços das empresas: {e}")
                         continue
