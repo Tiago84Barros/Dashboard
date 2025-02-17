@@ -1778,7 +1778,7 @@ if pagina == "Avançada": #_____________________________________________________
                 ax.legend()
                 st.pyplot(fig)
             
-                # 1) Calcular retorno_final (empresas) e retorno_ibov_final (IBOVESPA) _____________________________________________________________________________________________________
+               # 1) Calcular retorno_final (empresas) e retorno_ibov_final (IBOVESPA)
                 retorno_final = precos_retorno_acumulado.iloc[-1] * 100
                 retorno_ibov_final = float(ibov_retorno_acumulado.iloc[-1] * 100)
                 
@@ -1793,15 +1793,23 @@ if pagina == "Avançada": #_____________________________________________________
                 
                 # 4) Concatenar o IBOVESPA ao df_retorno
                 df_retorno = pd.concat([df_retorno, df_ibov], ignore_index=True)
-
-                               
-                # 5) Exibir no Streamlit
-                df_retorno["Retorno (%)"] = df_retorno["Retorno (%)"].astype(float)
                 
-                st.subheader("📊 Retorno Final das Empresas e IBOVESPA") # MOSTRANDO O RESULTADO NO DASHBOARD______________________________________________________________________________
+                # Converter para float e arredondar
+                df_retorno["Retorno (%)"] = df_retorno["Retorno (%)"].astype(float).round(2)
                 
-                html_content = """
-                <div style='display: flex; flex-wrap: wrap; gap: 10px;'>
+                st.subheader("📊 Retorno Final das Empresas e IBOVESPA")
+                
+                # 5) Construir HTML Dinâmico de Cartões
+                html_content = "<div style='display: flex; flex-wrap: wrap; gap: 10px;'>"
+                
+                for _, row in df_retorno.iterrows():
+                    ticker = row["Ticker"]
+                    retorno = row["Retorno (%)"]
+                    
+                    # Se quiser cor vermelha se for negativo, verde se for positivo
+                    color = "green" if retorno >= 0 else "red"
+                
+                    html_content += f"""
                     <div style="
                         border: 2px solid #ddd;
                         border-radius: 10px;
@@ -1811,47 +1819,18 @@ if pagina == "Avançada": #_____________________________________________________
                         text-align: center;
                         box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
                     ">
-                        <h4 style="color: #333; margin: 0;">EPAR3</h4>
-                        <p style="font-size: 18px; color: green; font-weight: bold; margin: 5px 0;">
-                            210.78%
+                        <h4 style="color: #333; margin: 0;">{ticker}</h4>
+                        <p style="font-size: 18px; color: {color}; font-weight: bold; margin: 5px 0;">
+                            {retorno:.2f}%
                         </p>
                     </div>
+                    """
                 
-                    <div style="
-                        border: 2px solid #ddd;
-                        border-radius: 10px;
-                        padding: 15px;
-                        background-color: #f9f9f9;
-                        width: 200px;
-                        text-align: center;
-                        box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
-                    ">
-                        <h4 style="color: #333; margin: 0;">WLMM3</h4>
-                        <p style="font-size: 18px; color: green; font-weight: bold; margin: 5px 0;">
-                            104.62%
-                        </p>
-                    </div>
+                html_content += "</div>"
                 
-                    <div style="
-                        border: 2px solid #ddd;
-                        border-radius: 10px;
-                        padding: 15px;
-                        background-color: #f9f9f9;
-                        width: 200px;
-                        text-align: center;
-                        box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
-                    ">
-                        <h4 style="color: #333; margin: 0;">IBOVESPA</h4>
-                        <p style="font-size: 18px; color: green; font-weight: bold; margin: 5px 0;">
-                            13.17%
-                        </p>
-                    </div>
-                </div>
-                """
-                
-                # Renderiza o HTML no Streamlit
+                # 6) Renderizar o HTML no Streamlit
                 st.markdown(html_content, unsafe_allow_html=True)
-                               
+                                               
                            
                             
                                      
