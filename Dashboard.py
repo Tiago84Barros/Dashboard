@@ -1780,7 +1780,7 @@ if pagina == "Avançada": #_____________________________________________________
             
                 # 1) Calcular retorno_final (empresas) e retorno_ibov_final (IBOVESPA) _____________________________________________________________________________________________________
                 retorno_final = precos_retorno_acumulado.iloc[-1] * 100
-                retorno_ibov_final = ibov_retorno_acumulado.iloc[-1] * 100
+                retorno_ibov_final = float(ibov_retorno_acumulado.iloc[-1] * 100)
                 
                 # 2) Criar df_retorno com as empresas
                 df_retorno = pd.DataFrame({
