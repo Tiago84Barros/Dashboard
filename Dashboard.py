@@ -1711,9 +1711,7 @@ if pagina == "Avançada": #_____________________________________________________
                 precos_retorno_acumulado = (precos / precos.iloc[0]) - 1  # Retorno acumulado
                 precos_retorno_acumulado.columns = precos_retorno_acumulado.columns.str.replace(".SA", "", regex=False) # Remove o ".SA" dos tickers
                
-                
-                st.dataframe(precos_retorno_acumulado)
-       
+                                  
                 # 🔹 3. BAIXANDO OS PREÇOS DO IBOVESPA __________________________________________________________________________________________________________________
                 try:
                     ibov = yf.download("^BVSP", start="2020-01-01", end="2024-01-01")["Close"]
@@ -1730,12 +1728,11 @@ if pagina == "Avançada": #_____________________________________________________
 
                 # 1) Lista de todas as colunas 
                 all_tickers = precos_retorno_acumulado.columns.tolist()
-                st.dataframe(all_tickers)
                 # 2) Ticker da empresa líder sem o ".SA"
-                lider_ticker_sem_sa = lider["ticker"].replace(".SA", "")
-                st.dataframe(lider_ticker_sem_sa)
+                lider_ticker = lider["ticker"].tolist()
+                st.dataframe(lider_ticker)
                  # 3) Remover a coluna correspondente ao ticker da empresa líder, se existir
-                if lider_ticker_sem_sa in precos_retorno_acumulado.columns:
+                if lider_ticker in precos_retorno_acumulado.columns:
                     precos_retorno_concorrentes = precos_retorno_acumulado.drop(columns=[lider_ticker_sem_sa])
                 # 4) Atualizar a lista de tickers após a remoção da líder
                 st.dataframe(precos_retorno_concorrentes)
