@@ -1734,7 +1734,7 @@ if pagina == "Avançada": #_____________________________________________________
                 all_tickers = precos_retorno_acumulado.columns.tolist()
                 
                 # 2) Remover a coluna correspondente ao ticker da empresa líder, se existir
-                precos_retorno_ concorrentes = pd.dataframe()
+                precos_retorno_concorrentes = pd.dataframe()
                 if lider_ticker in precos_retorno_acumulado.columns:
                     precos_retorno_concorrentes = precos_retorno_acumulado.drop(columns=[lider_ticker_sem_sa])
                 # 4) Atualizar a lista de tickers após a remoção da líder
