@@ -1800,41 +1800,46 @@ if pagina == "Avançada": #_____________________________________________________
                 
                 st.subheader("📊 Retorno Final das Empresas e IBOVESPA") # Visualizar o retorno do benchmark ______________________________________________________________________________
                 
-                # Criar container para os retornos
-                with st.container():
-                    # Estilização condicional com gradiente de cores
-                    styled_df = df_retorno.style \
-                        .background_gradient(
-                            subset=["Retorno (%)"],
-                            cmap="RdYlGn",  # Escala de cores vermelho-amarelo-verde
-                            vmin=df_retorno["Retorno (%)"].min(),
-                            vmax=df_retorno["Retorno (%)"].max()
-                        ) \
-                        .format({"Retorno (%)": "{:.2f}%"}) \
-                        .apply(lambda x: ["background: #f0f2f6" if x.Ticker == "IBOVESPA" else "" for i in x], axis=1) \
-                        .set_properties(**{
-                            'text-align': 'center',
-                            'font-weight': 'bold',
-                            'border': '1px solid #d3d3d3'
-                        }) \
-                        .set_table_styles([{
-                            'selector': 'th',
-                            'props': [
-                                ('background', '#4a4a4a'),
-                                ('color', 'white'),
-                                ('font-weight', 'bold'),
-                                ('text-align', 'center')
-                            ]
-                        }])
+                # Função para criar um bloco de empresa
+                def create_company_block(ticker, retorno):
+                    if ticker == "IBOVESPA":
+                        background_color = "#f0f2f6"  # Cor de fundo para o IBOVESPA
+                        border_color = "#4a4a4a"  # Borda escura para destaque
+                    else:
+                        background_color = "#ffffff"  # Cor de fundo padrão
+                        border_color = "#d3d3d3"  # Borda cinza
                 
-                    # Exibir tabela estilizada
-                    st.write(styled_df.to_html(escape=False), unsafe_allow_html=True)
+                    # Cor do texto baseada no retorno
+                    if retorno > 0:
+                        retorno_color = "#2ecc71"  # Verde para retornos positivos
+                    else:
+                        retorno_color = "#e74c3c"  # Vermelho para retornos negativos
                 
-                    # Legenda explicativa
-                    st.caption("""
-                    <div style="text-align: left; margin-top: 10px">
-                        <span style="color: #2ecc71">◼︎ Retornos Positivos</span> | 
-                        <span style="color: #e74c3c">◼︎ Retornos Negativos</span> | 
-                        <span style="color: #f0f2f6">◼︎ IBOVESPA (Benchmark)</span>
+                    # HTML para o bloco
+                    block_html = f"""
+                    <div style="
+                        background-color: {background_color};
+                        border: 2px solid {border_color};
+                        border-radius: 10px;
+                        padding: 15px;
+                        margin: 10px 0;
+                        text-align: center;
+                        box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
+                    ">
+                        <h3 style="margin: 0; color: #4a4a4a;">{ticker}</h3>
+                        <p style="font-size: 18px; margin: 5px 0; color: {retorno_color}; font-weight: bold;">
+                            {retorno:.2f}%
+                        </p>
                     </div>
-                    """, unsafe_allow_html=True)
+                    """
+                    return block_html
+                
+                # Título da seção
+                st.subheader("📊 Retorno Final das Empresas e IBOVESPA")
+                
+                # Exibir blocos para cada empresa
+                for index, row in df_retorno.iterrows():
+                    st.markdown(
+                        create_company_block(row["Ticker"], row["Retorno (%)"]),
+                        unsafe_allow_html=True
+                    )
