@@ -1797,13 +1797,41 @@ if pagina == "Avançada": #_____________________________________________________
                                
                 # 5) Exibir no Streamlit
                 df_retorno["Retorno (%)"] = df_retorno["Retorno (%)"].astype(float)
+                
                 st.subheader("📊 Retorno Final das Empresas e IBOVESPA")
-                styled_df = df_retorno.style.format({"Retorno (%)": "{:.2f}"}) \
-                            .highlight_max(subset=["Retorno (%)"], color="lightgreen")
-
-                st.dataframe(styled_df)
-               
-           
-            
-                     
-                       
+                html_content = """
+                <div style='background-color:#f9f9f9; padding:15px; border-radius:10px; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);'>
+                    <h3 style='color:#333; margin-top:0;'>Resumo de Retornos</h3>
+                    <table style='width:100%; border-collapse: collapse;'>
+                        <thead style='background-color:#ddd;'>
+                            <tr>
+                                <th style='padding:8px; text-align:left;'>Ticker</th>
+                                <th style='padding:8px; text-align:left;'>Retorno (%)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                """
+                
+                # Criar as linhas da tabela
+                for _, row in df_retorno.iterrows():
+                    ticker = row["Ticker"]
+                    retorno = row["Retorno (%)"]
+                    html_content += f"""
+                    <tr>
+                        <td style='padding:8px; border-bottom:1px solid #ccc;'>{ticker}</td>
+                        <td style='padding:8px; border-bottom:1px solid #ccc;'>{retorno:.2f}</td>
+                    </tr>
+                    """
+                
+                html_content += """
+                        </tbody>
+                    </table>
+                </div>
+                """
+                
+                st.markdown(html_content, unsafe_allow_html=True)
+                               
+                           
+                            
+                                     
+                                       
