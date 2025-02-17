@@ -1710,6 +1710,7 @@ if pagina == "Avançada": #_____________________________________________________
                                               
                 precos_retorno_acumulado = (precos / precos.iloc[0]) - 1  # Retorno acumulado
                 precos_retorno_acumulado.columns = precos_retorno_acumulado.columns.str.replace(".SA", "", regex=False) # Remove o ".SA" dos tickers
+                st.dataframe(precos_retorno_acumulado)
 
 
                 # 🔹 3. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS E DO IBOVESPA
