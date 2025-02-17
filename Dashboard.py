@@ -1693,8 +1693,7 @@ if pagina == "Avançada": #_____________________________________________________
             
                 # ✅ OBTENDO OS TICKERS PARA DOWNLOAD NO YAHOO FINANCE
                 tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()
-                tickers = ["^BVSP"] + [ticker + ".SA" for ticker in tickers_empresas]  # IBOVESPA + Empresas líderes
-                    
+                   
                      
                 # 🔹 2. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS E DO IBOVESPA
                 try:
@@ -1708,13 +1707,21 @@ if pagina == "Avançada": #_____________________________________________________
                 if precos.empty:
                     st.error("❌ Nenhum dado foi baixado! Verifique os tickers e a conexão.")
                     continue
-                    
-                          
+                                              
                 precos_retorno_acumulado = (precos / precos.iloc[0]) - 1  # Retorno acumulado
                 precos_retorno_acumulado.columns = precos_retorno_acumulado.columns.str.replace(".SA", "", regex=False) # Remove o ".SA" dos tickers
+
+
+                # 🔹 3. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS E DO IBOVESPA
+                try:
+                    ibov = yf.download("^BVSP", start="2020-01-01", end="2024-01-01")["Close"]
+
+                except Exception as e:
+                    st.error(f"❌ Erro ao baixar os preços das empresas: {e}")
+                    continue
                 
                        
-                # 🔹 7. GERANDO GRÁFICO COMPARATIVO
+                # 🔹 4. GERANDO GRÁFICO COMPARATIVO
                 fig, ax = plt.subplots(figsize=(12, 6))
             
                 # Plotando concorrentes
