@@ -1741,9 +1741,10 @@ if pagina == "Avançada": #_____________________________________________________
                     # 3) Plotando APENAS concorrentes
                     precos_retorno_acumulado[all_tickers].plot(
                         ax=ax,
+                        color = "blue"
                         alpha=0.4,
                         linewidth=1,
-                        linestyle="--",
+                        linestyle="-",
                         label="Concorrentes"
                     )
                     
