@@ -1791,7 +1791,7 @@ if pagina == "Avançada": #_____________________________________________________
                 # 2) Criar df_retorno com as empresas
                 df_retorno = pd.DataFrame({
                     "Ticker": retorno_acumulado_composto.index,
-                    "Retorno (%)": retorno_final.values
+                    "Retorno (%)": retorno_acumulado_composto.values
                 })
                                             
                 # 3) Criar DataFrame para o IBOVESPA
