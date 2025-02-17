@@ -1693,6 +1693,7 @@ if pagina == "Avançada": #_____________________________________________________
             
                 # ✅ OBTENDO OS TICKERS PARA DOWNLOAD NO YAHOO FINANCE
                 tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()
+                st.dataframe(tickers)
                    
                      
                 # 🔹 2. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS E DO IBOVESPA
