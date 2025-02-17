@@ -1787,53 +1787,7 @@ if pagina == "Avançada": #_____________________________________________________
                     "Ticker": retorno_final.index,
                     "Retorno (%)": retorno_final.values
                 })
-
-                # CSS para estilizar as “squares” usando .sector-box
-                st.markdown("""
-                    <style>
-                    .sector-box {
-                        border: 1px solid #ddd;
-                        padding: 15px;
-                        border-radius: 10px;
-                        margin-bottom: 10px;
-                        display: flex;
-                        justify-content: space-between;
-                        align-items: center;
-                        height: 140px;  /* Definindo uma altura fixa para os blocos */
-                        cursor: pointer;  /* Torna o quadrado clicável */
-                        transition: background-color 0.3s ease;  /* Animação de transição ao passar o mouse */
-                        box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
-                        margin-right: 10px; /* Espacinho entre as caixas */
-                    }
-                    .sector-box:hover {
-                        background-color: #f0f0f0;  /* Muda a cor de fundo ao passar o mouse */
-                    }
-                    .sector-info {
-                        font-size: 14px;
-                        color: #333;
-                        text-align: left;
-                        flex: 1;  /* O texto ocupa a maior parte à esquerda */
-                        overflow: hidden;  /* Esconder o texto que ultrapassar a área */
-                        text-overflow: ellipsis;  /* Adicionar reticências caso o texto seja muito longo */
-                    }
-                    .sector-info strong {
-                        font-size: 16px;
-                        color: #000;
-                    }
-                    .sector-logo {
-                        width: 50px;
-                        height: auto;
-                        margin-left: 15px;  /* Adiciona espaço entre o texto e o logo */
-                    }
-                    /* Container para alinhar os quadrados lado a lado */
-                    .sector-container {
-                        display: flex;
-                        flex-wrap: wrap;
-                        gap: 10px;
-                    }
-                    </style>
-                """, unsafe_allow_html=True)
-                                
+                                            
                 # 3) Criar DataFrame para o IBOVESPA
                 df_ibov = pd.DataFrame([{"Ticker": "IBOVESPA", "Retorno (%)": retorno_ibov_final}])
                 
@@ -1845,34 +1799,4 @@ if pagina == "Avançada": #_____________________________________________________
                 
                 st.subheader("📊 Retorno Final das Empresas e IBOVESPA")
                 
-                # Construir HTML dinamicamente
-                html_content = "<div class='sector-container'>"
-                
-                for _, row in df_retorno.iterrows():
-                    ticker = row["Ticker"]
-                    retorno = row["Retorno (%)"]
-                    logo_url = row.get("Logo", "")  # Se tiver coluna com URL do logo
-                    
-                    # Se quiser cor vermelha se for negativo
-                    # color = "green" if retorno >= 0 else "red"
-                
-                    # Montar o HTML de cada “square” com a classe .sector-box
-                    html_content += f"""
-                    <div class="sector-box">
-                        <div class="sector-info">
-                            <strong>{ticker}</strong><br>
-                            {retorno:.2f}%
-                        </div>
-                        <!-- Logo opcional, se não quiser, remova este bloco -->
-                        <img class="sector-logo" src="{logo_url}" alt="logo">
-                    </div>
-                    """
-                
-                html_content += "</div>"
-                
-                st.markdown(html_content, unsafe_allow_html=True)
-                                               
-                           
-                            
-                                     
-                                       
+               st.dataframe(df_retorno)
