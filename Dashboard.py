@@ -1776,6 +1776,9 @@ if pagina == "Avançada": #_____________________________________________________
                # 1) Calcular retorno_final (empresas) e retorno_ibov_final (IBOVESPA) ______________________________________________________________________________________________________
                # retorno_final = precos_retorno_acumulado.iloc[-1] * 100
                # retorno_ibov_final = float(ibov_retorno_acumulado.iloc[-1] * 100)
+
+                st.write("📌 Primeiros valores do IBOVESPA:", ibov.head())
+                st.write("📌 Últimos valores do IBOVESPA:", ibov.tail())
     
                 # 📌 CÁLCULO CORRETO DO RETORNO ACUMULADO COMPOSTO
                 retornos_diarios = precos.pct_change().dropna()  # Calcula os retornos diários
