@@ -1796,13 +1796,12 @@ if pagina == "Avançada": #_____________________________________________________
                 
                 # Converter para float e arredondar
                 df_retorno["Retorno (%)"] = df_retorno["Retorno (%)"].astype(float).round(2)
-                st.dataframe(df_retorno)
-                
+                            
                 st.subheader("📊 Retorno Final das Empresas e IBOVESPA") # Visualizar o retorno do benchmark ______________________________________________________________________________
                 
                 # Função para criar um bloco de empresa
                 def create_company_block(ticker, retorno):
-                    if ticker == "IBOVESPA":
+                    if ticker == lider["ticker"]:
                         background_color = "#f0f2f6"  # Cor de fundo para o IBOVESPA
                         border_color = "#4a4a4a"  # Borda escura para destaque
                     else:
@@ -1834,10 +1833,7 @@ if pagina == "Avançada": #_____________________________________________________
                     </div>
                     """
                     return block_html
-                
-                # Título da seção
-                st.subheader("📊 Retorno Final das Empresas e IBOVESPA")
-                
+                                           
                 # Criar colunas para os blocos
                 num_columns = 3  # Número de colunas (ajuste conforme necessário)
                 columns = st.columns(num_columns)
