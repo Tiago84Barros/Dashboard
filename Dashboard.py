@@ -1693,7 +1693,7 @@ if pagina == "Avançada": #_____________________________________________________
                     st.warning(f"⚠️ Não há concorrentes disponíveis para `{lider['nome_empresa']}` no segmento {segmento}.")
                     continue
             
-                # ✅ OBTENDO OS TICKERS PARA DOWNLOAD NO YAHOO FINANCE __________________________________________________________________________________________
+                # ✅ OBTENDO OS TICKERS PARA DOWNLOAD NO YAHOO FINANCE 
                 tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()  # Apenas empresas
                 tickers = [ticker + ".SA" for ticker in tickers]  # Adicionando ".SA" para cada empresa                 
                      
@@ -1734,6 +1734,7 @@ if pagina == "Avançada": #_____________________________________________________
                 all_tickers = precos_retorno_acumulado.columns.tolist()
                 
                 # 2) Remover a coluna correspondente ao ticker da empresa líder, se existir
+                precos_retorno_ concorrentes = pd.dataframe()
                 if lider_ticker in precos_retorno_acumulado.columns:
                     precos_retorno_concorrentes = precos_retorno_acumulado.drop(columns=[lider_ticker_sem_sa])
                 # 4) Atualizar a lista de tickers após a remoção da líder
