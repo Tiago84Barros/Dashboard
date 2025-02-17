@@ -1798,37 +1798,40 @@ if pagina == "Avançada": #_____________________________________________________
                 # 5) Exibir no Streamlit
                 df_retorno["Retorno (%)"] = df_retorno["Retorno (%)"].astype(float)
                 
-                st.subheader("📊 Retorno Final das Empresas e IBOVESPA")
+                st.subheader("📊 Retorno Final das Empresas e IBOVESPA") # MOSTRANDO O RESULTADO NO DASHBOARD______________________________________________________________________________
+                
+                # Constrói o HTML para exibir os "quadrados" (cards)
                 html_content = """
-                <div style='background-color:#f9f9f9; padding:15px; border-radius:10px; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);'>
-                    <h3 style='color:#333; margin-top:0;'>Resumo de Retornos</h3>
-                    <table style='width:100%; border-collapse: collapse;'>
-                        <thead style='background-color:#ddd;'>
-                            <tr>
-                                <th style='padding:8px; text-align:left;'>Ticker</th>
-                                <th style='padding:8px; text-align:left;'>Retorno (%)</th>
-                            </tr>
-                        </thead>
-                        <tbody>
+                <div style='display: flex; flex-wrap: wrap; gap: 10px;'>
                 """
                 
-                # Criar as linhas da tabela
                 for _, row in df_retorno.iterrows():
                     ticker = row["Ticker"]
                     retorno = row["Retorno (%)"]
+                    
+                    # Escolhe cor dependendo se o retorno é positivo ou negativo
+                    cor_valor = "green" if retorno >= 0 else "red"
+                
                     html_content += f"""
-                    <tr>
-                        <td style='padding:8px; border-bottom:1px solid #ccc;'>{ticker}</td>
-                        <td style='padding:8px; border-bottom:1px solid #ccc;'>{retorno:.2f}</td>
-                    </tr>
+                    <div style="
+                        border: 2px solid #ddd;
+                        border-radius: 10px;
+                        padding: 15px;
+                        background-color: #f9f9f9;
+                        width: 200px;
+                        text-align: center;
+                        box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
+                    ">
+                        <h4 style="color: #333; margin: 0;">{ticker}</h4>
+                        <p style="font-size: 18px; color: {cor_valor}; font-weight: bold; margin: 5px 0;">
+                            {retorno:.2f}%
+                        </p>
+                    </div>
                     """
                 
-                html_content += """
-                        </tbody>
-                    </table>
-                </div>
-                """
+                html_content += "</div>"
                 
+                # Renderiza o HTML no Streamlit
                 st.markdown(html_content, unsafe_allow_html=True)
                                
                            
