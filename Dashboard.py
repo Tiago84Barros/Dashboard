@@ -1695,7 +1695,7 @@ if pagina == "Avançada": #_____________________________________________________
                 tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()  # Apenas empresas
                 tickers = [ticker + ".SA" for ticker in tickers]  # Adicionando ".SA" para cada empresa                 
                      
-                # 🔹 2. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS E DO IBOVESPA
+                # 🔹 2. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS
                 try:
                     precos = yf.download(tickers, start="2020-01-01", end="2024-01-01")["Close"]
 
@@ -1710,10 +1710,8 @@ if pagina == "Avançada": #_____________________________________________________
                                               
                 precos_retorno_acumulado = (precos / precos.iloc[0]) - 1  # Retorno acumulado
                 precos_retorno_acumulado.columns = precos_retorno_acumulado.columns.str.replace(".SA", "", regex=False) # Remove o ".SA" dos tickers
-                st.dataframe(precos_retorno_acumulado)
-
-
-                # 🔹 3. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS E DO IBOVESPA
+       
+                # 🔹 3. BAIXANDO OS PREÇOS DO IBOVESPA
                 try:
                     ibov = yf.download("^BVSP", start="2020-01-01", end="2024-01-01")["Close"]
 
@@ -1724,7 +1722,22 @@ if pagina == "Avançada": #_____________________________________________________
                        
                 # 🔹 4. GERANDO GRÁFICO COMPARATIVO
                 fig, ax = plt.subplots(figsize=(12, 6))
-            
+
+                # 1) Lista de todas as colunas **antes** da remoção
+                all_tickers = precos_retorno_acumulado.columns.tolist()
+                # 2) Ticker da empresa líder sem o ".SA"
+                lider_ticker_sem_sa = lider["ticker"].replace(".SA", "")
+                 # 3) Remover a coluna correspondente ao ticker da empresa líder, se existir
+                if lider_ticker_sem_sa in precos_retorno_acumulado.columns:
+                    precos_retorno_acumulado = precos_retorno_acumulado.drop(columns=[lider_ticker_sem_sa])
+                # 4) Atualizar a lista de tickers após a remoção da líder
+                all_tickers = precos_retorno_acumulado.columns.tolist()  
+
+                # Se `all_tickers` estiver vazio, significa que não há concorrentes para comparar
+                if not all_tickers:
+                   st.warning(f"⚠️ Após remover `{lider['nome_empresa']}`, não há mais concorrentes disponíveis para o segmento {segmento}.")
+                   continue
+
                 # Plotando concorrentes
                 precos_retorno_acumulado.plot(ax=ax, alpha=0.4, linewidth=1, linestyle="--")
             
@@ -1734,18 +1747,9 @@ if pagina == "Avançada": #_____________________________________________________
                        
                 # Destacando a empresa líder
                 precos_retorno_acumulado[lider["ticker"]].plot(ax=ax, color="red", linewidth=2, label=f"{lider['nome_empresa']} (Líder)")
-
-                # 1) Lista de todas as colunas
-                all_tickers = precos_retorno_acumulado.columns.tolist()
-                
-                # 2) Ticker da empresa líder sem o ".SA"
-                lider_ticker_sem_sa = lider["ticker"].replace(".SA", "")
-                
-                # Remover a coluna correspondente ao ticker da empresa líder, se existir
-                if lider_ticker_sem_sa in precos_retorno_acumulado.columns:
-                    precos_retorno_acumulado = precos_retorno_acumulado.drop(columns=[lider_ticker_sem_sa])
-                                
-                fig, ax = plt.subplots(figsize=(12, 6))
+                        
+             
+                 fig, ax = plt.subplots(figsize=(12, 6))
                 
                 # 3) Plotando APENAS concorrentes
                 precos_retorno_acumulado[all_tickers].plot(
