@@ -1777,9 +1777,6 @@ if pagina == "Avançada": #_____________________________________________________
                # retorno_final = precos_retorno_acumulado.iloc[-1] * 100
                # retorno_ibov_final = float(ibov_retorno_acumulado.iloc[-1] * 100)
 
-                st.write("📌 Primeiros valores do IBOVESPA:", ibov.head())
-                st.write("📌 Últimos valores do IBOVESPA:", ibov.tail())
-    
                 # 📌 CÁLCULO CORRETO DO RETORNO ACUMULADO COMPOSTO
                 retornos_diarios = precos.pct_change().dropna()  # Calcula os retornos diários
             
@@ -1789,8 +1786,8 @@ if pagina == "Avançada": #_____________________________________________________
 
                 # 📌 Cálculo do retorno do IBOVESPA
                 retorno_ibov_composto = (1 + ibov.pct_change().dropna()).prod() - 1
-
-                  
+                st.write(f"📌 Retorno acumulado do IBOVESPA: {retorno_ibov_composto:.4%}")
+                                  
                 # 2) Criar df_retorno com as empresas
                 df_retorno = pd.DataFrame({
                     "Ticker": retorno_acumulado_composto.index,
