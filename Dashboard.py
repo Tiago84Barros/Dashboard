@@ -1799,4 +1799,4 @@ if pagina == "Avançada": #_____________________________________________________
                 
                 st.subheader("📊 Retorno Final das Empresas e IBOVESPA")
                 
-               st.dataframe(df_retorno)
+                st.dataframe(df_retorno)
