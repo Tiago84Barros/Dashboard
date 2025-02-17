@@ -1686,7 +1686,7 @@ if pagina == "Avançada": #_____________________________________________________
                 # ✅ SELECIONANDO EMPRESA LÍDER E CONCORRENTES _________________________________________________________________________________________________
                 lider = df_lideres[df_lideres["Segmento"] == segmento].iloc[0]    
                 lider_ticker = lider["ticker"]  # Agora já garantido que tem .SA
-                st.markdown(lider_ticker)
+          
                 concorrentes = df_empresas[(df_empresas["Segmento"] == segmento) & (df_empresas["Rank_Ajustado"] != 1)]
                          
                 if concorrentes.empty:
@@ -1732,10 +1732,8 @@ if pagina == "Avançada": #_____________________________________________________
 
                 # 1) Lista de todas as colunas 
                 all_tickers = precos_retorno_acumulado.columns.tolist()
-                # 2) Ticker da empresa líder sem o ".SA"
-                ticker = lider.iloc[0, 1]  # Acessa a primeira linha e segunda coluna (índice 1)0]
-                st.dataframe(lider_ticker)
-                # 3) Remover a coluna correspondente ao ticker da empresa líder, se existir
+                
+                # 2) Remover a coluna correspondente ao ticker da empresa líder, se existir
                 if lider_ticker in precos_retorno_acumulado.columns:
                     precos_retorno_concorrentes = precos_retorno_acumulado.drop(columns=[lider_ticker_sem_sa])
                 # 4) Atualizar a lista de tickers após a remoção da líder
