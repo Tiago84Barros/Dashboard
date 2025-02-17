@@ -1741,10 +1741,9 @@ if pagina == "Avançada": #_____________________________________________________
                 # 2) Ticker da empresa líder sem o ".SA"
                 lider_ticker_sem_sa = lider["ticker"].replace(".SA", "")
                 
-                # Remove o ticker da líder da lista de colunas
-                precos_retorno_acumulado = precos_retorno_acumulado.loc[
-                    precos_retorno_acumulado["Ticker"] != lider_ticker_sem_sa
-                ]
+                # Remover a coluna correspondente ao ticker da empresa líder, se existir
+                if lider_ticker_sem_sa in df.columns:
+                    df = df.drop(columns=[lider_ticker_sem_sa])
                                 
                 fig, ax = plt.subplots(figsize=(12, 6))
                 
