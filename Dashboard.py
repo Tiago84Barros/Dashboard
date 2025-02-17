@@ -1663,8 +1663,8 @@ if pagina == "Avançada": #_____________________________________________________
                 st.write("📌 Colunas disponíveis:", df_empresas.columns.tolist())
                 st.stop()
             
-            # 📌 FILTRANDO EMPRESAS LÍDERES (RANK 1)
-            df_lideres = df_empresas[df_empresas["Rank_Ajustado"] == 1]
+            # 📌 FILTRANDO EMPRESAS LÍDERES (RANK 1) __________________________________________________________________________________________________________
+            df_lideres = df_empresas[df_empresas["Rank_Ajustado"] == 1] 
                         
             # 📌 VERIFICANDO SE `df_lideres` ESTÁ VAZIO
             if df_lideres.empty:
@@ -1673,7 +1673,7 @@ if pagina == "Avançada": #_____________________________________________________
                 st.dataframe(df_empresas.head())  # Mostra os dados disponíveis
                 st.stop()
             
-            # 📌 VERIFICANDO SE `Segmento` EXISTE EM `df_lideres`
+            # 📌 VERIFICANDO SE `Segmento` EXISTE EM `df_lideres` 
             if "Segmento" not in df_lideres.columns:
                 st.error("❌ A coluna `Segmento` não existe em `df_lideres`!")
                 st.write("📌 Colunas disponíveis em `df_lideres`:", df_lideres.columns.tolist())
@@ -1683,7 +1683,7 @@ if pagina == "Avançada": #_____________________________________________________
             for segmento in df_lideres["Segmento"].unique():
                 st.subheader(f"📊 Comparação no Segmento: {segmento}")
             
-                # ✅ SELECIONANDO EMPRESA LÍDER E CONCORRENTES
+                # ✅ SELECIONANDO EMPRESA LÍDER E CONCORRENTES _________________________________________________________________________________________________
                 lider = df_lideres[df_lideres["Segmento"] == segmento].iloc[0]                              
                 concorrentes = df_empresas[(df_empresas["Segmento"] == segmento) & (df_empresas["Rank_Ajustado"] != 1)]
                          
@@ -1691,11 +1691,11 @@ if pagina == "Avançada": #_____________________________________________________
                     st.warning(f"⚠️ Não há concorrentes disponíveis para `{lider['nome_empresa']}` no segmento {segmento}.")
                     continue
             
-                # ✅ OBTENDO OS TICKERS PARA DOWNLOAD NO YAHOO FINANCE
+                # ✅ OBTENDO OS TICKERS PARA DOWNLOAD NO YAHOO FINANCE __________________________________________________________________________________________
                 tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()  # Apenas empresas
                 tickers = [ticker + ".SA" for ticker in tickers]  # Adicionando ".SA" para cada empresa                 
                      
-                # 🔹 2. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS
+                # 🔹 2. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS 
                 try:
                     precos = yf.download(tickers, start="2020-01-01", end="2024-01-01")["Close"]
 
@@ -1710,8 +1710,11 @@ if pagina == "Avançada": #_____________________________________________________
                                               
                 precos_retorno_acumulado = (precos / precos.iloc[0]) - 1  # Retorno acumulado
                 precos_retorno_acumulado.columns = precos_retorno_acumulado.columns.str.replace(".SA", "", regex=False) # Remove o ".SA" dos tickers
+               
+                
+                st.dataframe(precos_retorno_acumulado)
        
-                # 🔹 3. BAIXANDO OS PREÇOS DO IBOVESPA
+                # 🔹 3. BAIXANDO OS PREÇOS DO IBOVESPA __________________________________________________________________________________________________________________
                 try:
                     ibov = yf.download("^BVSP", start="2020-01-01", end="2024-01-01")["Close"]
 
@@ -1720,26 +1723,32 @@ if pagina == "Avançada": #_____________________________________________________
                     continue
                 
                        
-                # 🔹 4. GERANDO GRÁFICO COMPARATIVO
+                # 🔹 4. GERANDO GRÁFICO COMPARATIVO _______________________________________________________________________________________________________________________
+                # Retirando apenas empresa Líder ______________________________________________________________________________________________
+                
                 fig, ax = plt.subplots(figsize=(12, 6))
 
-                # 1) Lista de todas as colunas **antes** da remoção
+                # 1) Lista de todas as colunas 
                 all_tickers = precos_retorno_acumulado.columns.tolist()
+                st.dataframe(all_tickers)
                 # 2) Ticker da empresa líder sem o ".SA"
                 lider_ticker_sem_sa = lider["ticker"].replace(".SA", "")
+                st.dataframe(lider_ticker_sem_sa)
                  # 3) Remover a coluna correspondente ao ticker da empresa líder, se existir
                 if lider_ticker_sem_sa in precos_retorno_acumulado.columns:
-                    precos_retorno_acumulado = precos_retorno_acumulado.drop(columns=[lider_ticker_sem_sa])
+                    precos_retorno_concorrentes = precos_retorno_acumulado.drop(columns=[lider_ticker_sem_sa])
                 # 4) Atualizar a lista de tickers após a remoção da líder
-                all_tickers = precos_retorno_acumulado.columns.tolist()  
+                st.dataframe(precos_retorno_concorrentes)
+                all_tickers = precos_retorno_concorrentes.columns.tolist()
+                st.dataframe(all_tickers)
 
                 # Se `all_tickers` estiver vazio, significa que não há concorrentes para comparar
                 if not all_tickers:
                    st.warning(f"⚠️ Após remover `{lider['nome_empresa']}`, não há mais concorrentes disponíveis para o segmento {segmento}.")
                    continue
 
-                # Plotando concorrentes
-                precos_retorno_acumulado.plot(ax=ax, alpha=0.4, linewidth=1, linestyle="--")
+                # Plotando concorrentes ________________________________________________________________________________________________________________________________________
+                precos_retorno_concorrentes.plot(ax=ax, alpha=0.4, linewidth=1, linestyle="--")
             
                 # Plotando IBOVESPA
                 ibov_retorno_acumulado = (ibov / ibov.iloc[0]) - 1
