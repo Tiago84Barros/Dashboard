@@ -1778,10 +1778,24 @@ if pagina == "Avançada": #_____________________________________________________
                 ax.legend()
                 st.pyplot(fig)
             
-                # 🔹 8. EXIBIR RETORNOS FINAIS
+                # 1) Calcular retorno_final (empresas) e retorno_ibov_final (IBOVESPA) _____________________________________________________________________________________________________
                 retorno_final = precos_retorno_acumulado.iloc[-1] * 100
                 retorno_ibov_final = ibov_retorno_acumulado.iloc[-1] * 100
-                df_retorno = df_retorno.append({"Ticker": "IBOVESPA", "Retorno (%)": retorno_ibov_final}, ignore_index=True)
+                
+                # 2) Criar df_retorno com as empresas
+                df_retorno = pd.DataFrame({
+                    "Ticker": retorno_final.index,
+                    "Retorno (%)": retorno_final.values
+                })
+                
+                # 3) Criar DataFrame para o IBOVESPA
+                df_ibov = pd.DataFrame([{"Ticker": "IBOVESPA", "Retorno (%)": retorno_ibov_final}])
+                
+                # 4) Concatenar o IBOVESPA ao df_retorno
+                df_retorno = pd.concat([df_retorno, df_ibov], ignore_index=True)
+                
+                # 5) Exibir no Streamlit
+                st.subheader("📊 Retorno Final das Empresas e IBOVESPA")
                 st.dataframe(df_retorno)
             
                      
