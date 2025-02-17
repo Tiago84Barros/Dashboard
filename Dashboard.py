@@ -1749,7 +1749,7 @@ if pagina == "Avançada": #_____________________________________________________
                 precos_retorno_acumulado[lider["ticker"]].plot(ax=ax, color="red", linewidth=2, label=f"{lider['nome_empresa']} (Líder)")
                         
              
-                 fig, ax = plt.subplots(figsize=(12, 6))
+                fig, ax = plt.subplots(figsize=(12, 6))
                 
                 # 3) Plotando APENAS concorrentes
                 precos_retorno_acumulado[all_tickers].plot(
