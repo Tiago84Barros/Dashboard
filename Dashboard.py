@@ -1774,27 +1774,27 @@ if pagina == "Avançada": #_____________________________________________________
 
                 
                # 1) Calcular retorno_final (empresas) e retorno_ibov_final (IBOVESPA) ______________________________________________________________________________________________________
-               # retorno_final = precos_retorno_acumulado.iloc[-1] * 100
-               # retorno_ibov_final = float(ibov_retorno_acumulado.iloc[-1] * 100)
+                retorno_final = precos_retorno_acumulado.iloc[-1] * 100
+                retorno_ibov_final = float(ibov_retorno_acumulado.iloc[-1] * 100)
 
                 # 📌 CÁLCULO CORRETO DO RETORNO ACUMULADO COMPOSTO
                 retornos_diarios = precos.pct_change().dropna()  # Calcula os retornos diários
             
                 # Multiplicação dos fatores de retorno para obter o retorno acumulado composto
-                retorno_acumulado_composto = (1 + retornos_diarios).prod() - 1
-                retorno_acumulado_composto.index = retorno_acumulado_composto.index.str.replace(".SA", "", regex=False)
+                #retorno_acumulado_composto = (1 + retornos_diarios).prod() - 1
+                #retorno_acumulado_composto.index = retorno_acumulado_composto.index.str.replace(".SA", "", regex=False)
 
                 # 📌 Cálculo do retorno do IBOVESPA
-                retorno_ibov_composto = (1 + ibov.pct_change().dropna()).prod() - 1
+                #retorno_ibov_composto = (1 + ibov.pct_change().dropna()).prod() - 1
                                                  
                 # 2) Criar df_retorno com as empresas
                 df_retorno = pd.DataFrame({
-                    "Ticker": retorno_acumulado_composto.index,
-                    "Retorno (%)": retorno_acumulado_composto.values
+                    "Ticker": retorno_final.index,
+                    "Retorno (%)": retorno_final.values
                 })
                                             
                 # 3) Criar DataFrame para o IBOVESPA
-                df_ibov = pd.DataFrame([{"Ticker": "IBOVESPA", "Retorno (%)": retorno_ibov_composto}])
+                df_ibov = pd.DataFrame([{"Ticker": "IBOVESPA", "Retorno (%)": retorno_ibov_final}])
                 
                 # 4) Concatenar o IBOVESPA ao df_retorno
                 df_retorno = pd.concat([df_retorno, df_ibov], ignore_index=True)
