@@ -1692,8 +1692,8 @@ if pagina == "Avançada": #_____________________________________________________
                     continue
             
                 # ✅ OBTENDO OS TICKERS PARA DOWNLOAD NO YAHOO FINANCE
-                tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()
-                tickers = [ticker + ".SA" for ticker in tickers]  # IBOVESPA + Empresas líderes                   
+                tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()  # Apenas empresas
+                tickers = [ticker + ".SA" for ticker in tickers]  # Adicionando ".SA" para cada empresa                 
                      
                 # 🔹 2. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS E DO IBOVESPA
                 try:
