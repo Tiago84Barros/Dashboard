@@ -1709,31 +1709,9 @@ if pagina == "Avançada": #_____________________________________________________
                     st.error("❌ Nenhum dado foi baixado! Verifique os tickers e a conexão.")
                     continue
                     
-                # 🔹 Selecionar preços de fechamento no final de cada ano (dezembro)
-                dados_anual = precos.resample("Y").last()
-                
-                # 🔹 Calcular retornos anuais
-                retornos_anuais = dados_anual.pct_change().dropna() * 100  # Converte para %
-                
-                # 🔹 Função para calcular retorno acumulado composto
-                def calcular_retorno_acumulado(retornos):
-                    fatores = [(1 + r / 100) for r in retornos]
-                    return (np.prod(fatores) - 1) * 100  # Retorno acumulado em %
-                
-                # 🔹 Criar DataFrame de retorno acumulado
-                df_retorno_acumulado = []
-                
-                for ticker in retornos_anuais.columns:
-                    retorno_acumulado = calcular_retorno_acumulado(retornos_anuais[ticker].dropna().values)
-                    df_retorno_acumulado.append({"Ticker": ticker.replace(".SA", ""), "Retorno Acumulado (%)": retorno_acumulado})
-                
-                # 🔹 Transformar em DataFrame
-                precos_retorno_acumulado = pd.DataFrame(df_retorno_acumulado)
-                #precos_retorno_acumulado.columns = precos_retorno_acumulado.columns.str.replace(".SA", "", regex=False) # Remove o ".SA" dos tickers
-
-            
-                #precos_retorno_acumulado = (precos / precos.iloc[0]) - 1  # Retorno acumulado
-                #precos_retorno_acumulado.columns = precos_retorno_acumulado.columns.str.replace(".SA", "", regex=False) # Remove o ".SA" dos tickers
+                          
+                precos_retorno_acumulado = (precos / precos.iloc[0]) - 1  # Retorno acumulado
+                precos_retorno_acumulado.columns = precos_retorno_acumulado.columns.str.replace(".SA", "", regex=False) # Remove o ".SA" dos tickers
                 
                        
                 # 🔹 7. GERANDO GRÁFICO COMPARATIVO
@@ -1743,13 +1721,9 @@ if pagina == "Avançada": #_____________________________________________________
                 precos_retorno_acumulado.plot(ax=ax, alpha=0.4, linewidth=1, linestyle="--")
             
                 # Plotando IBOVESPA
-                #ibov_retorno_acumulado = (ibov / ibov.iloc[0]) - 1
-                #ibov_retorno_acumulado.plot(ax=ax, color="black", linestyle="-", linewidth=2, label="IBOVESPA")
-
-                #  Isolar o IBOVESPA
-                ibov_retorno_acumulado = precos_retorno_acumulado[precos_retorno_acumulado["Ticker"] == "BVSP"]["Retorno Acumulado (%)"].values[0] 
+                ibov_retorno_acumulado = (ibov / ibov.iloc[0]) - 1
                 ibov_retorno_acumulado.plot(ax=ax, color="black", linestyle="-", linewidth=2, label="IBOVESPA")
-            
+                       
                 # Destacando a empresa líder
                 precos_retorno_acumulado[lider["ticker"]].plot(ax=ax, color="red", linewidth=2, label=f"{lider['nome_empresa']} (Líder)")
 
