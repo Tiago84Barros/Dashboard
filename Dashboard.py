@@ -1693,16 +1693,10 @@ if pagina == "Avançada": #_____________________________________________________
             
                 # ✅ OBTENDO OS TICKERS PARA DOWNLOAD NO YAHOO FINANCE
                 tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()
-                tickers = [ticker + ".SA" if not ticker.endswith(".SA") else ticker for ticker in tickers]
-                      
-                # 🔹 1. BAIXANDO IBOVESPA
-                try:
-                    ibov = yf.download("^BVSP", start="2020-01-01", end="2024-01-01")["Close"]
-                except Exception as e:
-                    st.error(f"❌ Erro ao baixar IBOVESPA: {e}")
-                    continue
-                                         
-                # 🔹 2. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS
+                tickers = ["^BVSP"] + [ticker + ".SA" for ticker in tickers_empresas]  # IBOVESPA + Empresas líderes
+                    
+                     
+                # 🔹 2. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS E DO IBOVESPA
                 try:
                     precos = yf.download(tickers, start="2020-01-01", end="2024-01-01")["Close"]
 
@@ -1714,9 +1708,32 @@ if pagina == "Avançada": #_____________________________________________________
                 if precos.empty:
                     st.error("❌ Nenhum dado foi baixado! Verifique os tickers e a conexão.")
                     continue
+                    
+                # 🔹 Selecionar preços de fechamento no final de cada ano (dezembro)
+                dados_anual = precos.resample("Y").last()
+                
+                # 🔹 Calcular retornos anuais
+                retornos_anuais = dados_anual.pct_change().dropna() * 100  # Converte para %
+                
+                # 🔹 Função para calcular retorno acumulado composto
+                def calcular_retorno_acumulado(retornos):
+                    fatores = [(1 + r / 100) for r in retornos]
+                    return (np.prod(fatores) - 1) * 100  # Retorno acumulado em %
+                
+                # 🔹 Criar DataFrame de retorno acumulado
+                df_retorno_acumulado = []
+                
+                for ticker in retornos_anuais.columns:
+                    retorno_acumulado = calcular_retorno_acumulado(retornos_anuais[ticker].dropna().values)
+                    df_retorno_acumulado.append({"Ticker": ticker.replace(".SA", ""), "Retorno Acumulado (%)": retorno_acumulado})
+                
+                # 🔹 Transformar em DataFrame
+                precos_retorno_acumulado = pd.DataFrame(df_retorno_acumulado)
+                #precos_retorno_acumulado.columns = precos_retorno_acumulado.columns.str.replace(".SA", "", regex=False) # Remove o ".SA" dos tickers
+
             
-                precos_retorno_acumulado = (precos / precos.iloc[0]) - 1  # Retorno acumulado
-                precos_retorno_acumulado.columns = precos_retorno_acumulado.columns.str.replace(".SA", "", regex=False) # Remove o ".SA" dos tickers
+                #precos_retorno_acumulado = (precos / precos.iloc[0]) - 1  # Retorno acumulado
+                #precos_retorno_acumulado.columns = precos_retorno_acumulado.columns.str.replace(".SA", "", regex=False) # Remove o ".SA" dos tickers
                 
                        
                 # 🔹 7. GERANDO GRÁFICO COMPARATIVO
@@ -1726,7 +1743,11 @@ if pagina == "Avançada": #_____________________________________________________
                 precos_retorno_acumulado.plot(ax=ax, alpha=0.4, linewidth=1, linestyle="--")
             
                 # Plotando IBOVESPA
-                ibov_retorno_acumulado = (ibov / ibov.iloc[0]) - 1
+                #ibov_retorno_acumulado = (ibov / ibov.iloc[0]) - 1
+                #ibov_retorno_acumulado.plot(ax=ax, color="black", linestyle="-", linewidth=2, label="IBOVESPA")
+
+                #  Isolar o IBOVESPA
+                ibov_retorno_acumulado = precos_retorno_acumulado[precos_retorno_acumulado["Ticker"] == "BVSP"]["Retorno Acumulado (%)"].values[0] 
                 ibov_retorno_acumulado.plot(ax=ax, color="black", linestyle="-", linewidth=2, label="IBOVESPA")
             
                 # Destacando a empresa líder
@@ -1739,9 +1760,10 @@ if pagina == "Avançada": #_____________________________________________________
                 lider_ticker_sem_sa = lider["ticker"].replace(".SA", "")
                 
                 # Remove o ticker da líder da lista de colunas
-                if lider_ticker_sem_sa in all_tickers:
-                    all_tickers.remove(lider_ticker_sem_sa)
-                
+                precos_retorno_acumulado = precos_retorno_acumulado[
+                    (precos_retorno_acumulado["Ticker"] != lider_ticker_sem_sa) & 
+                    (precos_retorno_acumulado["Ticker"] != "BVSP")  # Removendo IBOVESPA
+                                
                 fig, ax = plt.subplots(figsize=(12, 6))
                 
                 # 3) Plotando APENAS concorrentes
