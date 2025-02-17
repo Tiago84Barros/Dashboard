@@ -1778,7 +1778,7 @@ if pagina == "Avançada": #_____________________________________________________
                 ax.legend()
                 st.pyplot(fig)
             
-               # 1) Calcular retorno_final (empresas) e retorno_ibov_final (IBOVESPA)
+               # 1) Calcular retorno_final (empresas) e retorno_ibov_final (IBOVESPA) ______________________________________________________________________________________________________
                 retorno_final = precos_retorno_acumulado.iloc[-1] * 100
                 retorno_ibov_final = float(ibov_retorno_acumulado.iloc[-1] * 100)
 
@@ -1797,6 +1797,45 @@ if pagina == "Avançada": #_____________________________________________________
                 # Converter para float e arredondar
                 df_retorno["Retorno (%)"] = df_retorno["Retorno (%)"].astype(float).round(2)
                 
-                st.subheader("📊 Retorno Final das Empresas e IBOVESPA")
+                st.subheader("📊 Retorno Final das Empresas e IBOVESPA") # Visualizar o retorno do benchmark ______________________________________________________________________________
                 
-                st.dataframe(df_retorno)
+          
+
+                # Criar container para os retornos
+                with st.container():
+                    # Estilização condicional com gradiente de cores
+                    styled_df = df_retorno.style \
+                        .background_gradient(
+                            subset=["Retorno (%)"],
+                            cmap="RdYlGn",  # Escala de cores vermelho-amarelo-verde
+                            vmin=df_retorno["Retorno (%)"].min(),
+                            vmax=df_retorno["Retorno (%)"].max()
+                        ) \
+                        .format({"Retorno (%)": "{:.2f}%"}) \
+                        .apply(lambda x: ["background: #f0f2f6" if x.Ticker == "IBOVESPA" else "" for i in x], axis=1) \
+                        .set_properties(**{
+                            'text-align': 'center',
+                            'font-weight': 'bold',
+                            'border': '1px solid #d3d3d3'
+                        }) \
+                        .set_table_styles([{
+                            'selector': 'th',
+                            'props': [
+                                ('background', '#4a4a4a'),
+                                ('color', 'white'),
+                                ('font-weight', 'bold'),
+                                ('text-align', 'center')
+                            ]
+                        }])
+                
+                    # Exibir tabela estilizada
+                    st.write(styled_df.to_html(escape=False), unsafe_allow_html=True)
+                
+                    # Legenda explicativa
+                    st.caption("""
+                    <div style="text-align: left; margin-top: 10px">
+                        <span style="color: #2ecc71">◼︎ Retornos Positivos</span> | 
+                        <span style="color: #e74c3c">◼︎ Retornos Negativos</span> | 
+                        <span style="color: #f0f2f6">◼︎ IBOVESPA (Benchmark)</span>
+                    </div>
+                    """, unsafe_allow_html=True)
