@@ -1786,12 +1786,7 @@ if pagina == "Avançada": #_____________________________________________________
 
                 # 📌 Cálculo do retorno do IBOVESPA
                 retorno_ibov_composto = (1 + ibov.pct_change().dropna()).prod() - 1
-                # Verifica se é um número válido
-                if pd.isnull(retorno_ibov_composto) or not isinstance(retorno_ibov_composto, (float, int)):
-                    st.error("❌ Erro: Retorno acumulado do IBOVESPA não pôde ser calculado corretamente.")
-                else:
-                    st.write(f"📌 Retorno acumulado do IBOVESPA: {retorno_ibov_composto:.4%}")
-                                  
+                                                 
                 # 2) Criar df_retorno com as empresas
                 df_retorno = pd.DataFrame({
                     "Ticker": retorno_acumulado_composto.index,
