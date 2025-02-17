@@ -1685,7 +1685,8 @@ if pagina == "Avançada": #_____________________________________________________
             
                 # ✅ SELECIONANDO EMPRESA LÍDER E CONCORRENTES _________________________________________________________________________________________________
                 lider = df_lideres[df_lideres["Segmento"] == segmento].iloc[0]    
-                st.dataframe(lider)
+                lider_ticker = lider["ticker"]  # Agora já garantido que tem .SA
+                st.markdown(lider_ticker)
                 concorrentes = df_empresas[(df_empresas["Segmento"] == segmento) & (df_empresas["Rank_Ajustado"] != 1)]
                          
                 if concorrentes.empty:
@@ -1696,7 +1697,7 @@ if pagina == "Avançada": #_____________________________________________________
                 tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()  # Apenas empresas
                 tickers = [ticker + ".SA" for ticker in tickers]  # Adicionando ".SA" para cada empresa                 
                      
-                # 🔹 2. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS 
+                # 🔹 2. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS ________________________________________________________________________________________________
                 try:
                     precos = yf.download(tickers, start="2020-01-01", end="2024-01-01")["Close"]
 
@@ -1720,11 +1721,13 @@ if pagina == "Avançada": #_____________________________________________________
                 except Exception as e:
                     st.error(f"❌ Erro ao baixar os preços das empresas: {e}")
                     continue
+                    
+                ibov_retorno_acumulado = (ibov / ibov.iloc[0]) - 1
+              
                 
                        
                 # 🔹 4. GERANDO GRÁFICO COMPARATIVO _______________________________________________________________________________________________________________________
-                # Retirando apenas empresa Líder ______________________________________________________________________________________________
-                
+                               
                 fig, ax = plt.subplots(figsize=(12, 6))
 
                 # 1) Lista de todas as colunas 
@@ -1749,7 +1752,6 @@ if pagina == "Avançada": #_____________________________________________________
                 precos_retorno_concorrentes.plot(ax=ax, alpha=0.4, linewidth=1, linestyle="--")
             
                 # Plotando IBOVESPA
-                ibov_retorno_acumulado = (ibov / ibov.iloc[0]) - 1
                 ibov_retorno_acumulado.plot(ax=ax, color="black", linestyle="-", linewidth=2, label="IBOVESPA")
                        
                 # Destacando a empresa líder
