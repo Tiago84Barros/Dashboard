@@ -1741,9 +1741,9 @@ if pagina == "Avançada": #_____________________________________________________
                 lider_ticker_sem_sa = lider["ticker"].replace(".SA", "")
                 
                 # Remove o ticker da líder da lista de colunas
-                precos_retorno_acumulado = precos_retorno_acumulado[
-                    (precos_retorno_acumulado["Ticker"] != lider_ticker_sem_sa) & 
-                    (precos_retorno_acumulado["Ticker"] != "BVSP")]  # Removendo IBOVESPA
+                precos_retorno_acumulado = precos_retorno_acumulado.loc[
+                    precos_retorno_acumulado["ticker"] != lider_ticker_sem_sa
+                ]
                                 
                 fig, ax = plt.subplots(figsize=(12, 6))
                 
