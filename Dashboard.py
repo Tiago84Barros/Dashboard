@@ -1684,7 +1684,8 @@ if pagina == "Avançada": #_____________________________________________________
                 st.subheader(f"📊 Comparação no Segmento: {segmento}")
             
                 # ✅ SELECIONANDO EMPRESA LÍDER E CONCORRENTES _________________________________________________________________________________________________
-                lider = df_lideres[df_lideres["Segmento"] == segmento].iloc[0]                              
+                lider = df_lideres[df_lideres["Segmento"] == segmento].iloc[0]    
+                st.dataframe(lider)
                 concorrentes = df_empresas[(df_empresas["Segmento"] == segmento) & (df_empresas["Rank_Ajustado"] != 1)]
                          
                 if concorrentes.empty:
