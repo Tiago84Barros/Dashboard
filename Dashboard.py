@@ -1684,7 +1684,7 @@ if pagina == "Avançada": #_____________________________________________________
                     st.subheader(f"📊 Comparação no Segmento: {segmento}")
                 
                     
-                    # SELECIONANDO EMPRESA LÍDER E CONCORRENTES
+                    # SELECIONANDO EMPRESA LÍDER E CONCORRENTES ___________________________________________________________________________________________________________
                     lider = df_lideres[df_lideres["Segmento"] == segmento].iloc[0]
                     concorrentes = df_empresas[(df_empresas["Segmento"] == segmento) & (df_empresas["Rank_Ajustado"] != 1)]
                 
@@ -1696,14 +1696,14 @@ if pagina == "Avançada": #_____________________________________________________
                     tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()
                     tickers = [ticker + ".SA" if not ticker.endswith(".SA") else ticker for ticker in tickers]
                 
-                    # 1. BAIXANDO IBOVESPA
+                    # 1. BAIXANDO IBOVESPA ____________________________________________________________________________________________________________________________________
                     try:
                         ibov = yf.download("^BVSP", start="2020-01-01", end="2024-01-01")["Close"]
                     except Exception as e:
                         st.error(f"❌ Erro ao baixar IBOVESPA: {e}")
                         continue
                 
-                    # 2. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS
+                    # 2. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS ______________________________________________________________________________________________________________
                     try:
                         precos = yf.download(tickers, start="2020-01-01", end="2024-01-01")["Close"]
                     except Exception as e:
@@ -1774,17 +1774,28 @@ if pagina == "Avançada": #_____________________________________________________
 
                 
                # 1) Calcular retorno_final (empresas) e retorno_ibov_final (IBOVESPA) ______________________________________________________________________________________________________
-                retorno_final = precos_retorno_acumulado.iloc[-1] * 100
-                retorno_ibov_final = float(ibov_retorno_acumulado.iloc[-1] * 100)
+               # retorno_final = precos_retorno_acumulado.iloc[-1] * 100
+               # retorno_ibov_final = float(ibov_retorno_acumulado.iloc[-1] * 100)
+    
+                # 📌 CÁLCULO CORRETO DO RETORNO ACUMULADO COMPOSTO
+                retornos_diarios = precos.pct_change().dropna()  # Calcula os retornos diários
+            
+                # Multiplicação dos fatores de retorno para obter o retorno acumulado composto
+                retorno_acumulado_composto = (1 + retornos_diarios).prod() - 1
+                retorno_acumulado_composto.index = retorno_acumulado_composto.index.str.replace(".SA", "", regex=False)
 
+                # 📌 Cálculo do retorno do IBOVESPA
+                retorno_ibov_composto = (1 + ibov.pct_change().dropna()).prod() - 1
+
+                  
                 # 2) Criar df_retorno com as empresas
                 df_retorno = pd.DataFrame({
-                    "Ticker": retorno_final.index,
+                    "Ticker": retorno_acumulado_composto.index,
                     "Retorno (%)": retorno_final.values
                 })
                                             
                 # 3) Criar DataFrame para o IBOVESPA
-                df_ibov = pd.DataFrame([{"Ticker": "IBOVESPA", "Retorno (%)": retorno_ibov_final}])
+                df_ibov = pd.DataFrame([{"Ticker": "IBOVESPA", "Retorno (%)": retorno_ibov_composto}])
                 
                 # 4) Concatenar o IBOVESPA ao df_retorno
                 df_retorno = pd.concat([df_retorno, df_ibov], ignore_index=True)
