@@ -1802,12 +1802,13 @@ if pagina == "Avançada": #_____________________________________________________
                 
                 # Função para criar um bloco de empresa
                 def create_company_block(ticker, retorno):
+                    # Definir cor de fundo e borda se for IBOVESPA
                     if ticker == "IBOVESPA":
                         background_color = "#f0f2f6"  # Cor de fundo para o IBOVESPA
-                        border_color = "#4a4a4a"  # Borda escura para destaque
+                        border_color = "#4a4a4a"      # Borda escura para destaque
                     else:
                         background_color = "#ffffff"  # Cor de fundo padrão
-                        border_color = "#d3d3d3"  # Borda cinza
+                        border_color = "#d3d3d3"      # Borda cinza
                 
                     # Cor do texto baseada no retorno
                     if retorno > 0:
@@ -1823,6 +1824,7 @@ if pagina == "Avançada": #_____________________________________________________
                         border-radius: 10px;
                         padding: 15px;
                         margin: 10px 0;
+                        width: 150px;              /* Defina a largura fixa */
                         text-align: center;
                         box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
                     ">
@@ -1837,9 +1839,16 @@ if pagina == "Avançada": #_____________________________________________________
                 # Título da seção
                 st.subheader("📊 Retorno Final das Empresas e IBOVESPA")
                 
-                # Exibir blocos para cada empresa
+                # Montar um container flex
+                html_content = """
+                <div style='display: flex; flex-wrap: wrap; gap: 10px;'>
+                """
+                
+                # Construir cada bloco e concatenar
                 for index, row in df_retorno.iterrows():
-                    st.markdown(
-                        create_company_block(row["Ticker"], row["Retorno (%)"]),
-                        unsafe_allow_html=True
-                    )
+                    html_content += create_company_block(row["Ticker"], row["Retorno (%)"])
+                
+                html_content += "</div>"
+                
+                # Renderizar tudo de uma vez
+                st.markdown(html_content, unsafe_allow_html=True)
