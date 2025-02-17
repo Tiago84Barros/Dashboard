@@ -1737,6 +1737,7 @@ if pagina == "Avançada": #_____________________________________________________
             
                 # Plotando a empresa líder em destaque
                 lider_ticker = lider["ticker"].replace(".SA", "")
+                st.markdown(lider_ticker)
                 if lider_ticker in retorno_acumulado_composto.index:
                     ax.plot(precos.index, (1 + precos[lider_ticker].pct_change()).cumprod() - 1, color="red", linewidth=2, label=f"{lider['nome_empresa']} (Líder)")
             
