@@ -1798,9 +1798,10 @@ if pagina == "Avançada": #_____________________________________________________
                 # 5) Exibir no Streamlit
                 df_retorno["Retorno (%)"] = df_retorno["Retorno (%)"].astype(float)
                 st.subheader("📊 Retorno Final das Empresas e IBOVESPA")
-                st.dataframe(
-                    df_retorno.style.format({"Retorno (%)": "{:.2f}"})
-                )
+                styled_df = df_retorno.style.format({"Retorno (%)": "{:.2f}"}) \
+                            .highlight_max(subset=["Retorno (%)"], color="lightgreen")
+
+                st.dataframe(styled_df)
                
            
             
