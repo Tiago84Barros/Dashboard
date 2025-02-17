@@ -1731,6 +1731,46 @@ if pagina == "Avançada": #_____________________________________________________
             
                 # Destacando a empresa líder
                 precos_retorno_acumulado[lider["ticker"]].plot(ax=ax, color="red", linewidth=2, label=f"{lider['nome_empresa']} (Líder)")
+
+                # 1) Lista de todas as colunas
+                all_tickers = precos_retorno_acumulado.columns.tolist()
+                
+                # 2) Ticker da empresa líder sem o ".SA"
+                lider_ticker_sem_sa = lider["ticker"].replace(".SA", "")
+                
+                # Remove o ticker da líder da lista de colunas
+                if lider_ticker_sem_sa in all_tickers:
+                    all_tickers.remove(lider_ticker_sem_sa)
+                
+                fig, ax = plt.subplots(figsize=(12, 6))
+                
+                # 3) Plotando APENAS concorrentes
+                precos_retorno_acumulado[all_tickers].plot(
+                    ax=ax,
+                    alpha=0.4,
+                    linewidth=1,
+                    linestyle="--",
+                    label="Concorrentes"
+                )
+                
+                # 4) Plotando IBOVESPA
+                ibov_retorno_acumulado.plot(
+                    ax=ax,
+                    color="black",
+                    linestyle="-",
+                    linewidth=2,
+                    label="IBOVESPA"
+                )
+                
+                # 5) Plotando a empresa líder em destaque
+                if lider_ticker_sem_sa in precos_retorno_acumulado.columns:
+                    precos_retorno_acumulado[lider_ticker_sem_sa].plot(
+                        ax=ax,
+                        color="red",
+                        linewidth=2,
+                        label=f"{lider['nome_empresa']} (Líder)"
+                    )
+
             
                 ax.set_title(f"📊 Comparação do Retorno Acumulado no Segmento: {segmento}")
                 ax.set_xlabel("Data")
