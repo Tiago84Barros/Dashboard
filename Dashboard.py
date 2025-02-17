@@ -1715,57 +1715,32 @@ if pagina == "Avançada": #_____________________________________________________
                     st.error("❌ Nenhum dado foi baixado! Verifique os tickers e a conexão.")
                     continue
             
-                # Cálculo do Retorno Acumulado (removendo .SA das colunas)
-                precos_retorno_acumulado = (precos / precos.iloc[0]) - 1
-                precos_retorno_acumulado.columns = precos_retorno_acumulado.columns.str.replace(".SA", "", regex=False)
+                # 📌 CÁLCULO CORRETO DO RETORNO ACUMULADO COMPOSTO
+                retornos_diarios = precos.pct_change().dropna()  # Calcula os retornos diários
             
-                # 7. GERANDO GRÁFICO COMPARATIVO
-                fig, ax = plt.subplots(figsize=(12, 6))
-                precos_retorno_acumulado.plot(ax=ax, alpha=0.4, linewidth=1, linestyle="--")
+                # Multiplicação dos fatores de retorno para obter o retorno acumulado composto
+                retorno_acumulado_composto = (1 + retornos_diarios).prod() - 1
+                retorno_acumulado_composto.index = retorno_acumulado_composto.index.str.replace(".SA", "", regex=False)
             
-                ibov_retorno_acumulado = (ibov / ibov.iloc[0]) - 1
-                ibov_retorno_acumulado.plot(ax=ax, color="black", linestyle="-", linewidth=2, label="IBOVESPA")
+                # 📌 Cálculo do retorno do IBOVESPA
+                retorno_ibov_composto = (1 + ibov.pct_change().dropna()).prod() - 1
             
-                # 1) Lista de todas as colunas
-                all_tickers = precos_retorno_acumulado.columns.tolist()
-                
-                # 2) Ticker da empresa líder sem o ".SA"
-                lider_ticker_sem_sa = lider["ticker"].replace(".SA", "")
-                
-                # Remove o ticker da líder da lista de colunas
-                if lider_ticker_sem_sa in all_tickers:
-                    all_tickers.remove(lider_ticker_sem_sa)
-                
+                # 📌 GERANDO GRÁFICO COMPARATIVO
                 fig, ax = plt.subplots(figsize=(12, 6))
                 
-                # 3) Plotando APENAS concorrentes
-                precos_retorno_acumulado[all_tickers].plot(
-                    ax=ax,
-                    alpha=0.4,
-                    linewidth=1,
-                    linestyle="--",
-                    label="Concorrentes"
-                )
-                
-                # 4) Plotando IBOVESPA
-                ibov_retorno_acumulado.plot(
-                    ax=ax,
-                    color="black",
-                    linestyle="-",
-                    linewidth=2,
-                    label="IBOVESPA"
-                )
-                
-                # 5) Plotando a empresa líder em destaque
-                if lider_ticker_sem_sa in precos_retorno_acumulado.columns:
-                    precos_retorno_acumulado[lider_ticker_sem_sa].plot(
-                        ax=ax,
-                        color="red",
-                        linewidth=2,
-                        label=f"{lider['nome_empresa']} (Líder)"
-                    )
-                
-                ax.set_title(f"📊 Comparação do Retorno Acumulado no Segmento: {segmento}")
+                # Plotando o IBOVESPA
+                ax.plot(ibov.index, (1 + ibov.pct_change()).cumprod() - 1, color="black", linestyle="-", linewidth=2, label="IBOVESPA")
+            
+                # Plotando as empresas concorrentes
+                for ticker in retorno_acumulado_composto.index:
+                    ax.plot(precos.index, (1 + precos.pct_change()).cumprod() - 1, linestyle="--", alpha=0.4, linewidth=1, label=ticker)
+            
+                # Plotando a empresa líder em destaque
+                lider_ticker = lider["ticker"].replace(".SA", "")
+                if lider_ticker in retorno_acumulado_composto.index:
+                    ax.plot(precos.index, (1 + precos[lider_ticker].pct_change()).cumprod() - 1, color="red", linewidth=2, label=f"{lider['nome_empresa']} (Líder)")
+            
+                ax.set_title(f"📊 Comparação do Retorno Acumulado Composto no Segmento: {segmento}")
                 ax.set_xlabel("Data")
                 ax.set_ylabel("Retorno Acumulado (%)")
                 ax.legend()
