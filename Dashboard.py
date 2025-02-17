@@ -1730,7 +1730,7 @@ if pagina == "Avançada": #_____________________________________________________
                 # 1) Lista de todas as colunas 
                 all_tickers = precos_retorno_acumulado.columns.tolist()
                 # 2) Ticker da empresa líder sem o ".SA"
-                lider_ticker = lider[lider.iloc[:, 0] == "ticker"].iloc[0, 1]
+                lider_ticker = lider[lider.iloc[:, 0] == "ticker"].iloc[:, 1].values[0]
                 st.dataframe(lider_ticker)
                  # 3) Remover a coluna correspondente ao ticker da empresa líder, se existir
                 if lider_ticker in precos_retorno_acumulado.columns:
