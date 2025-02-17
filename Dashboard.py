@@ -1796,11 +1796,10 @@ if pagina == "Avançada": #_____________________________________________________
                 
                 # Converter para float e arredondar
                 df_retorno["Retorno (%)"] = df_retorno["Retorno (%)"].astype(float).round(2)
+                st.dataframe(df_retorno)
                 
                 st.subheader("📊 Retorno Final das Empresas e IBOVESPA") # Visualizar o retorno do benchmark ______________________________________________________________________________
                 
-          
-
                 # Criar container para os retornos
                 with st.container():
                     # Estilização condicional com gradiente de cores
