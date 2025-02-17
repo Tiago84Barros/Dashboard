@@ -1709,7 +1709,6 @@ if pagina == "Avançada": #_____________________________________________________
                 except Exception as e:
                     st.error(f"❌ Erro ao baixar os preços das empresas: {e}")
                     continue
-                st.dataframe(precos)
                 # 3. GARANTIR QUE OS DADOS NÃO ESTÃO VAZIOS
                 if precos.empty:
                     st.error("❌ Nenhum dado foi baixado! Verifique os tickers e a conexão.")
@@ -1736,7 +1735,7 @@ if pagina == "Avançada": #_____________________________________________________
                     ax.plot(precos.index, (1 + precos.pct_change()).cumprod() - 1, linestyle="--", alpha=0.4, linewidth=1, label=ticker)
             
                 # Plotando a empresa líder em destaque
-                lider_ticker = lider["ticker"].replace(".SA", "")
+                lider_ticker = lider["ticker"]
                 if lider_ticker in retorno_acumulado_composto.index:
                     ax.plot(precos.index, (1 + precos[lider_ticker].pct_change()).cumprod() - 1, color="red", linewidth=2, label=f"{lider['nome_empresa']} (Líder)")
             
