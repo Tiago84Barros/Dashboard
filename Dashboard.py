@@ -1742,7 +1742,7 @@ if pagina == "Avançada": #_____________________________________________________
                 
                 # Remove o ticker da líder da lista de colunas
                 precos_retorno_acumulado = precos_retorno_acumulado.loc[
-                    precos_retorno_acumulado["ticker"] != lider_ticker_sem_sa
+                    precos_retorno_acumulado["Ticker"] != lider_ticker_sem_sa
                 ]
                                 
                 fig, ax = plt.subplots(figsize=(12, 6))
