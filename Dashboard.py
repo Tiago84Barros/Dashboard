@@ -1792,7 +1792,7 @@ if pagina == "Avançada": #_____________________________________________________
                 df_ibov = pd.DataFrame([{"Ticker": "IBOVESPA", "Retorno (%)": retorno_ibov_final}])
                 
                 # 4) Concatenar o IBOVESPA ao df_retorno
-                df_retorno["Retorno (%)"] = df_retorno["Retorno (%)"].astype(float)
+                df_retorno["Retorno (%)"] = df_retorno["Retorno (%)"]
 
                 st.dataframe(
                     df_retorno.style.format({"Retorno (%)": "{:.2f}"})
