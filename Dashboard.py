@@ -1710,7 +1710,7 @@ if pagina == "Avançada": #_____________________________________________________
                     except Exception as e:
                         st.error(f"❌ Erro ao baixar os preços das empresas: {e}")
                         continue
-                
+                    st.dataframe(precos)
                     # 3. GARANTIR QUE OS DADOS NÃO ESTÃO VAZIOS
                     if precos.empty:
                         st.error("❌ Nenhum dado foi baixado! Verifique os tickers e a conexão.")
