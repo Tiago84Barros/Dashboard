@@ -1748,8 +1748,10 @@ if pagina == "Avançada": #_____________________________________________________
                 df_ibov = pd.DataFrame([{"Ticker": "IBOVESPA", "Retorno (%)": retorno_ibov_final}])
                 df_retorno = pd.concat([df_retorno, df_ibov], ignore_index=True)
                 
-                # 📌 FORMATANDO VALORES
+                # 📌 FORMATANDO VALORES E ORDENANDO POR RETORNO (MAIOR → MENOR)
                 df_retorno["Retorno (%)"] = df_retorno["Retorno (%)"].astype(float).round(2)
+                df_retorno = df_retorno.sort_values(by="Retorno (%)", ascending=False)  # Ordenação decrescente
+
                 
                 # 📌 EXIBINDO NO DASHBOARD
                 st.subheader("📊 Retorno Final das Empresas e IBOVESPA")
