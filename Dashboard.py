@@ -1747,6 +1747,15 @@ if pagina == "Avançada": #_____________________________________________________
                 # 📌 ADICIONANDO IBOVESPA
                 df_ibov = pd.DataFrame([{"Ticker": "IBOVESPA", "Retorno (%)": retorno_ibov_final}])
                 df_retorno = pd.concat([df_retorno, df_ibov], ignore_index=True)
+
+                # Converter para float garantindo que todos os valores são numéricos
+                df_retorno["Retorno (%)"] = pd.to_numeric(df_retorno["Retorno (%)"], errors="coerce")
+                
+                # Remover valores NaN (empresas sem histórico suficiente)
+                df_retorno = df_retorno.dropna(subset=["Retorno (%)"])
+                
+                # Ordenação correta de maior para menor
+                df_retorno = df_retorno.sort_values(by="Retorno (%)", ascending=False)
                 
                 # 📌 FORMATANDO VALORES E ORDENANDO POR RETORNO (MAIOR → MENOR)
                 df_retorno["Retorno (%)"] = df_retorno["Retorno (%)"].astype(float).round(2)
