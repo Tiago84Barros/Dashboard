@@ -1709,7 +1709,7 @@ if pagina == "Avançada": #_____________________________________________________
                     precos_retorno_acumulado = precos_retorno_acumulado.fillna(0)
                 
                     # 🔹 7. REMOVER A EMPRESA LÍDER DO DATAFRAME
-                    lider_ticker_sem_sa = lider["ticker"]
+                    lider_ticker_sem_sa = lider["ticker"].replace(".SA", "")
                     if lider_ticker_sem_sa in precos_retorno_acumulado.columns:
                         precos_retorno_acumulado = precos_retorno_acumulado.drop(columns=[lider_ticker_sem_sa], errors="ignore")
                 
