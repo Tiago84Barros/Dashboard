@@ -1766,28 +1766,31 @@ if pagina == "Avançada": #_____________________________________________________
                 st.subheader("📊 Retorno Final das Empresas e IBOVESPA")
                 
                 # 📌 EXIBIÇÃO DOS QUADRADOS
-                num_columns = 3
-                columns = st.columns(num_columns)
+                # Criando uma grade de colunas para exibição organizada
+                num_columns = 3  # Número de colunas desejado por linha
+                rows = [df_retorno[i:i + num_columns] for i in range(0, len(df_retorno), num_columns)]
                 
-                for index, row in df_retorno.iterrows():
-                    with columns[index % num_columns]:
-                        st.markdown(
-                            f"""
-                            <div style="
-                                background-color: #f9f9f9;
-                                border: 2px solid #d3d3d3;
-                                border-radius: 10px;
-                                padding: 15px;
-                                margin: 10px;
-                                text-align: center;
-                                box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
-                                flex: 1;
-                            ">
-                                <h3 style="margin: 0; color: #4a4a4a;">{row["Ticker"]}</h3>
-                                <p style="font-size: 18px; margin: 5px 0; color: {'#2ecc71' if row['Retorno (%)'] > 0 else '#e74c3c'}; font-weight: bold;">
-                                    {row["Retorno (%)"]:.2f}%
-                                </p>
-                            </div>
-                            """,
-                            unsafe_allow_html=True
-                        )
+                # Criando os blocos linha por linha
+                for row in rows:
+                    cols = st.columns(num_columns)  # Criando as colunas para cada linha
+                    for index, (col, (_, row_data)) in enumerate(zip(cols, row.iterrows())):
+                        with col:
+                            st.markdown(
+                                f"""
+                                <div style="
+                                    background-color: white;
+                                    border: 2px solid #ddd;
+                                    border-radius: 10px;
+                                    padding: 15px;
+                                    margin: 10px;
+                                    text-align: center;
+                                    box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
+                                ">
+                                    <h3 style="margin: 0; color: #4a4a4a;">{row_data['Ticker']}</h3>
+                                    <p style="font-size: 18px; margin: 5px 0; color: {'#2ecc71' if row_data['Retorno (%)'] > 0 else '#e74c3c'}; font-weight: bold;">
+                                        {row_data['Retorno (%)']:.2f}%
+                                    </p>
+                                </div>
+                                """,
+                                unsafe_allow_html=True
+                            )
