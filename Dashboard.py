@@ -1649,10 +1649,9 @@ if pagina == "Avançada": #_____________________________________________________
 
                 gerar_resumo_melhor_empresa(df_empresas)
 
-           # ================================ CRIANDO UM BENCHMARK PARA TESTAR SE O SCORE DA EMPRESA ESCOLHIDA REALMENTE SUPERA O IBOVESPA E/OU AS EMPRESAS CONCORRENTES ===============================================
-         
-            
-              # 📌 VERIFICANDO SE `df_empresas` EXISTE E TEM DADOS
+              # =========================== BENCHMARK: EMPRESA LÍDER X CONCORRENTES X IBOVESPA ===========================
+    
+                # 📌 VERIFICANDO SE `df_empresas` EXISTE E TEM DADOS
                 if 'df_empresas' not in locals() or df_empresas.empty:
                     st.error("❌ O DataFrame `df_empresas` não está definido ou está vazio!")
                     st.stop()
@@ -1663,9 +1662,9 @@ if pagina == "Avançada": #_____________________________________________________
                     st.write("📌 Colunas disponíveis:", df_empresas.columns.tolist())
                     st.stop()
                 
-                # 📌 FILTRANDO EMPRESAS LÍDERES (RANK 1) __________________________________________________________________________________________________________
-                df_lideres = df_empresas[df_empresas["Rank_Ajustado"] == 1] 
-                            
+                # 📌 FILTRANDO EMPRESAS LÍDERES (RANK 1)
+                df_lideres = df_empresas[df_empresas["Rank_Ajustado"] == 1]
+                
                 # 📌 VERIFICANDO SE `df_lideres` ESTÁ VAZIO
                 if df_lideres.empty:
                     st.error("❌ Nenhuma empresa líder encontrada! Verifique os valores de `Rank_Ajustado`.")
@@ -1673,182 +1672,107 @@ if pagina == "Avançada": #_____________________________________________________
                     st.dataframe(df_empresas.head())  # Mostra os dados disponíveis
                     st.stop()
                 
-                # 📌 VERIFICANDO SE `Segmento` EXISTE EM `df_lideres` 
-                if "Segmento" not in df_lideres.columns:
-                    st.error("❌ A coluna `Segmento` não existe em `df_lideres`!")
-                    st.write("📌 Colunas disponíveis em `df_lideres`:", df_lideres.columns.tolist())
-                    st.stop()
-                
                 # 📌 LOOP PARA COMPARAÇÃO ENTRE A LÍDER, CONCORRENTES E IBOVESPA
                 for segmento in df_lideres["Segmento"].unique():
                     st.subheader(f"📊 Comparação no Segmento: {segmento}")
                 
-                    
-                    # SELECIONANDO EMPRESA LÍDER E CONCORRENTES ___________________________________________________________________________________________________________
-                    lider = df_lideres[df_lideres["Segmento"] == segmento].iloc[0]
+                    # ✅ SELECIONANDO EMPRESA LÍDER E CONCORRENTES
+                    lider = df_lideres[df_lideres["Segmento"] == segmento].iloc[0]                              
                     concorrentes = df_empresas[(df_empresas["Segmento"] == segmento) & (df_empresas["Rank_Ajustado"] != 1)]
                 
                     if concorrentes.empty:
                         st.warning(f"⚠️ Não há concorrentes disponíveis para `{lider['nome_empresa']}` no segmento {segmento}.")
                         continue
                 
-                    # OBTENDO OS TICKERS PARA DOWNLOAD NO YAHOO FINANCE
-                    tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()
-                    tickers = [ticker + ".SA" if not ticker.endswith(".SA") else ticker for ticker in tickers]
+                    # ✅ OBTENDO OS TICKERS PARA DOWNLOAD NO YAHOO FINANCE
+                    tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()  # Apenas empresas
+                    tickers = [ticker + ".SA" for ticker in tickers]  # Adicionando ".SA" para cada empresa
                 
-                    # 1. BAIXANDO IBOVESPA ____________________________________________________________________________________________________________________________________
+                    # 🔹 1. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS
                     try:
-                        ibov = yf.download("^BVSP", start="2020-01-01", end="2025-01-01")["Close"]
-                    except Exception as e:
-                        st.error(f"❌ Erro ao baixar IBOVESPA: {e}")
-                        continue
-                
-                    # 2. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS ______________________________________________________________________________________________________________
-                    try:
-                        precos = yf.download(tickers, start="2020-01-01", end="2025-01-01")["Close"]
-                       # precos = precos.reindex(pd.date_range(start="2015-01-01", end="2024-01-01", freq="B"))  # Preencher com NaN
+                        precos = yf.download(tickers, start="2020-01-01", end="2024-01-01")["Close"]
                     except Exception as e:
                         st.error(f"❌ Erro ao baixar os preços das empresas: {e}")
                         continue
                 
-                    # 3. GARANTIR QUE OS DADOS NÃO ESTÃO VAZIOS
+                    # 🔹 2. GARANTIR QUE OS DADOS NÃO ESTÃO VAZIOS
                     if precos.empty:
                         st.error("❌ Nenhum dado foi baixado! Verifique os tickers e a conexão.")
                         continue
                 
-                    # Cálculo do Retorno Acumulado (removendo .SA das colunas)
-                    precos_retorno_acumulado = (precos / precos.iloc[0]) - 1
-                    precos_retorno_acumulado.columns = precos_retorno_acumulado.columns.str.replace(".SA", "", regex=False)
+                    # 🔹 3. CALCULAR O RETORNO ACUMULADO, MAS AGORA CONSIDERANDO A PRIMEIRA COTAÇÃO DISPONÍVEL
+                    precos_retorno_acumulado = precos.copy()
                 
-                    # 7. GERANDO GRÁFICO COMPARATIVO
-                    fig, ax = plt.subplots(figsize=(12, 6))
-                    precos_retorno_acumulado.plot(ax=ax, alpha=0.4, linewidth=1, linestyle="--")
+                    for ticker in precos.columns:
+                        first_valid_index = precos[ticker].first_valid_index()  # Pega a primeira data com dado válido
+                        if first_valid_index:
+                            precos_retorno_acumulado[ticker] = (precos[ticker] / precos[ticker].loc[first_valid_index]) - 1
+                        else:
+                            precos_retorno_acumulado[ticker] = None  # Define como `None` caso não haja dados
                 
+                    precos_retorno_acumulado.columns = precos_retorno_acumulado.columns.str.replace(".SA", "", regex=False)  # Remove o ".SA" dos tickers
+                
+                    # 🔹 4. BAIXANDO OS PREÇOS DO IBOVESPA SEPARADAMENTE
+                    try:
+                        ibov = yf.download("^BVSP", start="2020-01-01", end="2024-01-01")["Close"]
+                    except Exception as e:
+                        st.error(f"❌ Erro ao baixar os preços do IBOVESPA: {e}")
+                        continue
+                
+                    # 🔹 5. CALCULANDO RETORNO ACUMULADO DO IBOVESPA
                     ibov_retorno_acumulado = (ibov / ibov.iloc[0]) - 1
+                
+                    # 🔹 6. REMOVENDO APENAS A EMPRESA LÍDER DO DataFrame `precos_retorno_acumulado`
+                    lider_ticker_sem_sa = lider["ticker"]
+                    if lider_ticker_sem_sa in precos_retorno_acumulado.columns:
+                        precos_retorno_acumulado = precos_retorno_acumulado.drop(columns=[lider_ticker_sem_sa], errors="ignore")
+                
+                    # 🔹 7. GERANDO GRÁFICO COMPARATIVO
+                    fig, ax = plt.subplots(figsize=(12, 6))
+                
+                    # Plotando concorrentes (tons neutros)
+                    precos_retorno_acumulado.plot(ax=ax, alpha=0.5, linewidth=1, linestyle="--", color="gray", legend=False)
+                
+                    # Plotando IBOVESPA
                     ibov_retorno_acumulado.plot(ax=ax, color="black", linestyle="-", linewidth=2, label="IBOVESPA")
                 
-                    # 1) Lista de todas as colunas
-                    all_tickers = precos_retorno_acumulado.columns.tolist()
-                    
-                    # 2) Ticker da empresa líder sem o ".SA"
-                    lider_ticker_sem_sa = lider["ticker"].replace(".SA", "")
-                    
-                    # Remove o ticker da líder da lista de colunas
-                    if lider_ticker_sem_sa in all_tickers:
-                        all_tickers.remove(lider_ticker_sem_sa)
-                    
-                    fig, ax = plt.subplots(figsize=(12, 6))
-                    
-                    # 3) Plotando APENAS concorrentes
-                    precos_retorno_acumulado[all_tickers].plot(
-                        ax=ax,
-                        color = "blue",
-                        alpha=0.4,
-                        linewidth=1,
-                        linestyle="-",
-                        label="Concorrentes"
-                    )
-                    
-                    # 4) Plotando IBOVESPA
-                    ibov_retorno_acumulado.plot(
-                        ax=ax,
-                        color="black",
-                        linestyle="-",
-                        linewidth=2,
-                        label="IBOVESPA"
-                    )
-                    
-                    # 5) Plotando a empresa líder em destaque
-                    if lider_ticker_sem_sa in precos_retorno_acumulado.columns:
-                        precos_retorno_acumulado[lider_ticker_sem_sa].plot(
-                            ax=ax,
-                            color="red",
-                            linewidth=2,
-                            label=f"{lider['nome_empresa']} (Líder)"
-                        )
-                    
+                    # Plotando a empresa líder
+                    precos[lider["ticker"]].plot(ax=ax, color="red", linewidth=2, label=f"{lider['nome_empresa']} (Líder)")
+                
                     ax.set_title(f"📊 Comparação do Retorno Acumulado no Segmento: {segmento}")
                     ax.set_xlabel("Data")
                     ax.set_ylabel("Retorno Acumulado (%)")
                     ax.legend()
                     st.pyplot(fig)
-
-
                 
-               # 1) Calcular retorno_final (empresas) e retorno_ibov_final (IBOVESPA) ______________________________________________________________________________________________________
-                retorno_final = precos_retorno_acumulado.iloc[-1] * 100
-                retorno_ibov_final = float(ibov_retorno_acumulado.iloc[-1] * 100)
-
-                # 📌 CÁLCULO CORRETO DO RETORNO ACUMULADO COMPOSTO
-                retornos_diarios = precos.pct_change().dropna()  # Calcula os retornos diários
-            
-                # Multiplicação dos fatores de retorno para obter o retorno acumulado composto
-                #retorno_acumulado_composto = (1 + retornos_diarios).prod() - 1
-                #retorno_acumulado_composto.index = retorno_acumulado_composto.index.str.replace(".SA", "", regex=False)
-
-                # 📌 Cálculo do retorno do IBOVESPA
-                #retorno_ibov_composto = (1 + ibov.pct_change().dropna()).prod() - 1
-                                                 
-                # 2) Criar df_retorno com as empresas
-                df_retorno = pd.DataFrame({
-                    "Ticker": retorno_final.index,
-                    "Retorno (%)": retorno_final.values
-                })
-                                            
-                # 3) Criar DataFrame para o IBOVESPA
-                df_ibov = pd.DataFrame([{"Ticker": "IBOVESPA", "Retorno (%)": retorno_ibov_final}])
+                    # 🔹 8. EXIBIR OS RESULTADOS NO DASHBOARD
+                    df_retorno = pd.DataFrame({
+                        "Ticker": precos_retorno_acumulado.columns,
+                        "Retorno (%)": precos_retorno_acumulado.iloc[-1].values * 100
+                    })
                 
-                # 4) Concatenar o IBOVESPA ao df_retorno
-                df_retorno = pd.concat([df_retorno, df_ibov], ignore_index=True)
+                    # 🔹 9. FORMATANDO `NaN` PARA EMPRESAS NOVAS
+                    df_retorno["Retorno (%)"] = df_retorno["Retorno (%)"].apply(lambda x: f"{x:.2f}%" if pd.notna(x) else "Sem dados")
                 
-                # Converter para float e arredondar
-                df_retorno["Retorno (%)"] = df_retorno["Retorno (%)"].astype(float).round(2)
-                            
-                st.subheader("📊 Retorno Final das Empresas e IBOVESPA") # Visualizar o retorno do benchmark ______________________________________________________________________________
+                    # 🔹 10. EXIBIR O RESULTADO NO STREAMLIT COM MELHOR FORMATAÇÃO
+                    st.subheader("📊 Retorno Final das Empresas e IBOVESPA")
                 
-                # Função para criar um bloco de empresa
-                def create_company_block(ticker, retorno):
-                    if ticker == lider["ticker"]:
-                        background_color = "#f0f2f6"  # Cor de fundo para o IBOVESPA
-                        border_color = "#4a4a4a"  # Borda escura para destaque
-                    else:
-                        background_color = "#ffffff"  # Cor de fundo padrão
-                        border_color = "#d3d3d3"  # Borda cinza
+                    colunas_layout = st.columns(len(df_retorno))
                 
-                    # Cor do texto baseada no retorno
-                    if retorno > 0:
-                        retorno_color = "#2ecc71"  # Verde para retornos positivos
-                    else:
-                        retorno_color = "#e74c3c"  # Vermelho para retornos negativos
-                
-                    # HTML para o bloco
-                    block_html = f"""
-                    <div style="
-                        background-color: {background_color};
-                        border: 2px solid {border_color};
-                        border-radius: 10px;
-                        padding: 15px;
-                        margin: 10px;
-                        text-align: center;
-                        box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
-                        flex: 1;
-                    ">
-                        <h3 style="margin: 0; color: #4a4a4a;">{ticker}</h3>
-                        <p style="font-size: 18px; margin: 5px 0; color: {retorno_color}; font-weight: bold;">
-                            {retorno:.2f}%
-                        </p>
-                    </div>
-                    """
-                    return block_html
-                                           
-                # Criar colunas para os blocos
-                num_columns = 3  # Número de colunas (ajuste conforme necessário)
-                columns = st.columns(num_columns)
-                
-                # Exibir blocos lado a lado
-                for index, row in df_retorno.iterrows():
-                    with columns[index % num_columns]:  # Distribui os blocos nas colunas
-                        st.markdown(
-                            create_company_block(row["Ticker"], row["Retorno (%)"]),
-                            unsafe_allow_html=True
-                        )
+                    for idx, row in df_retorno.iterrows():
+                        col = colunas_layout[idx % len(colunas_layout)]
+                        with col:
+                            retorno_cor = "green" if pd.notna(row["Retorno (%)"]) and "-" not in row["Retorno (%)"] else "red"
+                            st.markdown(
+                                f"""
+                                <div style="border: 2px solid #ddd; border-radius: 10px; padding: 15px; 
+                                            background-color: #f9f9f9; width: 180px; text-align: center; 
+                                            box-shadow: 2px 2px 5px rgba(0,0,0,0.1);">
+                                    <h4 style="color: #333; margin: 0;">{row["Ticker"]}</h4>
+                                    <p style="font-size: 18px; color: {retorno_cor}; font-weight: bold; margin: 5px 0;">
+                                        {row["Retorno (%)"]}
+                                    </p>
+                                </div>
+                                """,
+                                unsafe_allow_html=True
+                            )
