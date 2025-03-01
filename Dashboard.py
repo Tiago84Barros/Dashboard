@@ -1227,7 +1227,7 @@ if pagina == "Avançada": #_____________________________________________________
     
         def calcular_historico_bonus(anos):
             """ Penaliza empresas novas mais severamente """
-            return anos / (10 + anos)  # Ajustável, pode ser 15+ se quiser penalizar ainda mais
+            return anos / (15 + anos)  # Ajustável, pode ser 15+ se quiser penalizar ainda mais
     
         # Aplicando penalização aprimorada
         metrics['historico_bonus'] = calcular_historico_bonus(num_anos)
