@@ -1297,6 +1297,7 @@ if pagina == "Avançada": #_____________________________________________________
               
                     # Calcular métricas simplificadas ______________________________________________________________________________________________________
                     metrics_dict = calcular_metricas_historicas_simplificadas(multiplos_corrigido, df_dre_corrigido)
+                    st.dataframe(metrics_dict)
                                         
                     data_emp = {
                         'ticker': ticker,
