@@ -1668,7 +1668,8 @@ if pagina == "Avançada": #_____________________________________________________
                     st.subheader(f"📊 Comparação no Segmento: {segmento}")
                 
                     # ✅ SELECIONANDO EMPRESA LÍDER E CONCORRENTES
-                    lider = df_lideres[df_lideres["Segmento"] == segmento].iloc[0]                              
+                    lider = df_lideres[df_lideres["Segmento"] == segmento].iloc[0]    
+                    
                     concorrentes = df_empresas[(df_empresas["Segmento"] == segmento) & (df_empresas["Rank_Ajustado"] != 1)]
                 
                     if concorrentes.empty:
@@ -1678,8 +1679,7 @@ if pagina == "Avançada": #_____________________________________________________
                     # ✅ OBTENDO OS TICKERS PARA DOWNLOAD NO YAHOO FINANCE
                     tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()
                     tickers = [ticker + ".SA" if not ticker.endswith(".SA") else ticker for ticker in tickers]
-                    st.dataframe(tickers)
- 
+                   
                     # 🔹 1. BAIXANDO IBOVESPA
                     try:
                         ibov = yf.download("^BVSP", start="2020-01-01", end="2025-01-01")["Close"]
@@ -1693,7 +1693,7 @@ if pagina == "Avançada": #_____________________________________________________
                     except Exception as e:
                         st.error(f"❌ Erro ao baixar os preços das empresas: {e}")
                         continue
-                    st.dataframe(precos)
+                   
                     # 🔹 3. GARANTIR QUE OS DADOS NÃO ESTÃO VAZIOS
                     if precos.empty:
                         st.error("❌ Nenhum dado foi baixado! Verifique os tickers e a conexão.")
@@ -1724,8 +1724,8 @@ if pagina == "Avançada": #_____________________________________________________
                     ibov_retorno_acumulado.plot(ax=ax, color="black", linestyle="-", linewidth=2, label="IBOVESPA")
                 
                     # **✅ VERIFICAÇÃO ANTES DE PLOTAR A EMPRESA LÍDER**
-                    st.dataframe(precos)
-                    if lider_ticker_sem_sa in precos.columns:
+                    lider_ticker = lider_ticker_sem_sa + ".SA"
+                    if lider_ticker in precos.columns:
                         precos[lider_ticker_sem_sa].plot(ax=ax, color="red", linewidth=2, label=f"{lider['nome_empresa']} (Líder)")
                 
                     ax.set_title(f"📊 Comparação do Retorno Acumulado no Segmento: {segmento}")
