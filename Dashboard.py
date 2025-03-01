@@ -1354,9 +1354,18 @@ if pagina == "Avançada": #_____________________________________________________
                         # Aplicar Winsorize para suavizar outliers
                         df_empresas[col] = winsorize(df_empresas[col])
                 
+                        # 📌 Aplicando Penalização por Volatilidade
+                        volatility_col = col.replace("_mean", "_volatility_penalty")
+                        if volatility_col in df_empresas.columns:
+                            df_empresas[col] *= (1 - df_empresas[volatility_col])  # Penaliza o indicador pela volatilidade
+                
+                        # 📌 Aplicando Penalização por Tempo de Mercado
+                        if 'historico_bonus' in df_empresas.columns:
+                            df_empresas[col] *= df_empresas['historico_bonus']  # Penaliza o indicador pelo tempo de mercado
+                
                         # Criar coluna normalizada
                         df_empresas[col + '_norm'] = z_score_normalize(df_empresas[col], config['melhor_alto'])
-                             
+                
                         # Se a normalização falhar, criar a coluna `_norm`
                         if col + '_norm' not in df_empresas.columns:
                             st.error(f"Erro ao criar '{col}_norm'. Criando com valor padrão.")
@@ -1364,15 +1373,12 @@ if pagina == "Avançada": #_____________________________________________________
                 
                         # Somar ao Score Ajustado
                         df_empresas['Score_Ajustado'] += df_empresas[col + '_norm'] * config['peso']
-
-                    # 📌 **Aplicando a Penalização do Histórico de Longo Prazo**
-                    if 'historico_bonus' in df_empresas.columns:
-                        df_empresas['Score_Ajustado'] *= df_empresas['historico_bonus']  # APLICA A PENALIZAÇÃO NO SCORE
                 
                     # Criar ranking dentro do segmento
                     df_empresas['Rank_Ajustado'] = df_empresas['Score_Ajustado'].rank(method='dense', ascending=False)
                 
                     return df_empresas
+
                     
                 df_empresas = calcular_score(df_empresas, indicadores_score_ajustados) # CÁLCULO DO SCRORE DAS EMPRESAS
 
