@@ -1712,21 +1712,20 @@ if pagina == "Avançada": #_____________________________________________________
                     # 🔹 7. REMOVER A EMPRESA LÍDER DO DATAFRAME
                     lider_ticker_sem_sa = lider["ticker"]
                     if lider_ticker_sem_sa in precos_retorno_acumulado.columns:
-                        precos_retorno_acumulado = precos_retorno_acumulado.drop(columns=[lider_ticker_sem_sa], errors="ignore")
+                        precos_retorno_acumulado_concorrentes = precos_retorno_acumulado.drop(columns=[lider_ticker_sem_sa], errors="ignore")
                                        
                     # 🔹 8. GERANDO GRÁFICO COMPARATIVO
                     fig, ax = plt.subplots(figsize=(12, 6))
                 
                     # Plotando concorrentes
-                    precos_retorno_acumulado.plot(ax=ax, alpha=0.5, linewidth=1, linestyle="--", color="gray", legend=False)
+                    precos_retorno_acumulado_concorrentes.plot(ax=ax, alpha=0.5, linewidth=1, linestyle="--", color="gray", legend=False)
                 
                     # Plotando IBOVESPA
                     ibov_retorno_acumulado.plot(ax=ax, color="black", linestyle="-", linewidth=2, label="IBOVESPA")
                 
                     # **✅ VERIFICAÇÃO ANTES DE PLOTAR A EMPRESA LÍDER**
-                    lider_ticker = lider_ticker_sem_sa + ".SA"
-                    if lider_ticker in precos.columns:
-                        precos[lider_ticker].plot(ax=ax, color="red", linewidth=2, label=f"{lider['nome_empresa']} (Líder)")
+                    if lider_ticker_sem_sa in precos_retorno_acumulado.columns:
+                        precos_retorno_acumulado[lider_ticker_sem_sa].plot(ax=ax, color="red", linewidth=2, label=f"{lider['nome_empresa']} (Líder)")
                 
                     ax.set_title(f"📊 Comparação do Retorno Acumulado no Segmento: {segmento}")
                     ax.set_xlabel("Data")
