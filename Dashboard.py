@@ -1709,7 +1709,7 @@ if pagina == "Avançada": #_____________________________________________________
                         continue
               
                 # 📌 DEFINIÇÃO DA FUNÇÃO PARA SIMULAR APORTES MENSAIS
-                def calcular_patrimonio_com_aportes(precos, investimento_inicial=1000, aporte_mensal=1000):
+               def calcular_patrimonio_com_aportes(precos, investimento_inicial=1000, aporte_mensal=1000):
                     """
                     Simula aportes mensais em ações ao longo do tempo e calcula o patrimônio final.
                     
@@ -1723,7 +1723,13 @@ if pagina == "Avançada": #_____________________________________________________
                     patrimonio_final = {}
                     
                     for ticker in precos.columns:
-                        df_precos = precos[[ticker]].dropna()
+                        df_precos = precos[[ticker]].dropna()  # Remove valores NaN
+                        
+                        # Verifica se há dados suficientes (mínimo de 12 meses de histórico)
+                        if df_precos.empty or len(df_precos) < 12:
+                            print(f"⚠️ Empresa {ticker} removida da análise (dados insuficientes).")
+                            continue
+                        
                         df_precos['Mes'] = df_precos.index.to_period('M')  # Agrupar por mês
                         df_mensal = df_precos.groupby('Mes').first()  # Pegando o primeiro preço de cada mês
                         
@@ -1743,9 +1749,11 @@ if pagina == "Avançada": #_____________________________________________________
                                 total_acoes += aporte_mensal / preco
                                 total_investido += aporte_mensal
                 
-                        # Valor final do patrimônio
-                        patrimonio_final[ticker] = total_acoes * df_precos[ticker].iloc[-1]  # Último preço disponível
-                    
+                        # 🚨 Verifica se há um último preço válido antes de usar .iloc[-1]
+                        ultimo_preco = df_precos[ticker].dropna().iloc[-1] if not df_precos[ticker].dropna().empty else None
+                        if ultimo_preco is not None:
+                            patrimonio_final[ticker] = total_acoes * ultimo_preco  # Último preço válido disponível
+                
                     return pd.DataFrame.from_dict(patrimonio_final, orient='index', columns=['Patrimonio Final'])
                 
                 # 📌 BAIXANDO OS PREÇOS DAS EMPRESAS DO SEGMENTO
