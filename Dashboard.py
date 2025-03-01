@@ -1356,8 +1356,7 @@ if pagina == "Avançada": #_____________________________________________________
                 
                         # Criar coluna normalizada
                         df_empresas[col + '_norm'] = z_score_normalize(df_empresas[col], config['melhor_alto'])
-                        st.dataframe(df_empresas)
-                
+                             
                         # Se a normalização falhar, criar a coluna `_norm`
                         if col + '_norm' not in df_empresas.columns:
                             st.error(f"Erro ao criar '{col}_norm'. Criando com valor padrão.")
@@ -1365,13 +1364,17 @@ if pagina == "Avançada": #_____________________________________________________
                 
                         # Somar ao Score Ajustado
                         df_empresas['Score_Ajustado'] += df_empresas[col + '_norm'] * config['peso']
+
+                    # 📌 **Aplicando a Penalização do Histórico de Longo Prazo**
+                    if 'historico_bonus' in df_empresas.columns:
+                        df_empresas['Score_Ajustado'] *= df_empresas['historico_bonus']  # APLICA A PENALIZAÇÃO NO SCORE
                 
                     # Criar ranking dentro do segmento
                     df_empresas['Rank_Ajustado'] = df_empresas['Score_Ajustado'].rank(method='dense', ascending=False)
                 
                     return df_empresas
                     
-                df_empresas = calcular_score(df_empresas, indicadores_score_ajustados)
+                df_empresas = calcular_score(df_empresas, indicadores_score_ajustados) # CÁLCULO DO SCRORE DAS EMPRESAS
 
                 # Ordenar resultado pelo Score Ajustado
                 df_empresas.sort_values(['Segmento', 'Score_Ajustado'], ascending=[True, False], inplace=True)
