@@ -1312,8 +1312,7 @@ if pagina == "Avançada": #_____________________________________________________
                     st.info("Não há dados para as empresas deste segmento.")
                                    
                 df_empresas = pd.DataFrame(resultados)  # Coloca as informações agrupadas no dataframe df_empresas
-                st.dataframe(df_empresas)
-                                            
+                                                         
                 # Carregar dados macroeconômicos do banco de dados
                 dados_macro = load_macro_summary()
 
@@ -1357,6 +1356,7 @@ if pagina == "Avançada": #_____________________________________________________
                 
                         # Criar coluna normalizada
                         df_empresas[col + '_norm'] = z_score_normalize(df_empresas[col], config['melhor_alto'])
+                        st.dataframe(df_empresas)
                 
                         # Se a normalização falhar, criar a coluna `_norm`
                         if col + '_norm' not in df_empresas.columns:
