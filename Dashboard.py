@@ -1679,7 +1679,7 @@ if pagina == "Avançada": #_____________________________________________________
                     tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()
                     st.dataframe(tickers)
                     tickers = [ticker + ".SA" if not ticker.endswith(".SA") else ticker for ticker in tickers]
-                
+                    st.dataframe(tickers)
                     # 🔹 1. BAIXANDO IBOVESPA
                     try:
                         ibov = yf.download("^BVSP", start="2020-01-01", end="2025-01-01")["Close"]
@@ -1710,9 +1710,11 @@ if pagina == "Avançada": #_____________________________________________________
                     precos_retorno_acumulado = precos_retorno_acumulado.fillna(0)
                 
                     # 🔹 7. REMOVER A EMPRESA LÍDER DO DATAFRAME
-                    lider_ticker_sem_sa = lider["ticker"].replace(".SA", "")
+                    lider_ticker_sem_sa = lider["ticker"]
+                    st.markdown(lider_ticker_sem_sa)
                     if lider_ticker_sem_sa in precos_retorno_acumulado.columns:
                         precos_retorno_acumulado = precos_retorno_acumulado.drop(columns=[lider_ticker_sem_sa], errors="ignore")
+                        st.dataframe(precos_retorno_acumulado)
                 
                     # 🔹 8. GERANDO GRÁFICO COMPARATIVO
                     fig, ax = plt.subplots(figsize=(12, 6))
@@ -1724,6 +1726,7 @@ if pagina == "Avançada": #_____________________________________________________
                     ibov_retorno_acumulado.plot(ax=ax, color="black", linestyle="-", linewidth=2, label="IBOVESPA")
                 
                     # **✅ VERIFICAÇÃO ANTES DE PLOTAR A EMPRESA LÍDER**
+                    st.dataframe(precos)
                     if lider_ticker_sem_sa in precos.columns:
                         precos[lider_ticker_sem_sa].plot(ax=ax, color="red", linewidth=2, label=f"{lider['nome_empresa']} (Líder)")
                 
