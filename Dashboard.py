@@ -1726,7 +1726,7 @@ if pagina == "Avançada": #_____________________________________________________
                     # **✅ VERIFICAÇÃO ANTES DE PLOTAR A EMPRESA LÍDER**
                     lider_ticker = lider_ticker_sem_sa + ".SA"
                     if lider_ticker in precos.columns:
-                        precos[lider_ticker_sem_sa].plot(ax=ax, color="red", linewidth=2, label=f"{lider['nome_empresa']} (Líder)")
+                        precos[lider_ticker].plot(ax=ax, color="red", linewidth=2, label=f"{lider['nome_empresa']} (Líder)")
                 
                     ax.set_title(f"📊 Comparação do Retorno Acumulado no Segmento: {segmento}")
                     ax.set_xlabel("Data")
