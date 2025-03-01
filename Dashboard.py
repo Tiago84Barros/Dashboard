@@ -1664,8 +1664,51 @@ if pagina == "Avançada": #_____________________________________________________
                     st.plotly_chart(fig, use_container_width=True)          
 
                 gerar_resumo_melhor_empresa(df_empresas)
+
+                # ========================== CRIAÇÃO DO BENCHMARK (LÍDER X CONCORRENTES) ==========================
+                
+                # 📌 VERIFICANDO SE `df_empresas` EXISTE E TEM DADOS
+                if 'df_empresas' not in locals() or df_empresas.empty:
+                    st.error("❌ O DataFrame `df_empresas` não está definido ou está vazio!")
+                    st.stop()
+                
+                # 📌 FILTRANDO EMPRESAS LÍDERES (RANK 1)
+                df_lideres = df_empresas[df_empresas["Rank_Ajustado"] == 1]
+                
+                if df_lideres.empty:
+                    st.error("❌ Nenhuma empresa líder encontrada! Verifique os valores de `Rank_Ajustado`.")
+                    st.stop()
+                
+                # 📌 LOOP PARA COMPARAÇÃO ENTRE A LÍDER, CONCORRENTES E IBOVESPA
+                for segmento in df_lideres["Segmento"].unique():
+                    st.subheader(f"📊 Comparação no Segmento: {segmento}")
+                
+                    # ✅ SELECIONANDO EMPRESA LÍDER E CONCORRENTES
+                    lider = df_lideres[df_lideres["Segmento"] == segmento].iloc[0]    
+                    
+                    concorrentes = df_empresas[(df_empresas["Segmento"] == segmento) & (df_empresas["Rank_Ajustado"] != 1)]
+                
+                    if concorrentes.empty:
+                        st.warning(f"⚠️ Não há concorrentes disponíveis para `{lider['nome_empresa']}` no segmento {segmento}.")
+                        continue
+                
+                    # ✅ OBTENDO OS TICKERS PARA DOWNLOAD NO YAHOO FINANCE
+                    tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()
+                    tickers = [ticker + ".SA" if not ticker.endswith(".SA") else ticker for ticker in tickers]
+                   
+                    # 🔹 1. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS
+                    try:
+                        precos = yf.download(tickers, start="2020-01-01", end="2025-01-01")["Close"]
+                    except Exception as e:
+                        st.error(f"❌ Erro ao baixar os preços das empresas: {e}")
+                        continue
+                   
+                    # 🔹 2. GARANTIR QUE OS DADOS NÃO ESTÃO VAZIOS
+                    if precos.empty:
+                        st.error("❌ Nenhum dado foi baixado! Verifique os tickers e a conexão.")
+                        continue
               
-               # 📌 DEFINIÇÃO DA FUNÇÃO PARA SIMULAR APORTES MENSAIS
+                # 📌 DEFINIÇÃO DA FUNÇÃO PARA SIMULAR APORTES MENSAIS
                 def calcular_patrimonio_com_aportes(precos, investimento_inicial=1000, aporte_mensal=1000):
                     """
                     Simula aportes mensais em ações ao longo do tempo e calcula o patrimônio final.
