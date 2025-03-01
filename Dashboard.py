@@ -1677,6 +1677,7 @@ if pagina == "Avançada": #_____________________________________________________
                 
                     # ✅ OBTENDO OS TICKERS PARA DOWNLOAD NO YAHOO FINANCE
                     tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()
+                    st.dataframe(tickers)
                     tickers = [ticker + ".SA" if not ticker.endswith(".SA") else ticker for ticker in tickers]
                 
                     # 🔹 1. BAIXANDO IBOVESPA
