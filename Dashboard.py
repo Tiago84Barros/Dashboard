@@ -1227,7 +1227,7 @@ if pagina == "Avançada": #_____________________________________________________
     
         def calcular_historico_bonus(anos):
             """ Penaliza empresas novas mais severamente """
-            return anos / (15 + anos)  # Ajustável, pode ser 15+ se quiser penalizar ainda mais
+            return anos / (10 + anos)  # Ajustável, pode ser 15+ se quiser penalizar ainda mais
     
         # Aplicando penalização aprimorada
         metrics['historico_bonus'] = calcular_historico_bonus(num_anos)
@@ -1665,149 +1665,109 @@ if pagina == "Avançada": #_____________________________________________________
 
                 gerar_resumo_melhor_empresa(df_empresas)
               
-                # ========================== CRIAÇÃO DO BENCHMARK (IBOVESPA X LÍDER X CONCORRENTES) ==========================
-                
-                # 📌 VERIFICANDO SE `df_empresas` EXISTE E TEM DADOS
-                if 'df_empresas' not in locals() or df_empresas.empty:
-                    st.error("❌ O DataFrame `df_empresas` não está definido ou está vazio!")
-                    st.stop()
-                
-                # 📌 FILTRANDO EMPRESAS LÍDERES (RANK 1)
-                df_lideres = df_empresas[df_empresas["Rank_Ajustado"] == 1]
-                
-                if df_lideres.empty:
-                    st.error("❌ Nenhuma empresa líder encontrada! Verifique os valores de `Rank_Ajustado`.")
-                    st.stop()
-                
-                # 📌 LOOP PARA COMPARAÇÃO ENTRE A LÍDER, CONCORRENTES E IBOVESPA
-                for segmento in df_lideres["Segmento"].unique():
-                    st.subheader(f"📊 Comparação no Segmento: {segmento}")
-                
-                    # ✅ SELECIONANDO EMPRESA LÍDER E CONCORRENTES
-                    lider = df_lideres[df_lideres["Segmento"] == segmento].iloc[0]    
+               # 📌 DEFINIÇÃO DA FUNÇÃO PARA SIMULAR APORTES MENSAIS
+                def calcular_patrimonio_com_aportes(precos, investimento_inicial=1000, aporte_mensal=1000):
+                    """
+                    Simula aportes mensais em ações ao longo do tempo e calcula o patrimônio final.
                     
-                    concorrentes = df_empresas[(df_empresas["Segmento"] == segmento) & (df_empresas["Rank_Ajustado"] != 1)]
+                    - `precos`: DataFrame com preços históricos ajustados das empresas.
+                    - `investimento_inicial`: Valor inicial investido (padrão: R$1.000).
+                    - `aporte_mensal`: Valor a ser investido a cada mês (padrão: R$1.000).
+                    
+                    Retorna um DataFrame com o patrimônio final de cada empresa.
+                    """
+                    
+                    patrimonio_final = {}
+                    
+                    for ticker in precos.columns:
+                        df_precos = precos[[ticker]].dropna()
+                        df_precos['Mes'] = df_precos.index.to_period('M')  # Agrupar por mês
+                        df_mensal = df_precos.groupby('Mes').first()  # Pegando o primeiro preço de cada mês
+                        
+                        # Simulação de aportes
+                        total_acoes = 0
+                        total_investido = 0
+                        
+                        for preco in df_mensal[ticker]:
+                            if np.isnan(preco):  # Se não houver dado, pula o mês
+                                continue
+                            
+                            # Primeiro aporte
+                            if total_investido == 0:
+                                total_acoes += investimento_inicial / preco
+                                total_investido += investimento_inicial
+                            else:
+                                total_acoes += aporte_mensal / preco
+                                total_investido += aporte_mensal
                 
-                    if concorrentes.empty:
-                        st.warning(f"⚠️ Não há concorrentes disponíveis para `{lider['nome_empresa']}` no segmento {segmento}.")
-                        continue
+                        # Valor final do patrimônio
+                        patrimonio_final[ticker] = total_acoes * df_precos[ticker].iloc[-1]  # Último preço disponível
+                    
+                    return pd.DataFrame.from_dict(patrimonio_final, orient='index', columns=['Patrimonio Final'])
                 
-                    # ✅ OBTENDO OS TICKERS PARA DOWNLOAD NO YAHOO FINANCE
-                    tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()
-                    tickers = [ticker + ".SA" if not ticker.endswith(".SA") else ticker for ticker in tickers]
-                   
-                    # 🔹 1. BAIXANDO IBOVESPA
+                # 📌 BAIXANDO OS PREÇOS DAS EMPRESAS DO SEGMENTO
+                def baixar_precos(tickers, start="2020-01-01"):
+                    """
+                    Baixa os preços ajustados das ações a partir de 2020.
+                    """
                     try:
-                        ibov = yf.download("^BVSP", start="2020-01-01", end="2025-01-01")["Close"]
+                        precos = yf.download(tickers, start=start)['Adj Close']
+                        precos.columns = precos.columns.str.replace(".SA", "", regex=False)  # Removendo ".SA"
+                        return precos
                     except Exception as e:
-                        st.error(f"❌ Erro ao baixar IBOVESPA: {e}")
-                        continue
+                        st.error(f"Erro ao baixar preços: {e}")
+                        return None
                 
-                    # 🔹 2. BAIXANDO OS PREÇOS DAS EMPRESAS FILTRADAS
-                    try:
-                        precos = yf.download(tickers, start="2020-01-01", end="2025-01-01")["Close"]
-                    except Exception as e:
-                        st.error(f"❌ Erro ao baixar os preços das empresas: {e}")
-                        continue
-                   
-                    # 🔹 3. GARANTIR QUE OS DADOS NÃO ESTÃO VAZIOS
-                    if precos.empty:
-                        st.error("❌ Nenhum dado foi baixado! Verifique os tickers e a conexão.")
-                        continue
+                # 📌 BUSCAR EMPRESAS LÍDERES E CONCORRENTES NO MESMO SEGMENTO
+                if 'df_empresas' in locals() and not df_empresas.empty:
+                    df_lideres = df_empresas[df_empresas["Rank_Ajustado"] == 1]
                 
-                    # 🔹 4. CÁLCULO DO RETORNO ACUMULADO
-                    precos_retorno_acumulado = (precos / precos.iloc[0]) - 1
-                    precos_retorno_acumulado.columns = precos_retorno_acumulado.columns.str.replace(".SA", "", regex=False)
+                    for segmento in df_lideres["Segmento"].unique():
+                        st.subheader(f"📊 Comparação no Segmento: {segmento}")
                 
-                    # 🔹 5. CALCULAR RETORNO ACUMULADO DO IBOVESPA
-                    ibov_retorno_acumulado = (ibov / ibov.iloc[0]) - 1
+                        lider = df_lideres[df_lideres["Segmento"] == segmento].iloc[0]
+                        concorrentes = df_empresas[(df_empresas["Segmento"] == segmento) & (df_empresas["Rank_Ajustado"] != 1)]
                 
-                    # 🔹 6. EVITAR `NaN` PARA EMPRESAS NOVAS
-                    precos_retorno_acumulado = precos_retorno_acumulado.fillna(0)
+                        if concorrentes.empty:
+                            st.warning(f"⚠️ Não há concorrentes disponíveis para `{lider['nome_empresa']}` no segmento {segmento}.")
+                            continue
                 
-                    # 🔹 7. REMOVER A EMPRESA LÍDER DO DATAFRAME
-                    lider_ticker_sem_sa = lider["ticker"]
-                    if lider_ticker_sem_sa in precos_retorno_acumulado.columns:
-                        precos_retorno_acumulado_concorrentes = precos_retorno_acumulado.drop(columns=[lider_ticker_sem_sa], errors="ignore")
-                                       
-                    # 🔹 8. GERANDO GRÁFICO COMPARATIVO
-                    fig, ax = plt.subplots(figsize=(12, 6))
+                        tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()
+                        tickers = [ticker + ".SA" for ticker in tickers]  # Adicionando ".SA"
                 
-                    # Plotando concorrentes
-                    precos_retorno_acumulado_concorrentes.plot(ax=ax, alpha=0.5, linewidth=1, linestyle="--", color="gray", legend=False)
+                        precos = baixar_precos(tickers)
                 
-                    # Plotando IBOVESPA
-                    ibov_retorno_acumulado.plot(ax=ax, color="black", linestyle="-", linewidth=2, label="IBOVESPA")
+                        if precos is None or precos.empty:
+                            continue
                 
-                    # **✅ VERIFICAÇÃO ANTES DE PLOTAR A EMPRESA LÍDER**
-                    if lider_ticker_sem_sa in precos_retorno_acumulado.columns:
-                        precos_retorno_acumulado[lider_ticker_sem_sa].plot(ax=ax, color="red", linewidth=2, label=f"{lider['nome_empresa']} (Líder)")
+                        # 📌 CÁLCULO DO PATRIMÔNIO ACUMULADO
+                        df_patrimonio = calcular_patrimonio_com_aportes(precos)
                 
-                    ax.set_title(f"📊 Comparação do Retorno Acumulado no Segmento: {segmento}")
-                    ax.set_xlabel("Data")
-                    ax.set_ylabel("Retorno Acumulado (%)")
-                    ax.legend()
-                    st.pyplot(fig)
+                        # 📌 ORDENANDO OS RESULTADOS DO MAIOR PATRIMÔNIO PARA O MENOR
+                        df_patrimonio = df_patrimonio.sort_values(by="Patrimonio Final", ascending=False)
                 
-                # ========================== EXIBINDO OS RESULTADOS (IBOVESPA X LÍDER X CONCORRENTES) ==========================
+                        # 📌 EXIBIÇÃO DO PATRIMÔNIO FINAL NO DASHBOARD
+                        st.subheader("📊 Patrimônio Final para R$1.000/Mês Investidos desde 2020")
                 
-                # 📌 CÁLCULO FINAL DOS RETORNOS ACUMULADOS
-                retorno_final = precos_retorno_acumulado.iloc[-1] * 100
-                retorno_ibov_final = float(ibov_retorno_acumulado.iloc[-1] * 100)
+                        num_columns = 3  # Número de colunas no layout
+                        columns = st.columns(num_columns)
                 
-                # 📌 CRIAÇÃO DO DATAFRAME FINAL
-                df_retorno = pd.DataFrame({
-                    "Ticker": retorno_final.index,
-                    "Retorno (%)": retorno_final.values
-                })
-                
-                # 📌 ADICIONANDO IBOVESPA
-                df_ibov = pd.DataFrame([{"Ticker": "IBOVESPA", "Retorno (%)": retorno_ibov_final}])
-                df_retorno = pd.concat([df_retorno, df_ibov], ignore_index=True)
-
-                # Converter para float garantindo que todos os valores são numéricos
-                df_retorno["Retorno (%)"] = pd.to_numeric(df_retorno["Retorno (%)"], errors="coerce")
-                
-                # Remover valores NaN (empresas sem histórico suficiente)
-                df_retorno = df_retorno.dropna(subset=["Retorno (%)"])
-                
-                # Ordenação correta de maior para menor
-                df_retorno = df_retorno.sort_values(by="Retorno (%)", ascending=False)
-                
-                # 📌 FORMATANDO VALORES E ORDENANDO POR RETORNO (MAIOR → MENOR)
-                df_retorno["Retorno (%)"] = df_retorno["Retorno (%)"].astype(float).round(2)
-                df_retorno = df_retorno.sort_values(by="Retorno (%)", ascending=False)  # Ordenação decrescente
-
-                
-                # 📌 EXIBINDO NO DASHBOARD
-                st.subheader("📊 Retorno Final das Empresas e IBOVESPA")
-                
-               # 📌 EXIBIÇÃO DOS QUADRADOS
-               # Criando uma grade de colunas para exibição organizada
-                num_columns = 3  # Número de colunas desejado por linha
-                rows = [df_retorno[i:i + num_columns] for i in range(0, len(df_retorno), num_columns)]
-                
-                # Criando os blocos linha por linha
-                for row in rows:
-                    cols = st.columns(num_columns)  # Criando as colunas para cada linha
-                    for index, (col, (_, row_data)) in enumerate(zip(cols, row.iterrows())):
-                        with col:
-                            st.markdown(
-                                f"""
-                                <div style="
-                                    background-color: white;
-                                    border: 2px solid #ddd;
-                                    border-radius: 10px;
-                                    padding: 15px;
-                                    margin: 10px;
-                                    text-align: center;
-                                    box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
-                                ">
-                                    <h3 style="margin: 0; color: #4a4a4a;">{row_data['Ticker']}</h3>
-                                    <p style="font-size: 18px; margin: 5px 0; color: {'#2ecc71' if row_data['Retorno (%)'] > 0 else '#e74c3c'}; font-weight: bold;">
-                                        {row_data['Retorno (%)']:.2f}%
-                                    </p>
-                                </div>
-                                """,
-                                unsafe_allow_html=True
-                            )  
+                        for index, row in df_patrimonio.iterrows():
+                            with columns[index % num_columns]:  # Distribuindo os blocos nas colunas
+                                st.markdown(f"""
+                                    <div style="
+                                        background-color: #ffffff;
+                                        border: 2px solid #d3d3d3;
+                                        border-radius: 10px;
+                                        padding: 15px;
+                                        margin: 10px;
+                                        text-align: center;
+                                        box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
+                                        flex: 1;
+                                    ">
+                                        <h3 style="margin: 0; color: #4a4a4a;">{index}</h3>
+                                        <p style="font-size: 18px; margin: 5px 0; color: #2ecc71; font-weight: bold;">
+                                            R$ {row['Patrimonio Final']:.2f}
+                                        </p>
+                                    </div>
+                                """, unsafe_allow_html=True)
