@@ -1677,9 +1677,9 @@ if pagina == "Avançada": #_____________________________________________________
                 
                     # ✅ OBTENDO OS TICKERS PARA DOWNLOAD NO YAHOO FINANCE
                     tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()
-                    st.dataframe(tickers)
                     tickers = [ticker + ".SA" if not ticker.endswith(".SA") else ticker for ticker in tickers]
                     st.dataframe(tickers)
+ 
                     # 🔹 1. BAIXANDO IBOVESPA
                     try:
                         ibov = yf.download("^BVSP", start="2020-01-01", end="2025-01-01")["Close"]
@@ -1693,7 +1693,7 @@ if pagina == "Avançada": #_____________________________________________________
                     except Exception as e:
                         st.error(f"❌ Erro ao baixar os preços das empresas: {e}")
                         continue
-                
+                    st.dataframe(precos)
                     # 🔹 3. GARANTIR QUE OS DADOS NÃO ESTÃO VAZIOS
                     if precos.empty:
                         st.error("❌ Nenhum dado foi baixado! Verifique os tickers e a conexão.")
@@ -1711,11 +1711,9 @@ if pagina == "Avançada": #_____________________________________________________
                 
                     # 🔹 7. REMOVER A EMPRESA LÍDER DO DATAFRAME
                     lider_ticker_sem_sa = lider["ticker"]
-                    st.markdown(lider_ticker_sem_sa)
                     if lider_ticker_sem_sa in precos_retorno_acumulado.columns:
                         precos_retorno_acumulado = precos_retorno_acumulado.drop(columns=[lider_ticker_sem_sa], errors="ignore")
-                        st.dataframe(precos_retorno_acumulado)
-                
+                                       
                     # 🔹 8. GERANDO GRÁFICO COMPARATIVO
                     fig, ax = plt.subplots(figsize=(12, 6))
                 
