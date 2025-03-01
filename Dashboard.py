@@ -1222,9 +1222,15 @@ if pagina == "Avançada": #_____________________________________________________
             else:
                 metrics[f'{col}_volatility_penalty'] = 1.0  # Penalização máxima se a média for zero
         
-        # Bonificação por histórico longo
+         # 📌 NOVA Penalização por Histórico Longo → Agora mais severa
         num_anos = df_dre['Ano'].nunique()
-        metrics['historico_bonus'] = min(1.0, num_anos / 10)  # Bonificação máxima se empresa tiver 10+ anos de dados
+    
+        def calcular_historico_bonus(anos):
+            """ Penaliza empresas novas mais severamente """
+            return anos / (10 + anos)  # Ajustável, pode ser 15+ se quiser penalizar ainda mais
+    
+        # Aplicando penalização aprimorada
+        metrics['historico_bonus'] = calcular_historico_bonus(num_anos)
         
         return metrics
        
