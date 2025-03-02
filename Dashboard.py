@@ -1666,8 +1666,8 @@ if pagina == "Avançada": #_____________________________________________________
                 gerar_resumo_melhor_empresa(df_empresas)
 
                 # ========================== CRIAÇÃO DO BENCHMARK (LÍDER X CONCORRENTES) =========================================================================================
-
-                # 📌 Função para formatar valores em Reais (R$)
+                
+                                # 📌 Função para formatar valores em Reais (R$)
                 def formatar_real(valor):
                     formatted = f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                     return "R$ " + formatted
@@ -1677,46 +1677,53 @@ if pagina == "Avançada": #_____________________________________________________
                     url_base = "https://raw.githubusercontent.com/rodrigocsl2/Logos-B3/main/logos/"  # Repositório fictício com logos da B3
                     return f"{url_base}{ticker}.png"  # Exemplo: https://raw.githubusercontent.com/.../PETR4.png
                 
-                # 📌 Função para simular aportes mensais
+                # 📌 Função para simular aportes mensais e calcular a evolução do patrimônio
                 def calcular_patrimonio_com_aportes(precos, investimento_inicial=1000, aporte_mensal=1000):
                     patrimonio_final = {}
-                    
+                    patrimonio_evolucao = pd.DataFrame(index=precos.index)  # Criando DataFrame para evolução
+                
                     for ticker in precos.columns:
-                        df_precos = precos[[ticker]].dropna()  # Remove valores NaN
+                        df_precos = precos[[ticker]].dropna()
                         
                         if df_precos.empty or len(df_precos) < 12:  # Filtra empresas com histórico insuficiente
                             print(f"⚠️ Empresa {ticker} removida da análise (dados insuficientes).")
                             continue
                         
-                        df_precos['Mes'] = df_precos.index.to_period('M')  # Agrupar por mês
-                        df_mensal = df_precos.groupby('Mes').first()  # Pegando o primeiro preço de cada mês
+                        df_precos['Mes'] = df_precos.index.to_period('M')
+                        df_mensal = df_precos.groupby('Mes').first()
                         
-                        # Simulação de aportes
                         total_acoes = 0
                         total_investido = 0
-                        
-                        for preco in df_mensal[ticker]:
-                            if np.isnan(preco):
+                        patrimonio_evolucao[ticker] = np.nan  # Inicializando a coluna no DataFrame
+                
+                        for data, preco in df_mensal.iterrows():
+                            if np.isnan(preco[ticker]):
                                 continue
                             
                             if total_investido == 0:
-                                total_acoes += investimento_inicial / preco
+                                total_acoes += investimento_inicial / preco[ticker]
                                 total_investido += investimento_inicial
                             else:
-                                total_acoes += aporte_mensal / preco
+                                total_acoes += aporte_mensal / preco[ticker]
                                 total_investido += aporte_mensal
+                
+                            # Armazena o patrimônio ao longo do tempo
+                            patrimonio_evolucao.loc[preco.name, ticker] = total_acoes * preco[ticker]
                 
                         ultimo_preco = df_precos[ticker].dropna().iloc[-1] if not df_precos[ticker].dropna().empty else None
                         if ultimo_preco is not None:
-                            patrimonio_final[ticker] = total_acoes * ultimo_preco  # Último preço disponível
+                            patrimonio_final[ticker] = total_acoes * ultimo_preco
                 
-                    return pd.DataFrame.from_dict(patrimonio_final, orient='index', columns=['Patrimonio Final'])
+                    return (
+                        pd.DataFrame.from_dict(patrimonio_final, orient='index', columns=['Patrimonio Final']),
+                        patrimonio_evolucao.ffill()  # Preenche valores NaN para manter a evolução contínua
+                    )
                 
                 # 📌 Baixando preços ajustados das empresas
                 def baixar_precos(tickers, start="2020-01-01"):
                     try:
                         precos = yf.download(tickers, start=start)['Close']
-                        precos.columns = precos.columns.str.replace(".SA", "", regex=False)  # Removendo ".SA"
+                        precos.columns = precos.columns.str.replace(".SA", "", regex=False)
                         return precos
                     except Exception as e:
                         st.error(f"Erro ao baixar preços: {e}")
@@ -1737,15 +1744,15 @@ if pagina == "Avançada": #_____________________________________________________
                             continue
                 
                         tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()
-                        tickers = [ticker + ".SA" for ticker in tickers]  
+                        tickers = [ticker + ".SA" for ticker in tickers]
                 
                         precos = baixar_precos(tickers)
                 
                         if precos is None or precos.empty:
                             continue
                 
-                        # 📌 Cálculo do patrimônio acumulado
-                        df_patrimonio = calcular_patrimonio_com_aportes(precos)
+                        # 📌 Cálculo do patrimônio acumulado e evolução ao longo do tempo
+                        df_patrimonio, df_patrimonio_evolucao = calcular_patrimonio_com_aportes(precos)
                 
                         # 📌 Ordenação decrescente dos resultados
                         df_patrimonio = df_patrimonio.sort_values(by="Patrimonio Final", ascending=False)
@@ -1755,11 +1762,11 @@ if pagina == "Avançada": #_____________________________________________________
                 
                         fig, ax = plt.subplots(figsize=(12, 6))
                 
-                        for ticker in df_patrimonio.index:
+                        for ticker in df_patrimonio_evolucao.columns:
                             if ticker == lider["ticker"]:  # Destacar empresa líder
-                                precos[ticker].plot(ax=ax, linewidth=2, color="red", label=f"{lider['nome_empresa']} (Líder)")
+                                df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, color="red", label=f"{lider['nome_empresa']} (Líder)")
                             else:
-                                precos[ticker].plot(ax=ax, linewidth=1, linestyle="--", alpha=0.6, label=ticker)
+                                df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=1, linestyle="--", alpha=0.6, label=ticker)
                 
                         ax.set_title(f"Evolução do Patrimônio Acumulado no Segmento: {segmento}")
                         ax.set_xlabel("Data")
@@ -1781,15 +1788,14 @@ if pagina == "Avançada": #_____________________________________________________
                             patrimonio = row['Patrimonio Final']
                             icone_url = obter_icone_empresa(ticker)  # Obtendo o ícone da empresa
                             
-                            # Se for a empresa líder, destacá-la visualmente
+                            # Se for a empresa líder, destacá-la apenas com a borda dourada
                             is_lider = (ticker == lider["ticker"])
-                            background_color = "#FFD700" if is_lider else "#ffffff"  # Amarelo para líder, branco para os demais
-                            border_color = "#DAA520" if is_lider else "#d3d3d3"  # Borda dourada para líder
+                            border_color = "#DAA520" if is_lider else "#d3d3d3"  # Borda dourada para líder, cinza para demais
                             
                             with columns[i % num_columns]:  # Distribuindo os blocos nas colunas
                                 st.markdown(f"""
                                     <div style="
-                                        background-color: {background_color};
+                                        background-color: #ffffff;
                                         border: 3px solid {border_color};
                                         border-radius: 10px;
                                         padding: 15px;
@@ -1800,7 +1806,7 @@ if pagina == "Avançada": #_____________________________________________________
                                     ">
                                         <img src="{icone_url}" alt="{ticker}" style="width: 50px; height: auto; margin-bottom: 5px;">
                                         <h3 style="margin: 0; color: #4a4a4a;">{ticker}</h3>
-                                        <p style="font-size: 18px; margin: 5px 0; font-weight: bold; color: {'#D2691E' if is_lider else '#2ecc71'};">
+                                        <p style="font-size: 18px; margin: 5px 0; font-weight: bold; color: #2ecc71;">
                                             {formatar_real(patrimonio)}
                                         </p>
                                     </div>
