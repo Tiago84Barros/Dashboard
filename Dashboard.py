@@ -1755,14 +1755,17 @@ if pagina == "Avançada": #_____________________________________________________
                 
                         # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO ================================================================================================================
                         st.subheader("📈 Evolução do Patrimônio com Aportes Mensais")
-                        
+
                         fig, ax = plt.subplots(figsize=(12, 6))
                         
                         # 🔹 Garantindo que o índice seja datetime antes de ordenar
                         df_patrimonio_evolucao.index = pd.to_datetime(df_patrimonio_evolucao.index, errors='coerce')
                         
-                        # 🔹 Removendo possíveis valores nulos no índice
-                        df_patrimonio_evolucao = df_patrimonio_evolucao.dropna(subset=[df_patrimonio_evolucao.index.name])
+                        # 🔹 Verificando se o índice tem nome antes de tentar usar .dropna(subset=[...])
+                        if df_patrimonio_evolucao.index.name is not None:
+                            df_patrimonio_evolucao = df_patrimonio_evolucao.dropna(subset=[df_patrimonio_evolucao.index.name])
+                        else:
+                            df_patrimonio_evolucao = df_patrimonio_evolucao.dropna()
                         
                         # 🔹 Verificando se ainda há dados antes de prosseguir
                         if df_patrimonio_evolucao.empty:
