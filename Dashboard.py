@@ -1802,7 +1802,7 @@ if pagina == "Avançada": #_____________________________________________________
                 
                         num_columns = 3  # Número de colunas no layout
                         #columns = st.columns(num_columns)
-                        rows = [df_retorno[i:i + num_columns] for i in range(0, len(df_patrimonio), num_columns)]
+                        rows = [df_patrimonio[i:i + num_columns] for i in range(0, len(df_patrimonio), num_columns)]
                 
                         # Criando os blocos linha por linha
                         for row in rows:
