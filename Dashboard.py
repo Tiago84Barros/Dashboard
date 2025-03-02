@@ -1756,7 +1756,7 @@ if pagina == "Avançada": #_____________________________________________________
                 
                     return pd.DataFrame.from_dict(patrimonio_final, orient='index', columns=['Patrimonio Final'])
                 
-                # 📌 BAIXANDO OS PREÇOS DAS EMPRESAS DO SEGMENTO
+                # 📌 BAIXANDO OS PREÇOS DAS EMPRESAS DO SEGMENTO ============================================================================================
                 def baixar_precos(tickers, start="2020-01-01"):
                     """
                     Baixa os preços ajustados das ações a partir de 2020.
@@ -1801,30 +1801,25 @@ if pagina == "Avançada": #_____________________________________________________
                         st.subheader("📊 Patrimônio Final para R$1.000/Mês Investidos desde 2020")
                 
                         num_columns = 3  # Número de colunas no layout
-                        #columns = st.columns(num_columns)
-                        rows = [df_patrimonio[i:i + num_columns] for i in range(0, len(df_patrimonio), num_columns)]
+                        columns = st.columns(num_columns)
+                        #rows = [df_patrimonio[i:i + num_columns] for i in range(0, len(df_patrimonio), num_columns)]
                 
-                        # Criando os blocos linha por linha
-                        for row in rows:
-                            cols = st.columns(num_columns)  # Criando as colunas para cada linha
-                            for index, (col, (_, row_data)) in enumerate(zip(cols, row.iterrows())):
-                                with col:
-                                    st.markdown(
-                                        f"""
-                                        <div style="
-                                            background-color: white;
-                                            border: 2px solid #ddd;
-                                            border-radius: 10px;
-                                            padding: 15px;
-                                            margin: 10px;
-                                            text-align: center;
-                                            box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
-                                        ">
-                                            <h3 style="margin: 0; color: #4a4a4a;">{row_data['Ticker']}</h3>
-                                            <p style="font-size: 18px; margin: 5px 0; color: {'#2ecc71' if row_data['Retorno (%)'] > 0 else '#e74c3c'}; font-weight: bold;">
-                                                {row_data['Retorno (%)']:.2f}%
-                                            </p>
-                                        </div>
-                                        """,
-                                        unsafe_allow_html=True
-                                    )  
+                        for i, (ticker, row) in enumerate(df_patrimonio.iterrows()):  # Use enumerate() para criar um índice numérico
+                            with columns[i % num_columns]:  # Agora 'i' é um número e pode ser usado no cálculo da posição
+                                st.markdown(f"""
+                                    <div style="
+                                        background-color: #ffffff;
+                                        border: 2px solid #d3d3d3;
+                                        border-radius: 10px;
+                                        padding: 15px;
+                                        margin: 10px;
+                                        text-align: center;
+                                        box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
+                                        flex: 1;
+                                    ">
+                                        <h3 style="margin: 0; color: #4a4a4a;">{ticker}</h3>
+                                        <p style="font-size: 18px; margin: 5px 0; color: #2ecc71; font-weight: bold;">
+                                            R$ {row['Patrimonio Final']:.2f}
+                                        </p>
+                                    </div>
+                                """, unsafe_allow_html=True)
