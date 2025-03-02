@@ -1743,6 +1743,7 @@ if pagina == "Avançada": #_____________________________________________________
                         tickers = [ticker + ".SA" for ticker in tickers]
                 
                         precos = baixar_precos(tickers)
+                        st.dataframe(precos)
                 
                         if precos is None or precos.empty:
                             continue
