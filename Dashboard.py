@@ -1667,7 +1667,7 @@ if pagina == "Avançada": #_____________________________________________________
 
                 # ========================== CRIAÇÃO DO BENCHMARK (LÍDER X CONCORRENTES) =========================================================================================
                 
-                                # 📌 Função para formatar valores em Reais (R$)
+                # 📌 Função para formatar valores em Reais (R$)
                 def formatar_real(valor):
                     formatted = f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                     return "R$ " + formatted
@@ -1680,15 +1680,14 @@ if pagina == "Avançada": #_____________________________________________________
                 
                     for ticker in precos.columns:
                         df_precos = precos[[ticker]].dropna()
-                        st.dataframe(df_precos)
-                        
+                                              
                         if df_precos.empty or len(df_precos) < 12:  # Filtra empresas com histórico insuficiente
                             print(f"⚠️ Empresa {ticker} removida da análise (dados insuficientes).")
                             continue
                         
                         df_precos['Mes'] = df_precos.index.to_period('M')
                         df_mensal = df_precos.groupby('Mes').first()
-                        
+                        st.dataframe(df_mensal)
                         total_acoes = 0
                         total_investido = 0
                         patrimonio_evolucao[ticker] = np.nan  # Inicializando a coluna no DataFrame
