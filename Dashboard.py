@@ -1680,6 +1680,7 @@ if pagina == "Avançada": #_____________________________________________________
                 
                     for ticker in precos.columns:
                         df_precos = precos[[ticker]].dropna()
+                        st.dataframe(df_precos)
                         
                         if df_precos.empty or len(df_precos) < 12:  # Filtra empresas com histórico insuficiente
                             print(f"⚠️ Empresa {ticker} removida da análise (dados insuficientes).")
@@ -1749,9 +1750,7 @@ if pagina == "Avançada": #_____________________________________________________
                 
                         # 📌 Cálculo do patrimônio acumulado e evolução ao longo do tempo
                         df_patrimonio, df_patrimonio_evolucao = calcular_patrimonio_com_aportes(precos)
-                        st.dataframe(df_patrimonio)
-                        st.dataframe(df_patrimonio_evolucao)
-                
+                                       
                         # 📌 Ordenação decrescente dos resultados
                         df_patrimonio = df_patrimonio.sort_values(by="Patrimonio Final", ascending=False)
                 
