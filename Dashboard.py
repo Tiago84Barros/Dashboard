@@ -8,6 +8,7 @@ from sklearn.linear_model import LinearRegression
 import numpy as np
 import sqlite3
 import openai
+import locale
 import os
 
 # Função para obter a URL do logotipo a partir do repositório no GitHub ___________________________________________________________________________________________________________________________________________
@@ -1802,10 +1803,14 @@ if pagina == "Avançada": #_____________________________________________________
                 
                         num_columns = 3  # Número de colunas no layout
                         columns = st.columns(num_columns)
-                        #rows = [df_patrimonio[i:i + num_columns] for i in range(0, len(df_patrimonio), num_columns)]
-                
-                        for i, (ticker, row) in enumerate(df_patrimonio.iterrows()):  # Use enumerate() para criar um índice numérico
-                            with columns[i % num_columns]:  # Agora 'i' é um número e pode ser usado no cálculo da posição
+                            
+                        # Configura para o formato de moeda brasileiro
+                        locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
+                        
+                        for i, (ticker, row) in enumerate(df_patrimonio.iterrows()):  # Enumerate para criar índice numérico
+                            valor_formatado = locale.currency(row['Patrimonio Final'], grouping=True, symbol=True)  # Formata no padrão R$
+                        
+                            with columns[i % num_columns]:  # Organiza os blocos corretamente
                                 st.markdown(f"""
                                     <div style="
                                         background-color: #ffffff;
@@ -1819,7 +1824,7 @@ if pagina == "Avançada": #_____________________________________________________
                                     ">
                                         <h3 style="margin: 0; color: #4a4a4a;">{ticker}</h3>
                                         <p style="font-size: 18px; margin: 5px 0; color: #2ecc71; font-weight: bold;">
-                                            R$ {row['Patrimonio Final']:.2f}
+                                            {valor_formatado}
                                         </p>
                                     </div>
                                 """, unsafe_allow_html=True)
