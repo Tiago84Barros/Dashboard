@@ -1714,7 +1714,7 @@ if pagina == "Avançada": #_____________________________________________________
                         pd.DataFrame.from_dict(patrimonio_final, orient='index', columns=['Patrimonio Final']),
                         patrimonio_evolucao.ffill()  # Preenche valores NaN para manter a evolução contínua
                     )
-                
+            
                 # 📌 Baixando preços ajustados das empresas
                 def baixar_precos(tickers, start="2020-01-01"):
                     try:
