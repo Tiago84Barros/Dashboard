@@ -8,7 +8,6 @@ from sklearn.linear_model import LinearRegression
 import numpy as np
 import sqlite3
 import openai
-import locale
 import os
 
 # Função para obter a URL do logotipo a partir do repositório no GitHub ___________________________________________________________________________________________________________________________________________
@@ -1804,13 +1803,13 @@ if pagina == "Avançada": #_____________________________________________________
                         num_columns = 3  # Número de colunas no layout
                         columns = st.columns(num_columns)
                             
-                        # Configura para o formato de moeda brasileiro
-                        locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
+                        def formatar_real(valor):
+                            return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
                         
-                        for i, (ticker, row) in enumerate(df_patrimonio.iterrows()):  # Enumerate para criar índice numérico
-                            valor_formatado = locale.currency(row['Patrimonio Final'], grouping=True, symbol=True)  # Formata no padrão R$
-                        
-                            with columns[i % num_columns]:  # Organiza os blocos corretamente
+                        # 📌 Aplicando a formatação na exibição do patrimônio no Streamlit
+                        for index, row in df_patrimonio.iterrows():
+                            with columns[index % num_columns]:  # Distribuindo os blocos nas colunas
                                 st.markdown(f"""
                                     <div style="
                                         background-color: #ffffff;
@@ -1822,9 +1821,9 @@ if pagina == "Avançada": #_____________________________________________________
                                         box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
                                         flex: 1;
                                     ">
-                                        <h3 style="margin: 0; color: #4a4a4a;">{ticker}</h3>
+                                        <h3 style="margin: 0; color: #4a4a4a;">{index}</h3>
                                         <p style="font-size: 18px; margin: 5px 0; color: #2ecc71; font-weight: bold;">
-                                            {valor_formatado}
+                                            {formatar_real(row['Patrimonio Final'])}  <!-- Aplicando a função -->
                                         </p>
                                     </div>
                                 """, unsafe_allow_html=True)
