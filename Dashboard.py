@@ -1743,13 +1743,14 @@ if pagina == "Avançada": #_____________________________________________________
                         tickers = [ticker + ".SA" for ticker in tickers]
                 
                         precos = baixar_precos(tickers)
-                        st.dataframe(precos)
-                                   
+                                                
                         if precos is None or precos.empty:
                             continue
                 
                         # 📌 Cálculo do patrimônio acumulado e evolução ao longo do tempo
                         df_patrimonio, df_patrimonio_evolucao = calcular_patrimonio_com_aportes(precos)
+                        st.dataframe(df_patrimonio)
+                        st.dataframe(df_patrimonio_evolucao)
                 
                         # 📌 Ordenação decrescente dos resultados
                         df_patrimonio = df_patrimonio.sort_values(by="Patrimonio Final", ascending=False)
