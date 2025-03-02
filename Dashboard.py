@@ -1783,15 +1783,17 @@ if pagina == "Avançada": #_____________________________________________________
                         # 📌 EXIBIÇÃO DO PATRIMÔNIO FINAL NO DASHBOARD ============================================================================================================
                         st.subheader("📊 Patrimônio Final para R$1.000/Mês Investidos desde 2020")
                 
-                        num_columns = 3  # Número de colunas no layout
+                        # Definir número máximo de colunas baseado no número de empresas (mínimo 1, máximo 3)
+                        num_columns = min(3, len(df_patrimonio_final))
+                        
+                        # Criar colunas no Streamlit
                         columns = st.columns(num_columns)
-                
-                        def formatar_real(valor):
-                            return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                
-                        # 📌 Exibir os blocos organizados corretamente com os tickers visíveis
-                        for i, row in df_patrimonio_final.iterrows():
-                            with columns[i % num_columns]:  # Distribuindo os blocos nas colunas
+                        
+                        # Exibir os blocos organizados corretamente com os tickers visíveis
+                        for i, (ticker, row) in enumerate(df_patrimonio_final.iterrows()):
+                            col_index = i % num_columns  # Definir a posição correta para cada bloco
+                        
+                            with columns[col_index]:  # Evita acessar um índice inválido
                                 st.markdown(f"""
                                     <div style="
                                         background-color: #ffffff;
@@ -1803,9 +1805,9 @@ if pagina == "Avançada": #_____________________________________________________
                                         box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
                                         flex: 1;
                                     ">
-                                        <h3 style="margin: 0; color: #4a4a4a;">{row.name}</h3>  <!-- Exibindo o ticker da empresa -->
+                                        <h3 style="margin: 0; color: #4a4a4a;">{ticker}</h3>  <!-- Exibindo o ticker da empresa -->
                                         <p style="font-size: 18px; margin: 5px 0; color: #2ecc71; font-weight: bold;">
                                             {formatar_real(row['Patrimonio Final'])}  <!-- Exibindo o valor formatado -->
                                         </p>
                                     </div>
-                """, unsafe_allow_html=True)
+                                """, unsafe_allow_html=True)
