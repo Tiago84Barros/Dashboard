@@ -1749,8 +1749,7 @@ if pagina == "Avançada": #_____________________________________________________
                 
                         # 📌 Cálculo do patrimônio acumulado e evolução ao longo do tempo
                         df_patrimonio, df_patrimonio_evolucao = calcular_patrimonio_com_aportes(precos)
-                        st.dataframe(df_patrimonio_evolucao)
-                                       
+                                               
                         # 📌 Ordenação decrescente dos resultados
                         df_patrimonio = df_patrimonio.sort_values(by="Patrimonio Final", ascending=False)
                 
