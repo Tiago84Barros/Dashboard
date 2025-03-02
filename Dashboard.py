@@ -1731,6 +1731,9 @@ if pagina == "Avançada": #_____________________________________________________
                     except Exception as e:
                         st.error(f"Erro ao baixar preços: {e}")
                         return None
+                        
+                def formatar_real(valor):
+                    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                 
                 
                 if 'df_empresas' in locals() and not df_empresas.empty:
