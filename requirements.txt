@@ -6,4 +6,5 @@ plotly
 scikit-learn
 datetime
 openai
+locale
 matplotlib
