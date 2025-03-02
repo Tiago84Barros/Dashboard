@@ -1760,6 +1760,7 @@ if pagina == "Avançada": #_____________________________________________________
                         
                         # 🔹 Garantindo que o índice seja datetime antes de ordenar
                         df_patrimonio_evolucao.index = pd.to_datetime(df_patrimonio_evolucao.index, errors='coerce')
+                        st.dataframe(df_patrimonio_evolucao)
                         
                         # 🔹 Verificando se o índice tem nome antes de tentar usar .dropna(subset=[...])
                         if df_patrimonio_evolucao.index.name is not None:
