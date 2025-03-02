@@ -1704,8 +1704,8 @@ if pagina == "Avançada": #_____________________________________________________
                                 total_investido += aporte_mensal
                                                
                             # Armazena o patrimônio ao longo do tempo
-                            st.markdown(preco[ticker])
                             patrimonio_evolucao.loc[preco.name, ticker] = total_acoes * preco[ticker]
+                            st.markdown(patrimonio_evolucao)
                                         
                         ultimo_preco = df_precos[ticker].dropna().iloc[-1] if not df_precos[ticker].dropna().empty else None
                         if ultimo_preco is not None:
