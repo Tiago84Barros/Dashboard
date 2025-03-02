@@ -1681,7 +1681,7 @@ if pagina == "Avançada": #_____________________________________________________
                 
                 # 📌 LOOP PARA COMPARAÇÃO ENTRE A LÍDER, CONCORRENTES E IBOVESPA
                 for segmento in df_lideres["Segmento"].unique():
-                    st.subheader(f"📊 Comparação no Segmento: {segmento}")
+                    #st.subheader(f"📊 Comparação no Segmento: {segmento}")
                 
                     # ✅ SELECIONANDO EMPRESA LÍDER E CONCORRENTES
                     lider = df_lideres[df_lideres["Segmento"] == segmento].iloc[0]    
@@ -1762,7 +1762,7 @@ if pagina == "Avançada": #_____________________________________________________
                     Baixa os preços ajustados das ações a partir de 2020.
                     """
                     try:
-                        precos = yf.download(tickers, start=start)['Adj Close']
+                        precos = yf.download(tickers, start=start)['Close']
                         precos.columns = precos.columns.str.replace(".SA", "", regex=False)  # Removendo ".SA"
                         return precos
                     except Exception as e:
