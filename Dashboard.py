@@ -1672,11 +1672,7 @@ if pagina == "Avançada": #_____________________________________________________
                     formatted = f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                     return "R$ " + formatted
                 
-                # 📌 Função para buscar ícone da empresa
-                def obter_icone_empresa(ticker):
-                    url_base = "https://raw.githubusercontent.com/rodrigocsl2/Logos-B3/main/logos/"  # Repositório fictício com logos da B3
-                    return f"{url_base}{ticker}.png"  # Exemplo: https://raw.githubusercontent.com/.../PETR4.png
-                
+                            
                 # 📌 Função para simular aportes mensais e calcular a evolução do patrimônio
                 def calcular_patrimonio_com_aportes(precos, investimento_inicial=1000, aporte_mensal=1000):
                     patrimonio_final = {}
@@ -1786,7 +1782,7 @@ if pagina == "Avançada": #_____________________________________________________
                         for i, row in df_patrimonio.iterrows():
                             ticker = row['index']
                             patrimonio = row['Patrimonio Final']
-                            icone_url = obter_icone_empresa(ticker)  # Obtendo o ícone da empresa
+                            icone_url = get_logo_url(ticker)  # Obtendo o ícone da empresa
                             
                             # Se for a empresa líder, destacá-la apenas com a borda dourada
                             is_lider = (ticker == lider["ticker"])
