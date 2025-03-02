@@ -1810,9 +1810,9 @@ if pagina == "Avançada": #_____________________________________________________
                             return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
                         
-                        # 📌 Aplicando a formatação na exibição do patrimônio no Streamlit
-                        for index, row in df_patrimonio.iterrows():
-                            with columns[index % num_columns]:  # Distribuindo os blocos nas colunas
+                        # 📌 Exibir os blocos organizados corretamente com os tickers visíveis
+                        for i, row in df_patrimonio.iterrows():
+                            with columns[i % num_columns]:  # Distribuindo os blocos nas colunas
                                 st.markdown(f"""
                                     <div style="
                                         background-color: #ffffff;
@@ -1824,9 +1824,9 @@ if pagina == "Avançada": #_____________________________________________________
                                         box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
                                         flex: 1;
                                     ">
-                                        <h3 style="margin: 0; color: #4a4a4a;">{index}</h3>
+                                        <h3 style="margin: 0; color: #4a4a4a;">{row['index']}</h3>  <!-- Exibindo o ticker da empresa -->
                                         <p style="font-size: 18px; margin: 5px 0; color: #2ecc71; font-weight: bold;">
-                                            {formatar_real(row['Patrimonio Final'])}  <!-- Aplicando a função -->
+                                            {formatar_real(row['Patrimonio Final'])}  <!-- Exibindo o valor formatado -->
                                         </p>
                                     </div>
                                 """, unsafe_allow_html=True)
