@@ -1753,13 +1753,19 @@ if pagina == "Avançada": #_____________________________________________________
                         # 📌 Ordenação decrescente dos resultados
                         df_patrimonio = df_patrimonio.sort_values(by="Patrimonio Final", ascending=False)
                 
-                        # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO
+                        # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO ================================================================================================================
                         st.subheader("📈 Evolução do Patrimônio com Aportes Mensais")
 
                         fig, ax = plt.subplots(figsize=(12, 6))
                         
-                        # 🔹 Garante que todas as séries tenham o mesmo índice temporal
-                        df_patrimonio_evolucao = df_patrimonio_evolucao.reindex(sorted(df_patrimonio_evolucao.index))
+                        # 🔹 Garantindo que o índice seja datetime antes de ordenar
+                        df_patrimonio_evolucao.index = pd.to_datetime(df_patrimonio_evolucao.index, errors='coerce')
+                        
+                        # 🔹 Removendo possíveis valores nulos no índice
+                        df_patrimonio_evolucao = df_patrimonio_evolucao.dropna()
+                        
+                        # 🔹 Ordenando corretamente as datas no eixo X
+                        df_patrimonio_evolucao = df_patrimonio_evolucao.sort_index()
                         
                         # 🔹 Loop para plotar a evolução de cada empresa
                         for ticker in df_patrimonio_evolucao.columns:
@@ -1768,9 +1774,10 @@ if pagina == "Avançada": #_____________________________________________________
                             else:
                                 df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=1, linestyle="--", alpha=0.6, label=ticker)
                         
-                        # 🔹 Ajustes no eixo X para corrigir possíveis distorções de datas
-                        ax.set_xlim(df_patrimonio_evolucao.index.min(), df_patrimonio_evolucao.index.max())  # Garante que o eixo X está correto
-                        ax.set_xticks(pd.date_range(start=df_patrimonio_evolucao.index.min(), end=df_patrimonio_evolucao.index.max(), freq='6M'))  # Marcação semestral
+                        # 🔹 Configurações do eixo X para garantir que está correto
+                        ax.set_xlim(df_patrimonio_evolucao.index.min(), df_patrimonio_evolucao.index.max())  
+                        ax.set_xticks(pd.date_range(start=df_patrimonio_evolucao.index.min(), 
+                                                    end=df_patrimonio_evolucao.index.max(), freq='6M'))  # Marcações semestrais
                         
                         # 🔹 Formatação do eixo X para melhorar a leitura
                         ax.tick_params(axis='x', rotation=30)
@@ -1781,6 +1788,7 @@ if pagina == "Avançada": #_____________________________________________________
                         ax.set_ylabel("Patrimônio (R$)")
                         ax.legend()
                         st.pyplot(fig)
+
 
                 
                         # 📌 EXIBIÇÃO DOS QUADRADOS (BLOCOS COM OS RESULTADOS)
