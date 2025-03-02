@@ -1702,15 +1702,14 @@ if pagina == "Avançada": #_____________________________________________________
                             else:
                                 total_acoes += aporte_mensal / preco[ticker]
                                 total_investido += aporte_mensal
-                            st.markdown(total_investido)
-                         
+                                               
                             # Armazena o patrimônio ao longo do tempo
                             patrimonio_evolucao.loc[preco.name, ticker] = total_acoes * preco[ticker]
                                         
                         ultimo_preco = df_precos[ticker].dropna().iloc[-1] if not df_precos[ticker].dropna().empty else None
                         if ultimo_preco is not None:
                             patrimonio_final[ticker] = total_acoes * ultimo_preco
-                
+                        
                     return (
                         pd.DataFrame.from_dict(patrimonio_final, orient='index', columns=['Patrimonio Final']),
                         patrimonio_evolucao.ffill()  # Preenche valores NaN para manter a evolução contínua
@@ -1750,6 +1749,7 @@ if pagina == "Avançada": #_____________________________________________________
                 
                         # 📌 Cálculo do patrimônio acumulado e evolução ao longo do tempo
                         df_patrimonio, df_patrimonio_evolucao = calcular_patrimonio_com_aportes(precos)
+                        st.dataframe(df_patrimonio)
                                        
                         # 📌 Ordenação decrescente dos resultados
                         df_patrimonio = df_patrimonio.sort_values(by="Patrimonio Final", ascending=False)
