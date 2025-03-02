@@ -1805,7 +1805,7 @@ if pagina == "Avançada": #_____________________________________________________
                         columns = st.columns(num_columns)
                             
                         # Configura para o formato de moeda brasileiro
-                        #locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
+                        locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
                         
                         for i, (ticker, row) in enumerate(df_patrimonio.iterrows()):  # Enumerate para criar índice numérico
                             valor_formatado = locale.currency(row['Patrimonio Final'], grouping=True, symbol=True)  # Formata no padrão R$
