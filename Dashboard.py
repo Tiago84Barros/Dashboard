@@ -1800,6 +1800,9 @@ if pagina == "Avançada": #_____________________________________________________
                         # 📌 EXIBIÇÃO DO PATRIMÔNIO FINAL NO DASHBOARD ============================================================================================================
                         st.subheader("📊 Patrimônio Final para R$1.000/Mês Investidos desde 2020")
                 
+                        # Garantir que index seja numérico
+                        df_patrimonio = df_patrimonio.reset_index(drop=False)  # Mantém os tickers como coluna
+                        
                         num_columns = 3  # Número de colunas no layout
                         columns = st.columns(num_columns)
                             
