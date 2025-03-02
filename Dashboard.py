@@ -1709,7 +1709,7 @@ if pagina == "Avançada": #_____________________________________________________
                         continue
               
                 # 📌 DEFINIÇÃO DA FUNÇÃO PARA SIMULAR APORTES MENSAIS
-               def calcular_patrimonio_com_aportes(precos, investimento_inicial=1000, aporte_mensal=1000):
+                def calcular_patrimonio_com_aportes(precos, investimento_inicial=1000, aporte_mensal=1000):
                     """
                     Simula aportes mensais em ações ao longo do tempo e calcula o patrimônio final.
                     
