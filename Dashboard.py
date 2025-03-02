@@ -1703,7 +1703,7 @@ if pagina == "Avançada": #_____________________________________________________
                                 total_acoes += aporte_mensal / preco[ticker]
                                 total_investido += aporte_mensal
                             st.markdown(total_acoes)
-                            st.markdownn(total_investido)
+                         
                             # Armazena o patrimônio ao longo do tempo
                             patrimonio_evolucao.loc[preco.name, ticker] = total_acoes * preco[ticker]
                                         
