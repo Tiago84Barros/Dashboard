@@ -1666,54 +1666,58 @@ if pagina == "Avançada": #_____________________________________________________
                 gerar_resumo_melhor_empresa(df_empresas)
 
                 # ========================== CRIAÇÃO DO BENCHMARK (LÍDER X CONCORRENTES) =========================================================================================
-                
-                # 📌 DEFINIÇÃO DA FUNÇÃO PARA SIMULAR APORTES MENSAIS ======================================================================================================================
+
+                # 📌 DEFINIÇÃO DA FUNÇÃO PARA SIMULAR APORTES MENSAIS ===========================================================================================================
                 def calcular_patrimonio_com_aportes(precos, investimento_inicial=1000, aporte_mensal=1000):
                     """
-                    Simula aportes mensais em ações ao longo do tempo e calcula o patrimônio final.
-                    
+                    Simula aportes mensais em ações ao longo do tempo e calcula a evolução do patrimônio.
+                
                     - `precos`: DataFrame com preços históricos ajustados das empresas.
                     - `investimento_inicial`: Valor inicial investido (padrão: R$1.000).
-                    - `aporte_mensal`: Valor a ser investido a cada mês (padrão: R$1.000).
-                    
-                    Retorna um DataFrame com o patrimônio final de cada empresa.
+                    - `aporte_mensal`: Valor investido a cada mês (padrão: R$1.000).
+                
+                    Retorna um DataFrame com a evolução do patrimônio ao longo do tempo.
                     """
-                    
-                    patrimonio_final = {}
-                    
+                
+                    patrimonio_acumulado = pd.DataFrame(index=precos.index)
+                
                     for ticker in precos.columns:
                         df_precos = precos[[ticker]].dropna()  # Remove valores NaN
-                        
+                
                         # Verifica se há dados suficientes (mínimo de 12 meses de histórico)
                         if df_precos.empty or len(df_precos) < 12:
                             print(f"⚠️ Empresa {ticker} removida da análise (dados insuficientes).")
                             continue
-                        
+                
                         df_precos['Mes'] = df_precos.index.to_period('M')  # Agrupar por mês
                         df_mensal = df_precos.groupby('Mes').first()  # Pegando o primeiro preço de cada mês
-                        
-                        # Simulação de aportes
+                
                         total_acoes = 0
                         total_investido = 0
-                        
-                        for preco in df_mensal[ticker]:
-                            if np.isnan(preco):  # Se não houver dado, pula o mês
+                        patrimonio_tempo = []
+                
+                        for data, preco in df_mensal.iterrows():
+                            if np.isnan(preco[ticker]):  # Se não houver dado, pula o mês
+                                patrimonio_tempo.append(total_acoes * preco[ticker] if total_acoes > 0 else 0)
                                 continue
-                            
+                
                             # Primeiro aporte
                             if total_investido == 0:
-                                total_acoes += investimento_inicial / preco
+                                total_acoes += investimento_inicial / preco[ticker]
                                 total_investido += investimento_inicial
                             else:
-                                total_acoes += aporte_mensal / preco
+                                total_acoes += aporte_mensal / preco[ticker]
                                 total_investido += aporte_mensal
                 
-                        # 🚨 Verifica se há um último preço válido antes de usar .iloc[-1]
-                        ultimo_preco = df_precos[ticker].dropna().iloc[-1] if not df_precos[ticker].dropna().empty else None
-                        if ultimo_preco is not None:
-                            patrimonio_final[ticker] = total_acoes * ultimo_preco  # Último preço válido disponível
+                            # Atualiza patrimônio no tempo
+                            patrimonio_tempo.append(total_acoes * preco[ticker])
                 
-                    return pd.DataFrame.from_dict(patrimonio_final, orient='index', columns=['Patrimonio Final'])
+                        # Criando série de patrimônio ao longo do tempo
+                        patrimonio_series = pd.Series(patrimonio_tempo, index=df_mensal.index, name=ticker)
+                        patrimonio_acumulado = patrimonio_acumulado.join(patrimonio_series, how="outer")
+                
+                    return patrimonio_acumulado
+                
                 
                 # 📌 BAIXANDO OS PREÇOS DAS EMPRESAS DO SEGMENTO ====================================================================================================================
                 def baixar_precos(tickers, start="2020-01-01"):
@@ -1727,6 +1731,7 @@ if pagina == "Avançada": #_____________________________________________________
                     except Exception as e:
                         st.error(f"Erro ao baixar preços: {e}")
                         return None
+                
                 
                 if 'df_empresas' in locals() and not df_empresas.empty:
                     df_lideres = df_empresas[df_empresas["Rank_Ajustado"] == 1]
@@ -1750,46 +1755,42 @@ if pagina == "Avançada": #_____________________________________________________
                             continue
                 
                         # 📌 CÁLCULO DO PATRIMÔNIO ACUMULADO ======================================================================================================================
-                        df_patrimonio = calcular_patrimonio_com_aportes(precos)
+                        df_patrimonio_evolucao = calcular_patrimonio_com_aportes(precos)
                 
                         # 📌 ORDENANDO OS RESULTADOS DO MAIOR PATRIMÔNIO PARA O MENOR
-                        df_patrimonio = df_patrimonio.sort_values(by="Patrimonio Final", ascending=False)
-
+                        df_patrimonio_final = df_patrimonio_evolucao.iloc[-1].sort_values(ascending=False).to_frame(name="Patrimonio Final")
+                
                         # 📌 PLOTAGEM DO GRÁFICO ==================================================================================================================================
                         st.subheader("📈 Evolução do Patrimônio com Aportes Mensais")
-                        
+                
                         # Criar gráfico
                         fig, ax = plt.subplots(figsize=(12, 6))
-                        
+                
                         # Plotando todas as empresas do segmento
                         for ticker in df_patrimonio_evolucao.columns:
                             if ticker == lider["ticker"]:  # Empresa líder em destaque
                                 df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, color="red", label=f"{lider['nome_empresa']} (Líder)")
                             else:
                                 df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=1, linestyle="--", alpha=0.6, label=ticker)
-                        
+                
                         # Configurações do gráfico
                         ax.set_title(f"Evolução do Patrimônio Acumulado no Segmento: {segmento}")
                         ax.set_xlabel("Data")
                         ax.set_ylabel("Patrimônio (R$)")
                         ax.legend()
                         st.pyplot(fig)
-                                        
+                
                         # 📌 EXIBIÇÃO DO PATRIMÔNIO FINAL NO DASHBOARD ============================================================================================================
                         st.subheader("📊 Patrimônio Final para R$1.000/Mês Investidos desde 2020")
                 
-                        # Garantir que index seja numérico
-                        df_patrimonio = df_patrimonio.reset_index(drop=False)  # Mantém os tickers como coluna
-                        
                         num_columns = 3  # Número de colunas no layout
                         columns = st.columns(num_columns)
-                            
+                
                         def formatar_real(valor):
                             return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
-                        
+                
                         # 📌 Exibir os blocos organizados corretamente com os tickers visíveis
-                        for i, row in df_patrimonio.iterrows():
+                        for i, row in df_patrimonio_final.iterrows():
                             with columns[i % num_columns]:  # Distribuindo os blocos nas colunas
                                 st.markdown(f"""
                                     <div style="
@@ -1802,9 +1803,9 @@ if pagina == "Avançada": #_____________________________________________________
                                         box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
                                         flex: 1;
                                     ">
-                                        <h3 style="margin: 0; color: #4a4a4a;">{row['index']}</h3>  <!-- Exibindo o ticker da empresa -->
+                                        <h3 style="margin: 0; color: #4a4a4a;">{row.name}</h3>  <!-- Exibindo o ticker da empresa -->
                                         <p style="font-size: 18px; margin: 5px 0; color: #2ecc71; font-weight: bold;">
                                             {formatar_real(row['Patrimonio Final'])}  <!-- Exibindo o valor formatado -->
                                         </p>
                                     </div>
-                                """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
