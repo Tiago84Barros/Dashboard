@@ -1667,63 +1667,53 @@ if pagina == "Avançada": #_____________________________________________________
 
                 # ========================== CRIAÇÃO DO BENCHMARK (LÍDER X CONCORRENTES) =========================================================================================
 
-                # 📌 DEFINIÇÃO DA FUNÇÃO PARA SIMULAR APORTES MENSAIS ===========================================================================================================
+                # 📌 Função para formatar valores em Reais (R$)
+                def formatar_real(valor):
+                    formatted = f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                    return "R$ " + formatted
+                
+                # 📌 Função para buscar ícone da empresa
+                def obter_icone_empresa(ticker):
+                    url_base = "https://raw.githubusercontent.com/rodrigocsl2/Logos-B3/main/logos/"  # Repositório fictício com logos da B3
+                    return f"{url_base}{ticker}.png"  # Exemplo: https://raw.githubusercontent.com/.../PETR4.png
+                
+                # 📌 Função para simular aportes mensais
                 def calcular_patrimonio_com_aportes(precos, investimento_inicial=1000, aporte_mensal=1000):
-                    """
-                    Simula aportes mensais em ações ao longo do tempo e calcula a evolução do patrimônio.
-                
-                    - `precos`: DataFrame com preços históricos ajustados das empresas.
-                    - `investimento_inicial`: Valor inicial investido (padrão: R$1.000).
-                    - `aporte_mensal`: Valor investido a cada mês (padrão: R$1.000).
-                
-                    Retorna um DataFrame com a evolução do patrimônio ao longo do tempo.
-                    """
-                
-                    patrimonio_acumulado = pd.DataFrame(index=precos.index)
-                
+                    patrimonio_final = {}
+                    
                     for ticker in precos.columns:
                         df_precos = precos[[ticker]].dropna()  # Remove valores NaN
-                
-                        # Verifica se há dados suficientes (mínimo de 12 meses de histórico)
-                        if df_precos.empty or len(df_precos) < 12:
+                        
+                        if df_precos.empty or len(df_precos) < 12:  # Filtra empresas com histórico insuficiente
                             print(f"⚠️ Empresa {ticker} removida da análise (dados insuficientes).")
                             continue
-                
+                        
                         df_precos['Mes'] = df_precos.index.to_period('M')  # Agrupar por mês
                         df_mensal = df_precos.groupby('Mes').first()  # Pegando o primeiro preço de cada mês
-                
+                        
+                        # Simulação de aportes
                         total_acoes = 0
                         total_investido = 0
-                        patrimonio_tempo = []
-                
-                        for data, preco in df_mensal.iterrows():
-                            if np.isnan(preco[ticker]):  # Se não houver dado, pula o mês
-                                patrimonio_tempo.append(total_acoes * preco[ticker] if total_acoes > 0 else 0)
+                        
+                        for preco in df_mensal[ticker]:
+                            if np.isnan(preco):
                                 continue
-                
-                            # Primeiro aporte
+                            
                             if total_investido == 0:
-                                total_acoes += investimento_inicial / preco[ticker]
+                                total_acoes += investimento_inicial / preco
                                 total_investido += investimento_inicial
                             else:
-                                total_acoes += aporte_mensal / preco[ticker]
+                                total_acoes += aporte_mensal / preco
                                 total_investido += aporte_mensal
                 
-                            # Atualiza patrimônio no tempo
-                            patrimonio_tempo.append(total_acoes * preco[ticker])
+                        ultimo_preco = df_precos[ticker].dropna().iloc[-1] if not df_precos[ticker].dropna().empty else None
+                        if ultimo_preco is not None:
+                            patrimonio_final[ticker] = total_acoes * ultimo_preco  # Último preço disponível
                 
-                        # Criando série de patrimônio ao longo do tempo
-                        patrimonio_series = pd.Series(patrimonio_tempo, index=df_mensal.index, name=ticker)
-                        patrimonio_acumulado = patrimonio_acumulado.join(patrimonio_series, how="outer")
+                    return pd.DataFrame.from_dict(patrimonio_final, orient='index', columns=['Patrimonio Final'])
                 
-                    return patrimonio_acumulado
-                
-                
-                # 📌 BAIXANDO OS PREÇOS DAS EMPRESAS DO SEGMENTO ====================================================================================================================
+                # 📌 Baixando preços ajustados das empresas
                 def baixar_precos(tickers, start="2020-01-01"):
-                    """
-                    Baixa os preços ajustados das ações a partir de 2020.
-                    """
                     try:
                         precos = yf.download(tickers, start=start)['Close']
                         precos.columns = precos.columns.str.replace(".SA", "", regex=False)  # Removendo ".SA"
@@ -1731,11 +1721,8 @@ if pagina == "Avançada": #_____________________________________________________
                     except Exception as e:
                         st.error(f"Erro ao baixar preços: {e}")
                         return None
-                        
-                def formatar_real(valor):
-                    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                 
-                
+                # 📌 Analisando empresas por segmento
                 if 'df_empresas' in locals() and not df_empresas.empty:
                     df_lideres = df_empresas[df_empresas["Rank_Ajustado"] == 1]
                 
@@ -1750,57 +1737,60 @@ if pagina == "Avançada": #_____________________________________________________
                             continue
                 
                         tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()
-                        tickers = [ticker + ".SA" for ticker in tickers]  # Adicionando ".SA"
+                        tickers = [ticker + ".SA" for ticker in tickers]  
                 
                         precos = baixar_precos(tickers)
                 
                         if precos is None or precos.empty:
                             continue
                 
-                        # 📌 CÁLCULO DO PATRIMÔNIO ACUMULADO ======================================================================================================================
-                        df_patrimonio_evolucao = calcular_patrimonio_com_aportes(precos)
+                        # 📌 Cálculo do patrimônio acumulado
+                        df_patrimonio = calcular_patrimonio_com_aportes(precos)
                 
-                        # 📌 ORDENANDO OS RESULTADOS DO MAIOR PATRIMÔNIO PARA O MENOR
-                        df_patrimonio_final = df_patrimonio_evolucao.iloc[-1].sort_values(ascending=False).to_frame(name="Patrimonio Final")
+                        # 📌 Ordenação decrescente dos resultados
+                        df_patrimonio = df_patrimonio.sort_values(by="Patrimonio Final", ascending=False)
                 
-                        # 📌 PLOTAGEM DO GRÁFICO ==================================================================================================================================
+                        # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO
                         st.subheader("📈 Evolução do Patrimônio com Aportes Mensais")
                 
-                        # Criar gráfico
                         fig, ax = plt.subplots(figsize=(12, 6))
                 
-                        # Plotando todas as empresas do segmento
-                        for ticker in df_patrimonio_evolucao.columns:
-                            if ticker == lider["ticker"]:  # Empresa líder em destaque
-                                df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, color="red", label=f"{lider['nome_empresa']} (Líder)")
+                        for ticker in df_patrimonio.index:
+                            if ticker == lider["ticker"]:  # Destacar empresa líder
+                                precos[ticker].plot(ax=ax, linewidth=2, color="red", label=f"{lider['nome_empresa']} (Líder)")
                             else:
-                                df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=1, linestyle="--", alpha=0.6, label=ticker)
+                                precos[ticker].plot(ax=ax, linewidth=1, linestyle="--", alpha=0.6, label=ticker)
                 
-                        # Configurações do gráfico
                         ax.set_title(f"Evolução do Patrimônio Acumulado no Segmento: {segmento}")
                         ax.set_xlabel("Data")
                         ax.set_ylabel("Patrimônio (R$)")
                         ax.legend()
                         st.pyplot(fig)
                 
-                        # 📌 EXIBIÇÃO DO PATRIMÔNIO FINAL NO DASHBOARD ============================================================================================================
+                        # 📌 EXIBIÇÃO DOS QUADRADOS (BLOCOS COM OS RESULTADOS)
                         st.subheader("📊 Patrimônio Final para R$1.000/Mês Investidos desde 2020")
                 
-                        # Definir número máximo de colunas baseado no número de empresas (mínimo 1, máximo 3)
-                        num_columns = min(3, len(df_patrimonio_final))
-                        
-                        # Criar colunas no Streamlit
+                        df_patrimonio = df_patrimonio.reset_index(drop=False)  # Tickers como coluna
+                
+                        num_columns = 3  # Número de colunas no layout
                         columns = st.columns(num_columns)
-                        
-                        # Exibir os blocos organizados corretamente com os tickers visíveis
-                        for i, (ticker, row) in enumerate(df_patrimonio_final.iterrows()):
-                            col_index = i % num_columns  # Definir a posição correta para cada bloco
-                        
-                            with columns[col_index]:  # Evita acessar um índice inválido
+                
+                        # Exibir os blocos organizados corretamente com os tickers visíveis e ícones das empresas
+                        for i, row in df_patrimonio.iterrows():
+                            ticker = row['index']
+                            patrimonio = row['Patrimonio Final']
+                            icone_url = obter_icone_empresa(ticker)  # Obtendo o ícone da empresa
+                            
+                            # Se for a empresa líder, destacá-la visualmente
+                            is_lider = (ticker == lider["ticker"])
+                            background_color = "#FFD700" if is_lider else "#ffffff"  # Amarelo para líder, branco para os demais
+                            border_color = "#DAA520" if is_lider else "#d3d3d3"  # Borda dourada para líder
+                            
+                            with columns[i % num_columns]:  # Distribuindo os blocos nas colunas
                                 st.markdown(f"""
                                     <div style="
-                                        background-color: #ffffff;
-                                        border: 2px solid #d3d3d3;
+                                        background-color: {background_color};
+                                        border: 3px solid {border_color};
                                         border-radius: 10px;
                                         padding: 15px;
                                         margin: 10px;
@@ -1808,9 +1798,10 @@ if pagina == "Avançada": #_____________________________________________________
                                         box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
                                         flex: 1;
                                     ">
-                                        <h3 style="margin: 0; color: #4a4a4a;">{ticker}</h3>  <!-- Exibindo o ticker da empresa -->
-                                        <p style="font-size: 18px; margin: 5px 0; color: #2ecc71; font-weight: bold;">
-                                            {formatar_real(row['Patrimonio Final'])}  <!-- Exibindo o valor formatado -->
+                                        <img src="{icone_url}" alt="{ticker}" style="width: 50px; height: auto; margin-bottom: 5px;">
+                                        <h3 style="margin: 0; color: #4a4a4a;">{ticker}</h3>
+                                        <p style="font-size: 18px; margin: 5px 0; font-weight: bold; color: {'#D2691E' if is_lider else '#2ecc71'};">
+                                            {formatar_real(patrimonio)}
                                         </p>
                                     </div>
                                 """, unsafe_allow_html=True)
