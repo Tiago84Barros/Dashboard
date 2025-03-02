@@ -1687,7 +1687,7 @@ if pagina == "Avançada": #_____________________________________________________
                         
                         df_precos['Mes'] = df_precos.index.to_period('M')
                         df_mensal = df_precos.groupby('Mes').first()
-                        st.dataframe(df_mensal)
+                        
                         total_acoes = 0
                         total_investido = 0
                         patrimonio_evolucao[ticker] = np.nan  # Inicializando a coluna no DataFrame
@@ -1705,6 +1705,7 @@ if pagina == "Avançada": #_____________________________________________________
                 
                             # Armazena o patrimônio ao longo do tempo
                             patrimonio_evolucao.loc[preco.name, ticker] = total_acoes * preco[ticker]
+                            st.dataframe(patrimonio_evolucao)
                 
                         ultimo_preco = df_precos[ticker].dropna().iloc[-1] if not df_precos[ticker].dropna().empty else None
                         if ultimo_preco is not None:
