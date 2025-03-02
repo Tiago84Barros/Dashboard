@@ -1755,20 +1755,33 @@ if pagina == "Avançada": #_____________________________________________________
                 
                         # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO
                         st.subheader("📈 Evolução do Patrimônio com Aportes Mensais")
-                
+
                         fig, ax = plt.subplots(figsize=(12, 6))
-                
+                        
+                        # 🔹 Garante que todas as séries tenham o mesmo índice temporal
+                        df_patrimonio_evolucao = df_patrimonio_evolucao.reindex(sorted(df_patrimonio_evolucao.index))
+                        
+                        # 🔹 Loop para plotar a evolução de cada empresa
                         for ticker in df_patrimonio_evolucao.columns:
                             if ticker == lider["ticker"]:  # Destacar empresa líder
                                 df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, color="red", label=f"{lider['nome_empresa']} (Líder)")
                             else:
                                 df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=1, linestyle="--", alpha=0.6, label=ticker)
-                
+                        
+                        # 🔹 Ajustes no eixo X para corrigir possíveis distorções de datas
+                        ax.set_xlim(df_patrimonio_evolucao.index.min(), df_patrimonio_evolucao.index.max())  # Garante que o eixo X está correto
+                        ax.set_xticks(pd.date_range(start=df_patrimonio_evolucao.index.min(), end=df_patrimonio_evolucao.index.max(), freq='6M'))  # Marcação semestral
+                        
+                        # 🔹 Formatação do eixo X para melhorar a leitura
+                        ax.tick_params(axis='x', rotation=30)
+                        
+                        # 🔹 Configurações gerais do gráfico
                         ax.set_title(f"Evolução do Patrimônio Acumulado no Segmento: {segmento}")
                         ax.set_xlabel("Data")
                         ax.set_ylabel("Patrimônio (R$)")
                         ax.legend()
                         st.pyplot(fig)
+
                 
                         # 📌 EXIBIÇÃO DOS QUADRADOS (BLOCOS COM OS RESULTADOS)
                         st.subheader("📊 Patrimônio Final para R$1.000/Mês Investidos desde 2020")
