@@ -1690,24 +1690,26 @@ if pagina == "Avançada": #_____________________________________________________
                         
                         total_acoes = 0
                         total_investido = 0
-                        patrimonio_evolucao[ticker] = np.nan  # Inicializando a coluna no DataFrame
-                
-                        for data, preco in df_mensal.iterrows():
-                            if np.isnan(preco[ticker]):
+                        
+                        for _, preco in df_mensal.iterrows():
+                            if np.isnan(preco[ticker]):  # Se não houver dado, pula o mês
                                 continue
-                            
+                                                                                 
+                            # Primeiro aporte
                             if total_investido == 0:
                                 total_acoes += investimento_inicial / preco[ticker]
                                 total_investido += investimento_inicial
                             else:
                                 total_acoes += aporte_mensal / preco[ticker]
                                 total_investido += aporte_mensal
-                                               
-                            # Armazena o patrimônio ao longo do tempo
-                            patrimonio_evolucao.loc[preco.name, ticker] = total_acoes * preco[ticker]
-                            st.dataframe(patrimonio_evolucao)
-                                        
+                             # ✅ Verificar se preco.name existe no índice
+                            if preco.name in patrimonio_evolucao.index:
+                                patrimonio_evolucao.loc[preco.name, ticker] = total_acoes * preco[ticker]
+                            else:
+                                print(f"⚠️ Índice {preco.name} não encontrado em patrimonio_evolucao para {ticker}")                                               
+                            
                         ultimo_preco = df_precos[ticker].dropna().iloc[-1] if not df_precos[ticker].dropna().empty else None
+        
                         if ultimo_preco is not None:
                             patrimonio_final[ticker] = total_acoes * ultimo_preco
                         
