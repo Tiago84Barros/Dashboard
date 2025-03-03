@@ -1665,16 +1665,24 @@ if pagina == "Avançada": #_____________________________________________________
 
                 gerar_resumo_melhor_empresa(df_empresas)
 
-                # ========================== CRIAÇÃO DO BENCHMARK (LÍDER X CONCORRENTES) =========================================================================================
-                
+               # ========================== CRIAÇÃO DO BENCHMARK (LÍDER X CONCORRENTES) =========================================================================================
+
                 # 📌 Função para formatar valores em Reais (R$)
                 def formatar_real(valor):
                     formatted = f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                     return "R$ " + formatted
                 
-                            
+                
                 # 📌 Função para simular aportes mensais e calcular a evolução do patrimônio
                 def calcular_patrimonio_com_aportes(precos, investimento_inicial=1000, aporte_mensal=1000):
+                    """
+                    Simula aportes mensais e calcula a evolução do patrimônio ao longo do tempo.
+                
+                    Retorna:
+                    - `df_patrimonio`: DataFrame com o patrimônio final de cada empresa.
+                    - `df_patrimonio_evolucao`: DataFrame com a evolução do patrimônio ao longo do tempo.
+                    """
+                
                     patrimonio_final = {}
                     patrimonio_evolucao = pd.DataFrame(index=precos.index)  # Criando DataFrame para evolução
                 
@@ -1685,16 +1693,17 @@ if pagina == "Avançada": #_____________________________________________________
                             print(f"⚠️ Empresa {ticker} removida da análise (dados insuficientes).")
                             continue
                         
-                        df_precos['Mes'] = df_precos.index.to_period('M')
-                        df_mensal = df_precos.groupby('Mes').first()
+                        df_precos['Mes'] = df_precos.index.to_period('M')  # Agrupa por mês
+                        df_mensal = df_precos.groupby('Mes').first()  # Pegando o primeiro preço de cada mês
                         
                         total_acoes = 0
                         total_investido = 0
-                        
-                        for _, preco in df_mensal.iterrows():
+                        patrimonio = []
+                
+                        for data, preco in df_mensal.iterrows():
                             if np.isnan(preco[ticker]):  # Se não houver dado, pula o mês
                                 continue
-                                                                                 
+                            
                             # Primeiro aporte
                             if total_investido == 0:
                                 total_acoes += investimento_inicial / preco[ticker]
@@ -1702,22 +1711,23 @@ if pagina == "Avançada": #_____________________________________________________
                             else:
                                 total_acoes += aporte_mensal / preco[ticker]
                                 total_investido += aporte_mensal
-                             # ✅ Verificar se preco.name existe no índice
-                            if preco.name in patrimonio_evolucao.index:
-                                patrimonio_evolucao.loc[preco.name, ticker] = total_acoes * preco[ticker]
-                            else:
-                                print(f"⚠️ Índice {preco.name} não encontrado em patrimonio_evolucao para {ticker}")                                               
                             
+                            patrimonio.append(total_acoes * preco[ticker])
+                
+                            # ✅ Atualizando o DataFrame de evolução do patrimônio
+                            patrimonio_evolucao.loc[data.start_time, ticker] = total_acoes * preco[ticker]
+                
                         ultimo_preco = df_precos[ticker].dropna().iloc[-1] if not df_precos[ticker].dropna().empty else None
-        
+                
                         if ultimo_preco is not None:
                             patrimonio_final[ticker] = total_acoes * ultimo_preco
-                        
+                
                     return (
                         pd.DataFrame.from_dict(patrimonio_final, orient='index', columns=['Patrimonio Final']),
                         patrimonio_evolucao.ffill()  # Preenche valores NaN para manter a evolução contínua
                     )
-            
+                
+                
                 # 📌 Baixando preços ajustados das empresas
                 def baixar_precos(tickers, start="2020-01-01"):
                     try:
@@ -1727,6 +1737,7 @@ if pagina == "Avançada": #_____________________________________________________
                     except Exception as e:
                         st.error(f"Erro ao baixar preços: {e}")
                         return None
+                
                 
                 # 📌 Analisando empresas por segmento
                 if 'df_empresas' in locals() and not df_empresas.empty:
@@ -1746,54 +1757,43 @@ if pagina == "Avançada": #_____________________________________________________
                         tickers = [ticker + ".SA" for ticker in tickers]
                 
                         precos = baixar_precos(tickers)
-                                                
+                                                        
                         if precos is None or precos.empty:
                             continue
                 
                         # 📌 Cálculo do patrimônio acumulado e evolução ao longo do tempo
                         df_patrimonio, df_patrimonio_evolucao = calcular_patrimonio_com_aportes(precos)
-                                               
+                                                       
                         # 📌 Ordenação decrescente dos resultados
                         df_patrimonio = df_patrimonio.sort_values(by="Patrimonio Final", ascending=False)
                 
                         # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO ================================================================================================================
                         st.subheader("📈 Evolução do Patrimônio com Aportes Mensais")
-
+                
                         fig, ax = plt.subplots(figsize=(12, 6))
                         
-                        # 🔹 Garantindo que o índice seja datetime antes de ordenar
+                        # 🔹 Convertendo índice para datetime e ordenando
                         df_patrimonio_evolucao.index = pd.to_datetime(df_patrimonio_evolucao.index, errors='coerce')
-                                                
-                        # 🔹 Verificando se o índice tem nome antes de tentar usar .dropna(subset=[...])
-                        if df_patrimonio_evolucao.index.name is not None:
-                            df_patrimonio_evolucao = df_patrimonio_evolucao.dropna(subset=[df_patrimonio_evolucao.index.name])
-                        else:
-                            df_patrimonio_evolucao = df_patrimonio_evolucao.dropna()
+                        df_patrimonio_evolucao = df_patrimonio_evolucao.sort_index()
                         
                         # 🔹 Verificando se ainda há dados antes de prosseguir
                         if df_patrimonio_evolucao.empty:
                             st.warning("⚠️ Dados insuficientes para plotar a evolução do patrimônio.")
                         else:
-                            # 🔹 Ordenando corretamente as datas no eixo X
-                            df_patrimonio_evolucao = df_patrimonio_evolucao.sort_index()
-                        
                             # 🔹 Loop para plotar a evolução de cada empresa
                             for ticker in df_patrimonio_evolucao.columns:
                                 if ticker == lider["ticker"]:  # Destacar empresa líder
                                     df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, color="red", label=f"{lider['nome_empresa']} (Líder)")
                                 else:
                                     df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=1, linestyle="--", alpha=0.6, label=ticker)
-                        
-                            # 🔹 Garantindo que os limites do eixo X sejam válidos antes de aplicar
-                            min_date = df_patrimonio_evolucao.index.min()
-                            max_date = df_patrimonio_evolucao.index.max()
-                        
+                            
+                            # 🔹 Ajuste do eixo X
+                            min_date, max_date = df_patrimonio_evolucao.index.min(), df_patrimonio_evolucao.index.max()
                             if not pd.isna(min_date) and not pd.isna(max_date):
                                 ax.set_xlim(min_date, max_date)
                                 ax.set_xticks(pd.date_range(start=min_date, end=max_date, freq='6M'))  # Marcações semestrais
                                 ax.tick_params(axis='x', rotation=30)
-                        
-                            # 🔹 Configurações gerais do gráfico
+                            
                             ax.set_title(f"Evolução do Patrimônio Acumulado no Segmento: {segmento}")
                             ax.set_xlabel("Data")
                             ax.set_ylabel("Patrimônio (R$)")
