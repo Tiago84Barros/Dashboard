@@ -1732,9 +1732,7 @@ if pagina == "Avançada": #_____________________________________________________
                                 dados_macro.set_index("Data", inplace=True)
                             else:
                                 print("⚠️ A coluna 'Data' não foi encontrada no DataFrame.")
-                            
-                            # 🔹 Verifique se a conversão foi bem-sucedida
-                            st.dataframe(dados_macro.index)  # Deve exibir um DatetimeIndex correto
+                                                  
                         except Exception as e:
                             raise ValueError(f"Erro ao converter índice de `dados_macro` para datetime: {e}")
                 
