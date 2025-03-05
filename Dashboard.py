@@ -1603,7 +1603,7 @@ if pagina == "Avançada": #_____________________________________________________
                     st.warning("Não há dados disponíveis para as empresas selecionadas nas Demonstrações Financeiras.")
 
                 def gerar_resumo_melhor_empresa(df_empresas, df_mercado): #_____________________________________ Resumo de desempenho da melhor ranqueada___________________________________________________
-                    """
+        
 
                     # Seleciona a empresa melhor ranqueada
                     melhor_empresa = df_empresas.iloc[0]
