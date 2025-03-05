@@ -1817,6 +1817,9 @@ if pagina == "Avançada": #_____________________________________________________
 
                         # 🔹 Garantir que df_patrimonio_selic tenha o mesmo formato de índice (datetime)
                         df_patrimonio_selic.index = pd.to_datetime(df_patrimonio_selic.index, errors="coerce")
+
+                        # 🔹 Ajustar o Tesouro Selic para ter o mesmo tempo das ações
+                        df_patrimonio_selic = df_patrimonio_selic.loc[df_patrimonio_evolucao.index]
                         
                         # 🔹 Concatenar os dados do Tesouro Selic na evolução do patrimônio
                         df_patrimonio_evolucao = pd.concat([df_patrimonio_evolucao, df_patrimonio_selic], axis=1)
