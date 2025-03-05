@@ -1815,9 +1815,9 @@ if pagina == "Avançada": #_____________________________________________________
                         df_patrimonio = pd.concat([df_patrimonio, df_patrimonio_selic.iloc[-1].to_frame().T], axis=0)
                         df_patrimonio = df_patrimonio.sort_values(by="Patrimonio Final", ascending=False)
                 
-                        # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO ================================================================================================================
+                       # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO
                         st.subheader("📈 Evolução do Patrimônio com Aportes Mensais")
-                
+                        
                         fig, ax = plt.subplots(figsize=(12, 6))
                         
                         # 🔹 Convertendo índice para datetime e ordenando
@@ -1832,23 +1832,25 @@ if pagina == "Avançada": #_____________________________________________________
                             for ticker in df_patrimonio_evolucao.columns:
                                 if ticker == lider["ticker"]:  # Destacar empresa líder
                                     df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, color="red", label=f"{lider['nome_empresa']} (Líder)")
+                                elif ticker == "Tesouro Selic":  # Adicionar Tesouro Selic com cor azul destacada
+                                    df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, linestyle="-.", color="blue", label="Tesouro Selic")
                                 else:
                                     df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=1, linestyle="--", alpha=0.6, label=ticker)
-                            
+                        
                             # 🔹 Ajuste do eixo X
                             min_date, max_date = df_patrimonio_evolucao.index.min(), df_patrimonio_evolucao.index.max()
                             if not pd.isna(min_date) and not pd.isna(max_date):
                                 ax.set_xlim(min_date, max_date)
                                 ax.set_xticks(pd.date_range(start=min_date, end=max_date, freq='6M'))  # Marcações semestrais
                                 ax.tick_params(axis='x', rotation=30)
-                            
+                        
                             ax.set_title(f"Evolução do Patrimônio Acumulado no Segmento: {segmento}")
                             ax.set_xlabel("Data")
                             ax.set_ylabel("Patrimônio (R$)")
                             ax.legend()
                             st.pyplot(fig)
                                         
-                        # 📌 EXIBIÇÃO DOS QUADRADOS (BLOCOS COM OS RESULTADOS)
+                        # 📌 EXIBIÇÃO DOS QUADRADOS (BLOCOS COM OS RESULTADOS) ===============================================================================================================
                         st.subheader("📊 Patrimônio Final para R$1.000/Mês Investidos desde 2020")
                 
                         df_patrimonio = df_patrimonio.reset_index(drop=False)  # Tickers como coluna
