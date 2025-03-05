@@ -1811,20 +1811,12 @@ if pagina == "Avançada": #_____________________________________________________
                 
                         # 📌 Cálculo do patrimônio acumulado e evolução ao longo do tempo
                         df_patrimonio, df_patrimonio_evolucao = calcular_patrimonio_com_aportes(precos)
-                                                       
-                        df_patrimonio = pd.concat([df_patrimonio, df_patrimonio_selic.iloc[-1].to_frame().T], axis=0)
-                        df_patrimonio = df_patrimonio.sort_values(by="Patrimonio Final", ascending=False)
-
-                        # 🔹 Garantir que df_patrimonio_selic tenha o mesmo formato de índice (datetime)
-                        df_patrimonio_selic.index = pd.to_datetime(df_patrimonio_selic.index, errors="coerce")
-
-                        # 🔹 Ajustar o Tesouro Selic para ter o mesmo tempo das ações
-                        df_patrimonio_selic = df_patrimonio_selic.loc[df_patrimonio_evolucao.index]
-                        
-                        # 🔹 Concatenar os dados do Tesouro Selic na evolução do patrimônio
+                
+                        # 🔹 Ajustando o Tesouro Selic para ter o mesmo tempo das ações
+                        df_patrimonio_selic = df_patrimonio_selic.reindex(df_patrimonio_evolucao.index, method="ffill")
+                
+                        # 🔹 Concatenar os dados
                         df_patrimonio_evolucao = pd.concat([df_patrimonio_evolucao, df_patrimonio_selic], axis=1)
-                        
-                        # 🔹 Preencher possíveis valores NaN
                         df_patrimonio_evolucao = df_patrimonio_evolucao.ffill()
                 
                        # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO ========================================================================================================================
