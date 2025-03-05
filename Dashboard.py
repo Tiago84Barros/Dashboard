@@ -1640,7 +1640,12 @@ if pagina == "Avançada": #_____________________________________________________
 
                 gerar_resumo_melhor_empresa(df_empresas)
                 
-                # 📌 Função para simular aportes mensais e calcular a evolução do patrimônio das ações
+                # 📌 Função para simular aportes mensais e calcular a evolução do patrimônio das ações =============================================================================================================
+
+                def formatar_real(valor):
+                    formatted = f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                    return "R$ " + formatted
+
                 def calcular_patrimonio_com_aportes(precos, investimento_inicial=1000, aporte_mensal=1000):
                     patrimonio_final = {}
                     patrimonio_evolucao = pd.DataFrame(index=precos.index)  # Criando DataFrame para evolução
@@ -1771,7 +1776,7 @@ if pagina == "Avançada": #_____________________________________________________
                         df_patrimonio_evolucao = pd.concat([df_patrimonio_evolucao, df_patrimonio_selic], axis=1)
                         df_patrimonio_evolucao = df_patrimonio_evolucao.ffill()
                 
-                        # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO
+                        # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO =======================================================================================================================
                         st.subheader("📈 Evolução do Patrimônio com Aportes Mensais")
                 
                         fig, ax = plt.subplots(figsize=(12, 6))
