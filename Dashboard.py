@@ -1704,53 +1704,33 @@ if pagina == "Avançada": #_____________________________________________________
                     
                 def calcular_patrimonio_selic_macro(dados_macro, investimento_inicial=1000, aporte_mensal=1000):
                     """
-                    Calcula a evolução do patrimônio investido no Tesouro Selic, considerando aportes mensais e a taxa histórica da Selic.
-                    
-                    - `dados_macro`: DataFrame contendo a taxa Selic ao longo do tempo.
-                    - `investimento_inicial`: Valor inicial investido (padrão: R$1.000).
-                    - `aporte_mensal`: Valor a ser investido a cada mês (padrão: R$1.000).
-                
-                    Retorna um DataFrame com a evolução do patrimônio no Tesouro Selic.
+                    Calcula a evolução do patrimônio investido no Tesouro Selic, começando no mesmo período das ações.
                     """
                 
-                    # Verificar se `dados_macro` está carregado corretamente
                     if dados_macro is None or dados_macro.empty:
                         raise ValueError("O DataFrame `dados_macro` está vazio ou não foi carregado corretamente.")
                 
-                    # Garantir que o índice de `dados_macro` esteja no formato datetime
-                    if not isinstance(dados_macro.index, pd.DatetimeIndex):
-                        try:
-                           # 🔹 Se o índice numérico foi criado erroneamente, redefina-o
-                            dados_macro = dados_macro.reset_index(drop=True)
-                            
-                            # 🔹 Agora, garanta que a coluna de datas está nomeada corretamente
-                            if 'Data' in dados_macro.columns:
-                                # Converter a coluna de Data para datetime
-                                dados_macro["Data"] = pd.to_datetime(dados_macro["Data"], errors="coerce")
-                            
-                                # Definir a coluna de Data como índice correto
-                                dados_macro.set_index("Data", inplace=True)
-                            else:
-                                print("⚠️ A coluna 'Data' não foi encontrada no DataFrame.")
-                                                  
-                        except Exception as e:
-                            raise ValueError(f"Erro ao converter índice de `dados_macro` para datetime: {e}")
+                    # 🔹 Converter coluna de datas para datetime e definir como índice
+                    if 'Data' in dados_macro.columns:
+                        dados_macro["Data"] = pd.to_datetime(dados_macro["Data"], errors="coerce")
+                        dados_macro.set_index("Data", inplace=True)
                 
-                    # Remover possíveis linhas com índice inválido
-                    dados_macro = dados_macro.dropna(subset=["Selic"])  # Remove linhas onde a Selic está vazia
+                    # 🔹 Remover linhas onde a Selic está vazia
+                    dados_macro = dados_macro.dropna(subset=["Selic"])
                 
-                    # Criar DataFrame para evolução do patrimônio
-                    patrimonio_selic = pd.DataFrame(index=pd.date_range(start=dados_macro.index.min(), 
+                    # 🔹 Descobrir a data inicial das ações
+                    data_inicio_acoes = df_patrimonio_evolucao.index.min()
+                
+                    # 🔹 Criar DataFrame para evolução do patrimônio do Tesouro Selic, iniciando no mesmo período das ações
+                    patrimonio_selic = pd.DataFrame(index=pd.date_range(start=data_inicio_acoes, 
                                                                          end=dados_macro.index.max(), 
                                                                          freq="M"))
-                                  
-                    patrimonio_selic["Tesouro Selic"] = 0  # Inicializa a coluna
+                    patrimonio_selic["Tesouro Selic"] = 0
                 
                     total_aplicado = investimento_inicial
-                    saldo = investimento_inicial  # Saldo inicial
+                    saldo = investimento_inicial
                 
                     for data in patrimonio_selic.index:
-                        # Selecionar a taxa Selic correspondente ao ano
                         ano_referencia = data.year
                         taxa_selic_ano = dados_macro.loc[dados_macro.index.year == ano_referencia, "Selic"].values
                         if len(taxa_selic_ano) > 0:
@@ -1758,15 +1738,10 @@ if pagina == "Avançada": #_____________________________________________________
                         else:
                             taxa_selic_ano = 0.1  # Taxa padrão de 10% ao ano se não houver dado
                 
-                        # Converter taxa Selic anual para mensal composta
                         taxa_selic_mensal = (1 + taxa_selic_ano) ** (1/12) - 1
-                
-                        # Aplicar rentabilidade do mês e adicionar novo aporte
                         saldo *= (1 + taxa_selic_mensal)
                         saldo += aporte_mensal
                         total_aplicado += aporte_mensal
-                
-                        # Armazenar o valor do patrimônio no Tesouro Selic
                         patrimonio_selic.loc[data, "Tesouro Selic"] = saldo
                 
                     return patrimonio_selic
