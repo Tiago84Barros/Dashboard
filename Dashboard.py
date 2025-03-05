@@ -1770,45 +1770,48 @@ if pagina == "Avançada": #_____________________________________________________
                     
                 def calcular_patrimonio_selic_macro(dados_macro, investimento_inicial=1000, aporte_mensal=1000):
                     """
-                    Simula aportes mensais no Tesouro Selic utilizando os dados macroeconômicos fornecidos.
+                    Calcula a evolução do patrimônio investido no Tesouro Selic, considerando aportes mensais e a taxa histórica da Selic.
                     
-                    - `dados_macro`: DataFrame contendo a taxa Selic anual.
-                    - `investimento_inicial`: Valor inicial investido (R$ 1.000 padrão).
-                    - `aporte_mensal`: Valor investido a cada mês (R$ 1.000 padrão).
-                    
+                    - `dados_macro`: DataFrame contendo a taxa Selic ao longo do tempo.
+                    - `investimento_inicial`: Valor inicial investido (padrão: R$1.000).
+                    - `aporte_mensal`: Valor a ser investido a cada mês (padrão: R$1.000).
+                
                     Retorna um DataFrame com a evolução do patrimônio no Tesouro Selic.
                     """
-                    
-                    # Criar DataFrame para evolução do patrimônio
+                
+                    # Garantir que o índice de `dados_macro` esteja no formato correto
+                    dados_macro.index = pd.to_datetime(dados_macro.index, errors='coerce')
+                
+                    # Criar DataFrame com datas mensais
                     patrimonio_selic = pd.DataFrame(index=pd.date_range(start=dados_macro.index.min(), 
-                                                                        end=dados_macro.index.max(), freq='M'))
-                    
-                    total_investido = 0
-                    saldo_acumulado = 0
+                                                                         end=dados_macro.index.max(), 
+                                                                         freq="M"))
                 
-                    for ano, row in dados_macro.iterrows():
-                        selic_anual = row['selic'] / 100  # Convertendo de % para decimal
-                        rendimento_mensal = (1 + selic_anual) ** (1/12) - 1  # Transformando taxa anual em mensal
-                        
-                        for mes in range(12):
-                            data_mes = pd.Timestamp(year=ano.year, month=mes+1, day=1)  # Criando datas mensais
-                            
-                            if total_investido == 0:  # Primeiro aporte
-                                saldo_acumulado += investimento_inicial
-                                total_investido += investimento_inicial
-                            else:
-                                saldo_acumulado += aporte_mensal
-                                total_investido += aporte_mensal
+                    patrimonio_selic["Tesouro Selic"] = 0  # Inicializa a coluna
                 
-                            saldo_acumulado *= (1 + rendimento_mensal)  # Aplicando rendimento mensal
-                            
-                            # Armazenando o valor do patrimônio acumulado
-                            patrimonio_selic.loc[data_mes, 'Tesouro Selic'] = saldo_acumulado
+                    total_aplicado = investimento_inicial
+                    saldo = investimento_inicial  # Saldo inicial
                 
-                    return patrimonio_selic.ffill()  # Preenchendo valores NaN para manter a continuidade
+                    for data in patrimonio_selic.index:
+                        # Selecionar a taxa Selic correspondente ao ano
+                        ano_referencia = data.year
+                        if ano_referencia in dados_macro.index.year:
+                            taxa_selic_ano = dados_macro.loc[dados_macro.index.year == ano_referencia, "selic"].values[0] / 100
+                        else:
+                            taxa_selic_ano = 0.1  # Taxa padrão caso não haja dado disponível (exemplo: 10% a.a.)
                 
-                # Criando a evolução do Tesouro Selic
-                df_patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro)
+                        # Converter taxa Selic anual para mensal composta
+                        taxa_selic_mensal = (1 + taxa_selic_ano) ** (1/12) - 1
+                
+                        # Aplicar rentabilidade do mês e adicionar novo aporte
+                        saldo *= (1 + taxa_selic_mensal)
+                        saldo += aporte_mensal
+                        total_aplicado += aporte_mensal
+                
+                        # Armazenar o valor do patrimônio no Tesouro Selic
+                        patrimonio_selic.loc[data, "Tesouro Selic"] = saldo
+                
+                    return patrimonio_selic
                                 
                 
                 # 📌 Baixando preços ajustados das empresas
