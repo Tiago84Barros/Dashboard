@@ -221,47 +221,13 @@ def load_macro_summary():
         # Buscar todos os dados da tabela 'macroeconomia'
         query_macro = "SELECT * FROM info_economica ORDER BY Data ASC"
         df_macro = pd.read_sql_query(query_macro, conn)
-
-        # Fechar a conexão
-        conn.close()
-
-        if df_macro.empty:
-            return "Não há dados macroeconômicos disponíveis."
-
-        # Converter a coluna de Data para datetime e extrair o ano
-        df_macro['Ano'] = pd.to_datetime(df_macro['Data'], errors='coerce').dt.year
-
-        # Criar um resumo estatístico para os principais indicadores
-        resumo = {
-            "Taxa Selic Média (%)": df_macro["Selic"].mean(),
-            "Taxa Selic Desvio-Padrão": df_macro["Selic"].std(),
-            "Câmbio Médio (R$/USD)": df_macro["Cambio"].mean(),
-            "Inflação IPCA Média (%)": df_macro["IPCA"].mean(),
-            "Inflação IPCA Desvio-Padrão": df_macro["IPCA"].std(),
-            "Índice de Confiança do Consumidor (ICC) Médio": df_macro["ICC"].mean(),
-            "PIB Crescimento Médio (%)": df_macro["PIB"].mean(),
-            "Balança Comercial Média (US$ bi)": df_macro["Balança_Comercial"].mean()
-        }
-
-        # Criar uma string para enviar ao ChatGPT
-        resumo_texto = f"""
-        Resumo histórico dos principais indicadores macroeconômicos:
-        - Taxa Selic média anual: {resumo["Taxa Selic Média (%)"]:.2f}% (Desvio padrão: {resumo["Taxa Selic Desvio-Padrão"]:.2f})
-        - Câmbio médio (R$/USD): {resumo["Câmbio Médio (R$/USD)"]:.2f}
-        - Inflação IPCA média anual: {resumo["Inflação IPCA Média (%)"]:.2f}% (Desvio padrão: {resumo["Inflação IPCA Desvio-Padrão"]:.2f})
-        - Índice de Confiança do Consumidor (ICC) médio: {resumo["Índice de Confiança do Consumidor (ICC) Médio"]:.2f}
-        - Crescimento médio do PIB: {resumo["PIB Crescimento Médio (%)"]:.2f}%
-        - Balança Comercial média: US$ {resumo["Balança Comercial Média (US$ bi)"]:.2f} bilhões
+        return df_macro
         
-        Esses indicadores fornecem um contexto econômico para avaliar a performance das empresas analisadas.
-        """
-
-        return resumo_texto
-
     except Exception as e:
         return f"Erro ao carregar os dados macroeconômicos: {e}"
-
-
+    finally:
+        if conn:
+            conn.close()
 
 # Sidebar com ícones de navegação __________________________________________________________________________________________________________________________________________________________
 
@@ -1635,48 +1601,70 @@ if pagina == "Avançada": #_____________________________________________________
                     st.subheader(f"📊 Resumo de Desempenho: {melhor_empresa['nome_empresa']} ({melhor_empresa['ticker']})")
                 
                     st.markdown(f"""
-                    **A empresa melhor ranqueada no segmento é** `{melhor_empresa['nome_empresa']} ({melhor_empresa['ticker']})`.  
-                    Essa empresa se destaca em relação à média do mercado pelos seguintes fatores:
-                    """)
+                    <div style="background-color: #f8f9fa; padding: 12px; border-radius: 8px; margin-bottom: 12px; 
+                                text-align: center; font-size: 16px; max-width: 800px; margin-left: auto; margin-right: auto;">
+                        <b>A empresa melhor ranqueada no segmento é</b> 
+                        <span style="color: #007BFF;">{melhor_empresa['nome_empresa']} ({melhor_empresa['ticker']})</span>.  
+                        Essa empresa se destaca em relação à média do mercado pelos seguintes fatores:
+                    </div>
+                    """, unsafe_allow_html=True)
                 
-                    # Criando um layout em colunas para melhor organização
-                    col1, col2 = st.columns(2)
+                    # Estilização dos itens para listagem vertical
+                    table_style = """
+                    <style>
+                        .styled-table {
+                            width: 100%;
+                            max-width: 800px;
+                            margin: auto;
+                            border-collapse: collapse;
+                        }
+                        .styled-table th, .styled-table td {
+                            padding: 10px;
+                            text-align: left;
+                            border-bottom: 1px solid #ddd;
+                        }
+                        .styled-table th {
+                            background-color: #f4f4f4;
+                            font-weight: bold;
+                        }
+                        .value {
+                            text-align: right;
+                            font-weight: bold;
+                            color: {cor_valor};
+                        }
+                        .diff {
+                            text-align: right;
+                            font-weight: bold;
+                            color: {cor_diferenca};
+                        }
+                    </style>
+                    """
                 
-                    # Primeira coluna com métricas principais
-                    with col1:
-                        st.markdown("### 🔹 Indicadores Financeiros")
-                        for col in colunas_metricas[:4]:  # Primeiros 4 indicadores
-                            valor_empresa = melhor_empresa[col]
-                            media_mercado = df_mercado[col]
-                            diff = (valor_empresa - media_mercado) / media_mercado * 100 if media_mercado != 0 else 0
-                            emoji = "📈" if diff > 0 else "📉"
-                            st.markdown(
-                                f"""
-                                <div style="border: 1px solid #ddd; border-radius: 10px; padding: 10px; margin: 5px; text-align: center;">
-                                    <b>{emoji} {col.replace('_mean', '').replace('_slope_log', '').replace('_', ' ')}</b><br>
-                                    <span style="font-size: 20px; color: green;">{valor_empresa:.2f}</span><br>
-                                    <span style="font-size: 14px; color: gray;">Mercado: {media_mercado:.2f}, Diferença: {diff:.1f}%</span>
-                                </div>
-                                """, unsafe_allow_html=True
-                            )
+                    st.markdown(table_style, unsafe_allow_html=True)
                 
-                    # Segunda coluna com métricas complementares
-                    with col2:
-                        st.markdown("### 🔸 Indicadores de Risco e Liquidez")
-                        for col in colunas_metricas[4:]:  # Últimos 4 indicadores
-                            valor_empresa = melhor_empresa[col]
-                            media_mercado = df_mercado[col]
-                            diff = (valor_empresa - media_mercado) / media_mercado * 100 if media_mercado != 0 else 0
-                            emoji = "📈" if diff > 0 else "📉"
-                            st.markdown(
-                                f"""
-                                <div style="border: 1px solid #ddd; border-radius: 10px; padding: 10px; margin: 5px; text-align: center;">
-                                    <b>{emoji} {col.replace('_mean', '').replace('_slope_log', '').replace('_', ' ')}</b><br>
-                                    <span style="font-size: 20px; color: green;">{valor_empresa:.2f}</span><br>
-                                    <span style="font-size: 14px; color: gray;">Mercado: {media_mercado:.2f}, Diferença: {diff:.1f}%</span>
-                                </div>
-                                """, unsafe_allow_html=True
-                            )
+                    table_html = "<table class='styled-table'>"
+                    table_html += "<tr><th>Indicador</th><th>Empresa</th><th>Mercado</th><th>Diferença</th></tr>"
+                
+                    for col in colunas_metricas:
+                        valor_empresa = melhor_empresa[col]
+                        media_mercado = df_mercado[col]
+                        diff = (valor_empresa - media_mercado) / media_mercado * 100 if media_mercado != 0 else 0
+                        cor_valor = "#28a745" if diff > 0 else "#dc3545"
+                        cor_diferenca = "#28a745" if diff > 0 else "#dc3545"
+                        titulo = col.replace("_mean", "").replace("_slope_log", "").replace("_", " ")
+                
+                        table_html += f"""
+                        <tr>
+                            <td>{titulo}</td>
+                            <td class='value' style="color: {cor_valor};">{valor_empresa:.2f}</td>
+                            <td class='value'>{media_mercado:.2f}</td>
+                            <td class='diff' style="color: {cor_diferenca};">{diff:.1f}%</td>
+                        </tr>
+                        """
+                
+                    table_html += "</table>"
+                
+                    st.markdown(table_html, unsafe_allow_html=True)
                                                 
                     # Criando um gráfico comparativo =========================================================================================================================================
                     df_comparacao = pd.DataFrame({
