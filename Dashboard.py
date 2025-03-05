@@ -1602,50 +1602,54 @@ if pagina == "Avançada": #_____________________________________________________
                 else:
                     st.warning("Não há dados disponíveis para as empresas selecionadas nas Demonstrações Financeiras.")
 
-                def gerar_resumo_melhor_empresa(df_empresas): #_____________________________________ Resumo de desempenho da melhor ranqueada___________________________________________________
-                    """
-                    Gera um resumo da melhor empresa ranqueada em relação à média do mercado.
-                    """
+               def gerar_resumo_melhor_empresa(df_empresas, df_mercado):
+                    # Seleciona a empresa melhor ranqueada
+                    melhor_empresa = df_empresas.iloc[0]
                 
-                    if df_empresas.empty:
-                        st.warning("O DataFrame de empresas está vazio. Não há dados para gerar o resumo.")
-                        return
-                    
-                    # Identificar a melhor empresa (aquela com Rank_Ajustado == 1)
-                    melhor_empresa = df_empresas[df_empresas["Rank_Ajustado"] == 1]
-                    
-                    if melhor_empresa.empty:
-                        st.warning("Nenhuma empresa está ranqueada como a melhor. Verifique os dados.")
-                        return
-                    
-                    melhor_empresa = melhor_empresa.iloc[0]  # Pegamos a primeira entrada (caso haja empates)
+                    # Configuração da página
+                    st.set_page_config(page_title="Resumo de Desempenho", layout="wide")
                 
-                    # Calcular a média do mercado para comparação
-                    colunas_metricas = [
-                        "Margem_Liquida_mean", "ROE_mean", "ROIC_mean", 
-                        "P/VP_mean", "Endividamento_Total_mean", "Liquidez_Corrente_mean",
-                        "Receita_Liquida_slope_log", "Lucro_Liquido_slope_log"
-                    ]
-                    
-                    df_mercado = df_empresas[colunas_metricas].mean()
-                
-                    # Gerar texto do resumo
+                    # Título principal
                     st.subheader(f"📊 Resumo de Desempenho: {melhor_empresa['nome_empresa']} ({melhor_empresa['ticker']})")
-                
-                    st.write(f"""
+                    
+                    st.markdown(f"""
                     **A empresa melhor ranqueada no segmento é** `{melhor_empresa['nome_empresa']} ({melhor_empresa['ticker']})`.  
                     Essa empresa se destaca em relação à média do mercado pelos seguintes fatores:
                     """)
                 
-                    for col in colunas_metricas:
-                        valor_empresa = melhor_empresa[col]
-                        media_mercado = df_mercado[col]
-                        diff = (valor_empresa - media_mercado) / media_mercado * 100 if media_mercado != 0 else 0
-                        
-                        emoji = "📈" if diff > 0 else "📉"
-                        st.write(f"- {emoji} **{col.replace('_mean', '').replace('_slope_log', '')}:** {valor_empresa:.2f} (Mercado: {media_mercado:.2f}, Diferença: {diff:.1f}%)")
+                    # Definição das colunas métricas
+                    colunas_metricas = [
+                        "Margem_Liquida", "ROE", "ROIC", "P/VP",
+                        "Endividamento_Total", "Liquidez_Corrente",
+                        "Receita_Liquida", "Lucro_Liquido"
+                    ]
+                
+                    # Criando um layout em colunas para melhor organização
+                    col1, col2 = st.columns(2)
+                
+                    # Primeira coluna com métricas principais
+                    with col1:
+                        st.markdown("### 🔹 Indicadores Financeiros")
+                        for col in colunas_metricas[:4]:  # Primeiros 4 indicadores
+                            valor_empresa = melhor_empresa[col]
+                            media_mercado = df_mercado[col]
+                            diff = (valor_empresa - media_mercado) / media_mercado * 100 if media_mercado != 0 else 0
+                            emoji = "📈" if diff > 0 else "📉"
+                            st.metric(label=f"{emoji} {col.replace('_', ' ')}", value=f"{valor_empresa:.2f}", delta=f"{diff:.1f}% (Mercado: {media_mercado:.2f})")
+                
+                    # Segunda coluna com métricas complementares
+                    with col2:
+                        st.markdown("### 🔸 Indicadores de Risco e Liquidez")
+                        for col in colunas_metricas[4:]:  # Últimos 4 indicadores
+                            valor_empresa = melhor_empresa[col]
+                            media_mercado = df_mercado[col]
+                            diff = (valor_empresa - media_mercado) / media_mercado * 100 if media_mercado != 0 else 0
+                            emoji = "📈" if diff > 0 else "📉"
+                            st.metric(label=f"{emoji} {col.replace('_', ' ')}", value=f"{valor_empresa:.2f}", delta=f"{diff:.1f}% (Mercado: {media_mercado:.2f})")
                 
                     # Criando um gráfico comparativo
+                    st.markdown("### 📊 Comparação: Melhor Empresa vs. Média do Mercado")
+                
                     df_comparacao = pd.DataFrame({
                         "Indicador": colunas_metricas,
                         "Melhor Empresa": [melhor_empresa[col] for col in colunas_metricas],
@@ -1661,9 +1665,7 @@ if pagina == "Avançada": #_____________________________________________________
                         title=f"📊 Comparação: {melhor_empresa['nome_empresa']} vs. Média do Mercado"
                     )
                 
-                    st.plotly_chart(fig, use_container_width=True)          
-
-                gerar_resumo_melhor_empresa(df_empresas)
+                    st.plotly_chart(fig, use_container_width=True)
 
                # ========================== CRIAÇÃO DO BENCHMARK (LÍDER X CONCORRENTES) =========================================================================================
 
@@ -1726,7 +1728,49 @@ if pagina == "Avançada": #_____________________________________________________
                         pd.DataFrame.from_dict(patrimonio_final, orient='index', columns=['Patrimonio Final']),
                         patrimonio_evolucao.ffill()  # Preenche valores NaN para manter a evolução contínua
                     )
+                    
+                def calcular_patrimonio_selic_macro(dados_macro, investimento_inicial=1000, aporte_mensal=1000):
+                    """
+                    Simula aportes mensais no Tesouro Selic utilizando os dados macroeconômicos fornecidos.
+                    
+                    - `dados_macro`: DataFrame contendo a taxa Selic anual.
+                    - `investimento_inicial`: Valor inicial investido (R$ 1.000 padrão).
+                    - `aporte_mensal`: Valor investido a cada mês (R$ 1.000 padrão).
+                    
+                    Retorna um DataFrame com a evolução do patrimônio no Tesouro Selic.
+                    """
+                    
+                    # Criar DataFrame para evolução do patrimônio
+                    patrimonio_selic = pd.DataFrame(index=pd.date_range(start=dados_macro.index.min(), 
+                                                                        end=dados_macro.index.max(), freq='M'))
+                    
+                    total_investido = 0
+                    saldo_acumulado = 0
                 
+                    for ano, row in dados_macro.iterrows():
+                        selic_anual = row['selic'] / 100  # Convertendo de % para decimal
+                        rendimento_mensal = (1 + selic_anual) ** (1/12) - 1  # Transformando taxa anual em mensal
+                        
+                        for mes in range(12):
+                            data_mes = pd.Timestamp(year=ano.year, month=mes+1, day=1)  # Criando datas mensais
+                            
+                            if total_investido == 0:  # Primeiro aporte
+                                saldo_acumulado += investimento_inicial
+                                total_investido += investimento_inicial
+                            else:
+                                saldo_acumulado += aporte_mensal
+                                total_investido += aporte_mensal
+                
+                            saldo_acumulado *= (1 + rendimento_mensal)  # Aplicando rendimento mensal
+                            
+                            # Armazenando o valor do patrimônio acumulado
+                            patrimonio_selic.loc[data_mes, 'Tesouro Selic'] = saldo_acumulado
+                
+                    return patrimonio_selic.ffill()  # Preenchendo valores NaN para manter a continuidade
+                
+                # Criando a evolução do Tesouro Selic
+                df_patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro)
+                                
                 
                 # 📌 Baixando preços ajustados das empresas
                 def baixar_precos(tickers, start="2020-01-01"):
@@ -1764,7 +1808,7 @@ if pagina == "Avançada": #_____________________________________________________
                         # 📌 Cálculo do patrimônio acumulado e evolução ao longo do tempo
                         df_patrimonio, df_patrimonio_evolucao = calcular_patrimonio_com_aportes(precos)
                                                        
-                        # 📌 Ordenação decrescente dos resultados
+                        df_patrimonio = pd.concat([df_patrimonio, df_patrimonio_selic.iloc[-1].to_frame().T], axis=0)
                         df_patrimonio = df_patrimonio.sort_values(by="Patrimonio Final", ascending=False)
                 
                         # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO ================================================================================================================
