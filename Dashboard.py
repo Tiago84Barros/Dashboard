@@ -1731,6 +1731,7 @@ if pagina == "Avançada": #_____________________________________________________
                     patrimonio_selic = pd.DataFrame(index=pd.date_range(start=dados_macro.index.min(), 
                                                                          end=dados_macro.index.max(), 
                                                                          freq="M"))
+                    st.dataframe(patrimonio_selic)
                 
                     patrimonio_selic["Tesouro Selic"] = 0  # Inicializa a coluna
                 
