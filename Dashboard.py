@@ -1602,8 +1602,8 @@ if pagina == "Avançada": #_____________________________________________________
                 else:
                     st.warning("Não há dados disponíveis para as empresas selecionadas nas Demonstrações Financeiras.")
                 
-                
                 def gerar_resumo_melhor_empresa(df_empresas): #_____________________________________ Resumo de desempenho da melhor ranqueada___________________________________________________
+               
                     """
                     Gera um resumo da melhor empresa ranqueada em relação à média do mercado.
                     """
@@ -1634,7 +1634,7 @@ if pagina == "Avançada": #_____________________________________________________
                     st.subheader(f"📊 Resumo de Desempenho: {melhor_empresa['nome_empresa']} ({melhor_empresa['ticker']})")
                 
                     st.markdown(f"""
-                    <div style="background-color: #f8f9fa; padding: 15px; border-radius: 10px; margin-bottom: 10px;">
+                    <div style="background-color: #f8f9fa; padding: 10px; border-radius: 8px; margin-bottom: 10px; text-align: center; font-size: 16px;">
                         <b>A empresa melhor ranqueada no segmento é</b> <span style="color: #007BFF;">{melhor_empresa['nome_empresa']} ({melhor_empresa['ticker']})</span>.  
                         Essa empresa se destaca em relação à média do mercado pelos seguintes fatores:
                     </div>
@@ -1643,18 +1643,21 @@ if pagina == "Avançada": #_____________________________________________________
                     # Criando um layout em colunas para melhor organização
                     col1, col2 = st.columns(2)
                 
+                    # Estilização dos cartões compactos
                     card_style = """
                     <div style="
                         background-color: white; 
-                        border-radius: 12px; 
-                        padding: 15px; 
-                        margin: 8px 0; 
-                        box-shadow: 2px 2px 12px rgba(0, 0, 0, 0.1);
+                        border-radius: 8px; 
+                        padding: 12px; 
+                        margin: 6px 0; 
+                        width: 220px;
+                        box-shadow: 1px 1px 8px rgba(0, 0, 0, 0.1);
                         text-align: center;
+                        display: inline-block;
                     ">
-                        <h4 style="margin: 0; color: #333;">{titulo}</h4>
-                        <p style="font-size: 22px; font-weight: bold; color: {cor_valor}; margin: 5px 0;">{valor}</p>
-                        <p style="font-size: 14px; color: #777;">Mercado: {mercado} | Diferença: <span style="color: {cor_diferenca};">{diferenca}%</span></p>
+                        <h4 style="margin: 0; font-size: 14px; color: #333;">{titulo}</h4>
+                        <p style="font-size: 20px; font-weight: bold; color: {cor_valor}; margin: 4px 0;">{valor}</p>
+                        <p style="font-size: 12px; color: #777;">Mercado: {mercado} | Diferença: <span style="color: {cor_diferenca};">{diferenca}%</span></p>
                     </div>
                     """
                 
