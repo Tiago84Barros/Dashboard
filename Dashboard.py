@@ -1280,6 +1280,7 @@ if pagina == "Avançada": #_____________________________________________________
                                                          
                 # Carregar dados macroeconômicos do banco de dados
                 dados_macro = load_macro_summary()
+                st.dataframe(dados_macro)
         
                 # ================================================
                 #  DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE
@@ -1569,7 +1570,7 @@ if pagina == "Avançada": #_____________________________________________________
 
               
                # Resumo da melhor empresa em comparação com a média do mercado ============================================================================================================
-                    
+                        
                 def gerar_resumo_melhor_empresa(df_empresas):
                     """
                     Gera um resumo da melhor empresa ranqueada em relação à média do mercado.
@@ -1600,71 +1601,25 @@ if pagina == "Avançada": #_____________________________________________________
                     # Título
                     st.subheader(f"📊 Resumo de Desempenho: {melhor_empresa['nome_empresa']} ({melhor_empresa['ticker']})")
                 
-                    st.markdown(f"""
-                    <div style="background-color: #f8f9fa; padding: 12px; border-radius: 8px; margin-bottom: 12px; 
-                                text-align: center; font-size: 16px; max-width: 800px; margin-left: auto; margin-right: auto;">
-                        <b>A empresa melhor ranqueada no segmento é</b> 
-                        <span style="color: #007BFF;">{melhor_empresa['nome_empresa']} ({melhor_empresa['ticker']})</span>.  
-                        Essa empresa se destaca em relação à média do mercado pelos seguintes fatores:
-                    </div>
-                    """, unsafe_allow_html=True)
-                
-                    # Estilização dos itens para listagem vertical
-                    table_style = """
-                    <style>
-                        .styled-table {
-                            width: 100%;
-                            max-width: 800px;
-                            margin: auto;
-                            border-collapse: collapse;
-                        }
-                        .styled-table th, .styled-table td {
-                            padding: 10px;
-                            text-align: left;
-                            border-bottom: 1px solid #ddd;
-                        }
-                        .styled-table th {
-                            background-color: #f4f4f4;
-                            font-weight: bold;
-                        }
-                        .value {
-                            text-align: right;
-                            font-weight: bold;
-                            color: {cor_valor};
-                        }
-                        .diff {
-                            text-align: right;
-                            font-weight: bold;
-                            color: {cor_diferenca};
-                        }
-                    </style>
-                    """
-                
-                    st.markdown(table_style, unsafe_allow_html=True)
-                
-                    table_html = "<table class='styled-table'>"
-                    table_html += "<tr><th>Indicador</th><th>Empresa</th><th>Mercado</th><th>Diferença</th></tr>"
-                
+                    # Criar DataFrame para exibir no Streamlit
+                    dados = []
                     for col in colunas_metricas:
                         valor_empresa = melhor_empresa[col]
                         media_mercado = df_mercado[col]
                         diff = (valor_empresa - media_mercado) / media_mercado * 100 if media_mercado != 0 else 0
-                        cor_valor = "#28a745" if diff > 0 else "#dc3545"
-                        cor_diferenca = "#28a745" if diff > 0 else "#dc3545"
+                        cor_valor = "🔴" if diff < 0 else "🟢"  # Emoticons para diferenciar resultados negativos e positivos
                         titulo = col.replace("_mean", "").replace("_slope_log", "").replace("_", " ")
                 
-                        table_html += f"""
-                        <tr>
-                            <td>{titulo}</td>
-                            <td class='value' style="color: {cor_valor};">{valor_empresa:.2f}</td>
-                            <td class='value'>{media_mercado:.2f}</td>
-                            <td class='diff' style="color: {cor_diferenca};">{diff:.1f}%</td>
-                        </tr>
-                        """
+                        dados.append([titulo, f"{valor_empresa:.2f}", f"{media_mercado:.2f}", f"{diff:.1f}% {cor_valor}"])
                 
-                    table_html += "</table>"
+                    # Criando DataFrame formatado para exibição
+                    df_resultado = pd.DataFrame(dados, columns=["Indicador", "Empresa", "Mercado", "Diferença"])
                 
-                    st.markdown(table_html, unsafe_allow_html=True)
+                    # Exibir tabela formatada no Streamlit
+                    st.write(df_resultado.style.set_table_styles(
+                        [{'selector': 'th', 'props': [('background-color', '#f4f4f4'), ('text-align', 'left')]}]
+                    ))
+
                                                 
                     # Criando um gráfico comparativo =========================================================================================================================================
                     df_comparacao = pd.DataFrame({
