@@ -1600,8 +1600,11 @@ if pagina == "Avançada": #_____________________________________________________
                 
                 else:
                     st.warning("Não há dados disponíveis para as empresas selecionadas nas Demonstrações Financeiras.")
-                
-                def gerar_resumo_melhor_empresa(df_empresas): # Resumo da melhor empresa em comparação com a média do mercado ============================================================
+
+              
+               # Resumo da melhor empresa em comparação com a média do mercado ============================================================================================================
+                    
+                def gerar_resumo_melhor_empresa(df_empresas):
                     """
                     Gera um resumo da melhor empresa ranqueada em relação à média do mercado.
                     """
@@ -1632,29 +1635,12 @@ if pagina == "Avançada": #_____________________________________________________
                     st.subheader(f"📊 Resumo de Desempenho: {melhor_empresa['nome_empresa']} ({melhor_empresa['ticker']})")
                 
                     st.markdown(f"""
-                    <div style="background-color: #f8f9fa; padding: 15px; border-radius: 10px; margin-bottom: 10px;">
-                        <b>A empresa melhor ranqueada no segmento é</b> <span style="color: #007BFF;">{melhor_empresa['nome_empresa']} ({melhor_empresa['ticker']})</span>.  
-                        Essa empresa se destaca em relação à média do mercado pelos seguintes fatores:
-                    </div>
-                    """, unsafe_allow_html=True)
+                    **A empresa melhor ranqueada no segmento é** `{melhor_empresa['nome_empresa']} ({melhor_empresa['ticker']})`.  
+                    Essa empresa se destaca em relação à média do mercado pelos seguintes fatores:
+                    """)
                 
                     # Criando um layout em colunas para melhor organização
                     col1, col2 = st.columns(2)
-                
-                    card_style = """
-                    <div style="
-                        background-color: white; 
-                        border-radius: 12px; 
-                        padding: 15px; 
-                        margin: 8px 0; 
-                        box-shadow: 2px 2px 12px rgba(0, 0, 0, 0.1);
-                        text-align: center;
-                    ">
-                        <h4 style="margin: 0; color: #333;">{titulo}</h4>
-                        <p style="font-size: 22px; font-weight: bold; color: {cor_valor}; margin: 5px 0;">{valor}</p>
-                        <p style="font-size: 14px; color: #777;">Mercado: {mercado} | Diferença: <span style="color: {cor_diferenca};">{diferenca}%</span></p>
-                    </div>
-                    """
                 
                     # Primeira coluna com métricas principais
                     with col1:
@@ -1663,11 +1649,16 @@ if pagina == "Avançada": #_____________________________________________________
                             valor_empresa = melhor_empresa[col]
                             media_mercado = df_mercado[col]
                             diff = (valor_empresa - media_mercado) / media_mercado * 100 if media_mercado != 0 else 0
-                            cor_valor = "#28a745" if diff > 0 else "#dc3545"
-                            cor_diferenca = "#28a745" if diff > 0 else "#dc3545"
-                            titulo = col.replace("_mean", "").replace("_slope_log", "").replace("_", " ")
-                
-                            st.markdown(card_style.format(titulo=titulo, valor=f"{valor_empresa:.2f}", mercado=f"{media_mercado:.2f}", diferenca=f"{diff:.1f}", cor_valor=cor_valor, cor_diferenca=cor_diferenca), unsafe_allow_html=True)
+                            emoji = "📈" if diff > 0 else "📉"
+                            st.markdown(
+                                f"""
+                                <div style="border: 1px solid #ddd; border-radius: 10px; padding: 10px; margin: 5px; text-align: center;">
+                                    <b>{emoji} {col.replace('_mean', '').replace('_slope_log', '').replace('_', ' ')}</b><br>
+                                    <span style="font-size: 20px; color: green;">{valor_empresa:.2f}</span><br>
+                                    <span style="font-size: 14px; color: gray;">Mercado: {media_mercado:.2f}, Diferença: {diff:.1f}%</span>
+                                </div>
+                                """, unsafe_allow_html=True
+                            )
                 
                     # Segunda coluna com métricas complementares
                     with col2:
@@ -1676,14 +1667,17 @@ if pagina == "Avançada": #_____________________________________________________
                             valor_empresa = melhor_empresa[col]
                             media_mercado = df_mercado[col]
                             diff = (valor_empresa - media_mercado) / media_mercado * 100 if media_mercado != 0 else 0
-                            cor_valor = "#28a745" if diff > 0 else "#dc3545"
-                            cor_diferenca = "#28a745" if diff > 0 else "#dc3545"
-                            titulo = col.replace("_mean", "").replace("_slope_log", "").replace("_", " ")
-                
-                            st.markdown(card_style.format(titulo=titulo, valor=f"{valor_empresa:.2f}", mercado=f"{media_mercado:.2f}", diferenca=f"{diff:.1f}", cor_valor=cor_valor, cor_diferenca=cor_diferenca), unsafe_allow_html=True)
-                
-                
-                                
+                            emoji = "📈" if diff > 0 else "📉"
+                            st.markdown(
+                                f"""
+                                <div style="border: 1px solid #ddd; border-radius: 10px; padding: 10px; margin: 5px; text-align: center;">
+                                    <b>{emoji} {col.replace('_mean', '').replace('_slope_log', '').replace('_', ' ')}</b><br>
+                                    <span style="font-size: 20px; color: green;">{valor_empresa:.2f}</span><br>
+                                    <span style="font-size: 14px; color: gray;">Mercado: {media_mercado:.2f}, Diferença: {diff:.1f}%</span>
+                                </div>
+                                """, unsafe_allow_html=True
+                            )
+                                                
                     # Criando um gráfico comparativo =========================================================================================================================================
                     df_comparacao = pd.DataFrame({
                         "Indicador": colunas_metricas,
