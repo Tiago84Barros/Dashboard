@@ -1720,21 +1720,21 @@ if pagina == "Avançada": #_____________________________________________________
                     # Garantir que o índice de `dados_macro` esteja no formato datetime
                     if not isinstance(dados_macro.index, pd.DatetimeIndex):
                         try:
-                            # 🔹 Resetar o índice caso ele tenha sido configurado incorretamente
-                            dados_macro = dados_macro.reset_index()
+                           # 🔹 Se o índice numérico foi criado erroneamente, redefina-o
+                            dados_macro = dados_macro.reset_index(drop=True)
                             
-                            # 🔹 Verificar qual é a coluna correta de data
-                            st.dataframe(dados_macro.head())  # Isso mostrará todas as colunas disponíveis
+                            # 🔹 Agora, garanta que a coluna de datas está nomeada corretamente
+                            if 'Data' in dados_macro.columns:
+                                # Converter a coluna de Data para datetime
+                                dados_macro["Data"] = pd.to_datetime(dados_macro["Data"], errors="coerce")
                             
-                            # 🔹 Converter a coluna correta para datetime
-                            dados_macro["Data"] = pd.to_datetime(dados_macro["Data"], errors="coerce")
+                                # Definir a coluna de Data como índice correto
+                                dados_macro.set_index("Data", inplace=True)
+                            else:
+                                print("⚠️ A coluna 'Data' não foi encontrada no DataFrame.")
                             
-                            # 🔹 Definir a coluna "Data" como índice correto
-                            dados_macro.set_index("Data", inplace=True)
-                            
-                            # 🔹 Verificar se agora está certo
+                            # 🔹 Verifique se a conversão foi bem-sucedida
                             st.dataframe(dados_macro.index)  # Deve exibir um DatetimeIndex correto
-
                         except Exception as e:
                             raise ValueError(f"Erro ao converter índice de `dados_macro` para datetime: {e}")
                 
