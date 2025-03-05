@@ -1601,8 +1601,9 @@ if pagina == "Avançada": #_____________________________________________________
                 
                 else:
                     st.warning("Não há dados disponíveis para as empresas selecionadas nas Demonstrações Financeiras.")
-
+                
                 def gerar_resumo_melhor_empresa(df_empresas): #_____________________________________ Resumo de desempenho da melhor ranqueada___________________________________________________
+
                     """
                     Gera um resumo da melhor empresa ranqueada em relação à média do mercado.
                     """
@@ -1610,14 +1611,14 @@ if pagina == "Avançada": #_____________________________________________________
                     if df_empresas.empty:
                         st.warning("O DataFrame de empresas está vazio. Não há dados para gerar o resumo.")
                         return
-                    
-                    # Identificar a melhor empresa (aquela com Rank_Ajustado == 1)
+                
+                    # Identificar a melhor empresa (Rank_Ajustado == 1)
                     melhor_empresa = df_empresas[df_empresas["Rank_Ajustado"] == 1]
-                    
+                
                     if melhor_empresa.empty:
                         st.warning("Nenhuma empresa está ranqueada como a melhor. Verifique os dados.")
                         return
-                    
+                
                     melhor_empresa = melhor_empresa.iloc[0]  # Pegamos a primeira entrada (caso haja empates)
                 
                     # Calcular a média do mercado para comparação
@@ -1629,23 +1630,55 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     df_mercado = df_empresas[colunas_metricas].mean()
                 
-                    # Gerar texto do resumo
+                    # Título
                     st.subheader(f"📊 Resumo de Desempenho: {melhor_empresa['nome_empresa']} ({melhor_empresa['ticker']})")
                 
-                    st.write(f"""
+                    st.markdown(f"""
                     **A empresa melhor ranqueada no segmento é** `{melhor_empresa['nome_empresa']} ({melhor_empresa['ticker']})`.  
                     Essa empresa se destaca em relação à média do mercado pelos seguintes fatores:
                     """)
                 
-                    for col in colunas_metricas:
-                        valor_empresa = melhor_empresa[col]
-                        media_mercado = df_mercado[col]
-                        diff = (valor_empresa - media_mercado) / media_mercado * 100 if media_mercado != 0 else 0
-                        
-                        emoji = "📈" if diff > 0 else "📉"
-                        st.write(f"- {emoji} **{col.replace('_mean', '').replace('_slope_log', '')}:** {valor_empresa:.2f} (Mercado: {media_mercado:.2f}, Diferença: {diff:.1f}%)")
+                    # Criando um layout em colunas para melhor organização
+                    col1, col2 = st.columns(2)
                 
-                    # Criando um gráfico comparativo
+                    # Primeira coluna com métricas principais
+                    with col1:
+                        st.markdown("### 🔹 Indicadores Financeiros")
+                        for col in colunas_metricas[:4]:  # Primeiros 4 indicadores
+                            valor_empresa = melhor_empresa[col]
+                            media_mercado = df_mercado[col]
+                            diff = (valor_empresa - media_mercado) / media_mercado * 100 if media_mercado != 0 else 0
+                            emoji = "📈" if diff > 0 else "📉"
+                            st.markdown(
+                                f"""
+                                <div style="border: 1px solid #ddd; border-radius: 10px; padding: 10px; margin: 5px; text-align: center;">
+                                    <b>{emoji} {col.replace('_mean', '').replace('_slope_log', '').replace('_', ' ')}</b><br>
+                                    <span style="font-size: 20px; color: green;">{valor_empresa:.2f}</span><br>
+                                    <span style="font-size: 14px; color: gray;">Mercado: {media_mercado:.2f}, Diferença: {diff:.1f}%</span>
+                                </div>
+                                """, unsafe_allow_html=True
+                            )
+                
+                    # Segunda coluna com métricas complementares
+                    with col2:
+                        st.markdown("### 🔸 Indicadores de Risco e Liquidez")
+                        for col in colunas_metricas[4:]:  # Últimos 4 indicadores
+                            valor_empresa = melhor_empresa[col]
+                            media_mercado = df_mercado[col]
+                            diff = (valor_empresa - media_mercado) / media_mercado * 100 if media_mercado != 0 else 0
+                            emoji = "📈" if diff > 0 else "📉"
+                            st.markdown(
+                                f"""
+                                <div style="border: 1px solid #ddd; border-radius: 10px; padding: 10px; margin: 5px; text-align: center;">
+                                    <b>{emoji} {col.replace('_mean', '').replace('_slope_log', '').replace('_', ' ')}</b><br>
+                                    <span style="font-size: 20px; color: green;">{valor_empresa:.2f}</span><br>
+                                    <span style="font-size: 14px; color: gray;">Mercado: {media_mercado:.2f}, Diferença: {diff:.1f}%</span>
+                                </div>
+                                """, unsafe_allow_html=True
+                            )
+
+                
+                    # Criando um gráfico comparativo =========================================================================================================================================
                     df_comparacao = pd.DataFrame({
                         "Indicador": colunas_metricas,
                         "Melhor Empresa": [melhor_empresa[col] for col in colunas_metricas],
