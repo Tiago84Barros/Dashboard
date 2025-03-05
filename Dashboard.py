@@ -1600,9 +1600,8 @@ if pagina == "Avançada": #_____________________________________________________
                 
                 else:
                     st.warning("Não há dados disponíveis para as empresas selecionadas nas Demonstrações Financeiras.")
-
                 
-                def gerar_resumo_melhor_empresa(df_empresas): # Resumo da melhor empresa =========================================================================================
+                def gerar_resumo_melhor_empresa(df_empresas): # Resumo da melhor empresa em comparação com a média do mercado ============================================================
                     """
                     Gera um resumo da melhor empresa ranqueada em relação à média do mercado.
                     """
@@ -1632,47 +1631,35 @@ if pagina == "Avançada": #_____________________________________________________
                     # Título
                     st.subheader(f"📊 Resumo de Desempenho: {melhor_empresa['nome_empresa']} ({melhor_empresa['ticker']})")
                 
-                    # Caixa de destaque da empresa ranqueada
                     st.markdown(f"""
-                    <div style="background-color: #f8f9fa; padding: 10px; border-radius: 8px; margin-bottom: 10px; 
-                                text-align: center; font-size: 16px; max-width: 800px; margin-left: auto; margin-right: auto;">
-                        <b>A empresa melhor ranqueada no segmento é</b> 
-                        <span style="color: #007BFF;">{melhor_empresa['nome_empresa']} ({melhor_empresa['ticker']})</span>.  
+                    <div style="background-color: #f8f9fa; padding: 15px; border-radius: 10px; margin-bottom: 10px;">
+                        <b>A empresa melhor ranqueada no segmento é</b> <span style="color: #007BFF;">{melhor_empresa['nome_empresa']} ({melhor_empresa['ticker']})</span>.  
                         Essa empresa se destaca em relação à média do mercado pelos seguintes fatores:
                     </div>
                     """, unsafe_allow_html=True)
                 
-                    # Criando um layout em colunas para melhor organização e centralização
-                    col1, col2, col3 = st.columns([1, 3, 1])  # Coluna do meio maior para centralizar os blocos
+                    # Criando um layout em colunas para melhor organização
+                    col1, col2 = st.columns(2)
                 
-                    with col2:  # Todos os blocos ficarão centralizados dentro desta coluna
-                        st.markdown('<div style="display: flex; flex-wrap: wrap; justify-content: center; gap: 15px;">', unsafe_allow_html=True)
+                    card_style = """
+                    <div style="
+                        background-color: white; 
+                        border-radius: 12px; 
+                        padding: 15px; 
+                        margin: 8px 0; 
+                        box-shadow: 2px 2px 12px rgba(0, 0, 0, 0.1);
+                        text-align: center;
+                    ">
+                        <h4 style="margin: 0; color: #333;">{titulo}</h4>
+                        <p style="font-size: 22px; font-weight: bold; color: {cor_valor}; margin: 5px 0;">{valor}</p>
+                        <p style="font-size: 14px; color: #777;">Mercado: {mercado} | Diferença: <span style="color: {cor_diferenca};">{diferenca}%</span></p>
+                    </div>
+                    """
                 
-                        # Estilização dos cartões compactos
-                        card_style = """
-                        <div style="
-                            background-color: white; 
-                            border-radius: 8px; 
-                            padding: 12px; 
-                            width: 250px;
-                            box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);
-                            text-align: left;
-                            margin: 6px;
-                        ">
-                            <p style="margin: 0; font-size: 16px; font-weight: bold; color: #333;">{titulo} 
-                                <span style="float: right; color: {cor_valor}; font-size: 18px;">{valor}</span>
-                            </p>
-                            <p style="margin: 4px 0; font-size: 14px; color: #777;">Mercado: 
-                                <span style="float: right; font-weight: bold; color: #555;">{mercado}</span>
-                            </p>
-                            <p style="margin: 0; font-size: 14px; color: #777;">Diferença: 
-                                <span style="float: right; font-weight: bold; color: {cor_diferenca};">{diferenca}%</span>
-                            </p>
-                        </div>
-                        """
-                
-                        # Criando os blocos organizados e centralizados
-                        for col in colunas_metricas:
+                    # Primeira coluna com métricas principais
+                    with col1:
+                        st.markdown("### 🔹 Indicadores Financeiros")
+                        for col in colunas_metricas[:4]:  # Primeiros 4 indicadores
                             valor_empresa = melhor_empresa[col]
                             media_mercado = df_mercado[col]
                             diff = (valor_empresa - media_mercado) / media_mercado * 100 if media_mercado != 0 else 0
@@ -1680,15 +1667,23 @@ if pagina == "Avançada": #_____________________________________________________
                             cor_diferenca = "#28a745" if diff > 0 else "#dc3545"
                             titulo = col.replace("_mean", "").replace("_slope_log", "").replace("_", " ")
                 
-                            st.markdown(card_style.format(
-                                titulo=titulo, valor=f"{valor_empresa:.2f}",
-                                mercado=f"{media_mercado:.2f}", diferenca=f"{diff:.1f}",
-                                cor_valor=cor_valor, cor_diferenca=cor_diferenca
-                            ), unsafe_allow_html=True)
+                            st.markdown(card_style.format(titulo=titulo, valor=f"{valor_empresa:.2f}", mercado=f"{media_mercado:.2f}", diferenca=f"{diff:.1f}", cor_valor=cor_valor, cor_diferenca=cor_diferenca), unsafe_allow_html=True)
                 
-                        st.markdown('</div>', unsafe_allow_html=True)  # Fechando o container centralizado
-
+                    # Segunda coluna com métricas complementares
+                    with col2:
+                        st.markdown("### 🔸 Indicadores de Risco e Liquidez")
+                        for col in colunas_metricas[4:]:  # Últimos 4 indicadores
+                            valor_empresa = melhor_empresa[col]
+                            media_mercado = df_mercado[col]
+                            diff = (valor_empresa - media_mercado) / media_mercado * 100 if media_mercado != 0 else 0
+                            cor_valor = "#28a745" if diff > 0 else "#dc3545"
+                            cor_diferenca = "#28a745" if diff > 0 else "#dc3545"
+                            titulo = col.replace("_mean", "").replace("_slope_log", "").replace("_", " ")
                 
+                            st.markdown(card_style.format(titulo=titulo, valor=f"{valor_empresa:.2f}", mercado=f"{media_mercado:.2f}", diferenca=f"{diff:.1f}", cor_valor=cor_valor, cor_diferenca=cor_diferenca), unsafe_allow_html=True)
+                
+                
+                                
                     # Criando um gráfico comparativo =========================================================================================================================================
                     df_comparacao = pd.DataFrame({
                         "Indicador": colunas_metricas,
