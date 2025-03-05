@@ -1812,6 +1812,8 @@ if pagina == "Avançada": #_____________________________________________________
                         patrimonio_selic.loc[data, "Tesouro Selic"] = saldo
                 
                     return patrimonio_selic
+                    
+                df_patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro)
                                 
                 
                 # 📌 Baixando preços ajustados das empresas
