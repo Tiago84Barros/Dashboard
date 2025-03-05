@@ -1784,16 +1784,19 @@ if pagina == "Avançada": #_____________________________________________________
                             continue
                 
                 
-                        # 📌 Cálculo do patrimônio acumulado e evolução ao longo do tempo
+                       # 📌 Calcular o patrimônio das ações primeiro
                         df_patrimonio, df_patrimonio_evolucao = calcular_patrimonio_com_aportes(precos)
-                
-                        # 🔹 Ajustando o Tesouro Selic para ter o mesmo tempo das ações
+                        
+                        # 📌 Agora que `df_patrimonio_evolucao` existe, chamamos o cálculo do Tesouro Selic
+                        df_patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, df_patrimonio_evolucao)
+                        
+                        # 🔹 Ajustar o Tesouro Selic para ter o mesmo tempo das ações
                         df_patrimonio_selic = df_patrimonio_selic.reindex(df_patrimonio_evolucao.index, method="ffill")
-                
+                        
                         # 🔹 Concatenar os dados
                         df_patrimonio_evolucao = pd.concat([df_patrimonio_evolucao, df_patrimonio_selic], axis=1)
                         df_patrimonio_evolucao = df_patrimonio_evolucao.ffill()
-                
+                                        
                        # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO ========================================================================================================================
                         st.subheader("📈 Evolução do Patrimônio com Aportes Mensais")
                         
