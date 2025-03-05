@@ -1601,8 +1601,8 @@ if pagina == "Avançada": #_____________________________________________________
                 else:
                     st.warning("Não há dados disponíveis para as empresas selecionadas nas Demonstrações Financeiras.")
 
-             
-                def gerar_resumo_melhor_empresa(df_empresas): #_____________________________________ Resumo de desempenho da melhor ranqueada___________________________________________________
+                
+                def gerar_resumo_melhor_empresa(df_empresas): # Resumo da melhor empresa =========================================================================================
                     """
                     Gera um resumo da melhor empresa ranqueada em relação à média do mercado.
                     """
@@ -1642,65 +1642,51 @@ if pagina == "Avançada": #_____________________________________________________
                     </div>
                     """, unsafe_allow_html=True)
                 
-                    # CSS para centralizar os blocos
-                    st.markdown("""
-                    <style>
-                        .center-container {
-                            display: flex;
-                            justify-content: center;
-                            flex-wrap: wrap;
-                            gap: 15px;
-                            margin-top: 10px;
-                        }
-                    </style>
-                    """, unsafe_allow_html=True)
+                    # Criando um layout em colunas para melhor organização e centralização
+                    col1, col2, col3 = st.columns([1, 3, 1])  # Coluna do meio maior para centralizar os blocos
                 
-                    # Estilização dos cartões centralizados
-                    card_style = """
-                    <div style="
-                        background-color: white; 
-                        border-radius: 8px; 
-                        padding: 12px; 
-                        width: 260px;
-                        box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);
-                        text-align: left;
-                        display: flex;
-                        flex-direction: column;
-                        justify-content: center;
-                    ">
-                        <p style="margin: 0; font-size: 16px; font-weight: bold; color: #333;">{titulo} 
-                            <span style="float: right; color: {cor_valor}; font-size: 18px;">{valor}</span>
-                        </p>
-                        <p style="margin: 4px 0; font-size: 14px; color: #777;">Mercado: 
-                            <span style="float: right; font-weight: bold; color: #555;">{mercado}</span>
-                        </p>
-                        <p style="margin: 0; font-size: 14px; color: #777;">Diferença: 
-                            <span style="float: right; font-weight: bold; color: {cor_diferenca};">{diferenca}%</span>
-                        </p>
-                    </div>
-                    """
+                    with col2:  # Todos os blocos ficarão centralizados dentro desta coluna
+                        st.markdown('<div style="display: flex; flex-wrap: wrap; justify-content: center; gap: 15px;">', unsafe_allow_html=True)
                 
-                    # Bloco centralizado contendo as métricas
-                    st.markdown('<div class="center-container">', unsafe_allow_html=True)
+                        # Estilização dos cartões compactos
+                        card_style = """
+                        <div style="
+                            background-color: white; 
+                            border-radius: 8px; 
+                            padding: 12px; 
+                            width: 250px;
+                            box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);
+                            text-align: left;
+                            margin: 6px;
+                        ">
+                            <p style="margin: 0; font-size: 16px; font-weight: bold; color: #333;">{titulo} 
+                                <span style="float: right; color: {cor_valor}; font-size: 18px;">{valor}</span>
+                            </p>
+                            <p style="margin: 4px 0; font-size: 14px; color: #777;">Mercado: 
+                                <span style="float: right; font-weight: bold; color: #555;">{mercado}</span>
+                            </p>
+                            <p style="margin: 0; font-size: 14px; color: #777;">Diferença: 
+                                <span style="float: right; font-weight: bold; color: {cor_diferenca};">{diferenca}%</span>
+                            </p>
+                        </div>
+                        """
                 
-                    # Criando os blocos organizados e centralizados
-                    for col in colunas_metricas:
-                        valor_empresa = melhor_empresa[col]
-                        media_mercado = df_mercado[col]
-                        diff = (valor_empresa - media_mercado) / media_mercado * 100 if media_mercado != 0 else 0
-                        cor_valor = "#28a745" if diff > 0 else "#dc3545"
-                        cor_diferenca = "#28a745" if diff > 0 else "#dc3545"
-                        titulo = col.replace("_mean", "").replace("_slope_log", "").replace("_", " ")
+                        # Criando os blocos organizados e centralizados
+                        for col in colunas_metricas:
+                            valor_empresa = melhor_empresa[col]
+                            media_mercado = df_mercado[col]
+                            diff = (valor_empresa - media_mercado) / media_mercado * 100 if media_mercado != 0 else 0
+                            cor_valor = "#28a745" if diff > 0 else "#dc3545"
+                            cor_diferenca = "#28a745" if diff > 0 else "#dc3545"
+                            titulo = col.replace("_mean", "").replace("_slope_log", "").replace("_", " ")
                 
-                        st.markdown(card_style.format(
-                            titulo=titulo, valor=f"{valor_empresa:.2f}",
-                            mercado=f"{media_mercado:.2f}", diferenca=f"{diff:.1f}",
-                            cor_valor=cor_valor, cor_diferenca=cor_diferenca
-                        ), unsafe_allow_html=True)
+                            st.markdown(card_style.format(
+                                titulo=titulo, valor=f"{valor_empresa:.2f}",
+                                mercado=f"{media_mercado:.2f}", diferenca=f"{diff:.1f}",
+                                cor_valor=cor_valor, cor_diferenca=cor_diferenca
+                            ), unsafe_allow_html=True)
                 
-                    st.markdown('</div>', unsafe_allow_html=True)  # Fechando o container centralizado
-
-
+                        st.markdown('</div>', unsafe_allow_html=True)  # Fechando o container centralizado
 
                 
                     # Criando um gráfico comparativo =========================================================================================================================================
