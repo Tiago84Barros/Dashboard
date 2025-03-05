@@ -1315,6 +1315,7 @@ if pagina == "Avançada": #_____________________________________________________
                                                          
                 # Carregar dados macroeconômicos do banco de dados
                 dados_macro = load_macro_summary()
+                st.dataframe(dados_macro)
 
                 # ================================================
                 #  DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE
