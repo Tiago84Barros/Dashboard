@@ -208,7 +208,6 @@ def load_multiplos_from_db(ticker):
             conn.close()
 
 # Função para carregar DADOS MACROECONÔMICOS históricos do banco de dados ____________________________________________________________________________________________________________________
-# Função para carregar e resumir os dados macroeconômicos históricos
 @st.cache_data
 def load_macro_summary():
     db_path = download_db_from_github(db_url)
@@ -1315,8 +1314,7 @@ if pagina == "Avançada": #_____________________________________________________
                                                          
                 # Carregar dados macroeconômicos do banco de dados
                 dados_macro = load_macro_summary()
-                st.dataframe(dados_macro)
-
+        
                 # ================================================
                 #  DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE
                 # ================================================___________________________________________________________________________________________________________________________
