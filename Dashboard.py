@@ -1752,7 +1752,7 @@ if pagina == "Avançada": #_____________________________________________________
                     for data in patrimonio_selic.index:
                         # Selecionar a taxa Selic correspondente ao ano
                         ano_referencia = data.year
-                        taxa_selic_ano = dados_macro.loc[dados_macro.index.year == ano_referencia, "selic"].values
+                        taxa_selic_ano = dados_macro.loc[dados_macro.index.year == ano_referencia, "Selic"].values
                         if len(taxa_selic_ano) > 0:
                             taxa_selic_ano = taxa_selic_ano[0] / 100
                         else:
