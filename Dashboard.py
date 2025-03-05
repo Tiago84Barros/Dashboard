@@ -1280,8 +1280,7 @@ if pagina == "Avançada": #_____________________________________________________
                                                          
                 # Carregar dados macroeconômicos do banco de dados
                 dados_macro = load_macro_summary()
-                st.dataframe(dados_macro)
-        
+                 
                 # ================================================
                 #  DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE
                 # ================================================___________________________________________________________________________________________________________________________
@@ -1796,6 +1795,10 @@ if pagina == "Avançada": #_____________________________________________________
                                                         
                         if precos is None or precos.empty:
                             continue
+                            
+                        st.dataframe(dados_macro.head())  # Verifique se a Selic está lá corretamente
+                        st.dataframe(df_patrimonio_selic.head())  # Veja o formato do DataFrame final
+
                 
                         # 📌 Cálculo do patrimônio acumulado e evolução ao longo do tempo
                         df_patrimonio, df_patrimonio_evolucao = calcular_patrimonio_com_aportes(precos)
