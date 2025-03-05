@@ -1814,8 +1814,17 @@ if pagina == "Avançada": #_____________________________________________________
                                                        
                         df_patrimonio = pd.concat([df_patrimonio, df_patrimonio_selic.iloc[-1].to_frame().T], axis=0)
                         df_patrimonio = df_patrimonio.sort_values(by="Patrimonio Final", ascending=False)
+
+                        # 🔹 Garantir que df_patrimonio_selic tenha o mesmo formato de índice (datetime)
+                        df_patrimonio_selic.index = pd.to_datetime(df_patrimonio_selic.index, errors="coerce")
+                        
+                        # 🔹 Concatenar os dados do Tesouro Selic na evolução do patrimônio
+                        df_patrimonio_evolucao = pd.concat([df_patrimonio_evolucao, df_patrimonio_selic], axis=1)
+                        
+                        # 🔹 Preencher possíveis valores NaN
+                        df_patrimonio_evolucao = df_patrimonio_evolucao.ffill()
                 
-                       # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO
+                       # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO ========================================================================================================================
                         st.subheader("📈 Evolução do Patrimônio com Aportes Mensais")
                         
                         fig, ax = plt.subplots(figsize=(12, 6))
