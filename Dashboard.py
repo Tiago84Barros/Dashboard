@@ -1726,7 +1726,7 @@ if pagina == "Avançada": #_____________________________________________________
                             raise ValueError(f"Erro ao converter índice de `dados_macro` para datetime: {e}")
                 
                     # Remover possíveis linhas com índice inválido
-                    dados_macro = dados_macro.dropna(subset=["selic"])  # Remove linhas onde a Selic está vazia
+                    dados_macro = dados_macro.dropna(subset=["Selic"])  # Remove linhas onde a Selic está vazia
                 
                     # Criar DataFrame para evolução do patrimônio
                     patrimonio_selic = pd.DataFrame(index=pd.date_range(start=dados_macro.index.min(), 
