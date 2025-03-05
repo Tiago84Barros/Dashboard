@@ -1720,7 +1720,21 @@ if pagina == "Avançada": #_____________________________________________________
                     # Garantir que o índice de `dados_macro` esteja no formato datetime
                     if not isinstance(dados_macro.index, pd.DatetimeIndex):
                         try:
-                            dados_macro.index = pd.to_datetime(dados_macro.index, errors='coerce')
+                            # 🔹 Resetar o índice caso ele tenha sido configurado incorretamente
+                            dados_macro = dados_macro.reset_index()
+                            
+                            # 🔹 Verificar qual é a coluna correta de data
+                            st.dataframe(dados_macro.head())  # Isso mostrará todas as colunas disponíveis
+                            
+                            # 🔹 Converter a coluna correta para datetime
+                            dados_macro["Data"] = pd.to_datetime(dados_macro["Data"], errors="coerce")
+                            
+                            # 🔹 Definir a coluna "Data" como índice correto
+                            dados_macro.set_index("Data", inplace=True)
+                            
+                            # 🔹 Verificar se agora está certo
+                            st.dataframe(dados_macro.index)  # Deve exibir um DatetimeIndex correto
+
                         except Exception as e:
                             raise ValueError(f"Erro ao converter índice de `dados_macro` para datetime: {e}")
                 
@@ -1731,8 +1745,7 @@ if pagina == "Avançada": #_____________________________________________________
                     patrimonio_selic = pd.DataFrame(index=pd.date_range(start=dados_macro.index.min(), 
                                                                          end=dados_macro.index.max(), 
                                                                          freq="M"))
-                    st.dataframe(patrimonio_selic)
-                
+                                  
                     patrimonio_selic["Tesouro Selic"] = 0  # Inicializa a coluna
                 
                     total_aplicado = investimento_inicial
@@ -1796,10 +1809,7 @@ if pagina == "Avançada": #_____________________________________________________
                                                         
                         if precos is None or precos.empty:
                             continue
-                            
-                        st.dataframe(dados_macro.head())  # Verifique se a Selic está lá corretamente
-                        st.dataframe(df_patrimonio_selic.head())  # Veja o formato do DataFrame final
-
+                
                 
                         # 📌 Cálculo do patrimônio acumulado e evolução ao longo do tempo
                         df_patrimonio, df_patrimonio_evolucao = calcular_patrimonio_com_aportes(precos)
