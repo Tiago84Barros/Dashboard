@@ -1779,10 +1779,21 @@ if pagina == "Avançada": #_____________________________________________________
                     Retorna um DataFrame com a evolução do patrimônio no Tesouro Selic.
                     """
                 
-                    # Garantir que o índice de `dados_macro` esteja no formato correto
-                    dados_macro.index = pd.to_datetime(dados_macro.index, errors='coerce')
+                    # Verificar se `dados_macro` está carregado corretamente
+                    if dados_macro is None or dados_macro.empty:
+                        raise ValueError("O DataFrame `dados_macro` está vazio ou não foi carregado corretamente.")
                 
-                    # Criar DataFrame com datas mensais
+                    # Garantir que o índice de `dados_macro` esteja no formato datetime
+                    if not isinstance(dados_macro.index, pd.DatetimeIndex):
+                        try:
+                            dados_macro.index = pd.to_datetime(dados_macro.index, errors='coerce')
+                        except Exception as e:
+                            raise ValueError(f"Erro ao converter índice de `dados_macro` para datetime: {e}")
+                
+                    # Remover possíveis linhas com índice inválido
+                    dados_macro = dados_macro.dropna(subset=["selic"])  # Remove linhas onde a Selic está vazia
+                
+                    # Criar DataFrame para evolução do patrimônio
                     patrimonio_selic = pd.DataFrame(index=pd.date_range(start=dados_macro.index.min(), 
                                                                          end=dados_macro.index.max(), 
                                                                          freq="M"))
@@ -1795,10 +1806,11 @@ if pagina == "Avançada": #_____________________________________________________
                     for data in patrimonio_selic.index:
                         # Selecionar a taxa Selic correspondente ao ano
                         ano_referencia = data.year
-                        if ano_referencia in dados_macro.index.year:
-                            taxa_selic_ano = dados_macro.loc[dados_macro.index.year == ano_referencia, "selic"].values[0] / 100
+                        taxa_selic_ano = dados_macro.loc[dados_macro.index.year == ano_referencia, "selic"].values
+                        if len(taxa_selic_ano) > 0:
+                            taxa_selic_ano = taxa_selic_ano[0] / 100
                         else:
-                            taxa_selic_ano = 0.1  # Taxa padrão caso não haja dado disponível (exemplo: 10% a.a.)
+                            taxa_selic_ano = 0.1  # Taxa padrão de 10% ao ano se não houver dado
                 
                         # Converter taxa Selic anual para mensal composta
                         taxa_selic_mensal = (1 + taxa_selic_ano) ** (1/12) - 1
@@ -1812,6 +1824,7 @@ if pagina == "Avançada": #_____________________________________________________
                         patrimonio_selic.loc[data, "Tesouro Selic"] = saldo
                 
                     return patrimonio_selic
+
                     
                 df_patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro)
                                 
