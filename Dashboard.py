@@ -1820,13 +1820,12 @@ if pagina == "Avançada": #_____________________________________________________
                         
                         # 🔹 Criar uma cópia fixa de `df_patrimonio` para preservar `Tesouro Selic`
                         df_patrimonio_fixado = df_patrimonio.copy()
-                    
-                        # 🔹 Armazene o valor fixo do Tesouro Selic **fora do loop** para evitar variação entre segmentos
+                        
+                        # 🔹 Capturar o valor final do Tesouro Selic antes do loop para manter um valor **fixo e correto**
+                        patrimonio_selic_final = df_patrimonio_selic.at[df_patrimonio_selic.index[-1], "Tesouro Selic"]
+                        
+                        # 🔹 Garantir que `Tesouro Selic` esteja presente antes de ordenar
                         if "Tesouro Selic" not in df_patrimonio_fixado["index"].values:
-                            patrimonio_selic_final = df_patrimonio_selic.iloc[-1]["Tesouro Selic"]  # Último valor acumulado **fixo**
-                            st.markdown(patrimonio_selic_final)
-                            
-                            # 🔹 Adicionar apenas **uma vez** o valor do Tesouro Selic ao DataFrame fixado
                             df_patrimonio_fixado = pd.concat(
                                 [df_patrimonio_fixado, pd.DataFrame([{"index": "Tesouro Selic", "Patrimonio Final": patrimonio_selic_final}])],
                                 ignore_index=True
@@ -1842,7 +1841,7 @@ if pagina == "Avançada": #_____________________________________________________
                         # 🔹 Exibir os blocos organizados corretamente na ordem desejada
                         for i, row in enumerate(df_patrimonio_fixado.itertuples()):  # ✅ Usamos enumerate() para garantir ordem correta
                             ticker = row.index
-                            patrimonio = row._2  # Acessando a coluna "Patrimonio Final" corretamente
+                            patrimonio = row.Patrimonio_Final  # Correção do nome da coluna
                         
                             # 🔹 Diferenciar o ícone do Tesouro Selic
                             if ticker == "Tesouro Selic":
@@ -1875,5 +1874,4 @@ if pagina == "Avançada": #_____________________________________________________
                                             {patrimonio_formatado}
                                         </p>
                                     </div>
-                                """, unsafe_allow_html=True)
-
+        """, unsafe_allow_html=True)
