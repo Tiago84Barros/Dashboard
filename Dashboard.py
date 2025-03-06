@@ -1814,7 +1814,7 @@ if pagina == "Avançada": #_____________________________________________________
                         
                         # 📌 EXIBIÇÃO DOS QUADRADOS (BLOCOS COM OS RESULTADOS) =========================================================================================================================
                         st.subheader("📊 Patrimônio Final para R$1.000/Mês Investidos desde 2020")
-                        
+
                         # 🔹 Resetar índice para garantir que os tickers sejam colunas visíveis
                         df_patrimonio = df_patrimonio.reset_index(drop=False)  # Tickers como coluna
                         
@@ -1831,12 +1831,15 @@ if pagina == "Avançada": #_____________________________________________________
                                 ignore_index=True
                             )
                         
+                        # 🔹 Ordenar os valores acumulados em ordem decrescente
+                        df_patrimonio_fixado = df_patrimonio_fixado.sort_values(by="Patrimonio Final", ascending=False)
+                        
                         # 🔹 Criar colunas para exibição no Streamlit
                         num_columns = 3  # Número de colunas no layout
                         columns = st.columns(num_columns)
                         
                         # 🔹 Exibir os blocos organizados corretamente com os tickers visíveis e ícones das empresas
-                        for i, row in df_patrimonio_fixado.iterrows():  # ✅ Usamos o df_patrimonio_fixado para garantir consistência
+                        for i, row in df_patrimonio_fixado.iterrows():  # ✅ Usamos o df_patrimonio_fixado ordenado
                             ticker = row['index']
                             patrimonio = row['Patrimonio Final']
                         
