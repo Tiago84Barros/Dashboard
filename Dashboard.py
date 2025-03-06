@@ -1689,7 +1689,7 @@ if pagina == "Avançada": #_____________________________________________________
                 
                 
                 # 📌 Função para calcular o patrimônio acumulado no Tesouro Selic
-                def calcular_patrimonio_selic(dados_macro, data_inicio, investimento_inicial=1000, aporte_mensal=1000):
+                def calcular_patrimonio_selic_macro(dados_macro, data_inicio, investimento_inicial=1000, aporte_mensal=1000):
                     if dados_macro is None or dados_macro.empty:
                         raise ValueError("O DataFrame `dados_macro` está vazio ou não foi carregado corretamente.")
                 
