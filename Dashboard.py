@@ -1816,17 +1816,20 @@ if pagina == "Avançada": #_____________________________________________________
                         
                         # 📌 EXIBIÇÃO DOS QUADRADOS (BLOCOS COM OS RESULTADOS) =========================================================================================================================
                         st.subheader("📊 Patrimônio Final para R$1.000/Mês Investidos desde 2020")
-
+                        
                         # 🔹 Resetar índice para garantir que os tickers sejam colunas visíveis
                         df_patrimonio = df_patrimonio.reset_index(drop=False)  # Tickers como coluna
                         
-                        # 🔹 Armazene o valor fixo do Tesouro Selic **fora do loop** para evitar variação
-                        if "Tesouro Selic" not in df_patrimonio["index"].values:
+                        # 🔹 Criar uma cópia fixa de `df_patrimonio` para preservar `Tesouro Selic`
+                        df_patrimonio_fixado = df_patrimonio.copy()
+                        
+                        # 🔹 Armazene o valor fixo do Tesouro Selic **fora do loop** para evitar variação entre segmentos
+                        if "Tesouro Selic" not in df_patrimonio_fixado["index"].values:
                             patrimonio_selic_final = df_patrimonio_selic.iloc[-1]["Tesouro Selic"]  # Último valor acumulado **fixo**
                             
-                            # 🔹 Adicionar apenas **uma vez** o valor do Tesouro Selic ao DataFrame
-                            df_patrimonio = pd.concat(
-                                [df_patrimonio, pd.DataFrame([{"index": "Tesouro Selic", "Patrimonio Final": patrimonio_selic_final}])],
+                            # 🔹 Adicionar apenas **uma vez** o valor do Tesouro Selic ao DataFrame fixado
+                            df_patrimonio_fixado = pd.concat(
+                                [df_patrimonio_fixado, pd.DataFrame([{"index": "Tesouro Selic", "Patrimonio Final": patrimonio_selic_final}])],
                                 ignore_index=True
                             )
                         
@@ -1835,7 +1838,7 @@ if pagina == "Avançada": #_____________________________________________________
                         columns = st.columns(num_columns)
                         
                         # 🔹 Exibir os blocos organizados corretamente com os tickers visíveis e ícones das empresas
-                        for i, row in df_patrimonio.iterrows():
+                        for i, row in df_patrimonio_fixado.iterrows():  # ✅ Usamos o df_patrimonio_fixado para garantir consistência
                             ticker = row['index']
                             patrimonio = row['Patrimonio Final']
                         
