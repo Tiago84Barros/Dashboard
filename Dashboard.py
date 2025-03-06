@@ -1802,24 +1802,40 @@ if pagina == "Avançada": #_____________________________________________________
                             st.pyplot(fig)         
 
                         
-                        # 📌 EXIBIÇÃO DOS QUADRADOS (BLOCOS COM OS RESULTADOS) ===============================================================================================================
+                       # 📌 EXIBIÇÃO DOS QUADRADOS (BLOCOS COM OS RESULTADOS)
                         st.subheader("📊 Patrimônio Final para R$1.000/Mês Investidos desde 2020")
-                
+                        
+                        # 🔹 Resetar índice para garantir que os tickers sejam colunas visíveis
                         df_patrimonio = df_patrimonio.reset_index(drop=False)  # Tickers como coluna
-                
+                        
+                        # 🔹 Garantir que o Tesouro Selic está incluído no DataFrame
+                        if "Tesouro Selic" not in df_patrimonio["index"].values:
+                            patrimonio_selic_final = df_patrimonio_selic.iloc[-1]["Tesouro Selic"]  # Último valor acumulado
+                            df_patrimonio = pd.concat(
+                                [df_patrimonio, pd.DataFrame([{"index": "Tesouro Selic", "Patrimonio Final": patrimonio_selic_final}])],
+                                ignore_index=True
+                            )
+                        
+                        # 🔹 Criar colunas para exibição no Streamlit
                         num_columns = 3  # Número de colunas no layout
                         columns = st.columns(num_columns)
-                
-                        # Exibir os blocos organizados corretamente com os tickers visíveis e ícones das empresas
+                        
+                        # 🔹 Exibir os blocos organizados corretamente com os tickers visíveis e ícones das empresas
                         for i, row in df_patrimonio.iterrows():
                             ticker = row['index']
                             patrimonio = row['Patrimonio Final']
-                            icone_url = get_logo_url(ticker)  # Obtendo o ícone da empresa
-                            
-                            # Se for a empresa líder, destacá-la apenas com a borda dourada
-                            is_lider = (ticker == lider["ticker"])
-                            border_color = "#DAA520" if is_lider else "#d3d3d3"  # Borda dourada para líder, cinza para demais
-                            
+                        
+                            # 🔹 Diferenciar o ícone do Tesouro Selic
+                            if ticker == "Tesouro Selic":
+                                icone_url = "https://cdn-icons-png.flaticon.com/512/2331/2331949.png"  # Ícone de dinheiro
+                                border_color = "#007bff"  # Azul para diferenciar renda fixa
+                            else:
+                                icone_url = get_logo_url(ticker)
+                                border_color = "#DAA520" if ticker == lider["ticker"] else "#d3d3d3"  # Dourado para líder, cinza para demais
+                        
+                            # Se o patrimônio for inválido, exibir mensagem
+                            patrimonio_formatado = "Valor indisponível" if pd.isna(patrimonio) else formatar_real(patrimonio)
+                        
                             with columns[i % num_columns]:  # Distribuindo os blocos nas colunas
                                 st.markdown(f"""
                                     <div style="
@@ -1835,7 +1851,7 @@ if pagina == "Avançada": #_____________________________________________________
                                         <img src="{icone_url}" alt="{ticker}" style="width: 50px; height: auto; margin-bottom: 5px;">
                                         <h3 style="margin: 0; color: #4a4a4a;">{ticker}</h3>
                                         <p style="font-size: 18px; margin: 5px 0; font-weight: bold; color: #2ecc71;">
-                                            {formatar_real(patrimonio)}
+                                            {patrimonio_formatado}
                                         </p>
                                     </div>
                                 """, unsafe_allow_html=True)
