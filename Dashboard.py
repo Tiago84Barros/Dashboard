@@ -1712,6 +1712,7 @@ if pagina == "Avançada": #_____________________________________________________
                 
                     for data in patrimonio_selic.index:
                         ano_referencia = data.year
+                        st.markdown(ano_referencia)
                 
                         # 🔹 Obter a taxa Selic anual para o ano correspondente
                         if ano_referencia in dados_macro.index.year:
