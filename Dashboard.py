@@ -1838,10 +1838,10 @@ if pagina == "Avançada": #_____________________________________________________
                         num_columns = 3  # Número de colunas no layout
                         columns = st.columns(num_columns)
                         
-                        # 🔹 Exibir os blocos organizados corretamente com os tickers visíveis e ícones das empresas
-                        for i, row in df_patrimonio_fixado.iterrows():  # ✅ Usamos o df_patrimonio_fixado ordenado
-                            ticker = row['index']
-                            patrimonio = row['Patrimonio Final']
+                        # 🔹 Exibir os blocos organizados corretamente na ordem desejada
+                        for i, row in enumerate(df_patrimonio_fixado.itertuples()):  # ✅ Usamos enumerate() para garantir ordem correta
+                            ticker = row.index
+                            patrimonio = row._2  # Acessando a coluna "Patrimonio Final" corretamente
                         
                             # 🔹 Diferenciar o ícone do Tesouro Selic
                             if ticker == "Tesouro Selic":
@@ -1854,7 +1854,9 @@ if pagina == "Avançada": #_____________________________________________________
                             # Se o patrimônio for inválido, exibir mensagem
                             patrimonio_formatado = "Valor indisponível" if pd.isna(patrimonio) else formatar_real(patrimonio)
                         
-                            with columns[i % num_columns]:  # Distribuindo os blocos nas colunas
+                            # 🔹 Organizando os blocos de forma ordenada de cima para baixo e da esquerda para a direita
+                            col = columns[i % num_columns]  # Garante que os valores sejam distribuídos corretamente
+                            with col:
                                 st.markdown(f"""
                                     <div style="
                                         background-color: #ffffff;
