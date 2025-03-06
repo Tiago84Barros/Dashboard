@@ -1690,6 +1690,7 @@ if pagina == "Avançada": #_____________________________________________________
                 
                 # 📌 Simular a evolução do patrimônio no Tesouro Selic
                 def calcular_patrimonio_selic_macro(dados_macro, data_inicio_acoes, investimento_inicial=1000, aporte_mensal=1000):
+                    
                     if dados_macro is None or dados_macro.empty:
                         raise ValueError("O DataFrame `dados_macro` está vazio ou não foi carregado corretamente.")
                 
@@ -1707,24 +1708,31 @@ if pagina == "Avançada": #_____________________________________________________
                                                                          freq="M"))
                     patrimonio_selic["Tesouro Selic"] = 0
                 
-                    total_aplicado = investimento_inicial
-                    saldo = investimento_inicial
+                    saldo = investimento_inicial  # Saldo inicial investido
                 
                     for data in patrimonio_selic.index:
                         ano_referencia = data.year
-                        taxa_selic_ano = dados_macro.loc[dados_macro.index.year == ano_referencia, "Selic"].values
-                        if len(taxa_selic_ano) > 0:
-                            taxa_selic_ano = taxa_selic_ano[0] / 100
-                        else:
-                            taxa_selic_ano = 0.1  # Taxa padrão de 10% ao ano se não houver dado
                 
+                        # 🔹 Obter a taxa Selic anual para o ano correspondente
+                        if ano_referencia in dados_macro.index.year:
+                            taxa_selic_ano = dados_macro.loc[dados_macro.index.year == ano_referencia, "Selic"].iloc[0] / 100
+                        else:
+                            taxa_selic_ano = 0.10  # Se não houver dado, assumimos 10% ao ano
+                
+                        # 🔹 Converter taxa Selic anual para mensal composta
                         taxa_selic_mensal = (1 + taxa_selic_ano) ** (1/12) - 1
+                
+                        # 🔹 Aplicar rendimento do mês sobre o saldo total
                         saldo *= (1 + taxa_selic_mensal)
+                
+                        # 🔹 Adicionar novo aporte após aplicar a rentabilidade
                         saldo += aporte_mensal
-                        total_aplicado += aporte_mensal
+                
+                        # 🔹 Armazenar o valor do patrimônio no Tesouro Selic
                         patrimonio_selic.loc[data, "Tesouro Selic"] = saldo
                 
                     return patrimonio_selic
+
                 
                 
                 # 📌 Baixando preços ajustados das empresas
