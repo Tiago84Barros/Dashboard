@@ -1818,15 +1818,17 @@ if pagina == "Avançada": #_____________________________________________________
                             st.pyplot(fig)         
 
                         
-                       # 📌 EXIBIÇÃO DOS QUADRADOS (BLOCOS COM OS RESULTADOS) =========================================================================================================================
+                        # 📌 EXIBIÇÃO DOS QUADRADOS (BLOCOS COM OS RESULTADOS) =========================================================================================================================
                         st.subheader("📊 Patrimônio Final para R$1.000/Mês Investidos desde 2020")
-                        
+
                         # 🔹 Resetar índice para garantir que os tickers sejam colunas visíveis
                         df_patrimonio = df_patrimonio.reset_index(drop=False)  # Tickers como coluna
                         
-                        # 🔹 Garantir que o Tesouro Selic está incluído no DataFrame
+                        # 🔹 Armazene o valor fixo do Tesouro Selic **fora do loop** para evitar variação
                         if "Tesouro Selic" not in df_patrimonio["index"].values:
-                            patrimonio_selic_final = df_patrimonio_selic.iloc[-1]["Tesouro Selic"]  # Último valor acumulado
+                            patrimonio_selic_final = df_patrimonio_selic.iloc[-1]["Tesouro Selic"]  # Último valor acumulado **fixo**
+                            
+                            # 🔹 Adicionar apenas **uma vez** o valor do Tesouro Selic ao DataFrame
                             df_patrimonio = pd.concat(
                                 [df_patrimonio, pd.DataFrame([{"index": "Tesouro Selic", "Patrimonio Final": patrimonio_selic_final}])],
                                 ignore_index=True
