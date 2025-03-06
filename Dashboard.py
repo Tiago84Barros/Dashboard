@@ -1775,6 +1775,7 @@ if pagina == "Avançada": #_____________________________________________________
                 
                         # 📌 Agora que `df_patrimonio_evolucao` existe, pegamos a data inicial das ações
                         data_inicio_acoes = df_patrimonio_evolucao.index.min()
+                        st.markdown(data_inicio_acoes)
                 
                         # 📌 Agora chamamos o cálculo do Tesouro Selic passando `data_inicio_acoes`
                         df_patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, data_inicio_acoes)
