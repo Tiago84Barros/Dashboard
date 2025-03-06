@@ -1715,27 +1715,23 @@ if pagina == "Avançada": #_____________________________________________________
                 
                     for data in patrimonio_selic.index:
                         ano_referencia = data.year
-                        st.markdown(ano_referencia)
-                
+                              
                         # 🔹 Obter a taxa Selic anual para o ano correspondente
                         if ano_referencia in dados_macro.index.year:
                             taxa_selic_ano = dados_macro.loc[dados_macro.index.year == ano_referencia, "Selic"].iloc[0] / 100
-                            st.markdown(taxa_selic_ano)
+      
                         else:
                             taxa_selic_ano = 0.10  # Se não houver dado, assumimos 10% ao ano
                 
                         # 🔹 Converter taxa Selic anual para mensal composta
                         taxa_selic_mensal = (1 + taxa_selic_ano) ** (1/12) - 1
-                        st.markdown(taxa_selic_mensal)
-                
+                    
                         # 🔹 Aplicar rendimento do mês sobre o saldo total
                         saldo *= (1 + taxa_selic_mensal)
-                        st.markdown(saldo)
                 
                         # 🔹 Adicionar novo aporte após aplicar a rentabilidade
                         saldo += aporte_mensal
-                        st.markdown(saldo)
-                
+                  
                         # 🔹 Armazenar o valor do patrimônio no Tesouro Selic
                         patrimonio_selic.loc[data, "Tesouro Selic"] = saldo
                 
