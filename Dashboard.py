@@ -1701,11 +1701,14 @@ if pagina == "Avançada": #_____________________________________________________
                 
                     # 🔹 Remover linhas onde a Selic está vazia
                     dados_macro = dados_macro.dropna(subset=["Selic"])
+
+                     # 🔹 Definir o período máximo como o mês atual (primeiro dia do mês e ano atual)
+                    data_fim = pd.Timestamp.today().replace(day=1)  # Limita até o mês atual
                 
                     # 🔹 Criar DataFrame para evolução do patrimônio do Tesouro Selic, iniciando no mesmo período das ações
                     patrimonio_selic = pd.DataFrame(index=pd.date_range(start=data_inicio_acoes, 
-                                                                         end=dados_macro.index.max(), 
-                                                                         freq="M"))
+                                                         end=data_fim, 
+                                                         freq="M"))
                     patrimonio_selic["Tesouro Selic"] = 0
                 
                     saldo = investimento_inicial  # Saldo inicial investido
@@ -1815,7 +1818,7 @@ if pagina == "Avançada": #_____________________________________________________
                             st.pyplot(fig)         
 
                         
-                       # 📌 EXIBIÇÃO DOS QUADRADOS (BLOCOS COM OS RESULTADOS)
+                       # 📌 EXIBIÇÃO DOS QUADRADOS (BLOCOS COM OS RESULTADOS) =========================================================================================================================
                         st.subheader("📊 Patrimônio Final para R$1.000/Mês Investidos desde 2020")
                         
                         # 🔹 Resetar índice para garantir que os tickers sejam colunas visíveis
