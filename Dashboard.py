@@ -1775,8 +1775,7 @@ if pagina == "Avançada": #_____________________________________________________
                 
                         # 📌 Agora que `df_patrimonio_evolucao` existe, pegamos a data inicial das ações
                         data_inicio_acoes = df_patrimonio_evolucao.index.min()
-                        st.markdown(data_inicio_acoes)
-                
+                                       
                         # 📌 Agora chamamos o cálculo do Tesouro Selic passando `data_inicio_acoes`
                         df_patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, data_inicio_acoes)
                 
@@ -1794,8 +1793,7 @@ if pagina == "Avançada": #_____________________________________________________
                 
                         df_patrimonio_evolucao.index = pd.to_datetime(df_patrimonio_evolucao.index, errors='coerce')
                         df_patrimonio_evolucao = df_patrimonio_evolucao.sort_index()
-                        st.dataframe(df_patrimonio_evolucao)
-                
+                                       
                         if df_patrimonio_evolucao.empty:
                             st.warning("⚠️ Dados insuficientes para plotar a evolução do patrimônio.")
                         else:
@@ -1823,10 +1821,11 @@ if pagina == "Avançada": #_____________________________________________________
                         # 🔹 Criar uma cópia fixa de `df_patrimonio` para preservar `Tesouro Selic`
                         df_patrimonio_fixado = df_patrimonio.copy()
                         st.dataframe(df_patrimonio_fixado)
-                        
+                                                
                         # 🔹 Armazene o valor fixo do Tesouro Selic **fora do loop** para evitar variação entre segmentos
                         if "Tesouro Selic" not in df_patrimonio_fixado["index"].values:
                             patrimonio_selic_final = df_patrimonio_selic.iloc[-1]["Tesouro Selic"]  # Último valor acumulado **fixo**
+                            st.dataframe(patrimonio_selic_final)
                             
                             # 🔹 Adicionar apenas **uma vez** o valor do Tesouro Selic ao DataFrame fixado
                             df_patrimonio_fixado = pd.concat(
