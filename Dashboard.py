@@ -1688,57 +1688,55 @@ if pagina == "Avançada": #_____________________________________________________
                     )
                 
                 
-                # 📌 Simular a evolução do patrimônio no Tesouro Selic
-                def calcular_patrimonio_selic_macro(dados_macro, data_inicio_acoes, investimento_inicial=1000, aporte_mensal=1000):
-                    
+                # 📌 Função para calcular o patrimônio acumulado no Tesouro Selic
+                def calcular_patrimonio_selic(dados_macro, data_inicio, investimento_inicial=1000, aporte_mensal=1000):
                     if dados_macro is None or dados_macro.empty:
                         raise ValueError("O DataFrame `dados_macro` está vazio ou não foi carregado corretamente.")
                 
-                    # 🔹 Converter coluna de datas para datetime e definir como índice
+                    # 🔹 Converter a coluna "Data" para datetime e definir como índice
                     if 'Data' in dados_macro.columns:
                         dados_macro["Data"] = pd.to_datetime(dados_macro["Data"], errors="coerce")
                         dados_macro.set_index("Data", inplace=True)
                 
                     # 🔹 Remover linhas onde a Selic está vazia
                     dados_macro = dados_macro.dropna(subset=["Selic"])
-
-                     # 🔹 Definir o período máximo como o mês atual (primeiro dia do mês e ano atual)
-                    data_fim = pd.Timestamp.today().replace(day=1)  # Limita até o mês atual
                 
-                    # 🔹 Criar DataFrame para evolução do patrimônio do Tesouro Selic, iniciando no mesmo período das ações
-                    patrimonio_selic = pd.DataFrame(index=pd.date_range(start=data_inicio_acoes, 
-                                                         end=data_fim, 
-                                                         freq="M"))
+                    # 🔹 Definir o período até o mês atual
+                    data_fim = pd.Timestamp.today().replace(day=1)  # Limita ao primeiro dia do mês atual
+                
+                    # 🔹 Criar DataFrame para armazenar a evolução do patrimônio
+                    patrimonio_selic = pd.DataFrame(index=pd.date_range(start=data_inicio, 
+                                                                         end=data_fim, 
+                                                                         freq="M"))
                     patrimonio_selic["Tesouro Selic"] = 0
                 
-                    saldo = investimento_inicial  # Saldo inicial investido
+                    # 🔹 Criar uma lista para armazenar o saldo de cada aporte individualmente
+                    investimentos = []
                 
                     for data in patrimonio_selic.index:
                         ano_referencia = data.year
-                              
+                
                         # 🔹 Obter a taxa Selic anual para o ano correspondente
-                        if ano_referencia in dados_macro.index.year:
+                        try:
                             taxa_selic_ano = dados_macro.loc[dados_macro.index.year == ano_referencia, "Selic"].iloc[0] / 100
-      
-                        else:
+                        except IndexError:
                             taxa_selic_ano = 0.10  # Se não houver dado, assumimos 10% ao ano
                 
                         # 🔹 Converter taxa Selic anual para mensal composta
                         taxa_selic_mensal = (1 + taxa_selic_ano) ** (1/12) - 1
-                    
-                        # 🔹 Aplicar rendimento do mês sobre o saldo total
-                        saldo *= (1 + taxa_selic_mensal)
                 
-                        # 🔹 Adicionar novo aporte após aplicar a rentabilidade
-                        saldo += aporte_mensal
-                  
-                        # 🔹 Armazenar o valor do patrimônio no Tesouro Selic
-                        patrimonio_selic.loc[data, "Tesouro Selic"] = saldo
+                        # 🔹 Atualizar os investimentos já aplicados
+                        investimentos = [valor * (1 + taxa_selic_mensal) for valor in investimentos]
+                
+                        # 🔹 Adicionar um novo aporte ao portfólio
+                        investimentos.append(aporte_mensal)
+                
+                        # 🔹 Somar todos os investimentos acumulados até o momento
+                        patrimonio_selic.loc[data, "Tesouro Selic"] = sum(investimentos)
                 
                     return patrimonio_selic
-
-                
-                
+                                
+                                
                 # 📌 Baixando preços ajustados das empresas
                 def baixar_precos(tickers, start="2020-01-01"):
                     try:
