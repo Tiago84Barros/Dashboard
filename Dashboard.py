@@ -1820,12 +1820,11 @@ if pagina == "Avançada": #_____________________________________________________
                         
                         # 🔹 Criar uma cópia fixa de `df_patrimonio` para preservar `Tesouro Selic`
                         df_patrimonio_fixado = df_patrimonio.copy()
-                        st.dataframe(df_patrimonio_fixado)
-                                                
+                    
                         # 🔹 Armazene o valor fixo do Tesouro Selic **fora do loop** para evitar variação entre segmentos
                         if "Tesouro Selic" not in df_patrimonio_fixado["index"].values:
                             patrimonio_selic_final = df_patrimonio_selic.iloc[-1]["Tesouro Selic"]  # Último valor acumulado **fixo**
-                            st.dataframe(patrimonio_selic_final)
+                            st.markdown(patrimonio_selic_final)
                             
                             # 🔹 Adicionar apenas **uma vez** o valor do Tesouro Selic ao DataFrame fixado
                             df_patrimonio_fixado = pd.concat(
