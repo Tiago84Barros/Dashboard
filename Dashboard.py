@@ -1780,10 +1780,10 @@ if pagina == "Avançada": #_____________________________________________________
                         df_patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, data_inicio_acoes)
                 
                         # 🔹 Ajustar o Tesouro Selic para ter o mesmo tempo das ações
-                        df_patrimonio_selic = df_patrimonio_selic.reindex(df_patrimonio_evolucao.index, method="ffill")
+                        df_patrimonio_selic2 = df_patrimonio_selic.reindex(df_patrimonio_evolucao.index, method="ffill")
                 
                         # 🔹 Concatenar os dados
-                        df_patrimonio_evolucao = pd.concat([df_patrimonio_evolucao, df_patrimonio_selic], axis=1)
+                        df_patrimonio_evolucao = pd.concat([df_patrimonio_evolucao, df_patrimonio_selic2], axis=1)
                         df_patrimonio_evolucao = df_patrimonio_evolucao.ffill()
                 
                         # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO =======================================================================================================================
