@@ -1770,79 +1770,85 @@ if pagina == "Avançada": #_____________________________________________________
                         if precos is None or precos.empty:
                             continue
                 
-                        # 📌 Calcular o patrimônio das ações primeiro
-                        df_patrimonio, df_patrimonio_evolucao = calcular_patrimonio_com_aportes(precos)
-                
-                        # 📌 Agora que `df_patrimonio_evolucao` existe, pegamos a data inicial das ações
-                        data_inicio_acoes = df_patrimonio_evolucao.index.min()
-                                       
-                        # 📌 Agora chamamos o cálculo do Tesouro Selic passando `data_inicio_acoes`
-                        df_patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, data_inicio_acoes)
-                
-                        # 🔹 Ajustar o Tesouro Selic para ter o mesmo tempo das ações
-                        df_patrimonio_selic2 = df_patrimonio_selic.reindex(df_patrimonio_evolucao.index, method="ffill")
-                
-                        # 🔹 Concatenar os dados
-                        df_patrimonio_evolucao = pd.concat([df_patrimonio_evolucao, df_patrimonio_selic2], axis=1)
-                        df_patrimonio_evolucao = df_patrimonio_evolucao.ffill()
-                
-                        # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO =======================================================================================================================
-                        st.subheader("📈 Evolução do Patrimônio com Aportes Mensais")
-                
+                        st.subheader("📊 Comparação de Rentabilidade: Empresas x Tesouro Selic")
+                        
+                        # 🔹 Determinar as datas mínimas e máximas disponíveis
+                        data_minima = df_patrimonio_evolucao.index.min()
+                        data_maxima = df_patrimonio_evolucao.index.max()
+                        
+                        # 🔹 Criar um slider para selecionar o intervalo de tempo
+                        data_inicio, data_fim = st.slider(
+                            "Selecione o período de análise:",
+                            min_value=data_minima.to_pydatetime(),
+                            max_value=data_maxima.to_pydatetime(),
+                            value=(data_minima.to_pydatetime(), data_maxima.to_pydatetime()),
+                            format="YYYY-MM"
+                        )
+                        
+                        # 🔹 Filtrar o período selecionado para evitar remover empresas mais novas
+                        df_patrimonio_evolucao_filtrado = df_patrimonio_evolucao.loc[data_inicio:data_fim]
+                        df_patrimonio_selic_filtrado = df_patrimonio_selic.loc[data_inicio:data_fim]
+                        
+                        # 🔹 Ajustar `df_patrimonio_selic_filtrado` para não excluir valores já acumulados
+                        df_patrimonio_selic_filtrado = df_patrimonio_selic_filtrado.reindex(df_patrimonio_evolucao_filtrado.index, method="ffill")
+                        
+                        # 🔹 Concatenar os dados filtrados
+                        df_patrimonio_evolucao_final = pd.concat([df_patrimonio_evolucao_filtrado, df_patrimonio_selic_filtrado], axis=1)
+                        df_patrimonio_evolucao_final = df_patrimonio_evolucao_final.ffill()
+                        
+                        # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO =============================================================================================
+                        st.subheader(f"📈 Evolução do Patrimônio ({data_inicio.strftime('%Y-%m')} a {data_fim.strftime('%Y-%m')})")
+                        
                         fig, ax = plt.subplots(figsize=(12, 6))
-                
-                        df_patrimonio_evolucao.index = pd.to_datetime(df_patrimonio_evolucao.index, errors='coerce')
-                        df_patrimonio_evolucao = df_patrimonio_evolucao.sort_index()
-                                       
-                        if df_patrimonio_evolucao.empty:
+                        
+                        df_patrimonio_evolucao_final.index = pd.to_datetime(df_patrimonio_evolucao_final.index, errors='coerce')
+                        df_patrimonio_evolucao_final = df_patrimonio_evolucao_final.sort_index()
+                        
+                        if df_patrimonio_evolucao_final.empty:
                             st.warning("⚠️ Dados insuficientes para plotar a evolução do patrimônio.")
                         else:
-                            for ticker in df_patrimonio_evolucao.columns:
+                            for ticker in df_patrimonio_evolucao_final.columns:
                                 if ticker == lider["ticker"]:
-                                    df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, color="red", label=f"{lider['nome_empresa']} (Líder)")
+                                    df_patrimonio_evolucao_final[ticker].plot(ax=ax, linewidth=2, color="red", label=f"{lider['nome_empresa']} (Líder)")
                                 elif ticker == "Tesouro Selic":
-                                    df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, linestyle="-.", color="blue", label="Tesouro Selic")
+                                    df_patrimonio_evolucao_final[ticker].plot(ax=ax, linewidth=2, linestyle="-.", color="blue", label="Tesouro Selic")
                                 else:
-                                    df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=1, linestyle="--", alpha=0.6, label=ticker)
-                
-                            ax.set_title(f"Evolução do Patrimônio Acumulado no Segmento: {segmento}")
+                                    df_patrimonio_evolucao_final[ticker].plot(ax=ax, linewidth=1, linestyle="--", alpha=0.6, label=ticker)
+                        
+                            ax.set_title(f"Evolução do Patrimônio ({data_inicio.strftime('%Y-%m')} a {data_fim.strftime('%Y-%m')})")
                             ax.set_xlabel("Data")
                             ax.set_ylabel("Patrimônio (R$)")
                             ax.legend()
-                            st.pyplot(fig)         
-
+                            st.pyplot(fig)
                         
-                        # 📌 EXIBIÇÃO DOS QUADRADOS (BLOCOS COM OS RESULTADOS) =========================================================================================================================
-                        st.subheader("📊 Patrimônio Final para R$1.000/Mês Investidos desde 2020")
-
+                        # 📌 EXIBIÇÃO DOS QUADRADOS (BLOCOS COM OS RESULTADOS) ======================================================================================
+                        st.subheader(f"📊 Patrimônio Final para R$1.000/Mês Investidos ({data_inicio.strftime('%Y-%m')} a {data_fim.strftime('%Y-%m')})")
+                        
                         # 🔹 Resetar índice para garantir que os tickers sejam colunas visíveis
-                        df_patrimonio = df_patrimonio.reset_index(drop=False)  # Tickers como coluna
+                        df_patrimonio_final = df_patrimonio_evolucao_final.iloc[-1].reset_index()
+                        df_patrimonio_final.columns = ["index", "Patrimonio_Final"]
                         
-                        # 🔹 Criar uma cópia fixa de df_patrimonio para preservar Tesouro Selic
-                        df_patrimonio_fixado = df_patrimonio.copy()
-                    
-                        # 🔹 Armazene o valor fixo do Tesouro Selic **fora do loop** para evitar variação entre segmentos
-                        if "Tesouro Selic" not in df_patrimonio_fixado["index"].values:
-                            patrimonio_selic_final = df_patrimonio_selic.iloc[-1]["Tesouro Selic"]  # Último valor acumulado **fixo**
-                            st.markdown(patrimonio_selic_final)
-                            
-                            # 🔹 Adicionar apenas **uma vez** o valor do Tesouro Selic ao DataFrame fixado
-                            df_patrimonio_fixado = pd.concat(
-                                [df_patrimonio_fixado, pd.DataFrame([{"index": "Tesouro Selic", "Patrimonio Final": patrimonio_selic_final}])],
+                        # 🔹 Capturar o valor final do Tesouro Selic **fora do loop** para manter um valor fixo
+                        patrimonio_selic_final = df_patrimonio_selic_filtrado.iloc[-1]["Tesouro Selic"]
+                        
+                        # 🔹 Garantir que `Tesouro Selic` esteja presente antes de ordenar
+                        if "Tesouro Selic" not in df_patrimonio_final["index"].values:
+                            df_patrimonio_final = pd.concat(
+                                [df_patrimonio_final, pd.DataFrame([{"index": "Tesouro Selic", "Patrimonio_Final": patrimonio_selic_final}])],
                                 ignore_index=True
                             )
                         
                         # 🔹 Ordenar os valores acumulados em ordem decrescente
-                        df_patrimonio_fixado = df_patrimonio_fixado.sort_values(by="Patrimonio Final", ascending=False)
+                        df_patrimonio_final = df_patrimonio_final.sort_values(by="Patrimonio_Final", ascending=False)
                         
                         # 🔹 Criar colunas para exibição no Streamlit
                         num_columns = 3  # Número de colunas no layout
                         columns = st.columns(num_columns)
                         
                         # 🔹 Exibir os blocos organizados corretamente na ordem desejada
-                        for i, row in enumerate(df_patrimonio_fixado.itertuples()):  # ✅ Usamos enumerate() para garantir ordem correta
+                        for i, row in enumerate(df_patrimonio_final.itertuples()):  # ✅ Usamos enumerate() para garantir ordem correta
                             ticker = row.index
-                            patrimonio = row._2  # Acessando a coluna "Patrimonio Final" corretamente
+                            patrimonio = row.Patrimonio_Final  # Correção do nome da coluna
                         
                             # 🔹 Diferenciar o ícone do Tesouro Selic
                             if ticker == "Tesouro Selic":
