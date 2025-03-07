@@ -1159,6 +1159,7 @@ if pagina == "Avançada": #_____________________________________________________
         # Converter Data -> Ano
         df_mult['Ano'] = pd.to_datetime(df_mult['Data'], errors='coerce').dt.year
         df_dre['Ano']  = pd.to_datetime(df_dre['Data'], errors='coerce').dt.year
+        st.dataframe(df_dre)
         
         # Ordenar por Ano
         df_mult.sort_values('Ano', inplace=True)
@@ -1345,7 +1346,7 @@ if pagina == "Avançada": #_____________________________________________________
                     return df_empresas
 
                     
-                df_empresas = calcular_score(df_empresas, indicadores_score_ajustados) # CÁLCULO DO SCRORE DAS EMPRESAS
+                df_empresas = calcular_score(df_empresas, indicadores_score_ajustados) # CÁLCULO DO SCRORE DAS EMPRESAS ***********************************************
 
                 # Ordenar resultado pelo Score Ajustado
                 df_empresas.sort_values(['Segmento', 'Score_Ajustado'], ascending=[True, False], inplace=True)
@@ -1393,7 +1394,7 @@ if pagina == "Avançada": #_____________________________________________________
                 st.markdown("---") # Espaçamento entre diferentes tipos de análise
                 st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
 
-                st.markdown("### Comparação de Indicadores (Múltiplos) entre Empresas do Segmento") #______Gráfico dos Múltiplos_____________________________________________________________________________________________
+                st.markdown("### Comparação de Indicadores (Múltiplos) entre Empresas do Segmento") #______GRÁFICO DOS MÚLTIPLOS_____________________________________________________________________________________________
                 
                 # Lista de indicadores disponíveis
                 indicadores_disponiveis = ["Margem Líquida", "Margem Operacional", "ROE", "ROIC", "P/L", "Liquidez Corrente", "Alavancagem Financeira", "Endividamento Total"]
@@ -1482,7 +1483,7 @@ if pagina == "Avançada": #_____________________________________________________
                     st.markdown("---") # Espaçamento entre diferentes tipos de análise
                     st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
                 
-                # Seção: Gráfico Comparativo de Demonstrações Financeiras ________________Gráfico das Demonstrações Financeiras__________________________________________________________________
+                # Seção: Gráfico Comparativo de Demonstrações Financeiras ________________GRÁFICO DAS DEMONSTRAÇÕES FINANCEIRAS__________________________________________________________________
                 # Título da seção
                 st.markdown("### Comparação de Demonstrações Financeiras entre Empresas")
                 
@@ -1568,7 +1569,7 @@ if pagina == "Avançada": #_____________________________________________________
                     st.warning("Não há dados disponíveis para as empresas selecionadas nas Demonstrações Financeiras.")
 
               
-               # Resumo da melhor empresa em comparação com a média do mercado ============================================================================================================
+               # RESUMO DA MELHOR EMPRESA EM COMPARAÇÃO COM A MÉDIA DO MERCADO ============================================================================================================
                         
                 def gerar_resumo_melhor_empresa(df_empresas):
                     """
