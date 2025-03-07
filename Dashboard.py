@@ -1769,10 +1769,7 @@ if pagina == "Avançada": #_____________________________________________________
                 
                         if precos is None or precos.empty:
                             continue
-                
-                         # 📌 Calcular o patrimônio das ações primeiro
-                        df_patrimonio, df_patrimonio_evolucao = calcular_patrimonio_com_aportes(precos)
-                
+                                
                        # 📌 Calcular o patrimônio das ações primeiro
                         df_patrimonio, df_patrimonio_evolucao = calcular_patrimonio_com_aportes(precos)
                 
