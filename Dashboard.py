@@ -1738,7 +1738,7 @@ if pagina == "Avançada": #_____________________________________________________
                                 
                                 
                 # 📌 Baixando preços ajustados das empresas
-                def baixar_precos(tickers, start="2020-01-01"):
+                def baixar_precos(tickers, start="2010-01-01"):
                     try:
                         precos = yf.download(tickers, start=start)['Close']
                         precos.columns = precos.columns.str.replace(".SA", "", regex=False)
@@ -1775,11 +1775,11 @@ if pagina == "Avançada": #_____________________________________________________
                 
                         st.subheader("📊 Comparação de Rentabilidade: Empresas x Tesouro Selic")
 
-                        # 🔹 Determinar as datas mínimas e máximas disponíveis
-                        data_minima = df_patrimonio_evolucao.index.min()
+                        # 🔹 Determinar as datas mínimas e máximas disponíveis no dataset (desde 2010)
+                        data_minima = pd.Timestamp("2010-01-01")  # Considerando os dados desde 2010
                         data_maxima = df_patrimonio_evolucao.index.max()
                         
-                        # 🔹 Criar um slider para selecionar o intervalo de tempo
+                        # 🔹 Criar um slider para permitir a seleção de qualquer período dentro do intervalo disponível
                         data_inicio, data_fim = st.slider(
                             "Selecione o período de análise:",
                             min_value=data_minima.to_pydatetime(),
@@ -1792,7 +1792,7 @@ if pagina == "Avançada": #_____________________________________________________
                         df_patrimonio_evolucao_filtrado = df_patrimonio_evolucao.loc[data_inicio:data_fim]
                         df_patrimonio_selic_filtrado = df_patrimonio_selic.loc[data_inicio:data_fim]
                         
-                        # 🔹 Ajustar `df_patrimonio_selic_filtrado` para não excluir valores já acumulados
+                        # 🔹 Ajustar `df_patrimonio_selic_filtrado` para garantir que os valores já acumulados sejam mantidos
                         df_patrimonio_selic_filtrado = df_patrimonio_selic_filtrado.reindex(df_patrimonio_evolucao_filtrado.index, method="ffill")
                         
                         # 🔹 Concatenar os dados filtrados
