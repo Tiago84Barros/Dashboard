@@ -1820,6 +1820,9 @@ if pagina == "Avançada": #_____________________________________________________
                         
                         # 🔹 Criar uma cópia fixa de `df_patrimonio` para preservar `Tesouro Selic`
                         df_patrimonio_fixado = df_patrimonio.copy()
+
+                        # 🔹 Corrigir nome da coluna para evitar espaços
+                        df_patrimonio_fixado.rename(columns={"Patrimonio Final": "Patrimonio_Final"}, inplace=True
                         
                         # 🔹 Capturar o valor final do Tesouro Selic antes do loop para manter um valor **fixo e correto**
                         patrimonio_selic_final = df_patrimonio_selic.at[df_patrimonio_selic.index[-1], "Tesouro Selic"]
