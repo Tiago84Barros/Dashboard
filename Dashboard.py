@@ -1270,7 +1270,8 @@ if pagina == "Avançada": #_____________________________________________________
                 st.markdown(f"### Empresas no Segmento {segmento_selecionado}")
                 st.markdown("---")
 
-                                             
+                resultados = []        
+                
                 for i, row in empresas_filtradas.iterrows():
                     ticker = row['ticker']
                     nome_emp = row['nome_empresa']
