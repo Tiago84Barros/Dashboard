@@ -1255,24 +1255,22 @@ if pagina == "Avançada": #_____________________________________________________
     
                         # Aplicar o filtro conforme tempo de existência da empresa
                         if opcao_crescimento == "Crescimento (< 5 anos)" and anos_disponiveis < 5:
-                            resultados.append(row)
+                            empresas_selecionadas.append(row)
                         elif opcao_crescimento == "Estabelecida (>= 5 anos)" and anos_disponiveis >= 5:
-                            resultados.append(row)
+                            empresas_selecionadas.append(row)
                         elif opcao_crescimento == "Todas":
-                            resultados.append(row)
+                            empresas_selecionadas.append(row)
     
-                    if not resultados:
+                    if not empresas_selecionadas:
                         st.warning("Nenhuma empresa atende aos critérios do filtro selecionado.")
                     else:
-                        empresas_filtradas = pd.DataFrame(resultados)
+                        empresas_filtradas = pd.DataFrame(empresas_selecionadas)
                         st.success(f"Total de empresas filtradas: {len(empresas_filtradas)}")
 
                 st.markdown(f"### Empresas no Segmento {segmento_selecionado}")
                 st.markdown("---")
 
-                # Lista p/ armazenar dados agregados
-                resultados = []
-                                              
+                                             
                 for i, row in empresas_filtradas.iterrows():
                     ticker = row['ticker']
                     nome_emp = row['nome_empresa']
