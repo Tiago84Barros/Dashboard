@@ -1418,7 +1418,7 @@ if pagina == "Avançada": #_____________________________________________________
                         patrimonio_final = pd.concat([patrimonio_historico, patrimonio_selic], axis=1)
                         st.dataframe(patrimonio_final)
                         # Mostrar resultado final
-                        st.line_chart(patrimonio_historico)
+                        st.line_chart(patrimonio_historico
                         
                         # Esse código representa uma implementação sólida e robusta conforme as estratégias discutidas, permitindo uma análise dinâmica e fundamentada na evolução histórica dos Scores das empresas.
                     
