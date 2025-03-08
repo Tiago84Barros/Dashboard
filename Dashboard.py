@@ -1402,8 +1402,7 @@ if pagina == "Avançada": #_____________________________________________________
                         
                         # DataFrame com scores
                         df_scores = pd.concat([pd.DataFrame(res) for res in resultados])
-                        st.dataframe(df_scores)
-                        
+                                                
                         # Determinar líderes
                         lideres_por_ano = determinar_lideres(df_scores)
                         
@@ -1417,7 +1416,7 @@ if pagina == "Avançada": #_____________________________________________________
                         patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, patrimonio_historico.index.min())
                         
                         patrimonio_final = pd.concat([patrimonio_historico, patrimonio_selic], axis=1)
-                        
+                        st.dataframe(patrimonio_final)
                         # Mostrar resultado final
                         st.line_chart(patrimonio_historico)
                         
