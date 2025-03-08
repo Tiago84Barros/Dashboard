@@ -1032,12 +1032,11 @@ if pagina == "Básica":
         else:
             st.warning("Por favor, selecione pelo menos um indicador para exibir no gráfico.")
 
-if pagina == "Avançada": #_______________________________________________________________# Análise Avançada #____________________________________________________________________________________________________________
+if pagina == "Avançada": #_______________________________________________________________# ANÁLISE AVANÇADA #____________________________________________________________________________________________________________
 
     # ===============================================
     #                FUNÇÕES AUXILIARES
     # ===============================================
-
        
     # Função para remover outliers usando o método IQR __________________________________________________________________________________________________________________
     def remover_outliers_iqr(df, colunas):
@@ -1096,7 +1095,7 @@ if pagina == "Avançada": #_____________________________________________________
         return np.exp(slope) - 1
 
 
-    def calcular_media_e_std(df, col):
+    def calcular_media_e_std(df, col): # ____________________________________________________________________________________________________________________________________________________
         """
         Retorna a média e o desvio padrão da coluna `col` do DataFrame `df`.
         Remove valores nulos e infinitos antes do cálculo e exibe informações
@@ -1403,6 +1402,7 @@ if pagina == "Avançada": #_____________________________________________________
                         
                         # DataFrame com scores
                         df_scores = pd.concat([pd.DataFrame(res) for res in resultados])
+                        st.dataframe(df_scores)
                         
                         # Determinar líderes
                         lideres_por_ano = determinar_lideres(df_scores)
