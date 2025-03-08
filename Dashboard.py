@@ -1416,499 +1416,499 @@ if pagina == "Avançada": #_____________________________________________________
                         patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, patrimonio_historico.index.min())
                         
                         patrimonio_final = pd.concat([patrimonio_historico, patrimonio_selic], axis=1)
-                        st.dataframe(patrimonio_final)
+                      
                         # Mostrar resultado final
-                        st.line_chart(patrimonio_historico
+                        st.line_chart(patrimonio_historico)
                         
                         # Esse código representa uma implementação sólida e robusta conforme as estratégias discutidas, permitindo uma análise dinâmica e fundamentada na evolução histórica dos Scores das empresas.
                     
              
             
                          
-                 # Inserindo espaçamento entre os elementos
-                st.markdown("---") # Espaçamento entre diferentes tipos de análise
-                st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
-
-                st.markdown("### Comparação de Indicadores (Múltiplos) entre Empresas do Segmento") #______GRÁFICO DOS MÚLTIPLOS_____________________________________________________________________________________________
-                
-                # Lista de indicadores disponíveis
-                indicadores_disponiveis = ["Margem Líquida", "Margem Operacional", "ROE", "ROIC", "P/L", "Liquidez Corrente", "Alavancagem Financeira", "Endividamento Total"]
-                
-                # Mapeamento de nomes amigáveis para nomes de colunas no banco
-                nomes_to_col = {
-                    "Margem Líquida": "Margem_Liquida",
-                    "Margem Operacional": "Margem_Operacional",
-                    "ROE": "ROE",
-                    "ROIC": "ROIC",
-                    "P/L": "P/L",
-                    "Liquidez Corrente": "Liquidez_Corrente",
-                    "Alavancagem Financeira": "Alavancagem_Financeira",
-                    "Endividamento Total": "Endividamento_Total"
-                    
-                }
-
-                 # Selecionar as empresas a exibir
-                lista_empresas = empresas_filtradas['nome_empresa'].tolist()
-                empresas_selecionadas = st.multiselect("Selecione as empresas a serem exibidas no gráfico:", lista_empresas, default=lista_empresas)
-                
-                # Selecionar o indicador a ser exibido
-                indicador_selecionado = st.selectbox("Selecione o Indicador para Comparar:", indicadores_disponiveis, index=0)
-                col_indicador = nomes_to_col[indicador_selecionado]
-                
-                                  
-                # Opção para normalizar os dados
-                normalizar = st.checkbox("Normalizar os Indicadores (Escala de 0 a 1)", value=False)
-                
-                # Construir o DataFrame com o histórico completo de cada empresa selecionada
-                df_historico = []
-                for i, row in empresas_filtradas.iterrows():
-                    nome_emp = row['nome_empresa']
-                    if nome_emp in empresas_selecionadas:
-                        ticker = row['ticker']
-                        multiplos_data = load_multiplos_from_db(ticker + ".SA")
-                        if multiplos_data is not None and not multiplos_data.empty and col_indicador in multiplos_data.columns:
-                            # Processar os dados da empresa
-                            df_emp = multiplos_data[['Data', col_indicador]].copy()
-                            df_emp['Ano'] = pd.to_datetime(df_emp['Data'], errors='coerce').dt.year  # Extrair apenas o ano
-                            df_emp['Empresa'] = nome_emp
-                            df_historico.append(df_emp)
-                        else:
-                            st.info(f"Empresa {nome_emp} não possui dados para o indicador {indicador_selecionado}.")
-                
-                if len(df_historico) == 0:
-                    st.warning("Não há dados históricos disponíveis para as empresas selecionadas ou para o indicador escolhido.")
-                else:
-                    # Concatenar os DataFrames em um único DataFrame
-                    df_historico = pd.concat(df_historico, ignore_index=True)
-                
-                    # Remover entradas com anos nulos
-                    df_historico = df_historico.dropna(subset=['Ano'])
-                
-                    # Normalizar os dados se a opção estiver marcada
-                    if normalizar:
-                        max_valor = df_historico[col_indicador].max()
-                        min_valor = df_historico[col_indicador].min()
-                        df_historico[col_indicador] = (df_historico[col_indicador] - min_valor) / (max_valor - min_valor)
-                
-                    # Garantir que todos os anos presentes no conjunto de dados sejam exibidos no gráfico
-                    anos_disponiveis = sorted(df_historico['Ano'].unique())
-                    df_historico['Ano'] = df_historico['Ano'].astype(str)  # Converter para string para lidar com gaps no eixo
-                
-                    # Criar o gráfico de barras
-                    fig = px.bar(
-                        df_historico,
-                        x='Ano',
-                        y=col_indicador,
-                        color='Empresa',
-                        barmode='group',
-                        title=f"Evolução Histórica de {indicador_selecionado} por Empresa"
-                    )
-                
-                    # Ajustar layout do gráfico
-                    fig.update_layout(
-                        xaxis_title="Ano",
-                        yaxis_title=f"{indicador_selecionado} {'(Normalizado)' if normalizar else ''}",
-                        xaxis=dict(type='category', categoryorder='category ascending', tickvals=anos_disponiveis),
-                        legend_title="Empresa"
-                    )
-                
-                    # Exibir o gráfico no Streamlit
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                    st.markdown("---") # Espaçamento entre diferentes tipos de análise
-                    st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
-                
-                # Seção: Gráfico Comparativo de Demonstrações Financeiras ________________GRÁFICO DAS DEMONSTRAÇÕES FINANCEIRAS__________________________________________________________________
-                # Título da seção
-                st.markdown("### Comparação de Demonstrações Financeiras entre Empresas")
-                
-                # Função para carregar dados de demonstrações financeiras de todas as empresas selecionadas
-                def load_dre_comparativo(empresas, indicadores_dre):
-                    df_comparativo = []
-                    for _, row in empresas.iterrows():
-                        nome_emp = row['nome_empresa']
-                        ticker = row['ticker']
-                
-                        # Carregar dados da tabela demonstracoes_financeiras
-                        dre_data = load_data_from_db(ticker + ".SA")  # Função para carregar os dados
-                        if dre_data is not None and not dre_data.empty:
-                            dre_data['Empresa'] = nome_emp
-                            dre_data['Ano'] = pd.to_datetime(dre_data['Data'], errors='coerce').dt.year  # Extrair apenas o ano
-                            df_comparativo.append(dre_data)
-                
-                    if df_comparativo:
-                        return pd.concat(df_comparativo, ignore_index=True)
-                    return None
-                
-                # Carregar os dados para as empresas selecionadas
-                dre_data_comparativo = load_dre_comparativo(
-                    empresas_filtradas[empresas_filtradas['nome_empresa'].isin(empresas_selecionadas)],
-                    indicadores_dre=["Receita_Liquida", "EBIT", "Lucro_Liquido", "Patrimonio_Liquido", "Divida_Liquida", "Caixa_Liquido"]
-                )
-                
-                if dre_data_comparativo is not None:
-                    # Criar mapeamento de nomes de colunas para nomes amigáveis
-                    col_name_mapping = {
-                        "Receita_Liquida": "Receita Líquida",
-                        "EBIT": "EBIT",
-                        "Lucro_Liquido": "Lucro Líquido",
-                        "Patrimonio_Liquido": "Patrimônio Líquido",
-                        "Divida_Liquida": "Dívida Líquida",
-                        "Caixa_Liquido": "Caixa Líquido",
-                  
-                    }
-                    display_name_to_col = {v: k for k, v in col_name_mapping.items()}
-                    variaveis_disponiveis_display = list(col_name_mapping.values())
-                
-                    # Selecionar um único indicador para visualizar
-                    indicador_selecionado_display = st.selectbox(
-                        "Escolha o Indicador:",
-                        variaveis_disponiveis_display,
-                        index=0
-                    )
-                
-                    # Converter o nome amigável selecionado para o nome original
-                    indicador_selecionado = display_name_to_col[indicador_selecionado_display]
-                
-                    # Filtrar os dados apenas para o indicador selecionado
-                    df_filtrado = dre_data_comparativo[['Ano', indicador_selecionado, 'Empresa']].copy()
-                    df_filtrado = df_filtrado.rename(columns={indicador_selecionado: "Valor"})  # Renomear para padronização
-                
-                    # Garantir que todos os anos estejam presentes no eixo X
-                    anos_disponiveis = sorted(df_filtrado['Ano'].unique())
-                    df_filtrado['Ano'] = df_filtrado['Ano'].astype(str)  # Converter para string para lidar com gaps no eixo
-                
-                    # Criar o gráfico de barras agrupadas
-                    fig = px.bar(
-                        df_filtrado,
-                        x="Ano",
-                        y="Valor",
-                        color="Empresa",
-                        barmode="group",
-                        title=f"Comparação de {indicador_selecionado_display} entre Empresas"
-                    )
-                
-                    # Ajustar layout do gráfico
-                    fig.update_layout(
-                        xaxis_title="Ano",
-                        yaxis_title=indicador_selecionado_display,
-                        legend_title="Empresa",
-                        xaxis=dict(type='category', categoryorder='category ascending', tickvals=anos_disponiveis)
-                    )
-                
-                    # Exibir o gráfico no Streamlit
-                    st.plotly_chart(fig, use_container_width=True)
-
-                
-                else:
-                    st.warning("Não há dados disponíveis para as empresas selecionadas nas Demonstrações Financeiras.")
-
-              
-               # RESUMO DA MELHOR EMPRESA EM COMPARAÇÃO COM A MÉDIA DO MERCADO ============================================================================================================
+                         # Inserindo espaçamento entre os elementos
+                        st.markdown("---") # Espaçamento entre diferentes tipos de análise
+                        st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
+        
+                        st.markdown("### Comparação de Indicadores (Múltiplos) entre Empresas do Segmento") #______GRÁFICO DOS MÚLTIPLOS_____________________________________________________________________________________________
                         
-                def gerar_resumo_melhor_empresa(df_empresas):
-                    """
-                    Gera um resumo da melhor empresa ranqueada em relação à média do mercado.
-                    """
-                
-                    if df_empresas.empty:
-                        st.warning("O DataFrame de empresas está vazio. Não há dados para gerar o resumo.")
-                        return
-                
-                    # Identificar a melhor empresa (Rank_Ajustado == 1)
-                    melhor_empresa = df_empresas[df_empresas["Rank_Ajustado"] == 1]
-                
-                    if melhor_empresa.empty:
-                        st.warning("Nenhuma empresa está ranqueada como a melhor. Verifique os dados.")
-                        return
-                
-                    melhor_empresa = melhor_empresa.iloc[0]  # Pegamos a primeira entrada (caso haja empates)
-                
-                    # Calcular a média do mercado para comparação
-                    colunas_metricas = [
-                        "Margem_Liquida_mean", "ROE_mean", "ROIC_mean", 
-                        "P/VP_mean", "Endividamento_Total_mean", "Liquidez_Corrente_mean",
-                        "Receita_Liquida_slope_log", "Lucro_Liquido_slope_log"
-                    ]
-                    
-                    df_mercado = df_empresas[colunas_metricas].mean()
-                
-                    # Título
-                    st.subheader(f"📊 Resumo de Desempenho: {melhor_empresa['nome_empresa']} ({melhor_empresa['ticker']})")
-                
-                    # Criar DataFrame para exibir no Streamlit
-                    dados = []
-                    for col in colunas_metricas:
-                        valor_empresa = melhor_empresa[col]
-                        media_mercado = df_mercado[col]
-                        diff = (valor_empresa - media_mercado) / media_mercado * 100 if media_mercado != 0 else 0
-                        cor_valor = "🔴" if diff < 0 else "🟢"  # Emoticons para diferenciar resultados negativos e positivos
-                        titulo = col.replace("_mean", "").replace("_slope_log", "").replace("_", " ")
-                
-                        dados.append([titulo, f"{valor_empresa:.2f}", f"{media_mercado:.2f}", f"{diff:.1f}% {cor_valor}"])
-                
-                    # Criando DataFrame formatado para exibição
-                    df_resultado = pd.DataFrame(dados, columns=["Indicador", "Empresa", "Mercado", "Diferença"])
-                
-                    # Exibir tabela formatada no Streamlit
-                    st.write(df_resultado.style.set_table_styles(
-                        [{'selector': 'th', 'props': [('background-color', '#f4f4f4'), ('text-align', 'left')]}]
-                    ))
-
-                                                
-                    # Criando um gráfico comparativo =========================================================================================================================================
-                    df_comparacao = pd.DataFrame({
-                        "Indicador": colunas_metricas,
-                        "Melhor Empresa": [melhor_empresa[col] for col in colunas_metricas],
-                        "Média do Mercado": [df_mercado[col] for col in colunas_metricas]
-                    })
-                
-                    fig = px.bar(
-                        df_comparacao.melt(id_vars="Indicador", var_name="Categoria", value_name="Valor"),
-                        x="Indicador",
-                        y="Valor",
-                        color="Categoria",
-                        barmode="group",
-                        title=f"📊 Comparação: {melhor_empresa['nome_empresa']} vs. Média do Mercado"
-                    )
-                
-                    st.plotly_chart(fig, use_container_width=True)          
-
-                gerar_resumo_melhor_empresa(df_empresas)
-                
-                # 📌 Função para simular aportes mensais e calcular a evolução do patrimônio das ações =============================================================================================================
-
-                def formatar_real(valor):
-                    formatted = f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                    return "R$ " + formatted
-
-                def calcular_patrimonio_com_aportes(precos, investimento_inicial=1000, aporte_mensal=1000):
-                    patrimonio_final = {}
-                    patrimonio_evolucao = pd.DataFrame(index=precos.index)  # Criando DataFrame para evolução
-                
-                    for ticker in precos.columns:
-                        df_precos = precos[[ticker]].dropna()
+                        # Lista de indicadores disponíveis
+                        indicadores_disponiveis = ["Margem Líquida", "Margem Operacional", "ROE", "ROIC", "P/L", "Liquidez Corrente", "Alavancagem Financeira", "Endividamento Total"]
                         
-                        if df_precos.empty or len(df_precos) < 12:  # Filtra empresas com histórico insuficiente
-                            print(f"⚠️ Empresa {ticker} removida da análise (dados insuficientes).")
-                            continue
-                        
-                        df_precos['Mes'] = df_precos.index.to_period('M')  # Agrupa por mês
-                        df_mensal = df_precos.groupby('Mes').first()  # Pegando o primeiro preço de cada mês
-                        
-                        total_acoes = 0
-                        total_investido = 0
-                        patrimonio = []
-                
-                        for data, preco in df_mensal.iterrows():
-                            if np.isnan(preco[ticker]):  # Se não houver dado, pula o mês
-                                continue
-                
-                            if total_investido == 0:
-                                total_acoes += investimento_inicial / preco[ticker]
-                                total_investido += investimento_inicial
-                            else:
-                                total_acoes += aporte_mensal / preco[ticker]
-                                total_investido += aporte_mensal
-                
-                            patrimonio.append(total_acoes * preco[ticker])
-                            patrimonio_evolucao.loc[data.start_time, ticker] = total_acoes * preco[ticker]
-                
-                        ultimo_preco = df_precos[ticker].dropna().iloc[-1] if not df_precos[ticker].dropna().empty else None
-                        if ultimo_preco is not None:
-                            patrimonio_final[ticker] = total_acoes * ultimo_preco
-                
-                    return (
-                        pd.DataFrame.from_dict(patrimonio_final, orient='index', columns=['Patrimonio Final']),
-                        patrimonio_evolucao.ffill()  # Preenche valores NaN para manter a evolução contínua
-                    )
-                
-                
-                # 📌 Função para calcular o patrimônio acumulado no Tesouro Selic
-                def calcular_patrimonio_selic_macro(dados_macro, data_inicio, investimento_inicial=1000, aporte_mensal=1000):
-                    if dados_macro is None or dados_macro.empty:
-                        raise ValueError("O DataFrame `dados_macro` está vazio ou não foi carregado corretamente.")
-                
-                    # 🔹 Converter a coluna "Data" para datetime e definir como índice
-                    if 'Data' in dados_macro.columns:
-                        dados_macro["Data"] = pd.to_datetime(dados_macro["Data"], errors="coerce")
-                        dados_macro.set_index("Data", inplace=True)
-                
-                    # 🔹 Remover linhas onde a Selic está vazia
-                    dados_macro = dados_macro.dropna(subset=["Selic"])
-                
-                    # 🔹 Definir o período até o mês atual
-                    data_fim = pd.Timestamp.today().replace(day=1)  # Limita ao primeiro dia do mês atual
-                
-                    # 🔹 Criar DataFrame para armazenar a evolução do patrimônio
-                    patrimonio_selic = pd.DataFrame(index=pd.date_range(start=data_inicio, 
-                                                                         end=data_fim, 
-                                                                         freq="M"))
-                    patrimonio_selic["Tesouro Selic"] = 0
-                
-                    # 🔹 Criar uma lista para armazenar o saldo de cada aporte individualmente
-                    investimentos = []
-                
-                    for data in patrimonio_selic.index:
-                        ano_referencia = data.year
-                
-                        # 🔹 Obter a taxa Selic anual para o ano correspondente
-                        try:
-                            taxa_selic_ano = dados_macro.loc[dados_macro.index.year == ano_referencia, "Selic"].iloc[0] / 100
-                        except IndexError:
-                            taxa_selic_ano = 0.10  # Se não houver dado, assumimos 10% ao ano
-                
-                        # 🔹 Converter taxa Selic anual para mensal composta
-                        taxa_selic_mensal = (1 + taxa_selic_ano) ** (1/12) - 1
-                
-                        # 🔹 Atualizar os investimentos já aplicados
-                        investimentos = [valor * (1 + taxa_selic_mensal) for valor in investimentos]
-                
-                        # 🔹 Adicionar um novo aporte ao portfólio
-                        investimentos.append(aporte_mensal)
-                
-                        # 🔹 Somar todos os investimentos acumulados até o momento
-                        patrimonio_selic.loc[data, "Tesouro Selic"] = sum(investimentos)
-                
-                    return patrimonio_selic
-                                
-                                
-                # 📌 Baixando preços ajustados das empresas
-                def baixar_precos(tickers, start="2010-01-01"):
-                    try:
-                        precos = yf.download(tickers, start=start)['Close']
-                        precos.columns = precos.columns.str.replace(".SA", "", regex=False)
-                        return precos
-                    except Exception as e:
-                        st.error(f"Erro ao baixar preços: {e}")
-                        return None
-                
-                
-                # 📌 Analisando empresas por segmento
-                if 'df_empresas' in locals() and not df_empresas.empty:
-                    df_lideres = df_empresas[df_empresas["Rank_Ajustado"] == 1]
-                
-                    for segmento in df_lideres["Segmento"].unique():
-                        st.subheader(f"📊 Comparação no Segmento: {segmento}")
-                
-                        lider = df_lideres[df_lideres["Segmento"] == segmento].iloc[0]
-                        concorrentes = df_empresas[(df_empresas["Segmento"] == segmento) & (df_empresas["Rank_Ajustado"] != 1)]
-                
-                        if concorrentes.empty:
-                            st.warning(f"⚠️ Não há concorrentes disponíveis para `{lider['nome_empresa']}` no segmento {segmento}.")
-                            continue
-                
-                        tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()
-                        tickers = [ticker + ".SA" for ticker in tickers]
-                
-                        precos = baixar_precos(tickers)
-                
-                        if precos is None or precos.empty:
-                            continue
-                                
-                       # 📌 Calcular o patrimônio das ações primeiro
-                        df_patrimonio, df_patrimonio_evolucao = calcular_patrimonio_com_aportes(precos)
-                
-                        # 📌 Agora que `df_patrimonio_evolucao` existe, pegamos a data inicial das ações
-                        data_inicio_acoes = df_patrimonio_evolucao.index.min()
-                                       
-                        # 📌 Agora chamamos o cálculo do Tesouro Selic passando `data_inicio_acoes`
-                        df_patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, data_inicio_acoes)
-                
-                        # 🔹 Ajustar o Tesouro Selic para ter o mesmo tempo das ações
-                        df_patrimonio_selic2 = df_patrimonio_selic.reindex(df_patrimonio_evolucao.index, method="ffill")
-                
-                        # 🔹 Concatenar os dados
-                        df_patrimonio_evolucao = pd.concat([df_patrimonio_evolucao, df_patrimonio_selic2], axis=1)
-                        df_patrimonio_evolucao = df_patrimonio_evolucao.ffill()
-                
-                        # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO =======================================================================================================================
-                        st.subheader("📈 Evolução do Patrimônio com Aportes Mensais")
-                
-                        fig, ax = plt.subplots(figsize=(12, 6))
-                
-                        df_patrimonio_evolucao.index = pd.to_datetime(df_patrimonio_evolucao.index, errors='coerce')
-                        df_patrimonio_evolucao = df_patrimonio_evolucao.sort_index()
-                                       
-                        if df_patrimonio_evolucao.empty:
-                            st.warning("⚠️ Dados insuficientes para plotar a evolução do patrimônio.")
-                        else:
-                            for ticker in df_patrimonio_evolucao.columns:
-                                if ticker == lider["ticker"]:
-                                    df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, color="red", label=f"{lider['nome_empresa']} (Líder)")
-                                elif ticker == "Tesouro Selic":
-                                    df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, linestyle="-.", color="blue", label="Tesouro Selic")
-                                else:
-                                    df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=1, linestyle="--", alpha=0.6, label=ticker)
-                
-                            ax.set_title(f"Evolução do Patrimônio Acumulado no Segmento: {segmento}")
-                            ax.set_xlabel("Data")
-                            ax.set_ylabel("Patrimônio (R$)")
-                            ax.legend()
-                            st.pyplot(fig)         
-
-                        
-                        # 📌 EXIBIÇÃO DOS QUADRADOS (BLOCOS COM OS RESULTADOS) =========================================================================================================================
-                        st.subheader("📊 Patrimônio Final para R$1.000/Mês Investidos desde 2020")
-
-                        # 🔹 Resetar índice para garantir que os tickers sejam colunas visíveis
-                        df_patrimonio = df_patrimonio.reset_index(drop=False)  # Tickers como coluna
-                        
-                        # 🔹 Criar uma cópia fixa de df_patrimonio para preservar Tesouro Selic
-                        df_patrimonio_fixado = df_patrimonio.copy()
-                    
-                        # 🔹 Armazene o valor fixo do Tesouro Selic **fora do loop** para evitar variação entre segmentos
-                        if "Tesouro Selic" not in df_patrimonio_fixado["index"].values:
-                            patrimonio_selic_final = df_patrimonio_selic.iloc[-1]["Tesouro Selic"]  # Último valor acumulado **fixo**
-                            st.markdown(patrimonio_selic_final)
+                        # Mapeamento de nomes amigáveis para nomes de colunas no banco
+                        nomes_to_col = {
+                            "Margem Líquida": "Margem_Liquida",
+                            "Margem Operacional": "Margem_Operacional",
+                            "ROE": "ROE",
+                            "ROIC": "ROIC",
+                            "P/L": "P/L",
+                            "Liquidez Corrente": "Liquidez_Corrente",
+                            "Alavancagem Financeira": "Alavancagem_Financeira",
+                            "Endividamento Total": "Endividamento_Total"
                             
-                            # 🔹 Adicionar apenas **uma vez** o valor do Tesouro Selic ao DataFrame fixado
-                            df_patrimonio_fixado = pd.concat(
-                                [df_patrimonio_fixado, pd.DataFrame([{"index": "Tesouro Selic", "Patrimonio Final": patrimonio_selic_final}])],
-                                ignore_index=True
+                        }
+        
+                         # Selecionar as empresas a exibir
+                        lista_empresas = empresas_filtradas['nome_empresa'].tolist()
+                        empresas_selecionadas = st.multiselect("Selecione as empresas a serem exibidas no gráfico:", lista_empresas, default=lista_empresas)
+                        
+                        # Selecionar o indicador a ser exibido
+                        indicador_selecionado = st.selectbox("Selecione o Indicador para Comparar:", indicadores_disponiveis, index=0)
+                        col_indicador = nomes_to_col[indicador_selecionado]
+                        
+                                          
+                        # Opção para normalizar os dados
+                        normalizar = st.checkbox("Normalizar os Indicadores (Escala de 0 a 1)", value=False)
+                        
+                        # Construir o DataFrame com o histórico completo de cada empresa selecionada
+                        df_historico = []
+                        for i, row in empresas_filtradas.iterrows():
+                            nome_emp = row['nome_empresa']
+                            if nome_emp in empresas_selecionadas:
+                                ticker = row['ticker']
+                                multiplos_data = load_multiplos_from_db(ticker + ".SA")
+                                if multiplos_data is not None and not multiplos_data.empty and col_indicador in multiplos_data.columns:
+                                    # Processar os dados da empresa
+                                    df_emp = multiplos_data[['Data', col_indicador]].copy()
+                                    df_emp['Ano'] = pd.to_datetime(df_emp['Data'], errors='coerce').dt.year  # Extrair apenas o ano
+                                    df_emp['Empresa'] = nome_emp
+                                    df_historico.append(df_emp)
+                                else:
+                                    st.info(f"Empresa {nome_emp} não possui dados para o indicador {indicador_selecionado}.")
+                        
+                        if len(df_historico) == 0:
+                            st.warning("Não há dados históricos disponíveis para as empresas selecionadas ou para o indicador escolhido.")
+                        else:
+                            # Concatenar os DataFrames em um único DataFrame
+                            df_historico = pd.concat(df_historico, ignore_index=True)
+                        
+                            # Remover entradas com anos nulos
+                            df_historico = df_historico.dropna(subset=['Ano'])
+                        
+                            # Normalizar os dados se a opção estiver marcada
+                            if normalizar:
+                                max_valor = df_historico[col_indicador].max()
+                                min_valor = df_historico[col_indicador].min()
+                                df_historico[col_indicador] = (df_historico[col_indicador] - min_valor) / (max_valor - min_valor)
+                        
+                            # Garantir que todos os anos presentes no conjunto de dados sejam exibidos no gráfico
+                            anos_disponiveis = sorted(df_historico['Ano'].unique())
+                            df_historico['Ano'] = df_historico['Ano'].astype(str)  # Converter para string para lidar com gaps no eixo
+                        
+                            # Criar o gráfico de barras
+                            fig = px.bar(
+                                df_historico,
+                                x='Ano',
+                                y=col_indicador,
+                                color='Empresa',
+                                barmode='group',
+                                title=f"Evolução Histórica de {indicador_selecionado} por Empresa"
                             )
                         
-                        # 🔹 Ordenar os valores acumulados em ordem decrescente
-                        df_patrimonio_fixado = df_patrimonio_fixado.sort_values(by="Patrimonio Final", ascending=False)
+                            # Ajustar layout do gráfico
+                            fig.update_layout(
+                                xaxis_title="Ano",
+                                yaxis_title=f"{indicador_selecionado} {'(Normalizado)' if normalizar else ''}",
+                                xaxis=dict(type='category', categoryorder='category ascending', tickvals=anos_disponiveis),
+                                legend_title="Empresa"
+                            )
                         
-                        # 🔹 Criar colunas para exibição no Streamlit
-                        num_columns = 3  # Número de colunas no layout
-                        columns = st.columns(num_columns)
+                            # Exibir o gráfico no Streamlit
+                            st.plotly_chart(fig, use_container_width=True)
                         
-                        # 🔹 Exibir os blocos organizados corretamente na ordem desejada
-                        for i, row in enumerate(df_patrimonio_fixado.itertuples()):  # ✅ Usamos enumerate() para garantir ordem correta
-                            ticker = row.index
-                            patrimonio = row._2  # Acessando a coluna "Patrimonio Final" corretamente
+                            st.markdown("---") # Espaçamento entre diferentes tipos de análise
+                            st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
                         
-                            # 🔹 Diferenciar o ícone do Tesouro Selic
-                            if ticker == "Tesouro Selic":
-                                icone_url = "https://cdn-icons-png.flaticon.com/512/2331/2331949.png"  # Ícone de dinheiro
-                                border_color = "#007bff"  # Azul para diferenciar renda fixa
-                            else:
-                                icone_url = get_logo_url(ticker)
-                                border_color = "#DAA520" if ticker == lider["ticker"] else "#d3d3d3"  # Dourado para líder, cinza para demais
+                        # Seção: Gráfico Comparativo de Demonstrações Financeiras ________________GRÁFICO DAS DEMONSTRAÇÕES FINANCEIRAS__________________________________________________________________
+                        # Título da seção
+                        st.markdown("### Comparação de Demonstrações Financeiras entre Empresas")
                         
-                            # Se o patrimônio for inválido, exibir mensagem
-                            patrimonio_formatado = "Valor indisponível" if pd.isna(patrimonio) else formatar_real(patrimonio)
+                        # Função para carregar dados de demonstrações financeiras de todas as empresas selecionadas
+                        def load_dre_comparativo(empresas, indicadores_dre):
+                            df_comparativo = []
+                            for _, row in empresas.iterrows():
+                                nome_emp = row['nome_empresa']
+                                ticker = row['ticker']
                         
-                            # 🔹 Organizando os blocos de forma ordenada de cima para baixo e da esquerda para a direita
-                            col = columns[i % num_columns]  # Garante que os valores sejam distribuídos corretamente
-                            with col:
-                                st.markdown(f"""
-                                    <div style="
-                                        background-color: #ffffff;
-                                        border: 3px solid {border_color};
-                                        border-radius: 10px;
-                                        padding: 15px;
-                                        margin: 10px;
-                                        text-align: center;
-                                        box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
-                                        flex: 1;
-                                    ">
-                                        <img src="{icone_url}" alt="{ticker}" style="width: 50px; height: auto; margin-bottom: 5px;">
-                                        <h3 style="margin: 0; color: #4a4a4a;">{ticker}</h3>
-                                        <p style="font-size: 18px; margin: 5px 0; font-weight: bold; color: #2ecc71;">
-                                            {patrimonio_formatado}
-                                        </p>
-                                    </div>
-                                """, unsafe_allow_html=True)
+                                # Carregar dados da tabela demonstracoes_financeiras
+                                dre_data = load_data_from_db(ticker + ".SA")  # Função para carregar os dados
+                                if dre_data is not None and not dre_data.empty:
+                                    dre_data['Empresa'] = nome_emp
+                                    dre_data['Ano'] = pd.to_datetime(dre_data['Data'], errors='coerce').dt.year  # Extrair apenas o ano
+                                    df_comparativo.append(dre_data)
+                        
+                            if df_comparativo:
+                                return pd.concat(df_comparativo, ignore_index=True)
+                            return None
+                        
+                        # Carregar os dados para as empresas selecionadas
+                        dre_data_comparativo = load_dre_comparativo(
+                            empresas_filtradas[empresas_filtradas['nome_empresa'].isin(empresas_selecionadas)],
+                            indicadores_dre=["Receita_Liquida", "EBIT", "Lucro_Liquido", "Patrimonio_Liquido", "Divida_Liquida", "Caixa_Liquido"]
+                        )
+                        
+                        if dre_data_comparativo is not None:
+                            # Criar mapeamento de nomes de colunas para nomes amigáveis
+                            col_name_mapping = {
+                                "Receita_Liquida": "Receita Líquida",
+                                "EBIT": "EBIT",
+                                "Lucro_Liquido": "Lucro Líquido",
+                                "Patrimonio_Liquido": "Patrimônio Líquido",
+                                "Divida_Liquida": "Dívida Líquida",
+                                "Caixa_Liquido": "Caixa Líquido",
+                          
+                            }
+                            display_name_to_col = {v: k for k, v in col_name_mapping.items()}
+                            variaveis_disponiveis_display = list(col_name_mapping.values())
+                        
+                            # Selecionar um único indicador para visualizar
+                            indicador_selecionado_display = st.selectbox(
+                                "Escolha o Indicador:",
+                                variaveis_disponiveis_display,
+                                index=0
+                            )
+                        
+                            # Converter o nome amigável selecionado para o nome original
+                            indicador_selecionado = display_name_to_col[indicador_selecionado_display]
+                        
+                            # Filtrar os dados apenas para o indicador selecionado
+                            df_filtrado = dre_data_comparativo[['Ano', indicador_selecionado, 'Empresa']].copy()
+                            df_filtrado = df_filtrado.rename(columns={indicador_selecionado: "Valor"})  # Renomear para padronização
+                        
+                            # Garantir que todos os anos estejam presentes no eixo X
+                            anos_disponiveis = sorted(df_filtrado['Ano'].unique())
+                            df_filtrado['Ano'] = df_filtrado['Ano'].astype(str)  # Converter para string para lidar com gaps no eixo
+                        
+                            # Criar o gráfico de barras agrupadas
+                            fig = px.bar(
+                                df_filtrado,
+                                x="Ano",
+                                y="Valor",
+                                color="Empresa",
+                                barmode="group",
+                                title=f"Comparação de {indicador_selecionado_display} entre Empresas"
+                            )
+                        
+                            # Ajustar layout do gráfico
+                            fig.update_layout(
+                                xaxis_title="Ano",
+                                yaxis_title=indicador_selecionado_display,
+                                legend_title="Empresa",
+                                xaxis=dict(type='category', categoryorder='category ascending', tickvals=anos_disponiveis)
+                            )
+                        
+                            # Exibir o gráfico no Streamlit
+                            st.plotly_chart(fig, use_container_width=True)
+        
+                        
+                        else:
+                            st.warning("Não há dados disponíveis para as empresas selecionadas nas Demonstrações Financeiras.")
+        
+                      
+                       # RESUMO DA MELHOR EMPRESA EM COMPARAÇÃO COM A MÉDIA DO MERCADO ============================================================================================================
+                                
+                        def gerar_resumo_melhor_empresa(df_empresas):
+                            """
+                            Gera um resumo da melhor empresa ranqueada em relação à média do mercado.
+                            """
+                        
+                            if df_empresas.empty:
+                                st.warning("O DataFrame de empresas está vazio. Não há dados para gerar o resumo.")
+                                return
+                        
+                            # Identificar a melhor empresa (Rank_Ajustado == 1)
+                            melhor_empresa = df_empresas[df_empresas["Rank_Ajustado"] == 1]
+                        
+                            if melhor_empresa.empty:
+                                st.warning("Nenhuma empresa está ranqueada como a melhor. Verifique os dados.")
+                                return
+                        
+                            melhor_empresa = melhor_empresa.iloc[0]  # Pegamos a primeira entrada (caso haja empates)
+                        
+                            # Calcular a média do mercado para comparação
+                            colunas_metricas = [
+                                "Margem_Liquida_mean", "ROE_mean", "ROIC_mean", 
+                                "P/VP_mean", "Endividamento_Total_mean", "Liquidez_Corrente_mean",
+                                "Receita_Liquida_slope_log", "Lucro_Liquido_slope_log"
+                            ]
+                            
+                            df_mercado = df_empresas[colunas_metricas].mean()
+                        
+                            # Título
+                            st.subheader(f"📊 Resumo de Desempenho: {melhor_empresa['nome_empresa']} ({melhor_empresa['ticker']})")
+                        
+                            # Criar DataFrame para exibir no Streamlit
+                            dados = []
+                            for col in colunas_metricas:
+                                valor_empresa = melhor_empresa[col]
+                                media_mercado = df_mercado[col]
+                                diff = (valor_empresa - media_mercado) / media_mercado * 100 if media_mercado != 0 else 0
+                                cor_valor = "🔴" if diff < 0 else "🟢"  # Emoticons para diferenciar resultados negativos e positivos
+                                titulo = col.replace("_mean", "").replace("_slope_log", "").replace("_", " ")
+                        
+                                dados.append([titulo, f"{valor_empresa:.2f}", f"{media_mercado:.2f}", f"{diff:.1f}% {cor_valor}"])
+                        
+                            # Criando DataFrame formatado para exibição
+                            df_resultado = pd.DataFrame(dados, columns=["Indicador", "Empresa", "Mercado", "Diferença"])
+                        
+                            # Exibir tabela formatada no Streamlit
+                            st.write(df_resultado.style.set_table_styles(
+                                [{'selector': 'th', 'props': [('background-color', '#f4f4f4'), ('text-align', 'left')]}]
+                            ))
+        
+                                                        
+                            # Criando um gráfico comparativo =========================================================================================================================================
+                            df_comparacao = pd.DataFrame({
+                                "Indicador": colunas_metricas,
+                                "Melhor Empresa": [melhor_empresa[col] for col in colunas_metricas],
+                                "Média do Mercado": [df_mercado[col] for col in colunas_metricas]
+                            })
+                        
+                            fig = px.bar(
+                                df_comparacao.melt(id_vars="Indicador", var_name="Categoria", value_name="Valor"),
+                                x="Indicador",
+                                y="Valor",
+                                color="Categoria",
+                                barmode="group",
+                                title=f"📊 Comparação: {melhor_empresa['nome_empresa']} vs. Média do Mercado"
+                            )
+                        
+                            st.plotly_chart(fig, use_container_width=True)          
+        
+                        gerar_resumo_melhor_empresa(df_empresas)
+                        
+                        # 📌 Função para simular aportes mensais e calcular a evolução do patrimônio das ações =============================================================================================================
+        
+                        def formatar_real(valor):
+                            formatted = f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                            return "R$ " + formatted
+        
+                        def calcular_patrimonio_com_aportes(precos, investimento_inicial=1000, aporte_mensal=1000):
+                            patrimonio_final = {}
+                            patrimonio_evolucao = pd.DataFrame(index=precos.index)  # Criando DataFrame para evolução
+                        
+                            for ticker in precos.columns:
+                                df_precos = precos[[ticker]].dropna()
+                                
+                                if df_precos.empty or len(df_precos) < 12:  # Filtra empresas com histórico insuficiente
+                                    print(f"⚠️ Empresa {ticker} removida da análise (dados insuficientes).")
+                                    continue
+                                
+                                df_precos['Mes'] = df_precos.index.to_period('M')  # Agrupa por mês
+                                df_mensal = df_precos.groupby('Mes').first()  # Pegando o primeiro preço de cada mês
+                                
+                                total_acoes = 0
+                                total_investido = 0
+                                patrimonio = []
+                        
+                                for data, preco in df_mensal.iterrows():
+                                    if np.isnan(preco[ticker]):  # Se não houver dado, pula o mês
+                                        continue
+                        
+                                    if total_investido == 0:
+                                        total_acoes += investimento_inicial / preco[ticker]
+                                        total_investido += investimento_inicial
+                                    else:
+                                        total_acoes += aporte_mensal / preco[ticker]
+                                        total_investido += aporte_mensal
+                        
+                                    patrimonio.append(total_acoes * preco[ticker])
+                                    patrimonio_evolucao.loc[data.start_time, ticker] = total_acoes * preco[ticker]
+                        
+                                ultimo_preco = df_precos[ticker].dropna().iloc[-1] if not df_precos[ticker].dropna().empty else None
+                                if ultimo_preco is not None:
+                                    patrimonio_final[ticker] = total_acoes * ultimo_preco
+                        
+                            return (
+                                pd.DataFrame.from_dict(patrimonio_final, orient='index', columns=['Patrimonio Final']),
+                                patrimonio_evolucao.ffill()  # Preenche valores NaN para manter a evolução contínua
+                            )
+                        
+                        
+                        # 📌 Função para calcular o patrimônio acumulado no Tesouro Selic
+                        def calcular_patrimonio_selic_macro(dados_macro, data_inicio, investimento_inicial=1000, aporte_mensal=1000):
+                            if dados_macro is None or dados_macro.empty:
+                                raise ValueError("O DataFrame `dados_macro` está vazio ou não foi carregado corretamente.")
+                        
+                            # 🔹 Converter a coluna "Data" para datetime e definir como índice
+                            if 'Data' in dados_macro.columns:
+                                dados_macro["Data"] = pd.to_datetime(dados_macro["Data"], errors="coerce")
+                                dados_macro.set_index("Data", inplace=True)
+                        
+                            # 🔹 Remover linhas onde a Selic está vazia
+                            dados_macro = dados_macro.dropna(subset=["Selic"])
+                        
+                            # 🔹 Definir o período até o mês atual
+                            data_fim = pd.Timestamp.today().replace(day=1)  # Limita ao primeiro dia do mês atual
+                        
+                            # 🔹 Criar DataFrame para armazenar a evolução do patrimônio
+                            patrimonio_selic = pd.DataFrame(index=pd.date_range(start=data_inicio, 
+                                                                                 end=data_fim, 
+                                                                                 freq="M"))
+                            patrimonio_selic["Tesouro Selic"] = 0
+                        
+                            # 🔹 Criar uma lista para armazenar o saldo de cada aporte individualmente
+                            investimentos = []
+                        
+                            for data in patrimonio_selic.index:
+                                ano_referencia = data.year
+                        
+                                # 🔹 Obter a taxa Selic anual para o ano correspondente
+                                try:
+                                    taxa_selic_ano = dados_macro.loc[dados_macro.index.year == ano_referencia, "Selic"].iloc[0] / 100
+                                except IndexError:
+                                    taxa_selic_ano = 0.10  # Se não houver dado, assumimos 10% ao ano
+                        
+                                # 🔹 Converter taxa Selic anual para mensal composta
+                                taxa_selic_mensal = (1 + taxa_selic_ano) ** (1/12) - 1
+                        
+                                # 🔹 Atualizar os investimentos já aplicados
+                                investimentos = [valor * (1 + taxa_selic_mensal) for valor in investimentos]
+                        
+                                # 🔹 Adicionar um novo aporte ao portfólio
+                                investimentos.append(aporte_mensal)
+                        
+                                # 🔹 Somar todos os investimentos acumulados até o momento
+                                patrimonio_selic.loc[data, "Tesouro Selic"] = sum(investimentos)
+                        
+                            return patrimonio_selic
+                                        
+                                        
+                        # 📌 Baixando preços ajustados das empresas
+                        def baixar_precos(tickers, start="2010-01-01"):
+                            try:
+                                precos = yf.download(tickers, start=start)['Close']
+                                precos.columns = precos.columns.str.replace(".SA", "", regex=False)
+                                return precos
+                            except Exception as e:
+                                st.error(f"Erro ao baixar preços: {e}")
+                                return None
+                        
+                        
+                        # 📌 Analisando empresas por segmento
+                        if 'df_empresas' in locals() and not df_empresas.empty:
+                            df_lideres = df_empresas[df_empresas["Rank_Ajustado"] == 1]
+                        
+                            for segmento in df_lideres["Segmento"].unique():
+                                st.subheader(f"📊 Comparação no Segmento: {segmento}")
+                        
+                                lider = df_lideres[df_lideres["Segmento"] == segmento].iloc[0]
+                                concorrentes = df_empresas[(df_empresas["Segmento"] == segmento) & (df_empresas["Rank_Ajustado"] != 1)]
+                        
+                                if concorrentes.empty:
+                                    st.warning(f"⚠️ Não há concorrentes disponíveis para `{lider['nome_empresa']}` no segmento {segmento}.")
+                                    continue
+                        
+                                tickers = [lider["ticker"]] + concorrentes["ticker"].tolist()
+                                tickers = [ticker + ".SA" for ticker in tickers]
+                        
+                                precos = baixar_precos(tickers)
+                        
+                                if precos is None or precos.empty:
+                                    continue
+                                        
+                               # 📌 Calcular o patrimônio das ações primeiro
+                                df_patrimonio, df_patrimonio_evolucao = calcular_patrimonio_com_aportes(precos)
+                        
+                                # 📌 Agora que `df_patrimonio_evolucao` existe, pegamos a data inicial das ações
+                                data_inicio_acoes = df_patrimonio_evolucao.index.min()
+                                               
+                                # 📌 Agora chamamos o cálculo do Tesouro Selic passando `data_inicio_acoes`
+                                df_patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, data_inicio_acoes)
+                        
+                                # 🔹 Ajustar o Tesouro Selic para ter o mesmo tempo das ações
+                                df_patrimonio_selic2 = df_patrimonio_selic.reindex(df_patrimonio_evolucao.index, method="ffill")
+                        
+                                # 🔹 Concatenar os dados
+                                df_patrimonio_evolucao = pd.concat([df_patrimonio_evolucao, df_patrimonio_selic2], axis=1)
+                                df_patrimonio_evolucao = df_patrimonio_evolucao.ffill()
+                        
+                                # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO =======================================================================================================================
+                                st.subheader("📈 Evolução do Patrimônio com Aportes Mensais")
+                        
+                                fig, ax = plt.subplots(figsize=(12, 6))
+                        
+                                df_patrimonio_evolucao.index = pd.to_datetime(df_patrimonio_evolucao.index, errors='coerce')
+                                df_patrimonio_evolucao = df_patrimonio_evolucao.sort_index()
+                                               
+                                if df_patrimonio_evolucao.empty:
+                                    st.warning("⚠️ Dados insuficientes para plotar a evolução do patrimônio.")
+                                else:
+                                    for ticker in df_patrimonio_evolucao.columns:
+                                        if ticker == lider["ticker"]:
+                                            df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, color="red", label=f"{lider['nome_empresa']} (Líder)")
+                                        elif ticker == "Tesouro Selic":
+                                            df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, linestyle="-.", color="blue", label="Tesouro Selic")
+                                        else:
+                                            df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=1, linestyle="--", alpha=0.6, label=ticker)
+                        
+                                    ax.set_title(f"Evolução do Patrimônio Acumulado no Segmento: {segmento}")
+                                    ax.set_xlabel("Data")
+                                    ax.set_ylabel("Patrimônio (R$)")
+                                    ax.legend()
+                                    st.pyplot(fig)         
+        
+                                
+                                # 📌 EXIBIÇÃO DOS QUADRADOS (BLOCOS COM OS RESULTADOS) =========================================================================================================================
+                                st.subheader("📊 Patrimônio Final para R$1.000/Mês Investidos desde 2020")
+        
+                                # 🔹 Resetar índice para garantir que os tickers sejam colunas visíveis
+                                df_patrimonio = df_patrimonio.reset_index(drop=False)  # Tickers como coluna
+                                
+                                # 🔹 Criar uma cópia fixa de df_patrimonio para preservar Tesouro Selic
+                                df_patrimonio_fixado = df_patrimonio.copy()
+                            
+                                # 🔹 Armazene o valor fixo do Tesouro Selic **fora do loop** para evitar variação entre segmentos
+                                if "Tesouro Selic" not in df_patrimonio_fixado["index"].values:
+                                    patrimonio_selic_final = df_patrimonio_selic.iloc[-1]["Tesouro Selic"]  # Último valor acumulado **fixo**
+                                    st.markdown(patrimonio_selic_final)
+                                    
+                                    # 🔹 Adicionar apenas **uma vez** o valor do Tesouro Selic ao DataFrame fixado
+                                    df_patrimonio_fixado = pd.concat(
+                                        [df_patrimonio_fixado, pd.DataFrame([{"index": "Tesouro Selic", "Patrimonio Final": patrimonio_selic_final}])],
+                                        ignore_index=True
+                                    )
+                                
+                                # 🔹 Ordenar os valores acumulados em ordem decrescente
+                                df_patrimonio_fixado = df_patrimonio_fixado.sort_values(by="Patrimonio Final", ascending=False)
+                                
+                                # 🔹 Criar colunas para exibição no Streamlit
+                                num_columns = 3  # Número de colunas no layout
+                                columns = st.columns(num_columns)
+                                
+                                # 🔹 Exibir os blocos organizados corretamente na ordem desejada
+                                for i, row in enumerate(df_patrimonio_fixado.itertuples()):  # ✅ Usamos enumerate() para garantir ordem correta
+                                    ticker = row.index
+                                    patrimonio = row._2  # Acessando a coluna "Patrimonio Final" corretamente
+                                
+                                    # 🔹 Diferenciar o ícone do Tesouro Selic
+                                    if ticker == "Tesouro Selic":
+                                        icone_url = "https://cdn-icons-png.flaticon.com/512/2331/2331949.png"  # Ícone de dinheiro
+                                        border_color = "#007bff"  # Azul para diferenciar renda fixa
+                                    else:
+                                        icone_url = get_logo_url(ticker)
+                                        border_color = "#DAA520" if ticker == lider["ticker"] else "#d3d3d3"  # Dourado para líder, cinza para demais
+                                
+                                    # Se o patrimônio for inválido, exibir mensagem
+                                    patrimonio_formatado = "Valor indisponível" if pd.isna(patrimonio) else formatar_real(patrimonio)
+                                
+                                    # 🔹 Organizando os blocos de forma ordenada de cima para baixo e da esquerda para a direita
+                                    col = columns[i % num_columns]  # Garante que os valores sejam distribuídos corretamente
+                                    with col:
+                                        st.markdown(f"""
+                                            <div style="
+                                                background-color: #ffffff;
+                                                border: 3px solid {border_color};
+                                                border-radius: 10px;
+                                                padding: 15px;
+                                                margin: 10px;
+                                                text-align: center;
+                                                box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
+                                                flex: 1;
+                                            ">
+                                                <img src="{icone_url}" alt="{ticker}" style="width: 50px; height: auto; margin-bottom: 5px;">
+                                                <h3 style="margin: 0; color: #4a4a4a;">{ticker}</h3>
+                                                <p style="font-size: 18px; margin: 5px 0; font-weight: bold; color: #2ecc71;">
+                                                    {patrimonio_formatado}
+                                                </p>
+                                            </div>
+                                        """, unsafe_allow_html=True)
