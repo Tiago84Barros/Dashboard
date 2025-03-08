@@ -1232,6 +1232,41 @@ if pagina == "Avançada": #_____________________________________________________
            
                 if empresas_filtradas.empty:
                     st.warning("Não há empresas nesse segmento.")
+                else:
+                    # Adicionando o QUARTO filtro (Crescimento ou Estabelecidas)
+                    tipo_empresa = st.selectbox(
+                        "Selecione o Tipo de Empresa:",
+                        ["Todas", "Empresas em Crescimento (menos de 5 anos)", "Empresas Estabelecidas (5 anos ou mais)"]
+                    )
+            
+                empresas_selecionadas = []
+
+                for _, row in empresas_filtradas.iterrows():
+                    ticker = row['ticker']
+                    nome_emp = row['nome_empresa']
+        
+                    multiplos = load_multiplos_from_db(ticker + ".SA")
+                    df_dre = load_data_from_db(ticker + ".SA")
+        
+                    if multiplos is None or multiplos.empty or df_dre is None or df_dre.empty:
+                        continue
+        
+                    anos_disponiveis = pd.to_datetime(df_dre['Data'], errors='coerce').dt.year.nunique()
+        
+                    # Critério de filtragem
+                    if tipo_empresa == "Empresas em Crescimento (menos de 5 anos)" and anos_disponiveis < 5:
+                        empresas_selecionadas.append(row)
+                    elif tipo_empresa == "Empresas Estabelecidas (5 anos ou mais)" and anos_disponiveis >= 5:
+                        empresas_selecionadas.append(row)
+                    elif tipo_empresa == "Todas":
+                        empresas_selecionadas.append(row)
+        
+                if not empresas_selecionadas:
+                    st.warning(f"Não há empresas para a opção selecionada ({tipo_empresa}).")
+                else:
+                    empresas_filtradas = pd.DataFrame(empresas_selecionadas)
+                    st.success(f"Total de empresas filtradas: {len(empresas_filtradas)}")
+
 
                 st.markdown(f"### Empresas no Segmento {segmento_selecionado}")
                 st.markdown("---")
