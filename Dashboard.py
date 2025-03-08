@@ -1198,6 +1198,9 @@ if pagina == "Avançada": #_____________________________________________________
         metrics['historico_bonus'] = calcular_historico_bonus(num_anos)
         
         return metrics
+        
+    # Carregar dados macroeconômicos do banco de dados
+    dados_macro = load_macro_summary()
        
     # espaçamento entre os elementos
     st.markdown("""
@@ -1267,159 +1270,160 @@ if pagina == "Avançada": #_____________________________________________________
                         empresas_filtradas = pd.DataFrame(empresas_selecionadas)
                         st.success(f"Total de empresas filtradas: {len(empresas_filtradas)}")
 
-                st.markdown(f"### Empresas no Segmento {segmento_selecionado}")
-                st.markdown("---")
 
-                resultados = []        
-                
-                for i, row in empresas_filtradas.iterrows():
-                    ticker = row['ticker']
-                    nome_emp = row['nome_empresa']
+                    # Função para calcular o Score acumulado ----------------------------------------------------------------------------------------------------------------------------                   
+                    def calcular_score_acumulado(multiplos, dre, indicadores_score):
+                        df_resultados = []
+                    
+                        anos_disponiveis = sorted(multiplos['Ano'].unique())
+                    
+                        for ano in anos_disponiveis[:-1]:  # não calcula no último ano disponível (não tem como prever ano seguinte)
+                            df_multiplos_acum = multiplos[multiplos['Ano'] <= ano]
+                            df_dre_acumulado = dre[dre['Ano'] <= ano]
+                    
+                            metricas = calcular_metricas_historicas_simplificadas(df_mult=df_multiplos[df_multiplos['Ano'] <= ano],
+                                                                                   df_dre=df_dre[df_dre['Ano'] <= ano])
+                    
+                            score_ajustado = 0
+                            for ind, config in indicadores_score.items():
+                                if metricas.get(indicador) is None:
+                                    valor_norm = 0
+                                else:
+                                    valor = winsorize(pd.Series([metricas[col]]))[0]
+                                    valor_norm = z_score_normalize(pd.Series(valor), config['melhor_alto'])[0]
+                                    score_ajustado += valor_norm * config['peso']       #### *** SCORE AJUSTADO *** ######
+                    
+                            df_resultados.append({
+                                'Ano': ano,
+                                'Score_Ajustado': score_ajustado
+                            })
+                    
+                        return pd.DataFrame(df_resultados)
+                    
+                    
+                        # Função para determinar líder anual com base no Score Ajustado --------------------------------------------------------------------------------------------------                        
+                        def determinar_lider_anual(df_scores):
+                            lideres = df_scores.loc[df_scores.groupby('Ano')['Score_Ajustado'].idxmax()]
+                            return lideres
+                        
+                        
+                        # Função para gerenciamento dinâmico da carteira ------------------------------------------------------------------------------------------------------------------                        
+                        def gerir_carteira(precos, df_scores, aporte_mensal=1000):
+                            patrimonio = {}
+                            carteira = {}
+                        
+                            anos = sorted(df_scores['Ano'].unique())
+                        
+                            for ano in anos:
+                                empresa_lider = df_scores[df_scores['Ano'] == ano].iloc[0]['ticker']
+                        
+                                for mes in range(1, 13):
+                                    data_aporte = f"{ano + 1}-{mes:02d}"  # Ano seguinte ao ano do score
+                        
+                                    if data_aporte not in precos.index:
+                                        continue
+                        
+                                    preco_atual = precos.loc[data_aporte, empresa_lider]
+                        
+                                    # Verificar se houve mudança de líder
+                                    if empresa_lider not in carteira:
+                                        carteira[empresa_lider] = 0
+                        
+                                    carteira[empresa_lider] += aporte_mensal / preco_atual
+                        
+                                    # Atualizar patrimônio
+                                    patrimonio_total = sum(carteira[empresa] * precos.loc[data_aporte, empresa] for empresa in carteira)
+                        
+                                    patrimonio[data_aporte] = patrimonio.get(data_aporte, 0) + patrimonio_total
+                        
+                                    # Verificar deterioração do score e realizar venda se necessário
+                                    for empresa in list(carteira.keys()):
+                                        score_atual = df_scores[(df_scores['Ano'] == ano - 1) & (df_scores['ticker'] == empresa)]['Score_Ajustado'].values
+                                        score_inicial = df_scores[(df_scores['Ano'] == anos[0]) & (df_scores['Empresa'] == empresa)]['Score_Ajustado'].values[0]
+                        
+                                        if score_atual / score_inicial < 0.7:
+                                            # Venda completa e realocação para líder atual
+                                            patrimonio_venda = carteira.pop(empresa) * preco_atual
+                                            carteira[empresa_lider] += patrimonio_venda / preco_atual
+                        
+                            return pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
+                        
+                        
+                        # Fluxo principal                                       
+                        resultados = []
+                        for i, row in empresas_filtradas.iterrows():
+                            ticker = row['ticker']
+                            nome_emp = row['nome_empresa']
+                        
+                            multiplos = load_multiplos_from_db(ticker + ".SA")
+                            df_dre = load_data_from_db(ticker + ".SA")
+                        
+                            if multiplos is None or multiplos.empty or df_dre is None or df_dre.empty:
+                                continue
 
-                     # Carregar histórico das tabelas ________________________________________________________________________________________________
-                    multiplos = load_multiplos_from_db(ticker + ".SA")
-                    df_dre    = load_data_from_db(ticker + ".SA")
-                
-                    if multiplos is None or multiplos.empty:
-                        continue
-                    if df_dre is None or df_dre.empty:
-                        continue
-
-                    # **Remover outliers antes de calcular métricas** __________________________________________________________________________________
-                    colunas_para_filtrar = ['Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida', 
+                            # **Remover outliers antes de calcular métricas** __________________________________________________________________________________
+                            colunas_para_filtrar = ['Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida', 
                                             'Divida_Total', 'Passivo_Circulante', 'Liquidez_Corrente', 
                                             'Crescimento_Receita', 'Crescimento_Lucro']
+                        
+                            # Remover Outliers
+                            multiplos_corrigido = remover_outliers_iqr(multiplos, colunas_para_filtrar)
+                            df_dre_corrigido = remover_outliers_iqr(df_dre, colunas_para_filtrar)
 
-                    multiplos_corrigido = remover_outliers_iqr(multiplos, colunas_para_filtrar)
-                    df_dre_corrigido = remover_outliers_iqr(df_dre, colunas_para_filtrar)
-              
-                    # Calcular métricas simplificadas ______________________________________________________________________________________________________
-                    metrics_dict = calcular_metricas_historicas_simplificadas(multiplos_corrigido, df_dre_corrigido)
-                                                          
-                    data_emp = {
-                        'ticker': ticker,
-                        'nome_empresa': nome_emp,
-                        'Setor': row['SETOR'],
-                        'Subsetor': row['SUBSETOR'],
-                        'Segmento': row['SEGMENTO']
-                    }
-                    data_emp.update(metrics_dict)
-                    resultados.append(data_emp)   
-                            
-                if not resultados:
-                    st.info("Não há dados para as empresas deste segmento.")
-                                   
-                df_empresas = pd.DataFrame(resultados)  # Coloca as informações agrupadas no dataframe df_empresas
-                                                         
-                # Carregar dados macroeconômicos do banco de dados
-                dados_macro = load_macro_summary()
-                 
-                # ================================================
-                #  DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE
-                # ================================================___________________________________________________________________________________________________________________________
-                # Definir indicadores para score
-                indicadores_score_ajustados = {
-                    'Margem_Liquida_mean': {'peso': 0.15, 'melhor_alto': True},
-                    'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},
-                    'ROE_mean': {'peso': 0.20, 'melhor_alto': True},
-                    'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},
-                    'P/VP_mean': {'peso': 0.10, 'melhor_alto': False},
-                    'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
-                    'Alavancagem_Financeira_mean': {'peso': 0.15, 'melhor_alto': False},
-                    'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
-                    'Receita_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': True},
-                    'Lucro_Liquido_slope_log': {'peso': 0.20, 'melhor_alto': True},
-                    'Patrimonio_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
-                    'Divida_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': False},
-                    'Caixa_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
-                }
-               
-                def calcular_score(df_empresas, indicadores_score_ajustados):
-                    if df_empresas.empty:
-                        st.warning("O DataFrame está vazio. Não há dados para calcular o score.")
-                        return df_empresas
-                
-                    # Inicializar Score_Ajustado
-                    df_empresas['Score_Ajustado'] = 0.0
-                
-                    for col, config in indicadores_score_ajustados.items():
-                        if col not in df_empresas.columns:
-                            st.warning(f"A coluna '{col}' não existe em df_empresas e será ignorada.")
-                            df_empresas[col] = 0.0  # Criar coluna com valor 0
-                            df_empresas[col + '_norm'] = 0.0  # Criar versão normalizada
-                            continue
-                
-                        # Aplicar Winsorize para suavizar outliers
-                        df_empresas[col] = winsorize(df_empresas[col])
-                
-                        # 📌 Aplicando Penalização por Volatilidade
-                        volatility_col = col.replace("_mean", "_volatility_penalty")
-                        if volatility_col in df_empresas.columns:
-                            df_empresas[col] *= (1 - df_empresas[volatility_col])  # Penaliza o indicador pela volatilidade
-                
-                        # 📌 Aplicando Penalização por Tempo de Mercado
-                        if 'historico_bonus' in df_empresas.columns:
-                            df_empresas[col] *= df_empresas['historico_bonus']  # Penaliza o indicador pelo tempo de mercado
-                
-                        # Criar coluna normalizada
-                        df_empresas[col + '_norm'] = z_score_normalize(df_empresas[col], config['melhor_alto'])
-                
-                        # Se a normalização falhar, criar a coluna `_norm`
-                        if col + '_norm' not in df_empresas.columns:
-                            st.error(f"Erro ao criar '{col}_norm'. Criando com valor padrão.")
-                            df_empresas[col + '_norm'] = 0.0
-                
-                        # Somar ao Score Ajustado
-                        df_empresas['Score_Ajustado'] += df_empresas[col + '_norm'] * config['peso']
-                
-                    # Criar ranking dentro do segmento
-                    df_empresas['Rank_Ajustado'] = df_empresas['Score_Ajustado'].rank(method='dense', ascending=False)
-                
-                    return df_empresas
-
+                            # ================================================
+                            #  DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE
+                            # ================================================___________________________________________________________________________________________________________________________
+                            # Definir indicadores para score
+                            indicadores_score_ajustados = {
+                                'Margem_Liquida_mean': {'peso': 0.15, 'melhor_alto': True},
+                                'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},
+                                'ROE_mean': {'peso': 0.20, 'melhor_alto': True},
+                                'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},
+                                'P/VP_mean': {'peso': 0.10, 'melhor_alto': False},
+                                'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                                'Alavancagem_Financeira_mean': {'peso': 0.15, 'melhor_alto': False},
+                                'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                                'Receita_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                                'Lucro_Liquido_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                                'Patrimonio_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                                'Divida_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': False},
+                                'Caixa_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                            }
+                                    
+                            resultados_empresa = calcular_score_acumulado(multiplos_corrigido, df_dre_corrigido, indicadores_score_ajustados)
+                        
+                            resultados.append({
+                                'ticker': ticker,
+                                'nome_empresa': nome_emp,
+                                'Setor': row['SETOR'],
+                                'Subsetor': row['SUBSETOR'],
+                                'Segmento': row['SEGMENTO'],
+                                'Scores_Anuais': resultados
+                            })
+                        
+                        # DataFrame com scores
+                        df_scores = pd.concat([pd.DataFrame(res) for res in resultados])
+                        
+                        # Determinar líderes
+                        lideres_por_ano = determinar_lideres(df_scores)
+                        
+                        # Baixar preços
+                        precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
+                        
+                        # Gerenciamento da carteira
+                        patrimonio_historico = gerir_carteira(precos, df_scores)
+                        
+                        # Comparação final com Tesouro Selic
+                        patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, patrimonio_historico.index.min())
+                        
+                        patrimonio_final = pd.concat([patrimonio_historico, patrimonio_selic], axis=1)
+                        
+                        # Mostrar resultado final
+                        st.line_chart(patrimonio_historico)
+                        
+                        # Esse código representa uma implementação sólida e robusta conforme as estratégias discutidas, permitindo uma análise dinâmica e fundamentada na evolução histórica dos Scores das empresas.
                     
-                df_empresas = calcular_score(df_empresas, indicadores_score_ajustados) # CÁLCULO DO SCRORE DAS EMPRESAS ***********************************************
-
-                # Ordenar resultado pelo Score Ajustado
-                df_empresas.sort_values(['Segmento', 'Score_Ajustado'], ascending=[True, False], inplace=True)
-                
-                # Exibir Ranking de Empresas em quadrados estilizados lado a lado
-                st.markdown("### Ranking de Empresas (Score Ajustado)")
-                
-                colunas_layout = st.columns(3)
-                for idx, row in enumerate(df_empresas.itertuples()):
-                    col = colunas_layout[idx % len(colunas_layout)]
-                    with col:
-                        logo_url = get_logo_url(row.ticker)
-                        st.markdown(
-                            f"""
-                            <div style="
-                                border: 2px solid #ddd;
-                                border-radius: 10px;
-                                padding: 15px;
-                                margin: 10px;
-                                background-color: #f9f9f9;
-                                box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
-                                text-align: center;
-                            ">
-                                <img src="{logo_url}" style="width: 50px; height: 50px; margin-bottom: 10px;">
-                                <h4 style="color: #333;">{row.nome_empresa} ({row.ticker})</h4>
-                                <p style="font-size: 18px; color: green; font-weight: bold;">Score: {row.Score_Ajustado:.2f}</p>
-                                <p style="font-size: 16px;">Rank: {int(row.Rank_Ajustado)}</p>
-                            </div>
-                            """,
-                            unsafe_allow_html=True
-                        )
-                 
-                
-                # (Opcional) exibir df_empresas em modo tabela
-                #st.dataframe(df_empresas)
-
-                
-                # Esse score inicial considera poucas variáveis (Margem, ROE, P/L, etc.) 
-                # e a tendência de crescimento (slope log) de Receita e Lucro. 
-                # Caso deseje adicionar mais variáveis (ex.: Patrimônio, Caixa, etc.), 
-                # basta inserir nos dicionários e na função de cálculo.
+             
             
                          
                  # Inserindo espaçamento entre os elementos
