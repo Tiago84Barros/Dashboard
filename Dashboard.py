@@ -1205,7 +1205,7 @@ if pagina == "Avançada": #_____________________________________________________
         multiplos['Ano'] = pd.to_datetime(multiplos['Data'], errors='coerce').dt.year
         df_dre['Ano'] = pd.to_datetime(df_dre['Data'], errors='coerce').dt.year
         anos_disponiveis = sorted(multiplos['Ano'].unique())
-        st.markdown(anos_disponiveis)
+        st.dataframe(anos_disponiveis)
     
         for ano in anos_disponiveis[:-1]:  # não calcula no último ano disponível (não tem como prever ano seguinte)
             df_multiplos_acum = multiplos[multiplos['Ano'] <= ano]
