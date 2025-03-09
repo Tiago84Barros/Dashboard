@@ -1441,10 +1441,10 @@ if pagina == "Avançada": #_____________________________________________________
                             'Segmento': row['SEGMENTO'],
                             'Scores_Anuais': resultados
                         })
-                    """
+                 
                     # DataFrame com scores
                     df_scores = pd.concat([pd.DataFrame(res) for res in resultados])
-                                                              
+                    """                                       
                     # Determinar líderes
                     lideres_por_ano = determinar_lideres(df_scores)
                     
