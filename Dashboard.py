@@ -1199,12 +1199,10 @@ if pagina == "Avançada": #_____________________________________________________
         return metrics
 
     # Função para calcular o Score acumulado ___________________________________________________________________________________________________________________________________________________                  
-    def calcular_score_acumulado(multiplos, dre, indicadores_score):
+    def calcular_score_acumulado(multiplos, dre, indicadores_score, anos_disponiveis):
         df_resultados = []
 
-        multiplos['Ano'] = pd.to_datetime(multiplos['Data'], errors='coerce').dt.year
-        df_dre['Ano'] = pd.to_datetime(df_dre['Data'], errors='coerce').dt.year
-        anos_disponiveis = sorted(multiplos['Ano'].unique())
+        # anos_disponiveis = sorted(multiplos['Ano'].unique())
           
         for ano in anos_disponiveis[:-1]:  # não calcula no último ano disponível (não tem como prever ano seguinte)
             df_multiplos_acum = multiplos[multiplos['Ano'] <= ano]
@@ -1332,7 +1330,7 @@ if pagina == "Avançada": #_____________________________________________________
                             continue
                         if df_dre is None or df_dre.empty:
                             continue
-    
+      
                         # Determinar tempo de mercado com base no histórico das demonstrações
                         anos_disponiveis = df_dre['Data'].apply(lambda x: pd.to_datetime(x).year).nunique()
                    
@@ -1359,6 +1357,10 @@ if pagina == "Avançada": #_____________________________________________________
                         
                             multiplos = load_multiplos_from_db(ticker + ".SA")
                             df_dre = load_data_from_db(ticker + ".SA")
+
+                            # Determinar tempo de mercado com base no histórico das demonstrações
+                            anos_selecionados = df_dre['Data'].apply(lambda x: pd.to_datetime(x).year).nunique()
+                            st.markdonw(anos_selecionados)
                         
                             if multiplos is None or multiplos.empty or df_dre is None or df_dre.empty:
                                 continue
