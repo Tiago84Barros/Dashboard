@@ -1408,8 +1408,7 @@ if pagina == "Avançada": #_____________________________________________________
                     else:
                         empresas_filtradas = pd.DataFrame(empresas_selecionadas)
                         st.success(f"Total de empresas filtradas: {len(empresas_filtradas)}")  
-                                    
-                    """
+                             
                     # Fluxo principal                                       
                     resultados = []
                     for i, row in empresas_filtradas.iterrows():
@@ -1466,7 +1465,7 @@ if pagina == "Avançada": #_____________________________________________________
                             'Segmento': row['SEGMENTO'],
                             'Scores_Anuais': resultados
                         })
-                    
+                    """
                     # DataFrame com scores
                     df_scores = pd.concat([pd.DataFrame(res) for res in resultados])
                                                               
