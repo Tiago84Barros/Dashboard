@@ -1394,7 +1394,7 @@ if pagina == "Avançada": #_____________________________________________________
                         # Determinar tempo de mercado com base no histórico das demonstrações
                         anos_disponiveis = df_dre['Data'].apply(lambda x: pd.to_datetime(x).year).nunique()
                                         
-                        """
+                        
                         # Aplicar o filtro conforme tempo de existência da empresa
                         if opcao_crescimento == "Crescimento (< 5 anos)" and anos_disponiveis < 5:
                             empresas_selecionadas.append(row)
@@ -1409,7 +1409,7 @@ if pagina == "Avançada": #_____________________________________________________
                         empresas_filtradas = pd.DataFrame(empresas_selecionadas)
                         st.success(f"Total de empresas filtradas: {len(empresas_filtradas)}")  
                                     
-                    
+                    """
                     # Fluxo principal                                       
                     resultados = []
                     for i, row in empresas_filtradas.iterrows():
