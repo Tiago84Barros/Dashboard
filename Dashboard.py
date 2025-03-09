@@ -1410,6 +1410,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # DataFrame com scores
                     df_scores = pd.concat([pd.DataFrame(res) for res in resultados])
+                    st.dataframe(df_scores)
                                             
                     # Determinar líderes
                     lideres_por_ano = determinar_lideres(df_scores)
