@@ -1370,8 +1370,7 @@ if pagina == "Avançada": #_____________________________________________________
                         # Remover Outliers
                         multiplos_corrigido = remover_outliers_iqr(multiplos, colunas_para_filtrar)
                         df_dre_corrigido = remover_outliers_iqr(df_dre, colunas_para_filtrar)
-                        st.dataframe(multiplos_corrigido)
-    
+                           
                         # ================================================
                         #  DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE
                         # ================================================___________________________________________________________________________________________________________________________
@@ -1392,7 +1391,7 @@ if pagina == "Avançada": #_____________________________________________________
                             'Caixa_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
                         }
                                 
-                        resultados_empresa = calcular_score_acumulado(multiplos_corrigido, df_dre_corrigido, indicadores_score_ajustados)
+                        resultados_empresa = calcular_score_acumulado(multiplos_corrigido, df_dre_corrigido)
                     
                         resultados.append({
                             'ticker': ticker,
