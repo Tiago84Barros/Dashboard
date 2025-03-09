@@ -1277,7 +1277,7 @@ if pagina == "Avançada": #_____________________________________________________
                 # Verificar deterioração do score e realizar venda se necessário
                 for empresa in list(carteira.keys()):
                     score_atual = df_scores[(df_scores['Ano'] == ano - 1) & (df_scores['ticker'] == empresa)]['Score_Ajustado'].values
-                    score_inicial = df_scores[(df_scores['Ano'] == anos[0]) & (df_scores['Empresa'] == empresa)]['Score_Ajustado'].values[0]
+                    score_inicial = df_scores[(df_scores['Ano'] == anos[0]) & (df_scores['ticker'] == empresa)]['Score_Ajustado'].values[0]
     
                     if score_atual / score_inicial < 0.7:
                         # Venda completa e realocação para líder atual
