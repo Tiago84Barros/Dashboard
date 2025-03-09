@@ -1394,7 +1394,7 @@ if pagina == "Avançada": #_____________________________________________________
                         # Determinar tempo de mercado com base no histórico das demonstrações
                         anos_disponiveis = df_dre['Data'].apply(lambda x: pd.to_datetime(x).year).nunique()
                                         
-                   
+                        """
                         # Aplicar o filtro conforme tempo de existência da empresa
                         if opcao_crescimento == "Crescimento (< 5 anos)" and anos_disponiveis < 5:
                             empresas_selecionadas.append(row)
@@ -1489,7 +1489,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # Esse código representa uma implementação sólida e robusta conforme as estratégias discutidas, permitindo uma análise dinâmica e fundamentada na evolução histórica dos Scores das empresas.
                 
-         
+                    """
         
                      
                      # Inserindo espaçamento entre os elementos
