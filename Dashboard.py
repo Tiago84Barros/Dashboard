@@ -1051,7 +1051,7 @@ if pagina == "Avançada": #_____________________________________________________
                 df_filtrado = df_filtrado[(df_filtrado[col] >= limite_inferior) & (df_filtrado[col] <= limite_superior)]
         return df_filtrado
 
-    # Função que realiza a normalização dos dados (comparabilidade dos múltiplos, reduzindo distorções causadas por concentração de valores em um extremo)______________
+    # Função que realiza a normalização dos dados (comparabilidade dos múltiplos, reduzindo distorções causadas por concentração de valores em um extremo)_______________________________
     def z_score_normalize(series, melhor_alto=True):
         series = series.replace([np.inf, -np.inf], np.nan)
         valid = series.dropna()
@@ -1147,7 +1147,7 @@ if pagina == "Avançada": #_____________________________________________________
     # ===============================================
     # FUNÇÃO PRINCIPAL: Calcular Métricas Históricas
     # ===============================================
-    def calcular_metricas_historicas_simplificadas(df_mult, df_dre):
+    def calcular_metricas_historicas_simplificadas(df_mult, df_dre): #__________________________________________________________________________________________________________________________
         """
         Calcula métricas essenciais para um conjunto pequeno de variáveis.
         - Múltiplos: Margem_Liquida, Margem_Operacional, ROE, ROIC, P/VP, Endividamento_Total, Alavancagem_Financeira, Liquidez_Corrente
@@ -1197,6 +1197,84 @@ if pagina == "Avançada": #_____________________________________________________
         metrics['historico_bonus'] = calcular_historico_bonus(num_anos)
         
         return metrics
+
+    # Função para calcular o Score acumulado ___________________________________________________________________________________________________________________________________________________                  
+    def calcular_score_acumulado(multiplos, dre, indicadores_score):
+        df_resultados = []
+    
+        anos_disponiveis = sorted(multiplos['Ano'].unique())
+    
+        for ano in anos_disponiveis[:-1]:  # não calcula no último ano disponível (não tem como prever ano seguinte)
+            df_multiplos_acum = multiplos[multiplos['Ano'] <= ano]
+            df_dre_acumulado = dre[dre['Ano'] <= ano]
+    
+            metricas = calcular_metricas_historicas_simplificadas(df_mult=df_multiplos[df_multiplos['Ano'] <= ano],
+                                                                   df_dre=df_dre[df_dre['Ano'] <= ano])
+    
+            score_ajustado = 0
+            for ind, config in indicadores_score.items():
+                if metricas.get(indicador) is None:
+                    valor_norm = 0
+                else:
+                    valor = winsorize(pd.Series([metricas[col]]))[0]
+                    valor_norm = z_score_normalize(pd.Series(valor), config['melhor_alto'])[0]
+                    score_ajustado += valor_norm * config['peso']       #### *** SCORE AJUSTADO *** ######
+    
+            df_resultados.append({
+                'Ano': ano,
+                'Score_Ajustado': score_ajustado
+            })
+    
+        return pd.DataFrame(df_resultados)
+        
+    # Função para determinar líder anual com base no Score Ajustado __________________________________________________________________________________________________________________________                      
+    def determinar_lider_anual(df_scores):
+        lideres = df_scores.loc[df_scores.groupby('Ano')['Score_Ajustado'].idxmax()]
+        return lideres
+    
+    
+    # Função para gerenciamento dinâmico da carteira  ________________________________________________________________________________________________________________________________________                        
+    def gerir_carteira(precos, df_scores, aporte_mensal=1000):
+        patrimonio = {}
+        carteira = {}
+    
+        anos = sorted(df_scores['Ano'].unique())
+    
+        for ano in anos:
+            empresa_lider = df_scores[df_scores['Ano'] == ano].iloc[0]['ticker']
+    
+            for mes in range(1, 13):
+                data_aporte = f"{ano + 1}-{mes:02d}"  # Ano seguinte ao ano do score
+    
+                if data_aporte not in precos.index:
+                    continue
+    
+                preco_atual = precos.loc[data_aporte, empresa_lider]
+    
+                # Verificar se houve mudança de líder
+                if empresa_lider not in carteira:
+                    carteira[empresa_lider] = 0
+    
+                carteira[empresa_lider] += aporte_mensal / preco_atual
+    
+                # Atualizar patrimônio
+                patrimonio_total = sum(carteira[empresa] * precos.loc[data_aporte, empresa] for empresa in carteira)
+    
+                patrimonio[data_aporte] = patrimonio.get(data_aporte, 0) + patrimonio_total
+    
+                # Verificar deterioração do score e realizar venda se necessário
+                for empresa in list(carteira.keys()):
+                    score_atual = df_scores[(df_scores['Ano'] == ano - 1) & (df_scores['ticker'] == empresa)]['Score_Ajustado'].values
+                    score_inicial = df_scores[(df_scores['Ano'] == anos[0]) & (df_scores['Empresa'] == empresa)]['Score_Ajustado'].values[0]
+    
+                    if score_atual / score_inicial < 0.7:
+                        # Venda completa e realocação para líder atual
+                        patrimonio_venda = carteira.pop(empresa) * preco_atual
+                        carteira[empresa_lider] += patrimonio_venda / preco_atual
+    
+        return pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
+                        
+
         
     # Carregar dados macroeconômicos do banco de dados
     dados_macro = load_macro_summary()
@@ -1245,6 +1323,7 @@ if pagina == "Avançada": #_____________________________________________________
                         nome_emp = row['nome_empresa']
     
                         multiplos = load_multiplos_from_db(ticker + ".SA")
+                        st.dataframe(multiplos)
                         df_dre = load_data_from_db(ticker + ".SA")
     
                         if multiplos is None or multiplos.empty:
@@ -1270,83 +1349,10 @@ if pagina == "Avançada": #_____________________________________________________
                         st.success(f"Total de empresas filtradas: {len(empresas_filtradas)}")
 
 
-                    # Função para calcular o Score acumulado ----------------------------------------------------------------------------------------------------------------------------                   
-                    def calcular_score_acumulado(multiplos, dre, indicadores_score):
-                        df_resultados = []
-                    
-                        anos_disponiveis = sorted(multiplos['Ano'].unique())
-                    
-                        for ano in anos_disponiveis[:-1]:  # não calcula no último ano disponível (não tem como prever ano seguinte)
-                            df_multiplos_acum = multiplos[multiplos['Ano'] <= ano]
-                            df_dre_acumulado = dre[dre['Ano'] <= ano]
-                    
-                            metricas = calcular_metricas_historicas_simplificadas(df_mult=df_multiplos[df_multiplos['Ano'] <= ano],
-                                                                                   df_dre=df_dre[df_dre['Ano'] <= ano])
-                    
-                            score_ajustado = 0
-                            for ind, config in indicadores_score.items():
-                                if metricas.get(indicador) is None:
-                                    valor_norm = 0
-                                else:
-                                    valor = winsorize(pd.Series([metricas[col]]))[0]
-                                    valor_norm = z_score_normalize(pd.Series(valor), config['melhor_alto'])[0]
-                                    score_ajustado += valor_norm * config['peso']       #### *** SCORE AJUSTADO *** ######
-                    
-                            df_resultados.append({
-                                'Ano': ano,
-                                'Score_Ajustado': score_ajustado
-                            })
-                    
-                        return pd.DataFrame(df_resultados)
                     
                     
-                        # Função para determinar líder anual com base no Score Ajustado --------------------------------------------------------------------------------------------------                        
-                        def determinar_lider_anual(df_scores):
-                            lideres = df_scores.loc[df_scores.groupby('Ano')['Score_Ajustado'].idxmax()]
-                            return lideres
-                        
-                        
-                        # Função para gerenciamento dinâmico da carteira ------------------------------------------------------------------------------------------------------------------                        
-                        def gerir_carteira(precos, df_scores, aporte_mensal=1000):
-                            patrimonio = {}
-                            carteira = {}
-                        
-                            anos = sorted(df_scores['Ano'].unique())
-                        
-                            for ano in anos:
-                                empresa_lider = df_scores[df_scores['Ano'] == ano].iloc[0]['ticker']
-                        
-                                for mes in range(1, 13):
-                                    data_aporte = f"{ano + 1}-{mes:02d}"  # Ano seguinte ao ano do score
-                        
-                                    if data_aporte not in precos.index:
-                                        continue
-                        
-                                    preco_atual = precos.loc[data_aporte, empresa_lider]
-                        
-                                    # Verificar se houve mudança de líder
-                                    if empresa_lider not in carteira:
-                                        carteira[empresa_lider] = 0
-                        
-                                    carteira[empresa_lider] += aporte_mensal / preco_atual
-                        
-                                    # Atualizar patrimônio
-                                    patrimonio_total = sum(carteira[empresa] * precos.loc[data_aporte, empresa] for empresa in carteira)
-                        
-                                    patrimonio[data_aporte] = patrimonio.get(data_aporte, 0) + patrimonio_total
-                        
-                                    # Verificar deterioração do score e realizar venda se necessário
-                                    for empresa in list(carteira.keys()):
-                                        score_atual = df_scores[(df_scores['Ano'] == ano - 1) & (df_scores['ticker'] == empresa)]['Score_Ajustado'].values
-                                        score_inicial = df_scores[(df_scores['Ano'] == anos[0]) & (df_scores['Empresa'] == empresa)]['Score_Ajustado'].values[0]
-                        
-                                        if score_atual / score_inicial < 0.7:
-                                            # Venda completa e realocação para líder atual
-                                            patrimonio_venda = carteira.pop(empresa) * preco_atual
-                                            carteira[empresa_lider] += patrimonio_venda / preco_atual
-                        
-                            return pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
-                        
+                    
+                      
                         
                         # Fluxo principal                                       
                         resultados = []
