@@ -1212,14 +1212,15 @@ if pagina == "Avançada": #_____________________________________________________
             metricas = calcular_metricas_historicas_simplificadas(df_mult=df_multiplos_acum, df_dre=df_dre_acumulado)
     
             score_ajustado = 0
-            for ind, config in indicadores_score_ajustados.items():
-                st.markdown(ind)
-                if metricas.get(ind) is None:
-                    valor_norm = 0
-                else:
-                    valor = winsorize(pd.Series([metricas[col]]))[0]
-                    valor_norm = z_score_normalize(pd.Series(valor), config['melhor_alto'])[0]
-                    score_ajustado += valor_norm * config['peso']       #### *** SCORE AJUSTADO *** ######
+            for indicador, config in indicadores_score_ajustados.items():
+                valor_metrica = metricas.get(indicador)
+
+                # Checa se o valor existe antes de aplicar winsorize e normalizar
+                if valor_metrica is not None:
+                    valor_metrica = winsorize(pd.Series([valor_metrica])).iloc[0]  # Winsorize em valor único
+                    valor_norm = z_score_normalize(pd.Series([valor_metrica]), config['melhor_alto']).iloc[0]
+                    score_ajustado += valor_metrica * config['peso']   ### *** CÁLCULO DO SCORE *** ###
+
     
             df_resultados.append({
                 'Ano': ano,
