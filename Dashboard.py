@@ -1230,7 +1230,7 @@ if pagina == "Avançada": #_____________________________________________________
         return pd.DataFrame(df_resultados)
         
     # Função para determinar líder anual com base no Score Ajustado __________________________________________________________________________________________________________________________                      
-    def determinar_lider_anual(df_scores):
+    def determinar_lideres(df_scores):
         lideres = df_scores.loc[df_scores.groupby('Ano')['Score_Ajustado'].idxmax()]
         return lideres
     
