@@ -1199,28 +1199,28 @@ if pagina == "Avançada": #_____________________________________________________
         return metrics
 
     # Função para calcular o Score acumulado ___________________________________________________________________________________________________________________________________________________                  
-    def calcular_score_acumulado(multiplos, dre, indicadores_score_ajustados):
+    def calcular_score_acumulado(multiplos, dre, indicadores_score):
         df_resultados = []
-
+    
         anos_disponiveis = sorted(multiplos['Ano'].unique())
-                        
-        for ano in anos_disponiveis[:-1]:  # não calcula no último ano disponível (não tem como prever ano seguinte)
-            df_multiplos_acum = multiplos[multiplos['Ano'] <= ano]
-            df_dre_acumulado = dre[dre['Ano'] <= ano]
-
-            
-            metricas = calcular_metricas_historicas_simplificadas(df_mult=df_multiplos_acum, df_dre=df_dre_acumulado)
+                            
+        for ano in anos_disponiveis[:-1]:  
+            df_multiplos_acum = multiplos[multiplos['Ano'] <= ano].copy()
+            df_dre_acumulado = dre[dre['Ano'] <= ano].copy()
+    
+            metricas = calcular_metricas_historicas_simplificadas(
+                df_mult=df_multiplos_acum,
+                df_dre=df_dre_acumulado
+            )
     
             score_ajustado = 0
-            for indicador, config in indicadores_score_ajustados.items():
-                valor_metrica = metricas.get(indicador)
-
-                # Checa se o valor existe antes de aplicar winsorize e normalizar
-                if valor_metrica is not None:
-                    valor_metrica = winsorize(pd.Series([valor_metrica])).iloc[0]  # Winsorize em valor único
-                    valor_norm = z_score_normalize(pd.Series([valor_metrica]), config['melhor_alto']).iloc[0]
-                    score_ajustado += valor_metrica * config['peso']   ### *** CÁLCULO DO SCORE *** ###
-
+            for ind, config in indicadores_score.items():
+                if metricas.get(ind) is None:
+                    valor_norm = 0
+                else:
+                    valor = winsorize(pd.Series([metricas[ind]]))[0]
+                    valor_norm = z_score_normalize(pd.Series(valor), config['melhor_alto'])[0]
+                    score_ajustado += valor_norm * config['peso'] 
     
             df_resultados.append({
                 'Ano': ano,
@@ -1228,7 +1228,6 @@ if pagina == "Avançada": #_____________________________________________________
             })
     
         return pd.DataFrame(df_resultados)
-        
         
     # 📌 Baixando preços de fechamento das empresas ____________________________________________________________________________________________________________________________________________
     def baixar_precos(tickers, start="2010-01-01"):
@@ -1465,7 +1464,6 @@ if pagina == "Avançada": #_____________________________________________________
                             'Segmento': row['SEGMENTO'],
                             'Scores_Anuais': resultados
                         })
-                        st.dataframe(resultados)
                     """
                     # DataFrame com scores
                     df_scores = pd.concat([pd.DataFrame(res) for res in resultados])
