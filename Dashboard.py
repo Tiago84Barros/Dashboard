@@ -1212,7 +1212,7 @@ if pagina == "Avançada": #_____________________________________________________
             metricas = calcular_metricas_historicas_simplificadas(df_mult=df_multiplos_acum, df_dre=df_dre_acumulado)
     
             score_ajustado = 0
-            for ind, config in indicadores_score.items():
+            for ind, config in indicadores_score_ajustados.items():
                 if metricas.get(ind) is None:
                     valor_norm = 0
                 else:
