@@ -1444,10 +1444,10 @@ if pagina == "Avançada": #_____________________________________________________
                  
                     # DataFrame com scores
                     df_scores = pd.concat([pd.DataFrame(res) for res in resultados])
-                    """                                       
+                                                 
                     # Determinar líderes
                     lideres_por_ano = determinar_lideres(df_scores)
-                    
+                    """
                     # Baixar preços
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
                     
