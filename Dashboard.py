@@ -1278,9 +1278,7 @@ if pagina == "Avançada": #_____________________________________________________
                 for empresa in list(carteira.keys()):
                     score_atual = df_scores[(df_scores['Ano'] == ano - 1) & (df_scores['ticker'] == empresa)]['Score_Ajustado'].values
                     score_inicial = df_scores[(df_scores['Ano'] == anos[0]) & (df_scores['ticker'] == empresa)]['Score_Ajustado'].values[0]
-                    st.markdown(empresa)
-                    st.markdonw(score_inicial)
-    
+                    st.markdown(df_scores)
               
 
                     
