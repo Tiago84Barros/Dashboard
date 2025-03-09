@@ -1391,7 +1391,7 @@ if pagina == "Avançada": #_____________________________________________________
                             'Caixa_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
                         }
                                 
-                        resultados_empresa = calcular_score_acumulado(multiplos_corrigido, df_dre_corrigido)
+                        resultados_empresa = calcular_score_acumulado(multiplos_corrigido, df_dre_corrigido, indicadores_score_ajustados)
                     
                         resultados.append({
                             'ticker': ticker,
