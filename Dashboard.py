@@ -1229,6 +1229,17 @@ if pagina == "Avançada": #_____________________________________________________
     
         return pd.DataFrame(df_resultados)
         
+        
+    # 📌 Baixando preços de fechamento das empresas
+    def baixar_precos(tickers, start="2010-01-01"):
+        try:
+            precos = yf.download(tickers, start=start)['Close']
+            precos.columns = precos.columns.str.replace(".SA", "", regex=False)
+            return precos
+        except Exception as e:
+            st.error(f"Erro ao baixar preços: {e}")
+            return None
+
     # Função para determinar líder anual com base no Score Ajustado __________________________________________________________________________________________________________________________                      
     def determinar_lideres(df_scores):
         lideres = df_scores.loc[df_scores.groupby('Ano')['Score_Ajustado'].idxmax()]
@@ -1409,11 +1420,11 @@ if pagina == "Avançada": #_____________________________________________________
                         })
                     
                     # DataFrame com scores
-                   # df_scores = pd.concat([pd.DataFrame(res) for res in resultados])
-                   # st.dataframe(df_scores)
+                    df_scores = pd.concat([pd.DataFrame(res) for res in resultados])
+                    st.dataframe(df_scores)
                                             
                     # Determinar líderes
-                   # lideres_por_ano = determinar_lideres(df_scores)
+                    lideres_por_ano = determinar_lideres(df_scores)
                     
                     # Baixar preços
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
@@ -1782,15 +1793,7 @@ if pagina == "Avançada": #_____________________________________________________
                         return patrimonio_selic
                                     
                                     
-                    # 📌 Baixando preços ajustados das empresas
-                    def baixar_precos(tickers, start="2010-01-01"):
-                        try:
-                            precos = yf.download(tickers, start=start)['Close']
-                            precos.columns = precos.columns.str.replace(".SA", "", regex=False)
-                            return precos
-                        except Exception as e:
-                            st.error(f"Erro ao baixar preços: {e}")
-                            return None
+                 
                     
                     
                     # 📌 Analisando empresas por segmento
