@@ -1465,6 +1465,7 @@ if pagina == "Avançada": #_____________________________________________________
                             'Segmento': row['SEGMENTO'],
                             'Scores_Anuais': resultados
                         })
+                        st.dataframe(resultados)
                     """
                     # DataFrame com scores
                     df_scores = pd.concat([pd.DataFrame(res) for res in resultados])
