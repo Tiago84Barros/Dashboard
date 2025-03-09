@@ -1359,8 +1359,6 @@ if pagina == "Avançada": #_____________________________________________________
                         df_dre = load_data_from_db(ticker + ".SA")
     
                         # Determinar tempo de mercado com base no histórico das demonstrações
-                        st.dataframe(multiplos)
-                    
                         if multiplos is None or multiplos.empty or df_dre is None or df_dre.empty:
                             continue
     
@@ -1372,6 +1370,7 @@ if pagina == "Avançada": #_____________________________________________________
                         # Remover Outliers
                         multiplos_corrigido = remover_outliers_iqr(multiplos, colunas_para_filtrar)
                         df_dre_corrigido = remover_outliers_iqr(df_dre, colunas_para_filtrar)
+                        st.dataframe(multiplos_corrigido)
     
                         # ================================================
                         #  DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE
