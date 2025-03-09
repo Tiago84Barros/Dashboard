@@ -1443,7 +1443,23 @@ if pagina == "Avançada": #_____________________________________________________
                         })
                  
                     # DataFrame com scores
-                    df_scores = pd.concat([pd.DataFrame(res) for res in resultados])
+                    #df_scores = pd.concat([pd.DataFrame(res) for res in resultados])
+                    dfs = []  # lista de DFs prontos para concatenar
+
+                    for res in resultados:
+                    
+                        scores_anuais_df = res['Scores_Anuais'].copy()  # DataFrame com colunas 'Ano' e 'Score_Ajustado'
+                        
+                        # Adicionar colunas extras
+                        scores_anuais_df['ticker'] = res['ticker']
+                        scores_anuais_df['nome_empresa'] = res['nome_empresa']
+                        scores_anuais_df['Setor'] = res['Setor']
+                        scores_anuais_df['Subsetor'] = res['Subsetor']
+                        scores_anuais_df['Segmento'] = res['Segmento']
+                        
+                        # Armazena no array de DFs
+                        dfs.append(scores_anuais_df)              
+                        df_scores = pd.concat(dfs, ignore_index=True)
                                                                    
                     # Determinar líderes
                     lideres_por_ano = determinar_lideres(df_scores)
