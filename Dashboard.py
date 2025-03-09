@@ -1203,6 +1203,7 @@ if pagina == "Avançada": #_____________________________________________________
         df_resultados = []
 
         anos_disponiveis = dre['Data'].apply(lambda x: pd.to_datetime(x).year).nunique()
+        st.markdown(anos_disponiveis)
           
         for ano in anos_disponiveis[:-1]:  # não calcula no último ano disponível (não tem como prever ano seguinte)
             df_multiplos_acum = multiplos[multiplos['Ano'] <= ano]
