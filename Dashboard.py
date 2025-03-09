@@ -1207,6 +1207,7 @@ if pagina == "Avançada": #_____________________________________________________
         for ano in anos_disponiveis[:-1]:  # não calcula no último ano disponível (não tem como prever ano seguinte)
             df_multiplos_acum = multiplos[multiplos['Ano'] <= ano]
             df_dre_acumulado = dre[dre['Ano'] <= ano]
+            st.dataframe(df_dre_acumulado)
     
             metricas = calcular_metricas_historicas_simplificadas(df_mult=df_multiplos[df_multiplos['Ano'] <= ano],
                                                                    df_dre=df_dre[df_dre['Ano'] <= ano])
@@ -1313,7 +1314,7 @@ if pagina == "Avançada": #_____________________________________________________
                 if empresas_filtradas.empty:
                     st.warning("Não há empresas nesse segmento.")
                 else:
-                    # Novo: Adicionando quarto filtro (Crescimento ou Estabelecida)
+                    # Novo: Adicionando quarto filtro (Crescimento ou Estabelecida) _________________________________________________________________________________________________________
                     opcao_crescimento = st.selectbox("Tipo de Empresa:", ["Todas", "Crescimento (< 5 anos)", "Estabelecida (>= 5 anos)"])
     
                     empresas_selecionadas = []
@@ -1332,8 +1333,7 @@ if pagina == "Avançada": #_____________________________________________________
     
                         # Determinar tempo de mercado com base no histórico das demonstrações
                         anos_disponiveis = df_dre['Data'].apply(lambda x: pd.to_datetime(x).year).nunique()
-                        st.markdown(anos_disponiveis)
-    
+                   
                         # Aplicar o filtro conforme tempo de existência da empresa
                         if opcao_crescimento == "Crescimento (< 5 anos)" and anos_disponiveis < 5:
                             empresas_selecionadas.append(row)
@@ -1346,12 +1346,7 @@ if pagina == "Avançada": #_____________________________________________________
                         st.warning("Nenhuma empresa atende aos critérios do filtro selecionado.")
                     else:
                         empresas_filtradas = pd.DataFrame(empresas_selecionadas)
-                        st.success(f"Total de empresas filtradas: {len(empresas_filtradas)}")
-
-
-                    
-                    
-                    
+                        st.success(f"Total de empresas filtradas: {len(empresas_filtradas)}")            
                       
                         
                         # Fluxo principal                                       
