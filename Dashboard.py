@@ -1323,7 +1323,6 @@ if pagina == "Avançada": #_____________________________________________________
                         nome_emp = row['nome_empresa']
     
                         multiplos = load_multiplos_from_db(ticker + ".SA")
-                        st.dataframe(multiplos)
                         df_dre = load_data_from_db(ticker + ".SA")
     
                         if multiplos is None or multiplos.empty:
@@ -1333,6 +1332,7 @@ if pagina == "Avançada": #_____________________________________________________
     
                         # Determinar tempo de mercado com base no histórico das demonstrações
                         anos_disponiveis = df_dre['Data'].apply(lambda x: pd.to_datetime(x).year).nunique()
+                        st.markdown(anos_disponiveis)
     
                         # Aplicar o filtro conforme tempo de existência da empresa
                         if opcao_crescimento == "Crescimento (< 5 anos)" and anos_disponiveis < 5:
