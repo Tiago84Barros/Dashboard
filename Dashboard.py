@@ -1213,6 +1213,7 @@ if pagina == "Avançada": #_____________________________________________________
     
             score_ajustado = 0
             for ind, config in indicadores_score_ajustados.items():
+                st.markdown(ind)
                 if metricas.get(ind) is None:
                     valor_norm = 0
                 else:
