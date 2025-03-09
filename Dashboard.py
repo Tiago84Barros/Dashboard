@@ -1359,8 +1359,7 @@ if pagina == "Avançada": #_____________________________________________________
                             df_dre = load_data_from_db(ticker + ".SA")
 
                             # Determinar tempo de mercado com base no histórico das demonstrações
-                            anos_selecionados = df_dre['Data'].apply(lambda x: pd.to_datetime(x).year).nunique()
-                            st.markdonw(anos_selecionados)
+                            st.dataframe(multiplos)
                         
                             if multiplos is None or multiplos.empty or df_dre is None or df_dre.empty:
                                 continue
