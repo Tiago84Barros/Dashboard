@@ -1342,11 +1342,11 @@ if pagina == "Avançada": #_____________________________________________________
                         elif opcao_crescimento == "Todas":
                             empresas_selecionadas.append(row)
     
-                    if not empresas_selecionadas:
-                        st.warning("Nenhuma empresa atende aos critérios do filtro selecionado.")
-                    else:
-                        empresas_filtradas = pd.DataFrame(empresas_selecionadas)
-                        st.success(f"Total de empresas filtradas: {len(empresas_filtradas)}")            
+                        if not empresas_selecionadas:
+                            st.warning("Nenhuma empresa atende aos critérios do filtro selecionado.")
+                        else:
+                            empresas_filtradas = pd.DataFrame(empresas_selecionadas)
+                            st.success(f"Total de empresas filtradas: {len(empresas_filtradas)}")            
                       
                         
                         # Fluxo principal                                       
