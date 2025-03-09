@@ -1439,7 +1439,7 @@ if pagina == "Avançada": #_____________________________________________________
                             'Setor': row['SETOR'],
                             'Subsetor': row['SUBSETOR'],
                             'Segmento': row['SEGMENTO'],
-                            'Scores_Anuais': resultados
+                            'Scores_Anuais': resultados_empresa
                         })
                  
                     # DataFrame com scores
