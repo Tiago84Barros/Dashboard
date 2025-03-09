@@ -1208,8 +1208,7 @@ if pagina == "Avançada": #_____________________________________________________
         for ano in anos_disponiveis[:-1]:  # não calcula no último ano disponível (não tem como prever ano seguinte)
             df_multiplos_acum = multiplos[multiplos['Ano'] <= ano]
             df_dre_acumulado = dre[dre['Ano'] <= ano]
-            st.dataframe(df_dre_acumulado)
-    
+               
             metricas = calcular_metricas_historicas_simplificadas(df_mult=df_multiplos[df_multiplos['Ano'] <= ano],
                                                                    df_dre=df_dre[df_dre['Ano'] <= ano])
     
@@ -1334,12 +1333,7 @@ if pagina == "Avançada": #_____________________________________________________
                             
                         # Determinar tempo de mercado com base no histórico das demonstrações
                         anos_disponiveis = df_dre['Data'].apply(lambda x: pd.to_datetime(x).year).nunique()
-
-                        # Conversão das datas para anos antes de remover outliers
-                        multiplos['Ano'] = pd.to_datetime(multiplos['Data'], errors='coerce').dt.year
-                        df_dre['Ano'] = pd.to_datetime(df_dre['Data'], errors='coerce').dt.year
-                        st.dataframe(df_dre)
-                        
+                                        
                    
                         # Aplicar o filtro conforme tempo de existência da empresa
                         if opcao_crescimento == "Crescimento (< 5 anos)" and anos_disponiveis < 5:
@@ -1364,7 +1358,11 @@ if pagina == "Avançada": #_____________________________________________________
                     
                         multiplos = load_multiplos_from_db(ticker + ".SA")
                         df_dre = load_data_from_db(ticker + ".SA")
-    
+
+                         # Conversão das datas para anos antes de remover outliers
+                        multiplos['Ano'] = pd.to_datetime(multiplos['Data'], errors='coerce').dt.year
+                        df_dre['Ano'] = pd.to_datetime(df_dre['Data'], errors='coerce').dt.year
+                 
                         # Determinar tempo de mercado com base no histórico das demonstrações
                         if multiplos is None or multiplos.empty or df_dre is None or df_dre.empty:
                             continue
