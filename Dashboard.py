@@ -1202,7 +1202,7 @@ if pagina == "Avançada": #_____________________________________________________
     def calcular_score_acumulado(multiplos, dre, indicadores_score):
         df_resultados = []
 
-        anos_disponiveis = dre['Data'].apply(lambda x: pd.to_datetime(x).year).nunique()
+        anos = sorted(multiplos['Ano'].unique())
         st.markdown(anos_disponiveis)
           
         for ano in anos_disponiveis[:-1]:  # não calcula no último ano disponível (não tem como prever ano seguinte)
