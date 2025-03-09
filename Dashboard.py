@@ -1199,7 +1199,7 @@ if pagina == "Avançada": #_____________________________________________________
         return metrics
 
     # Função para calcular o Score acumulado ___________________________________________________________________________________________________________________________________________________                  
-    def calcular_score_acumulado(multiplos, dre, indicadores_score):
+    def calcular_score_acumulado(multiplos, dre, indicadores_score_ajustados):
         df_resultados = []
 
         anos_disponiveis = sorted(multiplos['Ano'].unique())
@@ -1207,9 +1207,9 @@ if pagina == "Avançada": #_____________________________________________________
         for ano in anos_disponiveis[:-1]:  # não calcula no último ano disponível (não tem como prever ano seguinte)
             df_multiplos_acum = multiplos[multiplos['Ano'] <= ano]
             df_dre_acumulado = dre[dre['Ano'] <= ano]
-               
-            metricas = calcular_metricas_historicas_simplificadas(df_mult=df_multiplos[df_multiplos['Ano'] <= ano],
-                                                                   df_dre=df_dre[df_dre['Ano'] <= ano])
+
+            
+            metricas = calcular_metricas_historicas_simplificadas(df_mult=df_multiplos_acum, df_dre=df_dre_acumulado)
     
             score_ajustado = 0
             for ind, config in indicadores_score.items():
