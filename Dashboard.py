@@ -1369,8 +1369,7 @@ if pagina == "Avançada": #_____________________________________________________
                             
                         # Determinar tempo de mercado com base no histórico das demonstrações
                         anos_disponiveis = df_dre['Data'].apply(lambda x: pd.to_datetime(x).year).nunique()
-                                        
-                        
+                                                                
                         # Aplicar o filtro conforme tempo de existência da empresa
                         if opcao_crescimento == "Crescimento (< 5 anos)" and anos_disponiveis < 5:
                             empresas_selecionadas.append(row)
@@ -1466,7 +1465,7 @@ if pagina == "Avançada": #_____________________________________________________
                    
                     # Baixar preços
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
-                     """
+                    """
                     # Gerenciamento da carteira
                     patrimonio_historico = gerir_carteira(precos, df_scores)
                     
