@@ -1331,9 +1331,13 @@ if pagina == "Avançada": #_____________________________________________________
                             continue
                         if df_dre is None or df_dre.empty:
                             continue
-      
+                            
                         # Determinar tempo de mercado com base no histórico das demonstrações
                         anos_disponiveis = df_dre['Data'].apply(lambda x: pd.to_datetime(x).year).nunique()
+
+                        # Conversão das datas para anos antes de remover outliers
+                        multiplos['Ano'] = pd.to_datetime(multiplos['Data'], errors='coerce').dt.year
+                        df_dre['Ano'] = pd.to_datetime(df_dre['Data'], errors='coerce').dt.year
                    
                         # Aplicar o filtro conforme tempo de existência da empresa
                         if opcao_crescimento == "Crescimento (< 5 anos)" and anos_disponiveis < 5:
@@ -1347,8 +1351,8 @@ if pagina == "Avançada": #_____________________________________________________
                         st.warning("Nenhuma empresa atende aos critérios do filtro selecionado.")
                     else:
                         empresas_filtradas = pd.DataFrame(empresas_selecionadas)
-                        st.success(f"Total de empresas filtradas: {len(empresas_filtradas)}")            
-                  
+                        st.success(f"Total de empresas filtradas: {len(empresas_filtradas)}")  
+                                    
                     
                     # Fluxo principal                                       
                     resultados = []
