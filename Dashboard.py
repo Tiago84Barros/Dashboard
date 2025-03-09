@@ -1338,6 +1338,8 @@ if pagina == "Avançada": #_____________________________________________________
                         # Conversão das datas para anos antes de remover outliers
                         multiplos['Ano'] = pd.to_datetime(multiplos['Data'], errors='coerce').dt.year
                         df_dre['Ano'] = pd.to_datetime(df_dre['Data'], errors='coerce').dt.year
+                        st.dataframe(df_dre)
+                        
                    
                         # Aplicar o filtro conforme tempo de existência da empresa
                         if opcao_crescimento == "Crescimento (< 5 anos)" and anos_disponiveis < 5:
