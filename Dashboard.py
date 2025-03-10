@@ -1495,10 +1495,10 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # Gerenciamento da carteira
                     patrimonio_historico = gerir_carteira(precos, df_scores)
-                    """
+                  
                     # Comparação final com Tesouro Selic
                     patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, patrimonio_historico.index.min())
-                    
+                    """
                     patrimonio_final = pd.concat([patrimonio_historico, patrimonio_selic], axis=1)
                   
                     # Mostrar resultado final
