@@ -1224,7 +1224,7 @@ if pagina == "Avançada": #_____________________________________________________
                     valor_norm = 0
                 else:
                     valor = winsorize(pd.Series([metricas[ind]]))[0] 
-                    st.markdown(valor)
+                    st.dataframe(valor)
                     valor_norm = z_score_normalize(pd.Series(valor), config['melhor_alto'])[0]
                     score_ajustado += valor_norm * config['peso'] 
             
