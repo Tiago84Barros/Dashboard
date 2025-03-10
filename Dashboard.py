@@ -1524,7 +1524,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # Esse código representa uma implementação sólida e robusta conforme as estratégias discutidas, permitindo uma análise dinâmica e fundamentada na evolução histórica dos Scores das empresas.
                 
-                    """
+            
         
                      
                      # Inserindo espaçamento entre os elementos
