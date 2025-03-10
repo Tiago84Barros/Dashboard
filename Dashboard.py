@@ -1212,7 +1212,7 @@ if pagina == "Avançada": #_____________________________________________________
 
              # 🐞 Debug: verificar quantas linhas
             st.write(f"Ano: {ano}, df_multiplos_acum shape:", df_multiplos_acum.shape)
-            st.write(df_multiplos_acum.head())  # Mostra as 5 primeiras linhas
+            st.dataframe(df_multiplos_acum.head())  # Mostra as 5 primeiras linhas
           
             # PASSO 3
             metricas = calcular_metricas_historicas_simplificadas(
