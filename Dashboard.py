@@ -1204,7 +1204,9 @@ if pagina == "Avançada": #_____________________________________________________
     
         anos_disponiveis = sorted(multiplos['Ano'].unique())
                             
-        for ano in anos_disponiveis[:-1]:  
+        # Iniciar a partir do 3º elemento: range(2, len(anos_disponiveis))
+        for idx in range(2, len(anos_disponiveis)):
+            ano = anos_disponiveis[idx]
             df_multiplos_acum = multiplos[multiplos['Ano'] <= ano].copy()
             df_dre_acumulado = dre[dre['Ano'] <= ano].copy()
     
@@ -1278,7 +1280,32 @@ if pagina == "Avançada": #_____________________________________________________
                 for empresa in list(carteira.keys()):
                     score_atual = df_scores[(df_scores['Ano'] == ano - 1) & (df_scores['ticker'] == empresa)]['Score_Ajustado'].values
                     score_inicial = df_scores[(df_scores['Ano'] == anos[0]) & (df_scores['ticker'] == empresa)]['Score_Ajustado'].values[0]
-                          
+
+                    # Se for o primeiro ano do array (ano == anos[0]), pula a verificação
+                    if ano == anos[0]:
+                        continue
+                
+                    # Obter arrays de score_atual e score_inicial
+                    score_atual_array = df_scores[
+                        (df_scores['Ano'] == ano - 1) & (df_scores['ticker'] == empresa)
+                    ]['Score_Ajustado'].values
+                    
+                    score_inicial_array = df_scores[
+                        (df_scores['Ano'] == anos[0]) & (df_scores['ticker'] == empresa)
+                    ]['Score_Ajustado'].values
+                
+                    # Verificar se os arrays estão vazios
+                    if len(score_atual_array) == 0 or len(score_inicial_array) == 0:
+                        # Sem dados suficientes, pula
+                        continue
+                
+                    score_atual_val = score_atual_array[0]
+                    score_inicial_val = score_inicial_array[0]
+                
+                    # Evitar divisão por zero
+                    if score_inicial_val == 0:
+                        continue
+                                          
                     if score_atual / score_inicial < 0.7:
                         # Venda completa e realocação para líder atual
                         patrimonio_venda = carteira.pop(empresa) * preco_atual
