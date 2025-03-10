@@ -1223,6 +1223,7 @@ if pagina == "Avançada": #_____________________________________________________
                 if metricas.get(ind) is None:
                     valor_norm = 0
                 else:
+                    st.write(metricas)
                     valor = winsorize(pd.Series([metricas[ind]]))[0] 
                     st.write(valor)
                     valor_norm = z_score_normalize(pd.Series(valor), config['melhor_alto'])[0]
