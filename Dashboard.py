@@ -1216,9 +1216,7 @@ if pagina == "Avançada": #_____________________________________________________
                 df_dre=df_dre_acumulado
             )
 
-              # 🐞 Debug: verificar quantas linhas
-            st.dataframe(metricas.head())  # Mostra as 5 primeiras linhas
-            
+                   
             score_ajustado = 0
             # PASSO 6
             for ind, config in indicadores_score.items():
@@ -1228,7 +1226,7 @@ if pagina == "Avançada": #_____________________________________________________
                     valor = winsorize(pd.Series([metricas[ind]]))[0] 
                     valor_norm = z_score_normalize(pd.Series(valor), config['melhor_alto'])[0]
                     score_ajustado += valor_norm * config['peso'] 
-    
+            st.write(score_ajustado)
             df_resultados.append({
                 'Ano': ano,
                 'Score_Ajustado': score_ajustado
