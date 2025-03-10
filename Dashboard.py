@@ -1210,16 +1210,16 @@ if pagina == "Avançada": #_____________________________________________________
             df_multiplos_acum = multiplos[multiplos['Ano'] <= ano].copy()
             df_dre_acumulado = dre[dre['Ano'] <= ano].copy()
 
-             # 🐞 Debug: verificar quantas linhas
-            st.write(f"Ano: {ano}, df_multiplos_acum shape:", df_multiplos_acum.shape)
-            st.dataframe(df_multiplos_acum.head())  # Mostra as 5 primeiras linhas
-          
             # PASSO 3
             metricas = calcular_metricas_historicas_simplificadas(
                 df_mult=df_multiplos_acum,
                 df_dre=df_dre_acumulado
             )
-             
+
+              # 🐞 Debug: verificar quantas linhas
+            st.write(f"Ano: {ano}, df_multiplos_acum shape:", df_multiplos_acum.shape)
+            st.dataframe(df_multiplos_acum.head())  # Mostra as 5 primeiras linhas
+            
             score_ajustado = 0
             # PASSO 6
             for ind, config in indicadores_score.items():
