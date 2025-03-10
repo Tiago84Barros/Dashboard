@@ -1518,6 +1518,9 @@ if pagina == "Avançada": #_____________________________________________________
                     patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, patrimonio_historico.index.min())
             
                     patrimonio_final = pd.concat([patrimonio_historico, patrimonio_selic], axis=1)
+
+                    st.write("patrimonio_historico shape:", patrimonio_historico.shape)
+                    st.dataframe(patrimonio_historico.head())
                   
                     # Mostrar resultado final
                     st.line_chart(patrimonio_historico)
