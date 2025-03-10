@@ -1214,7 +1214,7 @@ if pagina == "Avançada": #_____________________________________________________
                 df_mult=df_multiplos_acum,
                 df_dre=df_dre_acumulado
             )
-            st.write(f\"Métricas para ano {ano}:\", metricas)
+            st.write(f"Métricas para ano {ano}:", metricas)
     
             score_ajustado = 0
             for ind, config in indicadores_score.items():
