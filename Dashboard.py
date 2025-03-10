@@ -1217,7 +1217,7 @@ if pagina == "Avançada": #_____________________________________________________
             )
 
               # 🐞 Debug: verificar quantas linhas
-            st.write(f"Ano: {ano}, df_multiplos_acum shape:", df_multiplos_acum.shape)
+            st.write(f"Ano: {ano}, df_multiplos_acum shape:", metricas.shape)
             st.dataframe(metricas.head())  # Mostra as 5 primeiras linhas
             
             score_ajustado = 0
