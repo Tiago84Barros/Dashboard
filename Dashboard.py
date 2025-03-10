@@ -1165,7 +1165,7 @@ if pagina == "Avançada": #_____________________________________________________
         
         # Dicionário final
         metrics = {}
-        
+        # PASSO 4
         # =============== MÚLTIPLOS ===============
         for col in ['Margem_Liquida', 'Margem_Operacional', 'ROE', 'ROIC', 'P/VP', 'Endividamento_Total', 'Alavancagem_Financeira', 'Liquidez_Corrente']:
             mean, std = calcular_media_e_std(df_mult, col)
@@ -1178,17 +1178,17 @@ if pagina == "Avançada": #_____________________________________________________
             metrics[f'{col}_slope_log'] = slope
             metrics[f'{col}_growth_approx'] = slope_to_growth_percent(slope)
         
-        # Penalização por alta volatilidade (desvio padrão relativo à média)
+        # Penalização por alta volatilidade (desvio padrão relativo à média) # PASSO 5
         for col in ['Margem_Liquida', 'ROE', 'ROIC', 'Endividamento_Total', 'Liquidez_Corrente']:
             if metrics[f'{col}_mean'] != 0:
                 coef_var = metrics[f'{col}_std'] / abs(metrics[f'{col}_mean'])
-                metrics[f'{col}_volatility_penalty'] = min(1.0, coef_var)  # Penalização limitada a 100%
+                metrics[f'{col}_volatility_penalty'] = min(1.0, coef_var)  # Penalização limitada a 100% 
             else:
                 metrics[f'{col}_volatility_penalty'] = 1.0  # Penalização máxima se a média for zero
         
-         # 📌 NOVA Penalização por Histórico Longo → Agora mais severa
+         # 📌 NOVA Penalização por Histórico Longo → Agora mais severa # PASSO 5
         num_anos = df_dre['Ano'].nunique()
-    
+        
         def calcular_historico_bonus(anos):
             """ Penaliza empresas novas mais severamente """
             return anos / (10 + anos)  # Ajustável, pode ser 15+ se quiser penalizar ainda mais
@@ -1209,19 +1209,24 @@ if pagina == "Avançada": #_____________________________________________________
             ano = anos_disponiveis[idx]
             df_multiplos_acum = multiplos[multiplos['Ano'] <= ano].copy()
             df_dre_acumulado = dre[dre['Ano'] <= ano].copy()
-    
+
+             # 🐞 Debug: verificar quantas linhas
+            st.write(f"Ano: {ano}, df_multiplos_acum shape:", df_multiplos_acum.shape)
+            st.write(df_multiplos_acum.head())  # Mostra as 5 primeiras linhas
+          
+            # PASSO 3
             metricas = calcular_metricas_historicas_simplificadas(
                 df_mult=df_multiplos_acum,
                 df_dre=df_dre_acumulado
             )
-            st.write(f"Métricas para ano {ano}:", metricas)
-    
+             
             score_ajustado = 0
+            # PASSO 6
             for ind, config in indicadores_score.items():
                 if metricas.get(ind) is None:
                     valor_norm = 0
                 else:
-                    valor = winsorize(pd.Series([metricas[ind]]))[0]
+                    valor = winsorize(pd.Series([metricas[ind]]))[0] 
                     valor_norm = z_score_normalize(pd.Series(valor), config['melhor_alto'])[0]
                     score_ajustado += valor_norm * config['peso'] 
     
@@ -1452,7 +1457,7 @@ if pagina == "Avançada": #_____________________________________________________
                                         'Divida_Total', 'Passivo_Circulante', 'Liquidez_Corrente', 
                                         'Crescimento_Receita', 'Crescimento_Lucro']
                     
-                        # Remover Outliers
+                        # Remover Outliers (PASSO 2)
                         multiplos_corrigido = remover_outliers_iqr(multiplos, colunas_para_filtrar)
                         df_dre_corrigido = remover_outliers_iqr(df_dre, colunas_para_filtrar)
                            
