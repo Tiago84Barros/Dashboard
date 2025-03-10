@@ -1214,7 +1214,6 @@ if pagina == "Avançada": #_____________________________________________________
                 df_mult=df_multiplos_acum,
                 df_dre=df_dre_acumulado
             )
-
             st.write(f\"Métricas para ano {ano}:\", metricas)
     
             score_ajustado = 0
@@ -1512,8 +1511,6 @@ if pagina == "Avançada": #_____________________________________________________
                    
                     # Baixar preços
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
-
-                    st.write("df_scores shape:", df_scores.shape)
                                    
                     # Gerenciamento da carteira
                     patrimonio_historico = gerir_carteira(precos, df_scores)
@@ -1522,10 +1519,7 @@ if pagina == "Avançada": #_____________________________________________________
                     patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, patrimonio_historico.index.min())
             
                     patrimonio_final = pd.concat([patrimonio_historico, patrimonio_selic], axis=1)
-
-                    st.write("patrimonio_historico shape:", patrimonio_historico.shape)
-                    st.dataframe(patrimonio_historico.head())
-                  
+                 
                     # Mostrar resultado final
                     st.line_chart(patrimonio_historico)
                     
