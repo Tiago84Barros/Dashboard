@@ -1320,24 +1320,42 @@ if pagina == "Avançada": #_____________________________________________________
         dados_macro["Data"] = pd.to_datetime(dados_macro["Data"])
         dados_macro = dados_macro.set_index("Data").sort_index()
     
+        # Se 'data_inicio' for NaT, tratar
+        if pd.isnull(data_inicio):
+            # Defina uma data padrão ou retorne algo vazio
+            data_inicio = pd.Timestamp("2010-01-01")
+        
         datas_mensais = pd.date_range(start=data_inicio, end=pd.Timestamp.today(), freq='MS')
     
-        patrimonio = []
+        # Corrigido: Patrimônio como dicionário
+        patrimonio_selic = {}
         saldo_atual = 0.0
     
         for data in datas_mensais:
             ano_ref = data.year
+    
+            # Pegar a taxa Selic do ano, se não existir, pega a última disponível
             if ano_ref not in dados_macro.index.year:
                 taxa_anual = dados_macro["Selic"].iloc[-1] / 100
             else:
                 taxa_anual = dados_macro.loc[dados_macro.index.year == ano_ref, "Selic"].iloc[0] / 100
     
             taxa_mensal = (1 + taxa_anual)**(1/12) - 1
+    
+            # Atualiza o saldo com base na taxa anual
             saldo_atual *= (1 + taxa_anual)
+            # Adiciona aporte mensal
             saldo_atual += aporte_mensal
+    
+            # Grava o saldo no dicionário
             patrimonio_selic[data] = saldo_atual
     
-        return pd.DataFrame(patrimonio_selic, columns=["Tesouro Selic"])
+        # Converte o dicionário em DataFrame
+        df_patrimonio_selic = pd.DataFrame.from_dict(
+            patrimonio_selic, orient='index', columns=["Tesouro Selic"]
+        )
+        df_patrimonio_selic.sort_index(inplace=True)
+        return df_patrimonio_selic
           
     
     # Carregar dados macroeconômicos do banco de dados ________________________________________________________________________________________________________________________________________
