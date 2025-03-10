@@ -1214,6 +1214,8 @@ if pagina == "Avançada": #_____________________________________________________
                 df_mult=df_multiplos_acum,
                 df_dre=df_dre_acumulado
             )
+
+            st.write(f\"Métricas para ano {ano}:\", metricas)
     
             score_ajustado = 0
             for ind, config in indicadores_score.items():
@@ -1512,8 +1514,7 @@ if pagina == "Avançada": #_____________________________________________________
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
 
                     st.write("df_scores shape:", df_scores.shape)
-                    st.dataframe(df_scores)
-                    
+                                   
                     # Gerenciamento da carteira
                     patrimonio_historico = gerir_carteira(precos, df_scores)
                   
