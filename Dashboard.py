@@ -1319,8 +1319,7 @@ if pagina == "Avançada": #_____________________________________________________
                     continue
     
                 preco_atual = precos.loc[data_aporte, empresa_lider]
-                st.markdown(preco_atual)
-    
+                   
                 # Verificar se houve mudança de líder
                 if empresa_lider not in carteira:
                     carteira[empresa_lider] = 0
@@ -1329,6 +1328,7 @@ if pagina == "Avançada": #_____________________________________________________
     
                 # Atualizar patrimônio
                 patrimonio_total = sum(carteira[empresa] * precos.loc[data_aporte, empresa] for empresa in carteira)
+                st.markdown(patrimonio_total)
     
                 patrimonio[data_aporte] = patrimonio.get(data_aporte, 0) + patrimonio_total
     
