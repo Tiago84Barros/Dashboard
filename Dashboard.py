@@ -1568,8 +1568,7 @@ if pagina == "Avançada": #_____________________________________________________
                                                                    
                     # Determinar líderes
                     lideres_por_ano = determinar_lideres(df_scores)
-                    st.dataframe(lideres_por_ano)
-                   
+                                     
                     # Baixar preços
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
                                    
@@ -1580,14 +1579,13 @@ if pagina == "Avançada": #_____________________________________________________
                     patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, patrimonio_historico.index.min())
             
                     patrimonio_final = pd.concat([patrimonio_historico, patrimonio_selic], axis=1)
+                    st.dataframe(patrimonio_final)
                  
                     # Mostrar resultado final
                     st.line_chart(patrimonio_historico)
                     
                     # Esse código representa uma implementação sólida e robusta conforme as estratégias discutidas, permitindo uma análise dinâmica e fundamentada na evolução histórica dos Scores das empresas.
-                
-            
-        
+                   
                      
                      # Inserindo espaçamento entre os elementos
                     st.markdown("---") # Espaçamento entre diferentes tipos de análise
