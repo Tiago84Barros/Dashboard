@@ -1313,60 +1313,82 @@ if pagina == "Avançada": #_____________________________________________________
             empresa_lider = df_scores[df_scores['Ano'] == ano].iloc[0]['ticker']
     
             for mes in range(1, 13):
-                data_aporte = f"{ano + 1}-{mes:02d}"  # Ano seguinte ao ano do score
-                    
+                # Definir data_aporte como o primeiro dia do mês
+                data_aporte_str = f"{ano+1}-{mes:02d}-01"
+                data_aporte = pd.to_datetime(data_aporte_str)  # converter p/ datetime
+    
+                # Se data_aporte não estiver no índice de precos, tente achar a data útil
                 if data_aporte not in precos.index:
+                    # Exemplo de fallback: buscar a 1ª data maior ou igual a data_aporte
+                    prox_datas = precos.index[precos.index >= data_aporte]
+                    if prox_datas.empty:
+                        # Não há datas disponíveis (fim do range de precos)
+                        continue
+                    # Pega a primeira data útil existente
+                    data_aporte = prox_datas[0]
+    
+                # Agora data_aporte é garantidamente no índice de precos
+                # Verificar se empresa_lider está nas colunas:
+                if empresa_lider not in precos.columns:
+                    # Se não houver preços para esse ticker, pula
                     continue
     
-                preco_atual = precos.loc[data_aporte, empresa_lider]
-                   
-                # Verificar se houve mudança de líder
-                if empresa_lider not in carteira:
-                    carteira[empresa_lider] = 0
+                preco_atual = precos.loc[data_aporte, empresa_lider] # preço da ação no dia do aporte
     
+                # Se a carteira não tiver essa empresa_lider ainda, inicializa
+                if empresa_lider not in carteira:
+                    carteira[empresa_lider] = 0.0
+    
+                # Aportar
                 carteira[empresa_lider] += aporte_mensal / preco_atual
     
-                # Atualizar patrimônio
-                patrimonio_total = sum(carteira[empresa] * precos.loc[data_aporte, empresa] for empresa in carteira)
-                st.markdown(patrimonio_total)
+                # Atualizar patrimônio total
+                patrimonio_total = 0.0
+                for emp in carteira:
+                    if emp in precos.columns:
+                        patrimonio_total += carteira[emp] * precos.loc[data_aporte, emp]
     
-                patrimonio[data_aporte] = patrimonio.get(data_aporte, 0) + patrimonio_total
+                patrimonio[data_aporte] = patrimonio.get(data_aporte, 0.0) + patrimonio_total
     
                 # Verificar deterioração do score e realizar venda se necessário
-                for empresa in list(carteira.keys()):
-                    # Se for o primeiro ano do array (ano == anos[0]), pula a verificação
+                for emp in list(carteira.keys()):
+                    # Se for o primeiro ano, pula
                     if ano == anos[0]:
                         continue
-                
+    
                     # Obter arrays de score
                     score_atual_array = df_scores[
-                        (df_scores['Ano'] == ano - 1) & (df_scores['ticker'] == empresa)
+                        (df_scores['Ano'] == ano - 1) & (df_scores['ticker'] == emp)
                     ]['Score_Ajustado'].values
-                
+    
                     score_inicial_array = df_scores[
-                        (df_scores['Ano'] == anos[0]) & (df_scores['ticker'] == empresa)
+                        (df_scores['Ano'] == anos[0]) & (df_scores['ticker'] == emp)
                     ]['Score_Ajustado'].values
-                
-                    # Verificar se os arrays estão vazios
+    
+                    # Checar se vazio
                     if len(score_atual_array) == 0 or len(score_inicial_array) == 0:
                         continue
-                
-                    score_atual_val = score_atual_array[0]
+    
+                    score_atual_val   = score_atual_array[0]
                     score_inicial_val = score_inicial_array[0]
-                
-                    # Evitar divisão por zero
+    
+                    # Evitar div/0
                     if score_inicial_val == 0:
                         continue
-                
-                    # 👇 Aqui a comparação
+    
                     if score_atual_val / score_inicial_val < 0.7:
-                        # Venda completa e realocação para líder atual
-                        patrimonio_venda = carteira.pop(empresa) * preco_atual
+                        patrimonio_venda = carteira.pop(emp) * preco_atual
+                        # Garantir que a empresa líder exista no dicionário
                         if empresa_lider not in carteira:
-                            carteira[empresa_lider] = 0
+                            carteira[empresa_lider] = 0.0
                         carteira[empresa_lider] += patrimonio_venda / preco_atual
     
-        return pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
+        # Retornar um DataFrame ordenado por data
+        df_patrimonio = pd.DataFrame.from_dict(
+            patrimonio, orient='index', columns=['Patrimonio']
+        )
+        df_patrimonio.sort_index(inplace=True)
+    return df_patrimonio
 
     
     # 📌 Função para calcular o patrimônio acumulado no Tesouro Selic ________________________________________________________________________________________________________________________
