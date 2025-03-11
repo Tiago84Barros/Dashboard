@@ -1332,7 +1332,7 @@ if pagina == "Avançada": #_____________________________________________________
                 patrimonio[data_aporte] = patrimonio.get(data_aporte, 0) + patrimonio_total
     
                 # Verificar deterioração do score e realizar venda se necessário
-               for empresa in list(carteira.keys()):
+                for empresa in list(carteira.keys()):
                     # Se for o primeiro ano do array (ano == anos[0]), pula a verificação
                     if ano == anos[0]:
                         continue
@@ -1934,8 +1934,7 @@ if pagina == "Avançada": #_____________________________________________________
                             # 🔹 Somar todos os investimentos acumulados até o momento
                             patrimonio_selic.loc[data, "Tesouro Selic"] = sum(investimentos)
                     
-                        return patrimonio_selic
-                                    
+                        return patrimonio_selic                                   
                                     
                  
                     
