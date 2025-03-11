@@ -1314,6 +1314,7 @@ if pagina == "Avançada": #_____________________________________________________
     
             for mes in range(1, 13):
                 data_aporte = f"{ano + 1}-{mes:02d}"  # Ano seguinte ao ano do score
+                data_aporte = pd.to_datetime(data_aporte_str)
     
                 if data_aporte not in precos.index:
                     continue
@@ -1571,6 +1572,7 @@ if pagina == "Avançada": #_____________________________________________________
                                      
                     # Baixar preços
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
+                    st.dataframe(precos)
                                    
                     # Gerenciamento da carteira
                     patrimonio_historico = gerir_carteira(precos, df_scores)
@@ -1579,8 +1581,7 @@ if pagina == "Avançada": #_____________________________________________________
                     patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, patrimonio_historico.index.min())
             
                     patrimonio_final = pd.concat([patrimonio_historico, patrimonio_selic], axis=1)
-                    st.dataframe(patrimonio_historico)
-                 
+                                    
                     # Mostrar resultado final
                     st.line_chart(patrimonio_historico)
                     
