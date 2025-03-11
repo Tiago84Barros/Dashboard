@@ -1404,65 +1404,79 @@ if pagina == "Avançada": #_____________________________________________________
     
                     empresas_selecionadas = []
     
+                    # Lista para armazenar empresas selecionadas
+                    empresas_selecionadas = []
+                    
+                    # Iterar sobre as empresas e filtrar conforme critérios
                     for _, row in empresas_filtradas.iterrows():
-                        ticker = row['ticker']
+                        ticker = f"{row['ticker']}.SA"
                         nome_emp = row['nome_empresa']
-    
-                        multiplos = load_multiplos_from_db(ticker + ".SA")
-                        df_dre = load_data_from_db(ticker + ".SA")
-    
-                        if multiplos is None or multiplos.empty:
+                    
+                        # Carregar dados financeiros da empresa
+                        multiplos = load_multiplos_from_db(ticker)
+                        df_dre = load_data_from_db(ticker)
+                    
+                        # Validar se os dados estão disponíveis
+                        if multiplos is None or multiplos.empty or df_dre is None or df_dre.empty:
                             continue
-                        if df_dre is None or df_dre.empty:
-                            continue
-                            
-                        # Determinar tempo de mercado com base no histórico das demonstrações
-                        anos_disponiveis = df_dre['Data'].apply(lambda x: pd.to_datetime(x).year).nunique()
-                                                                
-                        # Aplicar o filtro conforme tempo de existência da empresa
-                        if opcao_crescimento == "Crescimento (< 5 anos)" and anos_disponiveis < 5:
+                    
+                        # Converter datas para anos
+                        df_dre['Ano'] = pd.to_datetime(df_dre['Data'], errors='coerce').dt.year
+                    
+                        # Determinar tempo de mercado baseado no histórico de demonstrações
+                        anos_disponiveis = df_dre['Ano'].nunique()
+                    
+                        # Aplicar filtro conforme tempo de existência
+                        if (
+                            (opcao_crescimento == "Crescimento (< 5 anos)" and anos_disponiveis < 5) or
+                            (opcao_crescimento == "Estabelecida (>= 5 anos)" and anos_disponiveis >= 5) or
+                            (opcao_crescimento == "Todas")
+                        ):
                             empresas_selecionadas.append(row)
-                        elif opcao_crescimento == "Estabelecida (>= 5 anos)" and anos_disponiveis >= 5:
-                            empresas_selecionadas.append(row)
-                        elif opcao_crescimento == "Todas":
-                            empresas_selecionadas.append(row)
-    
+                    
+                    # Exibir resultado do filtro
                     if not empresas_selecionadas:
                         st.warning("Nenhuma empresa atende aos critérios do filtro selecionado.")
                     else:
                         empresas_filtradas = pd.DataFrame(empresas_selecionadas)
-                        st.success(f"Total de empresas filtradas: {len(empresas_filtradas)}")  
-                             
-                    # Fluxo principal                                       
+                        st.success(f"Total de empresas filtradas: {len(empresas_filtradas)}")
+                    
+                    # =====================================================================
+                    # FLUXO PRINCIPAL - Cálculo de métricas e Score
+                    # =====================================================================
+                    
                     resultados = []
-                    for i, row in empresas_filtradas.iterrows():
-                        ticker = row['ticker']
+                    
+                    for _, row in empresas_filtradas.iterrows():
+                        ticker = f"{row['ticker']}.SA"
                         nome_emp = row['nome_empresa']
                     
-                        multiplos = load_multiplos_from_db(ticker + ".SA")
-                        df_dre = load_data_from_db(ticker + ".SA")
-
-                         # Conversão das datas para anos antes de remover outliers
-                        multiplos.loc[:, 'Ano'] = pd.to_datetime(multiplos['Data'], errors='coerce').dt.year
-                        df_dre.loc[:, 'Ano'] = pd.to_datetime(df_dre['Data'], errors='coerce').dt.year
-                 
-                        # Determinar tempo de mercado com base no histórico das demonstrações
+                        # Recarregar dados financeiros
+                        multiplos = load_multiplos_from_db(ticker)
+                        df_dre = load_data_from_db(ticker)
+                    
+                        # Garantir que os dados existem antes de continuar
                         if multiplos is None or multiplos.empty or df_dre is None or df_dre.empty:
                             continue
-    
-                        # **Remover outliers antes de calcular métricas** __________________________________________________________________________________
-                        colunas_para_filtrar = ['Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida', 
-                                        'Divida_Total', 'Passivo_Circulante', 'Liquidez_Corrente', 
-                                        'Crescimento_Receita', 'Crescimento_Lucro']
                     
-                        # Remover Outliers (PASSO 2)
+                        # Conversão da coluna Data para Ano
+                        multiplos['Ano'] = pd.to_datetime(multiplos['Data'], errors='coerce').dt.year
+                        df_dre['Ano'] = pd.to_datetime(df_dre['Data'], errors='coerce').dt.year
+                    
+                        # Definir colunas para remoção de outliers
+                        colunas_para_filtrar = [
+                            'Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida',
+                            'Divida_Total', 'Passivo_Circulante', 'Liquidez_Corrente',
+                            'Crescimento_Receita', 'Crescimento_Lucro'
+                        ]
+                    
+                        # Remover outliers dos DataFrames
                         multiplos_corrigido = remover_outliers_iqr(multiplos, colunas_para_filtrar)
                         df_dre_corrigido = remover_outliers_iqr(df_dre, colunas_para_filtrar)
-                           
+                    
                         # ================================================
-                        #  DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE
-                        # ================================================___________________________________________________________________________________________________________________________
-                        # Definir indicadores para score
+                        # DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE
+                        # ================================================
                         indicadores_score_ajustados = {
                             'Margem_Liquida_mean': {'peso': 0.15, 'melhor_alto': True},
                             'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},
@@ -1478,9 +1492,11 @@ if pagina == "Avançada": #_____________________________________________________
                             'Divida_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': False},
                             'Caixa_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
                         }
-                                
+                    
+                        # Calcular Score da empresa
                         resultados_empresa = calcular_score_acumulado(multiplos_corrigido, df_dre_corrigido, indicadores_score_ajustados)
                     
+                        # Adicionar os resultados na lista final
                         resultados.append({
                             'ticker': ticker,
                             'nome_empresa': nome_emp,
@@ -1489,7 +1505,7 @@ if pagina == "Avançada": #_____________________________________________________
                             'Segmento': row['SEGMENTO'],
                             'Scores_Anuais': resultados_empresa
                         })
-                 
+                                     
                     # DataFrame com scores
                     #df_scores = pd.concat([pd.DataFrame(res) for res in resultados])
                     dfs = []  # lista de DFs prontos para concatenar
