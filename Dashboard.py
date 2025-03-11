@@ -1451,7 +1451,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
                                 # Criar bloco estilizado para cada empresa
                                 st.markdown(
-                                    f"""
+                                    f'
                                     <div style="
                                         border: 2px solid #ddd;
                                         border-radius: 10px;
@@ -1465,7 +1465,7 @@ if pagina == "Avançada": #_____________________________________________________
                                         <h4 style="color: #333;">{row.nome_empresa} ({row.ticker})</h4>
                                      
                                     </div>
-                                    """,
+                                    ',
                                     unsafe_allow_html=True
                                 )
                                 
