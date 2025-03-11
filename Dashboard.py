@@ -1437,7 +1437,6 @@ if pagina == "Avançada": #_____________________________________________________
                         empresas_filtradas = pd.DataFrame(empresas_selecionadas)
                         st.success(f"Total de empresas filtradas: {len(empresas_filtradas)}")
 
-                    st.dataframe(empresas_filtradas)
                     # Exibir empresas selecionadas em blocos estilizados lado a lado __________________________________________________________________________________________________________
                     if not empresas_filtradas.empty:
                         st.markdown("### Empresas Selecionadas")
@@ -1464,9 +1463,7 @@ if pagina == "Avançada": #_____________________________________________________
                                     ">
                                         <img src="{logo_url}" style="width: 50px; height: 50px; margin-bottom: 10px;">
                                         <h4 style="color: #333;">{row.nome_empresa} ({row.ticker})</h4>
-                                        <p style="font-size: 16px;">Setor: {row.SETOR}</p>
-                                        <p style="font-size: 16px;">Subsetor: {row.SUBSETOR}</p>
-                                        <p style="font-size: 16px;">Segmento: {row.SEGMENTO}</p>
+                                     
                                     </div>
                                     """,
                                     unsafe_allow_html=True
