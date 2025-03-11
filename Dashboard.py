@@ -1388,7 +1388,7 @@ if pagina == "Avançada": #_____________________________________________________
             patrimonio, orient='index', columns=['Patrimonio']
         )
         df_patrimonio.sort_index(inplace=True)
-    return df_patrimonio
+        return df_patrimonio
 
     
     # 📌 Função para calcular o patrimônio acumulado no Tesouro Selic ________________________________________________________________________________________________________________________
