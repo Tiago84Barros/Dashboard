@@ -1536,7 +1536,7 @@ if pagina == "Avançada": #_____________________________________________________
                             'multiplos': multiplos,
                             'df_dre': df_dre
                         })
-
+                    st.dataframe(lista_empresas)
                     # ================================================
                     # DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE
                     # ================================================
