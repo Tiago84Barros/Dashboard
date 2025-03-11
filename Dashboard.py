@@ -1198,41 +1198,93 @@ if pagina == "Avançada": #_____________________________________________________
         
         return metrics
 
-    # Função para calcular o Score acumulado ___________________________________________________________________________________________________________________________________________________                  
-    def calcular_score_acumulado(multiplos, dre, indicadores_score):
+    def calcular_score_acumulado(lista_empresas, indicadores_score, anos_minimos=3):
+        """
+        lista_empresas: lista de dicionários, cada um contendo:
+           {
+             'ticker': str,
+             'multiplos': <DataFrame com col 'Ano'>,
+             'df_dre': <DataFrame com col 'Ano'>
+           }
+        indicadores_score: dicionário de { 'Margem_Liquida_mean': {'peso':..., 'melhor_alto':...}, ... }
+        anos_minimos: int (ex: 3) => somente começa a gerar score após N anos de histórico
+        
+        Retorna df_scores com colunas: [Ano, ticker, Score_Ajustado].
+        """
+    
+        # 1) Descobrir todos os anos possíveis, unindo as colunas 'Ano' de cada empresa
+        anos_disponiveis = set()
+        for emp in lista_empresas:
+            anos_disponiveis.update(emp['multiplos']['Ano'].unique())
+            anos_disponiveis.update(emp['df_dre']['Ano'].unique())
+        anos_disponiveis = sorted(anos_disponiveis)
+    
         df_resultados = []
     
-        anos_disponiveis = sorted(multiplos['Ano'].unique())
-                            
-        # Iniciar a partir do 3º elemento: range(2, len(anos_disponiveis))
-        for idx in range(2, len(anos_disponiveis)):
+        # 2) Percorrer a partir de anos_minimos para frente
+        for idx in range(anos_minimos, len(anos_disponiveis)):
             ano = anos_disponiveis[idx]
-            df_multiplos_acum = multiplos[multiplos['Ano'] <= ano].copy()
-            df_dre_acumulado = dre[dre['Ano'] <= ano].copy()
-
-            # PASSO 3
-            metricas = calcular_metricas_historicas_simplificadas(
-                df_mult=df_multiplos_acum,
-                df_dre=df_dre_acumulado
-            )
-
-                   
-            score_ajustado = 0
-            # PASSO 6
-            for ind, config in indicadores_score.items():
-                if metricas.get(ind) is None:
-                    valor_norm = 0
-                else:
-                    valor = winsorize(pd.Series([metricas[ind]]))[0] 
-                    valor_norm = z_score_normalize(pd.Series(valor), config['melhor_alto'])[0]
-                    score_ajustado += valor_norm * config['peso'] 
-            
-            df_resultados.append({
-                'Ano': ano,
-                'Score_Ajustado': score_ajustado
-            })
     
-        return pd.DataFrame(df_resultados)
+            # Coletar métricas brutas de todas as empresas para esse 'ano'
+            dados_ano = []
+            for emp in lista_empresas:
+                df_mult = emp['multiplos'][emp['multiplos']['Ano'] <= ano].copy()
+                df_dre  = emp['df_dre'][emp['df_dre']['Ano'] <= ano].copy()
+    
+                if df_mult.empty or df_dre.empty:
+                    continue
+
+                 # Definir colunas para remoção de outliers
+                colunas_para_filtrar = [
+                    'Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida',
+                    'Divida_Total', 'Passivo_Circulante', 'Liquidez_Corrente',
+                    'Crescimento_Receita', 'Crescimento_Lucro'
+                ]
+            
+                # Remover outliers dos DataFrames
+                multiplos_corrigido = remover_outliers_iqr(df_mult, colunas_para_filtrar)
+                df_dre_corrigido = remover_outliers_iqr(df_dre, colunas_para_filtrar)
+
+                metricas = calcular_metricas_historicas_simplificadas(multiplos_corrigido, df_dre_corrigido)
+                row_dict = {'ticker': emp['ticker'], 'Ano': ano}
+                row_dict.update(metricas)  # ex: 'Margem_Liquida_mean': X, etc.
+    
+                dados_ano.append(row_dict)
+    
+            # Montar DataFrame com todas as empresas nesse ano
+            df_ano = pd.DataFrame(dados_ano)
+            if df_ano.empty:
+                continue
+    
+            # 3) Para cada indicador, winsorize e penalize
+            for col, config in indicadores_score.items():
+                if col in df_ano.columns:
+                    df_ano[col] = winsorize(df_ano[col])
+                    vol_col = col.replace("_mean", "_volatility_penalty")
+                    if vol_col in df_ano.columns:
+                        df_ano[col] *= (1 - df_ano[vol_col])
+                    if 'historico_bonus' in df_ano.columns:
+                        df_ano[col] *= df_ano['historico_bonus']
+    
+            # Criar Score_Ajustado com 0
+            df_ano['Score_Ajustado'] = 0.0
+    
+            # 4) Normalizar as colunas no conjunto (para não cair no caso 1 valor = z=0)
+            for col, cfg in indicadores_score.items():
+                if col in df_ano.columns:
+                    # z-score no conjunto
+                    df_ano[col + "_norm"] = z_score_normalize(df_ano[col], cfg['melhor_alto'])
+                    # some no score
+                    df_ano['Score_Ajustado'] += df_ano[col + "_norm"] * cfg['peso']
+    
+            df_resultados.append(df_ano[['Ano','ticker','Score_Ajustado']])
+    
+        if df_resultados:
+            df_scores = pd.concat(df_resultados, ignore_index=True)
+        else:
+            df_scores = pd.DataFrame(columns=['Ano','ticker','Score_Ajustado'])
+    
+        return df_scores
         
     # 📌 Baixando preços de fechamento das empresas ____________________________________________________________________________________________________________________________________________
     def baixar_precos(tickers, start="2010-01-01"):
@@ -1465,94 +1517,47 @@ if pagina == "Avançada": #_____________________________________________________
                                         <h4 style="color: #333;">{row.nome_empresa} ({row.ticker})</h4>
                                      
                                     </div>
-                                    """,
+                                    "",
                                     unsafe_allow_html=True
                                 )
                                 
                     # =====================================================================
                     # FLUXO PRINCIPAL - Cálculo de métricas e Score
                     # =====================================================================
-                    
-                    resultados = []
-                    
-                    for _, row in empresas_filtradas.iterrows():
-                        ticker = f"{row['ticker']}.SA"
-                        nome_emp = row['nome_empresa']
-                    
-                        # Recarregar dados financeiros
-                        multiplos = load_multiplos_from_db(ticker)
-                        df_dre = load_data_from_db(ticker)
-                    
-                        # Garantir que os dados existem antes de continuar
-                        if multiplos is None or multiplos.empty or df_dre is None or df_dre.empty:
-                            continue
-                    
-                        # Conversão da coluna Data para Ano
-                        multiplos['Ano'] = pd.to_datetime(multiplos['Data'], errors='coerce').dt.year
-                        df_dre['Ano'] = pd.to_datetime(df_dre['Data'], errors='coerce').dt.year
-                    
-                        # Definir colunas para remoção de outliers
-                        colunas_para_filtrar = [
-                            'Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida',
-                            'Divida_Total', 'Passivo_Circulante', 'Liquidez_Corrente',
-                            'Crescimento_Receita', 'Crescimento_Lucro'
-                        ]
-                    
-                        # Remover outliers dos DataFrames
-                        multiplos_corrigido = remover_outliers_iqr(multiplos, colunas_para_filtrar)
-                        df_dre_corrigido = remover_outliers_iqr(df_dre, colunas_para_filtrar)
-                    
-                        # ================================================
-                        # DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE
-                        # ================================================
-                        indicadores_score_ajustados = {
-                            'Margem_Liquida_mean': {'peso': 0.15, 'melhor_alto': True},
-                            'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},
-                            'ROE_mean': {'peso': 0.20, 'melhor_alto': True},
-                            'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},
-                            'P/VP_mean': {'peso': 0.10, 'melhor_alto': False},
-                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
-                            'Alavancagem_Financeira_mean': {'peso': 0.15, 'melhor_alto': False},
-                            'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
-                            'Receita_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': True},
-                            'Lucro_Liquido_slope_log': {'peso': 0.20, 'melhor_alto': True},
-                            'Patrimonio_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
-                            'Divida_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': False},
-                            'Caixa_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
-                        }
-                    
-                        # Calcular Score da empresa
-                        resultados_empresa = calcular_score_acumulado(multiplos_corrigido, df_dre_corrigido, indicadores_score_ajustados)
-                    
-                        # Adicionar os resultados na lista final
-                        resultados.append({
-                            'ticker': ticker,
-                            'nome_empresa': nome_emp,
-                            'Setor': row['SETOR'],
-                            'Subsetor': row['SUBSETOR'],
-                            'Segmento': row['SEGMENTO'],
-                            'Scores_Anuais': resultados_empresa
-                        })
-                                     
-                    # DataFrame com scores
-                    #df_scores = pd.concat([pd.DataFrame(res) for res in resultados])
-                    dfs = []  # lista de DFs prontos para concatenar
 
-                    for res in resultados:
-                    
-                        scores_anuais_df = res['Scores_Anuais'].copy()  # DataFrame com colunas 'Ano' e 'Score_Ajustado'
-                        
-                        # Adicionar colunas extras
-                        scores_anuais_df['ticker'] = res['ticker']
-                        scores_anuais_df['nome_empresa'] = res['nome_empresa']
-                        scores_anuais_df['Setor'] = res['Setor']
-                        scores_anuais_df['Subsetor'] = res['Subsetor']
-                        scores_anuais_df['Segmento'] = res['Segmento']
-                        
-                        # Armazena no array de DFs
-                        dfs.append(scores_anuais_df)              
-                        df_scores = pd.concat(dfs, ignore_index=True)
-                                                                   
+                    lista_empresas = []
+                    for i, row in empresas_filtradas.iterrows():
+                        ticker = row['ticker']
+                        multiplos = load_multiplos_from_db(ticker+".SA").copy()
+                        df_dre = load_data_from_db(ticker+".SA").copy()
+                        # converter data->ano etc.
+                        lista_empresas.append({
+                            'ticker': ticker,
+                            'multiplos': multiplos,
+                            'df_dre': df_dre
+                        })
+
+                    # ================================================
+                    # DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE
+                    # ================================================
+                    indicadores_score_ajustados = {
+                        'Margem_Liquida_mean': {'peso': 0.15, 'melhor_alto': True},
+                        'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},
+                        'ROE_mean': {'peso': 0.20, 'melhor_alto': True},
+                        'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},
+                        'P/VP_mean': {'peso': 0.10, 'melhor_alto': False},
+                        'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                        'Alavancagem_Financeira_mean': {'peso': 0.15, 'melhor_alto': False},
+                        'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                        'Receita_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                        'Lucro_Liquido_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                        'Patrimonio_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                        'Divida_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': False},
+                        'Caixa_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                    }
+                    # Escores das empresas de acordo com segmento e tipo de empresa
+                    df_scores = calcular_score_acumulado(lista_empresas, indicadores_score_ajustados, anos_minimos=3)
+                                                                                                    
                     # Determinar líderes
                     lideres_por_ano = determinar_lideres(df_scores)
                    
