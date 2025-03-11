@@ -1314,7 +1314,7 @@ if pagina == "Avançada": #_____________________________________________________
     
             for mes in range(1, 13):
                 data_aporte = f"{ano + 1}-{mes:02d}"  # Ano seguinte ao ano do score
-                data_aporte = pd.to_datetime(data_aporte_str)
+                st.markdown(data_aporte)
     
                 if data_aporte not in precos.index:
                     continue
