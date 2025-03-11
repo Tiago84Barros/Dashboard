@@ -1437,6 +1437,7 @@ if pagina == "Avançada": #_____________________________________________________
                         empresas_filtradas = pd.DataFrame(empresas_selecionadas)
                         st.success(f"Total de empresas filtradas: {len(empresas_filtradas)}")
 
+                    st.dataframe(empresas_filtradas)
                     # Exibir empresas selecionadas em blocos estilizados lado a lado __________________________________________________________________________________________________________
                     if not empresas_filtradas.empty:
                         st.markdown("### Empresas Selecionadas")
@@ -1470,7 +1471,7 @@ if pagina == "Avançada": #_____________________________________________________
                                     """,
                                     unsafe_allow_html=True
                                 )
-                    
+                                
                     # =====================================================================
                     # FLUXO PRINCIPAL - Cálculo de métricas e Score
                     # =====================================================================
