@@ -1545,7 +1545,7 @@ if pagina == "Avançada": #_____________________________________________________
                             'multiplos': multiplos,
                             'df_dre': df_dre
                         })
-                    st.dataframe(lista_empresas)
+               
                     # ================================================
                     # DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE
                     # ================================================
@@ -1566,6 +1566,7 @@ if pagina == "Avançada": #_____________________________________________________
                     }
                     # Escores das empresas de acordo com segmento e tipo de empresa
                     df_scores = calcular_score_acumulado(lista_empresas, indicadores_score_ajustados, anos_minimos=3)
+                    st.dataframe(df_scores)
                                                                                                     
                     # Determinar líderes
                     lideres_por_ano = determinar_lideres(df_scores)
