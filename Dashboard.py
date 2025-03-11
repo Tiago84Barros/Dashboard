@@ -1517,7 +1517,7 @@ if pagina == "Avançada": #_____________________________________________________
                                         <h4 style="color: #333;">{row.nome_empresa} ({row.ticker})</h4>
                                      
                                     </div>
-                                    """,
+                                    "",
                                     unsafe_allow_html=True
                                 )
                                 
@@ -1530,7 +1530,16 @@ if pagina == "Avançada": #_____________________________________________________
                         ticker = row['ticker']
                         multiplos = load_multiplos_from_db(ticker+".SA").copy()
                         df_dre = load_data_from_db(ticker+".SA").copy()
-                        # converter data->ano etc.
+                        
+                        if multiplos is None or multiplos.empty:
+                            continue
+                        if df_dre is None or df_dre.empty:
+                            continue
+                    
+                        # ✅ Criar a coluna 'Ano' aqui
+                        multiplos["Ano"] = pd.to_datetime(multiplos["Data"], errors="coerce").dt.year
+                        df_dre["Ano"]    = pd.to_datetime(df_dre["Data"], errors="coerce").dt.year
+                                            
                         lista_empresas.append({
                             'ticker': ticker,
                             'multiplos': multiplos,
