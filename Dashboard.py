@@ -1314,12 +1314,12 @@ if pagina == "Avançada": #_____________________________________________________
     
             for mes in range(1, 13):
                 data_aporte = f"{ano + 1}-{mes:02d}"  # Ano seguinte ao ano do score
-                st.markdown(data_aporte)
-    
+                    
                 if data_aporte not in precos.index:
                     continue
     
                 preco_atual = precos.loc[data_aporte, empresa_lider]
+                st.markdown(preco_atual)
     
                 # Verificar se houve mudança de líder
                 if empresa_lider not in carteira:
