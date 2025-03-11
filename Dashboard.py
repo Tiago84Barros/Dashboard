@@ -1400,9 +1400,7 @@ if pagina == "Avançada": #_____________________________________________________
                 else:
                     # Novo: Adicionando quarto filtro (Crescimento ou Estabelecida) _________________________________________________________________________________________________________
                     opcao_crescimento = st.selectbox("Tipo de Empresa:", ["Todas", "Crescimento (< 5 anos)", "Estabelecida (>= 5 anos)"])
-    
-                    empresas_selecionadas = []
-    
+       
                     # Lista para armazenar empresas selecionadas
                     empresas_selecionadas = []
                     
@@ -1412,11 +1410,10 @@ if pagina == "Avançada": #_____________________________________________________
                         nome_emp = row['nome_empresa']
                     
                         # Carregar dados financeiros da empresa
-                        multiplos = load_multiplos_from_db(ticker)
                         df_dre = load_data_from_db(ticker)
                     
                         # Validar se os dados estão disponíveis
-                        if multiplos is None or multiplos.empty or df_dre is None or df_dre.empty:
+                        if df_dre is None or df_dre.empty:
                             continue
                     
                         # Converter datas para anos
@@ -1439,6 +1436,40 @@ if pagina == "Avançada": #_____________________________________________________
                     else:
                         empresas_filtradas = pd.DataFrame(empresas_selecionadas)
                         st.success(f"Total de empresas filtradas: {len(empresas_filtradas)}")
+
+                    # Exibir empresas selecionadas em blocos estilizados lado a lado __________________________________________________________________________________________________________
+                    if not empresas_filtradas.empty:
+                        st.markdown("### Empresas Selecionadas")
+                    
+                        colunas_layout = st.columns(3)  # Ajuste o número de colunas conforme necessário
+                    
+                        for idx, row in enumerate(empresas_filtradas.itertuples()):
+                            col = colunas_layout[idx % len(colunas_layout)]  # Distribui os blocos entre as colunas
+                            with col:
+                                # Obter URL do logo da empresa (você pode modificar essa função conforme sua necessidade)
+                                logo_url = get_logo_url(row.ticker)  # Certifique-se de que essa função existe e retorna a URL correta
+                    
+                                # Criar bloco estilizado para cada empresa
+                                st.markdown(
+                                    f"""
+                                    <div style="
+                                        border: 2px solid #ddd;
+                                        border-radius: 10px;
+                                        padding: 15px;
+                                        margin: 10px;
+                                        background-color: #f9f9f9;
+                                        box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
+                                        text-align: center;
+                                    ">
+                                        <img src="{logo_url}" style="width: 50px; height: 50px; margin-bottom: 10px;">
+                                        <h4 style="color: #333;">{row.nome_empresa} ({row.ticker})</h4>
+                                        <p style="font-size: 16px;">Setor: {row.SETOR}</p>
+                                        <p style="font-size: 16px;">Subsetor: {row.SUBSETOR}</p>
+                                        <p style="font-size: 16px;">Segmento: {row.SEGMENTO}</p>
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True
+                                )
                     
                     # =====================================================================
                     # FLUXO PRINCIPAL - Cálculo de métricas e Score
