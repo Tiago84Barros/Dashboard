@@ -1664,27 +1664,23 @@ if pagina == "Avançada": #_____________________________________________________
 
                                     
                     # Mostrar resultado final =========================================== GRÁFICO COMPARATIVO ESTRATÉGIA LIDER VS CONCORRENTES VS TESOURO SELIC ===================================
+                    # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO =======================================================================================================
                     st.subheader("📈 Evolução do Patrimônio com Aportes Mensais")
-
+                    
                     fig, ax = plt.subplots(figsize=(12, 6))
                     
                     # Garantir que os dados estão ordenados corretamente
                     df_patrimonio_evolucao = patrimonio_final.copy()
-                    st.dataframe(df_patrimonio_evolucao)
                     df_patrimonio_evolucao.index = pd.to_datetime(df_patrimonio_evolucao.index, errors='coerce')
                     df_patrimonio_evolucao = df_patrimonio_evolucao.sort_index()
-                    
-                    # 🚀 Diferenciar a estratégia de aportes no DataFrame
-                    coluna_estrategia = "Patrimonio Estratégia"  # Nome personalizado para evitar confusão
-                    if "Patrimonio" in df_patrimonio_evolucao.columns:
-                        df_patrimonio_evolucao = df_patrimonio_evolucao.rename(columns={"Patrimonio": coluna_estrategia})
+                    st.dataframe(df_patrimonio_evolucao)
                     
                     # Se não houver dados, exibir aviso
                     if df_patrimonio_evolucao.empty:
                         st.warning("⚠️ Dados insuficientes para plotar a evolução do patrimônio.")
                     else:
                         for ticker in df_patrimonio_evolucao.columns:
-                            if ticker == coluna_estrategia:  # Estratégia de aporte principal
+                            if ticker == "Patrimonio":  # Destacando a estratégia principal
                                 df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, color="red", label="Estratégia de Aporte")
                             elif ticker == "Tesouro Selic":
                                 df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, linestyle="-.", color="blue", label="Tesouro Selic")
@@ -1699,7 +1695,6 @@ if pagina == "Avançada": #_____________________________________________________
                     
                         # Exibir gráfico no Streamlit
                         st.pyplot(fig)
-
 
                     
                     # Esse código representa uma implementação sólida e robusta conforme as estratégias discutidas, permitindo uma análise dinâmica e fundamentada na evolução histórica dos Scores das empresas.
