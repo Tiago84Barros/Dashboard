@@ -1362,6 +1362,9 @@ if pagina == "Avançada": #_____________________________________________________
                     data_inicio = data_aporte
         
                 preco_lider = precos.loc[data_aporte, empresa_lider]
+
+                # Exibir o preço e a data do aporte para conferência
+                st.write(f"📌 Aporte realizado em {data_aporte.date()} | Preço de {empresa_lider}: {preco_lider}")
                                     
                 # Verificar se houve mudança de líder
                 if empresa_lider not in carteira:
