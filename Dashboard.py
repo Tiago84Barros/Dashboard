@@ -1605,7 +1605,35 @@ if pagina == "Avançada": #_____________________________________________________
                     patrimonio_final = pd.concat([patrimonio_historico, patrimonio_selic], axis=1)
                                     
                     # Mostrar resultado final
-                    st.line_chart(patrimonio_historico)
+                    st.subheader("📈 Evolução do Patrimônio com Aportes Mensais")
+
+                    fig, ax = plt.subplots(figsize=(12, 6))
+                    
+                    # Converter o índice para datetime e ordenar
+                    patrimonio_final.index = pd.to_datetime(patrimonio_final.index, errors='coerce')
+                    patrimonio_final.sort_index(inplace=True)
+                    
+                    if patrimonio_final.empty:
+                        st.warning("⚠️ Dados insuficientes para plotar a evolução do patrimônio.")
+                    else:
+                        # Iterar sobre cada coluna do DataFrame, criando uma linha no gráfico
+                        for col in patrimonio_final.columns:
+                            # Se quiser destacar alguma coluna específica (ex: Tesouro Selic)
+                            if col == "Tesouro Selic":
+                                patrimonio_final[col].plot(
+                                    ax=ax, linewidth=2, linestyle="-.", color="blue", label="Tesouro Selic"
+                                )
+                            else:
+                                # Demais colunas (empresas, estratégia do líder, etc.)
+                                patrimonio_final[col].plot(
+                                    ax=ax, linewidth=1, linestyle="--", alpha=0.7, label=col
+                                )
+                    
+                        ax.set_title("Evolução do Patrimônio Acumulado")
+                        ax.set_xlabel("Data")
+                        ax.set_ylabel("Patrimônio (R$)")
+                        ax.legend()
+                        st.pyplot(fig)
                     
                     # Esse código representa uma implementação sólida e robusta conforme as estratégias discutidas, permitindo uma análise dinâmica e fundamentada na evolução histórica dos Scores das empresas.
                    
@@ -1955,10 +1983,7 @@ if pagina == "Avançada": #_____________________________________________________
                             # 🔹 Somar todos os investimentos acumulados até o momento
                             patrimonio_selic.loc[data, "Tesouro Selic"] = sum(investimentos)
                     
-                        return patrimonio_selic                                   
-                                    
-                 
-                    
+                        return patrimonio_selic                        
                     
                     # 📌 Analisando empresas por segmento
                     if 'df_empresas' in locals() and not df_empresas.empty:
