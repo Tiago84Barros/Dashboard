@@ -1303,92 +1303,79 @@ if pagina == "Avançada": #_____________________________________________________
     
     
     # Função para gerenciamento dinâmico da carteira  ________________________________________________________________________________________________________________________________________                        
-    def gerir_carteira(precos, df_scores, aporte_mensal=1000):
-        patrimonio = {}
-        carteira = {}
+   def gerir_carteira(precos, df_scores, aporte_mensal=1000):
+        """
+        Simula o crescimento do patrimônio com aportes mensais em todas as empresas da carteira.
+        - precos: DataFrame com preços das ações.
+        - df_scores: DataFrame com os scores ajustados.
+        - aporte_mensal: Valor a ser investido mensalmente.
+    
+        Retorna um DataFrame com a evolução do patrimônio ao longo do tempo.
+        """
+        patrimonio = {}  # Dicionário para armazenar o patrimônio ao longo do tempo
+        carteira = {}  # Dicionário que armazena a quantidade de ações de cada empresa
     
         anos = sorted(df_scores['Ano'].unique())
     
         for ano in anos:
+            # Encontrar a empresa líder do ano
             empresa_lider = df_scores[df_scores['Ano'] == ano].iloc[0]['ticker']
     
-            for mes in range(1, 13):
-                # Definir data_aporte como o primeiro dia do mês
-                data_aporte_str = f"{ano+1}-{mes:02d}-01"
-                data_aporte = pd.to_datetime(data_aporte_str)  # converter p/ datetime
+            for mes in range(1, 13):  # Loop pelos meses do ano
+                # Criar a data correta no formato ano/mês/dia (1º dia do mês)
+                data_aporte = f"{ano + 1}-{mes:02d}-01"
+                data_aporte = pd.to_datetime(data_aporte)
     
-                # Se data_aporte não estiver no índice de precos, tente achar a data útil
+                # Verificar se há preços disponíveis para essa data
                 if data_aporte not in precos.index:
-                    # Exemplo de fallback: buscar a 1ª data maior ou igual a data_aporte
-                    prox_datas = precos.index[precos.index >= data_aporte]
-                    if prox_datas.empty:
-                        # Não há datas disponíveis (fim do range de precos)
-                        continue
-                    # Pega a primeira data útil existente
-                    data_aporte = prox_datas[0]
-    
-                # Agora data_aporte é garantidamente no índice de precos
-                # Verificar se empresa_lider está nas colunas:
-                if empresa_lider not in precos.columns:
-                    # Se não houver preços para esse ticker, pula
                     continue
     
-                preco_atual = precos.loc[data_aporte, empresa_lider] # preço da ação no dia do aporte
+                # Aporte em todas as empresas ativas da carteira
+                for empresa in carteira.keys():
+                    preco_atual = precos.loc[data_aporte, empresa]
     
-                # Se a carteira não tiver essa empresa_lider ainda, inicializa
-                if empresa_lider not in carteira:
-                    carteira[empresa_lider] = 0.0
-    
-                # Aportar
-                carteira[empresa_lider] += aporte_mensal / preco_atual
-    
-                # Atualizar patrimônio total
-                patrimonio_total = 0.0
-                for emp in carteira:
-                    if emp in precos.columns:
-                        patrimonio_total += carteira[emp] * precos.loc[data_aporte, emp]
-    
-                patrimonio[data_aporte] = patrimonio.get(data_aporte, 0.0) + patrimonio_total
-    
-                # Verificar deterioração do score e realizar venda se necessário
-                for emp in list(carteira.keys()):
-                    # Se for o primeiro ano, pula
-                    if ano == anos[0]:
+                    if pd.isna(preco_atual) or preco_atual <= 0:
                         continue
     
-                    # Obter arrays de score
-                    score_atual_array = df_scores[
-                        (df_scores['Ano'] == ano - 1) & (df_scores['ticker'] == emp)
-                    ]['Score_Ajustado'].values
+                    carteira[empresa] += aporte_mensal / preco_atual  # Comprar mais ações
     
-                    score_inicial_array = df_scores[
-                        (df_scores['Ano'] == anos[0]) & (df_scores['ticker'] == emp)
-                    ]['Score_Ajustado'].values
+                # Se a empresa líder ainda não estiver na carteira, adicioná-la
+                if empresa_lider not in carteira:
+                    carteira[empresa_lider] = 0
     
-                    # Checar se vazio
+                # Aporte mensal na empresa líder
+                preco_lider = precos.loc[data_aporte, empresa_lider]
+                if not pd.isna(preco_lider) and preco_lider > 0:
+                    carteira[empresa_lider] += aporte_mensal / preco_lider  # Comprar mais ações
+    
+                # Atualizar patrimônio total
+                patrimonio_total = sum(carteira[empresa] * precos.loc[data_aporte, empresa] for empresa in carteira if empresa in precos.columns)
+    
+                patrimonio[data_aporte] = patrimonio_total
+    
+                # 📌 Verificação de Score e Venda de Empresas Fracas
+                for empresa in list(carteira.keys()):
+                    if ano == anos[0]:  # No primeiro ano, ainda não há base de comparação
+                        continue
+    
+                    score_atual_array = df_scores[(df_scores['Ano'] == ano - 1) & (df_scores['ticker'] == empresa)]['Score_Ajustado'].values
+                    score_inicial_array = df_scores[(df_scores['Ano'] == anos[0]) & (df_scores['ticker'] == empresa)]['Score_Ajustado'].values
+    
                     if len(score_atual_array) == 0 or len(score_inicial_array) == 0:
                         continue
     
-                    score_atual_val   = score_atual_array[0]
+                    score_atual_val = score_atual_array[0]
                     score_inicial_val = score_inicial_array[0]
     
-                    # Evitar div/0
                     if score_inicial_val == 0:
                         continue
     
+                    # Se a empresa perdeu mais de 30% do score inicial, vende-se tudo
                     if score_atual_val / score_inicial_val < 0.7:
-                        patrimonio_venda = carteira.pop(emp) * preco_atual
-                        # Garantir que a empresa líder exista no dicionário
-                        if empresa_lider not in carteira:
-                            carteira[empresa_lider] = 0.0
-                        carteira[empresa_lider] += patrimonio_venda / preco_atual
+                        patrimonio_venda = carteira.pop(empresa) * preco_atual
+                        carteira[empresa_lider] += patrimonio_venda / preco_lider
     
-        # Retornar um DataFrame ordenado por data
-        df_patrimonio = pd.DataFrame.from_dict(
-            patrimonio, orient='index', columns=['Patrimonio']
-        )
-        df_patrimonio.sort_index(inplace=True)
-        return df_patrimonio
+        return pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
 
     
     # 📌 Função para calcular o patrimônio acumulado no Tesouro Selic ________________________________________________________________________________________________________________________
