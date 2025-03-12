@@ -1418,7 +1418,7 @@ if pagina == "Avançada": #_____________________________________________________
         # Ordenar por data
         df_patrimonio_empresas.sort_index(inplace=True)
 
-    return df_patrimonio_empresas
+        return df_patrimonio_empresas
 
 
     
