@@ -1322,6 +1322,7 @@ if pagina == "Avançada": #_____________________________________________________
         """
         while data_aporte not in precos.index:
             data_aporte += pd.Timedelta(days=1)  # Avança um dia
+            st.markdown(data_aporte)
             if data_aporte > precos.index.max():  # Evita sair do intervalo dos dados
                 return None
         return data_aporte
@@ -1644,12 +1645,10 @@ if pagina == "Avançada": #_____________________________________________________
                                                                    
                     # Determinar líderes
                     lideres_por_ano = determinar_lideres(df_scores)
-                    st.dataframe(lideres_por_ano)
-                                     
+                                                         
                     # Baixar preços
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
-                    st.dataframe(precos)
-                                                                
+                                                                                  
                     # Gerenciamento da carteira
                     patrimonio_historico, data_inicio_aporte = gerir_carteira(precos, df_scores)
                     
@@ -1686,8 +1685,7 @@ if pagina == "Avançada": #_____________________________________________________
                     df_patrimonio_evolucao = patrimonio_final.copy()
                     df_patrimonio_evolucao.index = pd.to_datetime(df_patrimonio_evolucao.index, errors='coerce')
                     df_patrimonio_evolucao = df_patrimonio_evolucao.sort_index()
-                    st.dataframe(df_patrimonio_evolucao)
-                    
+                                     
                     # Se não houver dados, exibir aviso
                     if df_patrimonio_evolucao.empty:
                         st.warning("⚠️ Dados insuficientes para plotar a evolução do patrimônio.")
