@@ -1314,6 +1314,19 @@ if pagina == "Avançada": #_____________________________________________________
     def determinar_lideres(df_scores):
         lideres = df_scores.loc[df_scores.groupby('Ano')['Score_Ajustado'].idxmax()]
         return lideres
+
+    def encontrar_proxima_data_valida(data_aporte, precos):
+        """
+        Ajusta a data do aporte para o próximo dia disponível em `precos.index`
+        """
+        precos = precos.sort_index()  # Garante que os preços estão ordenados
+        datas_validas = precos.index[precos.index >= data_aporte]  # Filtra datas após ou na data_aporte
+        
+        if not datas_validas.empty:
+            st.write(f"📅 Ajustando data do aporte de {data_aporte} para {datas_validas[0]}")
+            return datas_validas[0]
+        
+        return None  # Caso não haja mais preços disponíveis
     
     # Função para criar uma carteira com aportes apenas na empresa líder do ano ________________________________________________________________________________________________________________
     def gerir_carteira(precos, df_scores, aporte_mensal=1000):
@@ -1335,23 +1348,23 @@ if pagina == "Avançada": #_____________________________________________________
             empresa_lider = df_scores[df_scores['Ano'] == ano].iloc[0]['ticker']
     
             for mes in range(1, 13):
-                # Criar a data de aporte (inicialmente ano/mês)
-                data_aporte = f"{ano + 1}-{mes:02d}"
-                data_aporte = pd.to_datetime(data_aporte, errors='coerce')
+                data_aporte = f"{ano + 1}-{mes:02d}-01"  # Garante o primeiro dia do mês
+                data_aporte = pd.to_datetime(data_aporte)  # Converter para formato datetime
+
+                # Buscar a próxima data disponível com preço
+                data_aporte = encontrar_proxima_data_valida(data_aporte, precos)
     
-                # Encontrar a data mais próxima disponível nos preços
-                data_proxima = precos.index[precos.index >= data_aporte]
-                if not data_proxima.empty:
-                    data_aporte = data_proxima[0]
-                else:
-                    continue  # Se não houver preços disponíveis, pula
-    
-                # Salvar a primeira data válida de aporte
+                # Se não houver data válida, pula
+                if data_aporte is None:
+                    st.warning(f"❌ Nenhuma data válida encontrada para {ano}-{mes:02d}")
+                    continue
+                    
+                # Registra a primeira data de aporte válida
                 if data_inicio is None:
                     data_inicio = data_aporte
-    
+        
                 preco_lider = precos.loc[data_aporte, empresa_lider]
-    
+                     
                 # Verificar se houve mudança de líder
                 if empresa_lider not in carteira:
                     carteira[empresa_lider] = 0
