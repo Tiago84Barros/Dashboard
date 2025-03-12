@@ -1309,9 +1309,6 @@ if pagina == "Avançada": #_____________________________________________________
             st.error(f"Erro ao baixar preços: {e}")
             return None
         
-            except Exception as e:
-                st.error(f"Erro ao baixar preços: {e}")
-                return None
             
     # Função para determinar líder anual com base no Score Ajustado __________________________________________________________________________________________________________________________                      
     def determinar_lideres(df_scores):
