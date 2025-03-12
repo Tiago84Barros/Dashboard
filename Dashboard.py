@@ -1362,7 +1362,7 @@ if pagina == "Avançada": #_____________________________________________________
                     data_inicio = data_aporte
         
                 preco_lider = precos.loc[data_aporte, empresa_lider]
-                st.dataframe(preco_lider)
+                st.write(preco_lider)
                      
                 # Verificar se houve mudança de líder
                 if empresa_lider not in carteira:
