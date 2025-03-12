@@ -1318,60 +1318,107 @@ if pagina == "Avançada": #_____________________________________________________
     # Função para criar uma carteira com aportes apenas na empresa líder do ano ________________________________________________________________________________________________________________
     def gerir_carteira(precos, df_scores, aporte_mensal=1000):
         """
-        Simula o crescimento do patrimônio investindo mensalmente apenas na empresa líder do ano.
-        Se a líder mudar, vende toda a posição da anterior e realoca o capital na nova líder.
-        Se não houver preço disponível na data do aporte, busca o próximo dia com preço válido.
+        Gera a carteira investindo mensalmente apenas na empresa líder do ano e 
+        transfere o patrimônio para a nova líder quando necessário.
     
-        Retorna um DataFrame com a evolução do patrimônio ao longo do tempo.
+        Retorna:
+        - DataFrame com a evolução do patrimônio ao longo do tempo.
+        - Data da primeira alocação para sincronização com outras estratégias.
         """
+        patrimonio = {}
+        carteira = {}
+        data_inicio = None  # Inicializa a variável para armazenar a data do primeiro aporte
     
-        patrimonio = {}  # Dicionário que armazenará o patrimônio total ao longo do tempo
-        carteira = {}  # Dicionário que armazenará a quantidade de ações da empresa líder
         anos = sorted(df_scores['Ano'].unique())
-        empresa_atual = None  # Empresa líder inicial
-        capital_total = 0  # Total investido
     
         for ano in anos:
-            # 📌 1️⃣ Encontrar a empresa líder do ano
             empresa_lider = df_scores[df_scores['Ano'] == ano].iloc[0]['ticker']
     
-            for mes in range(1, 13):  # Loop pelos meses do ano
-                data_aporte = pd.to_datetime(f"{ano + 1}-{mes:02d}-01")
+            for mes in range(1, 13):
+                # Criar a data de aporte (inicialmente ano/mês)
+                data_aporte = f"{ano + 1}-{mes:02d}"
+                data_aporte = pd.to_datetime(data_aporte, errors='coerce')
     
-                # 📌 2️⃣ Se a data exata não existir em preços, buscar a próxima data válida
-                while data_aporte not in precos.index:
-                    data_aporte += pd.Timedelta(days=1)
-                    if data_aporte > precos.index.max():
-                        break  # Se a data ultrapassar o último dia disponível, interrompe a busca
+                # Encontrar a data mais próxima disponível nos preços
+                data_proxima = precos.index[precos.index >= data_aporte]
+                if not data_proxima.empty:
+                    data_aporte = data_proxima[0]
+                else:
+                    continue  # Se não houver preços disponíveis, pula
     
-                if data_aporte not in precos.index:
-                    continue  # Se ainda assim não encontrou uma data válida, pula o mês
+                # Salvar a primeira data válida de aporte
+                if data_inicio is None:
+                    data_inicio = data_aporte
     
                 preco_lider = precos.loc[data_aporte, empresa_lider]
     
-                if pd.isna(preco_lider) or preco_lider <= 0:
-                    continue  # Se ainda não houver preço válido, pula o mês
+                # Verificar se houve mudança de líder
+                if empresa_lider not in carteira:
+                    carteira[empresa_lider] = 0
     
-                # 📌 3️⃣ Caso a empresa líder tenha mudado, vende tudo da antiga e compra a nova
-                if empresa_atual and empresa_atual != empresa_lider:
-                    preco_venda = precos.loc[data_aporte, empresa_atual]
+                # Aporte mensal na líder
+                carteira[empresa_lider] += aporte_mensal / preco_lider
     
-                    if not pd.isna(preco_venda) and preco_venda > 0:
-                        # Converter ações da antiga líder para dinheiro
-                        capital_total = carteira.pop(empresa_atual, 0) * preco_venda  
-    
-                # 📌 4️⃣ Fazer o novo aporte na líder do ano
-                capital_total += aporte_mensal  # Somar ao capital total
-                carteira[empresa_lider] = capital_total / preco_lider  # Comprar novas ações
-    
-                # Atualizar a empresa líder atual
-                empresa_atual = empresa_lider
-    
-                # 📌 5️⃣ Calcular patrimônio total e armazenar no histórico
-                patrimonio_total = carteira[empresa_lider] * preco_lider
+                # Atualizar patrimônio total
+                patrimonio_total = sum(carteira[empresa] * precos.loc[data_aporte, empresa] for empresa in carteira)
                 patrimonio[data_aporte] = patrimonio_total
     
-        return pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
+        # Converter para DataFrame
+        df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
+    
+        return df_patrimonio, data_inicio  # Retorna tanto o patrimônio quanto a data do primeiro aporte
+
+    # Função que determina aportes mensais em todas as empresas das empresas filtradas _______________________________________________________________________________________________________________
+    def gerir_carteira_todas_empresas(precos, tickers, data_inicio, aporte_mensal=1000):
+        """
+        Realiza aportes mensais em todas as empresas a partir da data inicial do primeiro aporte da líder.
+        
+        precos: DataFrame com os preços históricos das empresas.
+        tickers: Lista dos tickers das empresas no portfólio.
+        data_inicio: Data inicial do primeiro aporte na empresa líder (formato YYYY-MM-DD).
+        aporte_mensal: Valor investido em cada empresa a cada mês.
+    
+        Retorna: DataFrame com a evolução do patrimônio por empresa.
+        """
+        patrimonio = {ticker: {} for ticker in tickers}
+        carteira = {ticker: 0 for ticker in tickers}
+    
+        # Converter índice de preços para datetime (se ainda não estiver)
+        precos.index = pd.to_datetime(precos.index)
+    
+        # Criar sequência de datas mensais a partir do primeiro aporte
+        datas_aporte = pd.date_range(start=data_inicio, end=precos.index.max(), freq='MS')
+    
+        for data_aporte in datas_aporte:
+            # Encontrar a data mais próxima disponível no DataFrame de preços
+            if data_aporte not in precos.index:
+                data_proxima = precos.index[precos.index >= data_aporte]
+                if not data_proxima.empty:
+                    data_aporte = data_proxima[0]
+                else:
+                    continue  # Se não houver preços disponíveis, pula o mês
+    
+            for ticker in tickers:
+                if ticker not in precos.columns:
+                    continue  # Se o ticker não existir nos preços, ignora
+    
+                preco_atual = precos.loc[data_aporte, ticker]
+                if pd.isna(preco_atual) or preco_atual == 0:
+                    continue  # Se o preço estiver vazio ou for zero, pula
+    
+                # Comprar fração de ações com o aporte mensal
+                carteira[ticker] += aporte_mensal / preco_atual
+    
+                # Atualizar o valor do patrimônio da empresa
+                patrimonio[ticker][data_aporte] = carteira[ticker] * preco_atual
+    
+        # Converter o dicionário em DataFrame para facilitar análise e plotagem
+        df_patrimonio_empresas = pd.DataFrame.from_dict(patrimonio, orient='columns')
+    
+        # Ordenar por data
+        df_patrimonio_empresas.sort_index(inplace=True)
+
+    return df_patrimonio_empresas
 
 
     
@@ -1592,12 +1639,18 @@ if pagina == "Avançada": #_____________________________________________________
                     st.dataframe(precos)
                                               
                     # Gerenciamento da carteira
-                    patrimonio_historico = gerir_carteira(precos, df_scores)
-                  
-                    # Comparação final com Tesouro Selic
-                    patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, patrimonio_historico.index.min())
-            
-                    patrimonio_final = pd.concat([patrimonio_historico, patrimonio_selic], axis=1)
+                    patrimonio_historico, data_inicio_aporte = gerir_carteira(precos, df_scores)
+                    
+                    # Comparação com Tesouro Selic a partir da mesma data
+                    patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, data_inicio_aporte)
+                    
+                    # Gerir carteira para todas as empresas usando a mesma data de início
+                    patrimonio_empresas = gerir_carteira_todas_empresas(precos, empresas_filtradas['ticker'], data_inicio_aporte)
+                    
+                    # Combinar os resultados para exibição no gráfico
+                    patrimonio_final = pd.concat([patrimonio_historico, patrimonio_empresas, patrimonio_selic], axis=1)
+
+                    
                                     
                     # Mostrar resultado final =========================================== GRÁFICO COMPARATIVO ESTRATÉGIA LIDER VS CONCORRENTES VS TESOURO SELIC ===================================
                     st.subheader("📈 Evolução do Patrimônio com Aportes Mensais")
