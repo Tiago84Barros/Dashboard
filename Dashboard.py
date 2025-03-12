@@ -1648,6 +1648,7 @@ if pagina == "Avançada": #_____________________________________________________
                                      
                     # Baixar preços
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
+                    st.dataframe(precos)
                                                                 
                     # Gerenciamento da carteira
                     patrimonio_historico, data_inicio_aporte = gerir_carteira(precos, df_scores)
