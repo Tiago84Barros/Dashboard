@@ -1287,34 +1287,31 @@ if pagina == "Avançada": #_____________________________________________________
         return df_scores
         
     # 📌 Baixando preços de fechamento das empresas ____________________________________________________________________________________________________________________________________________
-    def baixar_precos(tickers, start=None):
+    def baixar_precos(tickers, start="2010-01-01"):
         """
-        Baixa os preços das ações a partir da primeira data disponível.
+        Baixa os preços das ações a partir de uma data fixa.
         
         tickers: lista de tickers das empresas.
-        start: data inicial opcional (se None, busca a primeira data disponível).
+        start: data inicial padrão (exemplo: 2010-01-01).
         
         Retorna: DataFrame com preços ajustados.
         """
         try:
-            # Baixar todos os preços sem uma data inicial fixa
-            precos = yf.download(tickers, start="2000-01-01")['Close']
-    
-            # Ajustar os tickers para remover ".SA" e evitar problemas de nome
-            precos.columns = precos.columns.str.replace(".SA", "", regex=False)
-    
-            # Se `start` for None, encontrar a primeira data disponível no dataset
-            if start is None:
-                start = precos.dropna(how="all").index.min()
+            precos = yf.download(tickers, start=start)['Close']
+            precos.columns = precos.columns.str.replace(".SA", "", regex=False)  # Ajustar tickers
             
-            # Filtrar os preços para começarem apenas na primeira data disponível
-            precos = precos[precos.index >= start]
+            # Remover linhas onde todos os preços são NaN (empresas sem dados nesse período)
+            precos = precos.dropna(how="all")
     
             return precos
     
         except Exception as e:
             st.error(f"Erro ao baixar preços: {e}")
             return None
+        
+            except Exception as e:
+                st.error(f"Erro ao baixar preços: {e}")
+                return None
             
     # Função para determinar líder anual com base no Score Ajustado __________________________________________________________________________________________________________________________                      
     def determinar_lideres(df_scores):
