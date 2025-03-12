@@ -1659,12 +1659,12 @@ if pagina == "Avançada": #_____________________________________________________
 
                                     
                     # Mostrar resultado final =========================================== GRÁFICO COMPARATIVO ESTRATÉGIA LIDER VS CONCORRENTES VS TESOURO SELIC ===================================
-                    # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO =======================================================================================================================
+                    # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO =======================================================================================================
                     st.subheader("📈 Evolução do Patrimônio com Aportes Mensais")
                     
                     fig, ax = plt.subplots(figsize=(12, 6))
                     
-                    # Garantir que os dados estão ordenados
+                    # Garantir que os dados estão ordenados corretamente
                     df_patrimonio_evolucao = patrimonio_final.copy()
                     df_patrimonio_evolucao.index = pd.to_datetime(df_patrimonio_evolucao.index, errors='coerce')
                     df_patrimonio_evolucao = df_patrimonio_evolucao.sort_index()
@@ -1673,16 +1673,9 @@ if pagina == "Avançada": #_____________________________________________________
                     if df_patrimonio_evolucao.empty:
                         st.warning("⚠️ Dados insuficientes para plotar a evolução do patrimônio.")
                     else:
-                        # Determinar o líder para destacar no gráfico
-                        if not df_scores.empty:
-                            lider_atual = df_scores.sort_values("Ano", ascending=False).iloc[0]["ticker"]
-                        else:
-                            lider_atual = None
-                    
-                        # Plotar cada empresa no portfólio
                         for ticker in df_patrimonio_evolucao.columns:
-                            if ticker == lider_atual:
-                                df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, color="red", label=f"{ticker} (Líder)")
+                            if ticker == "Patrimonio":  # Destacando a estratégia principal
+                                df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, color="red", label="Estratégia de Aporte")
                             elif ticker == "Tesouro Selic":
                                 df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, linestyle="-.", color="blue", label="Tesouro Selic")
                             else:
