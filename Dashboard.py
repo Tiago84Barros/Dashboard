@@ -1354,7 +1354,7 @@ if pagina == "Avançada": #_____________________________________________________
     
                 # Se não houver data válida, pula
                 if data_aporte is None:
-                    st.warning(f"❌ Nenhuma data válida encontrada para {ano + 1}-{mes:02d}")
+                    #st.warning(f"❌ Nenhuma data válida encontrada para {ano + 1}-{mes:02d}")
                     continue
                     
                 # Registra a primeira data de aporte válida
@@ -1362,8 +1362,7 @@ if pagina == "Avançada": #_____________________________________________________
                     data_inicio = data_aporte
         
                 preco_lider = precos.loc[data_aporte, empresa_lider]
-                st.write(preco_lider)
-                     
+                                    
                 # Verificar se houve mudança de líder
                 if empresa_lider not in carteira:
                     carteira[empresa_lider] = 0
