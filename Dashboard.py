@@ -1322,7 +1322,6 @@ if pagina == "Avançada": #_____________________________________________________
         """
         while data_aporte not in precos.index:
             data_aporte += pd.Timedelta(days=1)  # Avança um dia
-            st.markdown(data_aporte)
             if data_aporte > precos.index.max():  # Evita sair do intervalo dos dados
                 return None
         return data_aporte
@@ -1363,6 +1362,7 @@ if pagina == "Avançada": #_____________________________________________________
                     data_inicio = data_aporte
         
                 preco_lider = precos.loc[data_aporte, empresa_lider]
+                st.markdown(preco_lider)
                      
                 # Verificar se houve mudança de líder
                 if empresa_lider not in carteira:
