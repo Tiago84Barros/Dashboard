@@ -1327,7 +1327,7 @@ if pagina == "Avançada": #_____________________________________________________
         return data_aporte
     
     # Função para criar uma carteira com aportes apenas na empresa líder do ano ________________________________________________________________________________________________________________
-    def gerir_carteira(precos, df_scores, aporte_mensal=1000):
+    def gerir_carteira(precos, df_scores, lideres_por_ano, aporte_mensal=1000):
         """
         Gera a carteira investindo mensalmente apenas na empresa líder do ano e 
         transfere o patrimônio para a nova líder quando necessário.
@@ -1343,7 +1343,10 @@ if pagina == "Avançada": #_____________________________________________________
         anos = sorted(df_scores['Ano'].unique())
     
         for ano in anos:
-            empresa_lider = df_scores[df_scores['Ano'] == ano].iloc[0]['ticker']
+            if ano in lideres_por_ano['Ano'].values:
+                empresa_lider = lideres_por_ano[lideres_por_ano['Ano'] == ano].iloc[0]['ticker']
+            else:
+                empresa_lider = None  # Ou defina um valor padrão adequado
     
             for mes in range(1, 13):
                 data_aporte = f"{ano + 1}-{mes:02d}-01"  # Garante o primeiro dia do mês
@@ -1647,13 +1650,12 @@ if pagina == "Avançada": #_____________________________________________________
                                                                    
                     # Determinar líderes
                     lideres_por_ano = determinar_lideres(df_scores)
-                    st.dataframe(lideres_por_ano)
-                                                         
+                                                                        
                     # Baixar preços
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
                                                                                   
                     # Gerenciamento da carteira
-                    patrimonio_historico, data_inicio_aporte = gerir_carteira(precos, df_scores)
+                    patrimonio_historico, data_inicio_aporte = gerir_carteira(precos, df_scores, lideres_por_ano)
                     
                     # Comparação com Tesouro Selic a partir da mesma data
                     patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, data_inicio_aporte)
