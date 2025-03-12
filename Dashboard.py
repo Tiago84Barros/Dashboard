@@ -1331,25 +1331,27 @@ if pagina == "Avançada": #_____________________________________________________
                     continue
     
                 # Aporte em todas as empresas ativas da carteira
-                for empresa in carteira.keys():
+                for empresa in list(carteira.keys()):
                     preco_atual = precos.loc[data_aporte, empresa]
     
                     if pd.isna(preco_atual) or preco_atual <= 0:
-                        continue
+                        continue  # Ignorar empresa se preço não for válido
     
                     carteira[empresa] += aporte_mensal / preco_atual  # Comprar mais ações
     
                 # Se a empresa líder ainda não estiver na carteira, adicioná-la
-                if empresa_lider not in carteira:
-                    carteira[empresa_lider] = 0
-    
-                # Aporte mensal na empresa líder
                 preco_lider = precos.loc[data_aporte, empresa_lider]
+    
                 if not pd.isna(preco_lider) and preco_lider > 0:
+                    if empresa_lider not in carteira:
+                        carteira[empresa_lider] = 0
                     carteira[empresa_lider] += aporte_mensal / preco_lider  # Comprar mais ações
     
                 # Atualizar patrimônio total
-                patrimonio_total = sum(carteira[empresa] * precos.loc[data_aporte, empresa] for empresa in carteira if empresa in precos.columns)
+                patrimonio_total = sum(
+                    carteira[empresa] * precos.loc[data_aporte, empresa]
+                    for empresa in carteira if empresa in precos.columns and not pd.isna(precos.loc[data_aporte, empresa])
+                )
     
                 patrimonio[data_aporte] = patrimonio_total
     
@@ -1372,10 +1374,17 @@ if pagina == "Avançada": #_____________________________________________________
     
                     # Se a empresa perdeu mais de 30% do score inicial, vende-se tudo
                     if score_atual_val / score_inicial_val < 0.7:
-                        patrimonio_venda = carteira.pop(empresa) * preco_atual
-                        carteira[empresa_lider] += patrimonio_venda / preco_lider
+                        preco_venda = precos.loc[data_aporte, empresa]
+    
+                        if not pd.isna(preco_venda) and preco_venda > 0:
+                            patrimonio_venda = carteira.pop(empresa) * preco_venda
+    
+                            # Evitar divisão por zero ao realocar fundos na empresa líder
+                            if not pd.isna(preco_lider) and preco_lider > 0:
+                                carteira[empresa_lider] += patrimonio_venda / preco_lider
     
         return pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
+
 
     
     # 📌 Função para calcular o patrimônio acumulado no Tesouro Selic ________________________________________________________________________________________________________________________
