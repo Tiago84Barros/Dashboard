@@ -1288,6 +1288,7 @@ if pagina == "Avançada": #_____________________________________________________
         
     # 📌 Baixando preços de fechamento das empresas ____________________________________________________________________________________________________________________________________________
     def baixar_precos(tickers, start="2010-01-01"):
+        st.markdown(tickers)
         try:
             precos = yf.download(tickers, start=start)['Close']
             precos.columns = precos.columns.str.replace(".SA", "", regex=False)
@@ -1301,7 +1302,7 @@ if pagina == "Avançada": #_____________________________________________________
         lideres = df_scores.loc[df_scores.groupby('Ano')['Score_Ajustado'].idxmax()]
         return lideres
     
-    
+    # Função para criar uma carteira com aportes apenas na empresa líder do ano ________________________________________________________________________________________________________________
     def gerir_carteira(precos, df_scores, aporte_mensal=1000):
         """
         Simula o crescimento do patrimônio investindo mensalmente apenas na empresa líder do ano.
@@ -1520,7 +1521,7 @@ if pagina == "Avançada": #_____________________________________________________
                                         <h4 style="color: #333;">{row.nome_empresa} ({row.ticker})</h4>
                                      
                                     </div>
-                                    """,
+                                    "",
                                     unsafe_allow_html=True
                                 )
                                 
@@ -1575,8 +1576,7 @@ if pagina == "Avançada": #_____________________________________________________
                                      
                     # Baixar preços
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
-                    st.dataframe(precos)
-                                   
+                                              
                     # Gerenciamento da carteira
                     patrimonio_historico = gerir_carteira(precos, df_scores)
                   
