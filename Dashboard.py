@@ -1656,6 +1656,11 @@ if pagina == "Avançada": #_____________________________________________________
                     else:
                         # Determinar a empresa líder mais recente
                         lider = df_scores.sort_values("Ano", ascending=False).iloc[0]
+                        
+
+                    # Inserindo espaçamento entre os elementos
+                    st.markdown("---") # Espaçamento entre diferentes tipos de análise
+                    st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
 
                                     
                     # Mostrar resultado final =========================================== GRÁFICO COMPARATIVO ESTRATÉGIA LIDER VS CONCORRENTES VS TESOURO SELIC ===================================
