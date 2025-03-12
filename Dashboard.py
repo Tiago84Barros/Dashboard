@@ -1303,7 +1303,7 @@ if pagina == "Avançada": #_____________________________________________________
     
     
     # Função para gerenciamento dinâmico da carteira  ________________________________________________________________________________________________________________________________________                        
-   def gerir_carteira(precos, df_scores, aporte_mensal=1000):
+    def gerir_carteira(precos, df_scores, aporte_mensal=1000):
         """
         Simula o crescimento do patrimônio com aportes mensais em todas as empresas da carteira.
         - precos: DataFrame com preços das ações.
