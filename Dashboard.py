@@ -1355,7 +1355,7 @@ if pagina == "Avançada": #_____________________________________________________
     
                 # Se não houver data válida, pula
                 if data_aporte is None:
-                    st.warning(f"❌ Nenhuma data válida encontrada para {ano}-{mes:02d}")
+                    st.warning(f"❌ Nenhuma data válida encontrada para {ano + 1}-{mes:02d}")
                     continue
                     
                 # Registra a primeira data de aporte válida
