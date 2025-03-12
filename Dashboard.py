@@ -1657,30 +1657,31 @@ if pagina == "Avançada": #_____________________________________________________
 
                     fig, ax = plt.subplots(figsize=(12, 6))
                     
-                    # Converter o índice para datetime e ordenar
-                    patrimonio_final.index = pd.to_datetime(patrimonio_final.index, errors='coerce')
-                    patrimonio_final.sort_index(inplace=True)
+                    # Garantir que os dados estão ordenados
+                    df_patrimonio_evolucao = patrimonio_final.copy()
+                    df_patrimonio_evolucao.index = pd.to_datetime(df_patrimonio_evolucao.index, errors='coerce')
+                    df_patrimonio_evolucao = df_patrimonio_evolucao.sort_index()
                     
-                    if patrimonio_final.empty:
+                    # Se não houver dados, exibir aviso
+                    if df_patrimonio_evolucao.empty:
                         st.warning("⚠️ Dados insuficientes para plotar a evolução do patrimônio.")
                     else:
-                        # Iterar sobre cada coluna do DataFrame, criando uma linha no gráfico
-                        for col in patrimonio_final.columns:
-                            # Se quiser destacar alguma coluna específica (ex: Tesouro Selic)
-                            if col == "Tesouro Selic":
-                                patrimonio_final[col].plot(
-                                    ax=ax, linewidth=2, linestyle="-.", color="blue", label="Tesouro Selic"
-                                )
+                        # Plotar cada empresa no portfólio
+                        for ticker in df_patrimonio_evolucao.columns:
+                            if ticker == lider["ticker"]:
+                                df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, color="red", label=f"{lider['nome_empresa']} (Líder)")
+                            elif ticker == "Tesouro Selic":
+                                df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, linestyle="-.", color="blue", label="Tesouro Selic")
                             else:
-                                # Demais colunas (empresas, estratégia do líder, etc.)
-                                patrimonio_final[col].plot(
-                                    ax=ax, linewidth=2, linestyle="-", color="red", alpha=0.7, label=col
-                                )
+                                df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=1, linestyle="--", alpha=0.6, color="gray", label=ticker)  
                     
+                        # Melhorias no gráfico
                         ax.set_title("Evolução do Patrimônio Acumulado")
                         ax.set_xlabel("Data")
                         ax.set_ylabel("Patrimônio (R$)")
                         ax.legend()
+                    
+                        # Exibir gráfico no Streamlit
                         st.pyplot(fig)
                     
                     # Esse código representa uma implementação sólida e robusta conforme as estratégias discutidas, permitindo uma análise dinâmica e fundamentada na evolução histórica dos Scores das empresas.
