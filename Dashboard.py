@@ -1317,16 +1317,14 @@ if pagina == "Avançada": #_____________________________________________________
 
     def encontrar_proxima_data_valida(data_aporte, precos):
         """
-        Ajusta a data do aporte para o próximo dia disponível em `precos.index`
+        Encontra a próxima data disponível para aporte no DataFrame de preços.
+        Se a data não existir, pega o próximo dia disponível.
         """
-        precos = precos.sort_index()  # Garante que os preços estão ordenados
-        datas_validas = precos.index[precos.index >= data_aporte]  # Filtra datas após ou na data_aporte
-        
-        if not datas_validas.empty:
-            st.write(f"📅 Ajustando data do aporte de {data_aporte} para {datas_validas[0]}")
-            return datas_validas[0]
-        
-        return None  # Caso não haja mais preços disponíveis
+        while data_aporte not in precos.index:
+            data_aporte += pd.Timedelta(days=1)  # Avança um dia
+            if data_aporte > precos.index.max():  # Evita sair do intervalo dos dados
+                return None
+        return data_aporte
     
     # Função para criar uma carteira com aportes apenas na empresa líder do ano ________________________________________________________________________________________________________________
     def gerir_carteira(precos, df_scores, aporte_mensal=1000):
@@ -1597,11 +1595,11 @@ if pagina == "Avançada": #_____________________________________________________
                                     """,
                                     unsafe_allow_html=True
                                 )
-                                
+                                             
                     # =====================================================================
                     # FLUXO PRINCIPAL - Cálculo de métricas e Score
                     # =====================================================================
-
+                
                     lista_empresas = []
                     for i, row in empresas_filtradas.iterrows():
                         ticker = row['ticker']
