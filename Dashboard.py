@@ -1581,7 +1581,7 @@ if pagina == "Avançada": #_____________________________________________________
                                         <h4 style="color: #333;">{row.nome_empresa} ({row.ticker})</h4>
                                      
                                     </div>
-                                    """,
+                                    "",
                                     unsafe_allow_html=True
                                 )
                                 
@@ -1670,6 +1670,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # Garantir que os dados estão ordenados corretamente
                     df_patrimonio_evolucao = patrimonio_final.copy()
+                    st.dataframe(df_patrimonio_evolucao)
                     df_patrimonio_evolucao.index = pd.to_datetime(df_patrimonio_evolucao.index, errors='coerce')
                     df_patrimonio_evolucao = df_patrimonio_evolucao.sort_index()
                     
