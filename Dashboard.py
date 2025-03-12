@@ -1615,7 +1615,7 @@ if pagina == "Avançada": #_____________________________________________________
             
                     patrimonio_final = pd.concat([patrimonio_historico, patrimonio_selic], axis=1)
                                     
-                    # Mostrar resultado final
+                    # Mostrar resultado final =========================================== GRÁFICO COMPARATIVO ESTRATÉGIA LIDER VS CONCORRENTES VS TESOURO SELIC ===================================
                     st.subheader("📈 Evolução do Patrimônio com Aportes Mensais")
 
                     fig, ax = plt.subplots(figsize=(12, 6))
@@ -1637,7 +1637,7 @@ if pagina == "Avançada": #_____________________________________________________
                             else:
                                 # Demais colunas (empresas, estratégia do líder, etc.)
                                 patrimonio_final[col].plot(
-                                    ax=ax, linewidth=1, linestyle="--", alpha=0.7, label=col
+                                    ax=ax, linewidth=2, linestyle="-", color="red", alpha=0.7, label=col
                                 )
                     
                         ax.set_title("Evolução do Patrimônio Acumulado")
