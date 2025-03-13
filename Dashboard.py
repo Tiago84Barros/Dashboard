@@ -1748,18 +1748,15 @@ if pagina == "Avançada": #_____________________________________________________
                     # 🔹 Verificar colunas reais
                     st.write("Colunas atuais:", df_patrimonio_final.columns)
                     
-                    # 🔹 Garantir que os nomes das colunas estejam corretos
-                    colunas_corrigidas = ["Data", "index", "Patrimônio Final"]
-                    
-                    # 🔹 Ajustar os nomes se necessário
-                    if len(df_patrimonio_final.columns) == len(colunas_corrigidas):
-                        df_patrimonio_final.columns = colunas_corrigidas
+                    # 🔹 Ajustar nomes de colunas, se necessário
+                    if "index" in df_patrimonio_final.columns and "Patrimônio Final" in df_patrimonio_final.columns:
+                        df_patrimonio_final.rename(columns={"index": "Ticker", "Patrimônio Final": "Valor Final"}, inplace=True)
                     
                     # 🔹 Ordenar os valores acumulados em ordem decrescente
-                    if "Patrimônio Final" in df_patrimonio_final.columns:
-                        df_patrimonio_final = df_patrimonio_final.sort_values(by="Patrimônio Final", ascending=False)
+                    if "Valor Final" in df_patrimonio_final.columns:
+                        df_patrimonio_final = df_patrimonio_final.sort_values(by="Valor Final", ascending=False)
                     else:
-                        st.error("Coluna 'Patrimônio Final' não encontrada!")
+                        st.error("Coluna 'Valor Final' não encontrada!")
                     
                     # 🔹 Criar colunas para exibição no Streamlit
                     num_columns = 3  # Número de colunas no layout
@@ -1769,9 +1766,9 @@ if pagina == "Avançada": #_____________________________________________________
                     contagem_lideres = df_scores['ticker'].value_counts().to_dict()
                     
                     # 🔹 Iterar sobre os valores do DataFrame ordenado
-                    for i, row in df_patrimonio_final.itertuples(index=False):
-                        ticker = getattr(row, "index", None)
-                        patrimonio = getattr(row, "Patrimônio Final", None)
+                    for i, (index, row) in enumerate(df_patrimonio_final.iterrows()):
+                        ticker = row["Ticker"]
+                        patrimonio = row["Valor Final"]
                     
                         # 🔹 Definir borda dourada apenas para a estratégia de aporte
                         if ticker == "Patrimonio":
