@@ -1689,50 +1689,36 @@ if pagina == "Avançada": #_____________________________________________________
                     st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
 
                     # Mostrar resultado final =========================================== GRÁFICO COMPARATIVO ESTRATÉGIA LIDER VS CONCORRENTES VS TESOURO SELIC ===================================               
-                   # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO =================================================================
+                    # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO =======================================================================================================
                     st.subheader("📈 Evolução do Patrimônio com Aportes Mensais")
                     
                     fig, ax = plt.subplots(figsize=(12, 6))
                     
-                    # Ordenar datas no eixo X
-                    df_patrimonio_final.index = pd.to_datetime(df_patrimonio_final.index, errors='coerce')
-                    df_patrimonio_final = df_patrimonio_final.sort_index()
+                    # Garantir que os dados estão ordenados corretamente
+                    df_patrimonio_evolucao = patrimonio_final.copy()
+                    df_patrimonio_evolucao.index = pd.to_datetime(df_patrimonio_evolucao.index, errors='coerce')
+                    df_patrimonio_evolucao = df_patrimonio_evolucao.sort_index()
+                                     
+                    # Se não houver dados, exibir aviso
+                    if df_patrimonio_evolucao.empty:
+                        st.warning("⚠️ Dados insuficientes para plotar a evolução do patrimônio.")
+                    else:
+                        for ticker in df_patrimonio_evolucao.columns:
+                            if ticker == "Patrimonio":  # Destacando a estratégia principal
+                                df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, color="red", label="Estratégia de Aporte")
+                            elif ticker == "Tesouro Selic":
+                                df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, linestyle="-.", color="blue", label="Tesouro Selic")
+                            else:
+                                df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=1, linestyle="--", alpha=0.6, color="gray", label=ticker)
                     
-                    # 📌 Definir benchmarks
-                    valor_final_selic = df_patrimonio_final["Tesouro Selic"].iloc[-1]  # Último valor do Tesouro Selic
-                    valor_final_estrategia = df_patrimonio_final["Patrimonio"].iloc[-1]  # Último valor da estratégia de aportes
+                        # Melhorias no gráfico
+                        ax.set_title("Evolução do Patrimônio Acumulado")
+                        ax.set_xlabel("Data")
+                        ax.set_ylabel("Patrimônio (R$)")
+                        ax.legend()
                     
-                    # 📌 Plotar Tesouro Selic (linha azul tracejada)
-                    df_patrimonio_final["Tesouro Selic"].plot(ax=ax, linewidth=2, linestyle="--", color="blue", label="Tesouro Selic")
-                    
-                    # 📌 Plotar Estratégia de Aportes (linha vermelha contínua)
-                    df_patrimonio_final["Patrimonio"].plot(ax=ax, linewidth=2.5, color="red", label="Estratégia de Aporte")
-                    
-                    # 📌 Plotar cada empresa individualmente
-                    for ticker in df_patrimonio_final.columns:
-                        if ticker in ["Patrimonio", "Tesouro Selic"]:
-                            continue  # Já plotamos esses
-                    
-                        valor_final_empresa = df_patrimonio_final[ticker].iloc[-1]
-                    
-                        # 📌 Se a empresa ultrapassou os benchmarks, destacar em verde
-                        if valor_final_empresa > valor_final_selic and valor_final_empresa > valor_final_estrategia:
-                            cor = "green"
-                            destaque = " (Destaque ✅)"
-                        else:
-                            cor = "gray"
-                            destaque = ""
-                    
-                        df_patrimonio_final[ticker].plot(ax=ax, linewidth=1.5, linestyle="--", color=cor, alpha=0.7, label=f"{ticker}{destaque}")
-                    
-                    # Configuração do gráfico
-                    ax.set_title(f"Evolução do Patrimônio Acumulado no Segmento: {segmento}")
-                    ax.set_xlabel("Data")
-                    ax.set_ylabel("Patrimônio (R$)")
-                    ax.legend()
-                    
-                    # 📌 Exibir gráfico no Streamlit
-                    st.pyplot(fig)
+                        # Exibir gráfico no Streamlit
+                        st.pyplot(fig)
 
                     # Inserindo espaçamento entre os elementos
                     st.markdown("---") # Espaçamento entre diferentes tipos de análise
