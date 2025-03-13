@@ -1386,7 +1386,7 @@ if pagina == "Avançada": #_____________________________________________________
                
         # Converter para DataFrame
         df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
-        
+        st.dataframe(patrimonio)
         return df_patrimonio, datas_aportes  # Retorna tanto o patrimônio quanto a data do primeiro aporte
 
     # Função que determina aportes mensais em todas as empresas das empresas filtradas _______________________________________________________________________________________________________________
@@ -1473,6 +1473,7 @@ if pagina == "Avançada": #_____________________________________________________
             patrimonio_selic[data] = saldo_atual
     
         df_patrimonio_selic = pd.DataFrame.from_dict(patrimonio_selic, orient='index', columns=["Tesouro Selic"])
+        st.dataframe(df_patrimonio_selic)
         return df_patrimonio_selic
     
     # Carregar dados macroeconômicos do banco de dados ________________________________________________________________________________________________________________________________________
@@ -1646,8 +1647,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # Combinar os resultados para exibição no gráfico
                     patrimonio_final = pd.concat([patrimonio_historico, patrimonio_empresas, patrimonio_selic], axis=1)
-                    st.dataframe(patrimonio_final[patrimonio_historico.columns])
-
+                 
                     # 📌 Verificar se df_scores não está vazio antes de tentar acessar a empresa líder
                     if df_scores.empty:
                         st.error("⚠️ Não há dados suficientes para determinar a empresa líder.")
