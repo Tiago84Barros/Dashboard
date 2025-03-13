@@ -1666,7 +1666,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # Combinar os resultados para exibição no gráfico
                     patrimonio_final = pd.concat([patrimonio_historico, patrimonio_empresas, patrimonio_selic], axis=1)
-                    st.dataframe(patrimonio_final[patrimono_historico.columns])
+                    st.dataframe(patrimonio_final[patrimonio_historico.columns])
 
                     # 📌 Verificar se df_scores não está vazio antes de tentar acessar a empresa líder
                     if df_scores.empty:
