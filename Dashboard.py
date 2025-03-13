@@ -1769,7 +1769,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # 🔹 Contar quantas vezes cada empresa foi líder no score
                     #contagem_lideres = df_scores['ticker'].value_counts().to_dict()
-                    contagem_lideres = df_lideres_por_ano['ticker'].value_counts().to_dict()
+                    contagem_lideres = lideres_por_ano['ticker'].value_counts().to_dict()
                     
                     # 🔹 Iterar sobre os valores do DataFrame ordenado
                     for i, (index, row) in enumerate(df_patrimonio_final.iterrows()):
