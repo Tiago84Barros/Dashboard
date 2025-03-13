@@ -1298,6 +1298,7 @@ if pagina == "Avançada": #_____________________________________________________
         """
         try:
             precos = yf.download(tickers, start=start)['Close']
+            precos = yf.download(tickers, start=start, auto_adjust=True)['Close']
             precos.columns = precos.columns.str.replace(".SA", "", regex=False)  # Ajustar tickers
             
             # Remover linhas onde todos os preços são NaN (empresas sem dados nesse período)
