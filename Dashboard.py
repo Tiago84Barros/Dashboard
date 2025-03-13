@@ -1450,14 +1450,13 @@ if pagina == "Avançada": #_____________________________________________________
     
         Retorna: DataFrame com o patrimônio acumulado no Tesouro Selic.
         """
-        st.dataframe(dados_macro)
-         # 📌 Converter índice para datetime
-        # Certificar que o índice está em formato datetime corretamente
-        dados_macro.index = pd.to_datetime(dados_macro.index, errors='coerce')        
-        # Eliminar valores NaT (se houver)
-        dados_macro = dados_macro.dropna(subset=['Selic'])        
-        # Agora, extrair o ano corretamente
-        dados_macro['Ano'] = dados_macro.index.year
+      
+        # Garantir que a coluna "Data" seja datetime
+        dados_macro["Data"] = pd.to_datetime(dados_macro["Data"], errors='coerce')        
+        # Definir a coluna "Data" como índice corretamente
+        dados_macro.set_index("Data", inplace=True)        
+        # Agora que o índice está correto, podemos extrair o ano
+        dados_macro["Ano"] = dados_macro.index.year
         st.dataframe(dados_macro)
         
         patrimonio_selic = {}
