@@ -1738,7 +1738,7 @@ if pagina == "Avançada": #_____________________________________________________
                             pd.DataFrame([{"index": "Tesouro Selic", "Patrimônio Final": patrimonio_selic_final}])
                         ], ignore_index=True)
                     
-                    # 📌 Exibir DataFrame para depuração
+                   # 📌 Exibir DataFrame para depuração
                     st.dataframe(df_patrimonio_final)
                     
                     # 🔹 Garantir que o índice esteja resetado corretamente
@@ -1748,12 +1748,18 @@ if pagina == "Avançada": #_____________________________________________________
                     # 🔹 Verificar colunas reais
                     st.write("Colunas atuais:", df_patrimonio_final.columns)
                     
-                    # 🔹 Renomear colunas corretamente
-                    if len(df_patrimonio_final.columns) == 2:
-                        df_patrimonio_final.columns = ["index", "Patrimonio Final"]
+                    # 🔹 Garantir que os nomes das colunas estejam corretos
+                    colunas_corrigidas = ["Data", "index", "Patrimônio Final"]
+                    
+                    # 🔹 Ajustar os nomes se necessário
+                    if len(df_patrimonio_final.columns) == len(colunas_corrigidas):
+                        df_patrimonio_final.columns = colunas_corrigidas
                     
                     # 🔹 Ordenar os valores acumulados em ordem decrescente
-                    df_patrimonio_final = df_patrimonio_final.sort_values(by="Patrimonio Final", ascending=False)
+                    if "Patrimônio Final" in df_patrimonio_final.columns:
+                        df_patrimonio_final = df_patrimonio_final.sort_values(by="Patrimônio Final", ascending=False)
+                    else:
+                        st.error("Coluna 'Patrimônio Final' não encontrada!")
                     
                     # 🔹 Criar colunas para exibição no Streamlit
                     num_columns = 3  # Número de colunas no layout
@@ -1765,7 +1771,7 @@ if pagina == "Avançada": #_____________________________________________________
                     # 🔹 Iterar sobre os valores do DataFrame ordenado
                     for i, row in df_patrimonio_final.itertuples(index=False):
                         ticker = getattr(row, "index", None)
-                        patrimonio = getattr(row, "Patrimonio Final", None)
+                        patrimonio = getattr(row, "Patrimônio Final", None)
                     
                         # 🔹 Definir borda dourada apenas para a estratégia de aporte
                         if ticker == "Patrimonio":
