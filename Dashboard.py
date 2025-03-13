@@ -1349,11 +1349,11 @@ if pagina == "Avançada": #_____________________________________________________
         """
         patrimonio = {}
         carteira = {}
-        data_inicio = None  # Armazena a data do primeiro aporte
-        datas_aportes = []  # Lista de datas dos aportes
+        data_inicio = None  
+        datas_aportes = []  
+        empresas_mantidas = set()  
     
         anos = sorted(df_scores['Ano'].unique())
-        empresas_mantidas = set()  # Empresas que já foram líderes e permanecem na carteira
     
         for ano in anos:
             if ano in lideres_por_ano['Ano'].values:
@@ -1362,58 +1362,57 @@ if pagina == "Avançada": #_____________________________________________________
                 empresa_lider = None
     
             for mes in range(1, 13):
-                data_aporte = f"{ano + 1}-{mes:02d}-01"  # Primeiro dia do mês
+                data_aporte = f"{ano + 1}-{mes:02d}-01"
                 data_aporte = pd.to_datetime(data_aporte)
     
-                # Encontrar a próxima data válida no mercado
                 data_aporte = encontrar_proxima_data_valida(data_aporte, precos)
     
                 if data_aporte is None:
-                    continue  # Pular se não houver data válida
+                    continue  
     
-                datas_aportes.append(data_aporte)  # Armazena a data do aporte
+                datas_aportes.append(data_aporte)  
     
                 if data_inicio is None:
                     data_inicio = data_aporte
     
+                if empresa_lider not in precos.columns:
+                    continue  
+    
                 preco_lider = precos.loc[data_aporte, empresa_lider]
     
-                # Se a empresa líder mudou e a anterior ainda existe, adiciona ela às empresas mantidas
+                if pd.isna(preco_lider) or preco_lider == 0:
+                    continue  
+    
                 if empresa_lider not in carteira:
-                    for antiga_lider in carteira.keys():
-                        if antiga_lider != empresa_lider:
-                            empresas_mantidas.add(antiga_lider)
+                    carteira[empresa_lider] = 0
     
-                # Aporte apenas na nova líder
-                carteira[empresa_lider] = carteira.get(empresa_lider, 0) + (aporte_mensal / preco_lider)
+                carteira[empresa_lider] += aporte_mensal / preco_lider
     
-                # Monitoramento das ex-líderes e venda se deterioração for severa
-                for empresa in list(empresas_mantidas):
-                    score_atual_array = df_scores[(df_scores['Ano'] == ano) & (df_scores['ticker'] == empresa)]['Score_Ajustado'].values
-                    score_inicial_array = df_scores[(df_scores['Ano'] == anos[0]) & (df_scores['ticker'] == empresa)]['Score_Ajustado'].values
+                for antiga_lider in list(empresas_mantidas):
+                    score_atual = df_scores[(df_scores['Ano'] == ano) & (df_scores['ticker'] == antiga_lider)]['Score_Ajustado'].values
+                    score_inicial = df_scores[(df_scores['Ano'] == anos[0]) & (df_scores['ticker'] == antiga_lider)]['Score_Ajustado'].values
     
-                    if len(score_atual_array) == 0 or len(score_inicial_array) == 0:
-                        continue  # Se não houver dados, ignora
+                    if len(score_atual) == 0 or len(score_inicial) == 0:
+                        continue  
     
-                    score_atual_val = score_atual_array[0]
-                    score_inicial_val = score_inicial_array[0]
+                    score_atual_val = score_atual[0]
+                    score_inicial_val = score_inicial[0]
     
                     if score_inicial_val == 0:
-                        continue  # Evita divisão por zero
+                        continue  
     
                     if score_atual_val / score_inicial_val < deterioracao_limite:
-                        # Venda e realocação para a nova líder
-                        patrimonio_venda = carteira.pop(empresa) * precos.loc[data_aporte, empresa]
-                        carteira[empresa_lider] += patrimonio_venda / preco_lider
-                        empresas_mantidas.remove(empresa)  # Remove da lista de empresas mantidas
+                        if antiga_lider in carteira:
+                            patrimonio_venda = carteira.pop(antiga_lider) * precos.loc[data_aporte, antiga_lider]
+                            if empresa_lider not in carteira:
+                                carteira[empresa_lider] = 0
+                            carteira[empresa_lider] += patrimonio_venda / preco_lider
+                            empresas_mantidas.remove(antiga_lider)
     
-                # Atualizar patrimônio total
                 patrimonio_total = sum(carteira[empresa] * precos.loc[data_aporte, empresa] for empresa in carteira)
                 patrimonio[data_aporte] = patrimonio_total
     
-        # Converter para DataFrame
         df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
-    
         return df_patrimonio, datas_aportes
 
 
