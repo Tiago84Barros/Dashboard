@@ -1386,7 +1386,6 @@ if pagina == "Avançada": #_____________________________________________________
                
         # Converter para DataFrame
         df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
-        st.dataframe(patrimonio)
         return df_patrimonio, datas_aportes  # Retorna tanto o patrimônio quanto a data do primeiro aporte
 
     # Função que determina aportes mensais em todas as empresas das empresas filtradas _______________________________________________________________________________________________________________
@@ -1451,7 +1450,7 @@ if pagina == "Avançada": #_____________________________________________________
     
         Retorna: DataFrame com o patrimônio acumulado no Tesouro Selic.
         """
-       
+        st.dataframe(dados_macro)
          # 📌 Converter índice para datetime
         # Certificar que o índice está em formato datetime corretamente
         dados_macro.index = pd.to_datetime(dados_macro.index, errors='coerce')        
