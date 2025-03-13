@@ -1315,6 +1315,16 @@ if pagina == "Avançada": #_____________________________________________________
         lideres = df_scores.loc[df_scores.groupby('Ano')['Score_Ajustado'].idxmax()]
         return lideres
 
+    # Função para formatar um valor númerico para o formato de moeda brasileira _________________________________________________________________________________________________________________
+    def formatar_real(valor):
+        """
+        Formata um valor numérico para o formato de moeda brasileira (R$).
+        """
+        if pd.isna(valor) or valor is None:
+            return "Valor indisponível"
+        
+        return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
     def encontrar_proxima_data_valida(data_aporte, precos):
         """
         Encontra a próxima data disponível para aporte no DataFrame de preços.
@@ -1715,7 +1725,7 @@ if pagina == "Avançada": #_____________________________________________________
                     st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
 
 
-                    # 📌 EXIBIÇÃO DOS QUADRADOS (BLOCOS COM OS RESULTADOS) ===========================================================================================
+                    # 📌 EXIBIÇÃO DOS QUADRADOS (BLOCOS COM OS RESULTADOS) ====================================================================================================================
                     st.subheader("📊 Patrimônio Final para R$1.000/Mês Investidos desde a Data Inicial")
                     
                     # 🔹 Criar um DataFrame consolidado com os resultados finais das empresas, estratégia e Tesouro Selic
