@@ -1751,10 +1751,7 @@ if pagina == "Avançada": #_____________________________________________________
                     # 🔹 Garantir que o índice esteja resetado corretamente
                     if df_patrimonio_final.index.name is not None:
                         df_patrimonio_final = df_patrimonio_final.reset_index()
-                    
-                    # 🔹 Verificar colunas reais
-                    st.write("Colunas atuais:", df_patrimonio_final.columns)
-                    
+                                                      
                     # 🔹 Ajustar nomes de colunas, se necessário
                     if "index" in df_patrimonio_final.columns and "Patrimônio Final" in df_patrimonio_final.columns:
                         df_patrimonio_final.rename(columns={"index": "Ticker", "Patrimônio Final": "Valor Final"}, inplace=True)
