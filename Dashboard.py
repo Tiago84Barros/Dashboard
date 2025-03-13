@@ -1738,8 +1738,19 @@ if pagina == "Avançada": #_____________________________________________________
                             pd.DataFrame([{"index": "Tesouro Selic", "Patrimônio Final": patrimonio_selic_final}])
                         ], ignore_index=True)
                     
-                    # 🔹 Renomear colunas se necessário para garantir acesso correto
-                    df_patrimonio_final.columns = ["index", "Patrimonio Final"]
+                    # 📌 Exibir DataFrame para depuração
+                    st.dataframe(df_patrimonio_final)
+                    
+                    # 🔹 Garantir que o índice esteja resetado corretamente
+                    if df_patrimonio_final.index.name is not None:
+                        df_patrimonio_final = df_patrimonio_final.reset_index()
+                    
+                    # 🔹 Verificar colunas reais
+                    st.write("Colunas atuais:", df_patrimonio_final.columns)
+                    
+                    # 🔹 Renomear colunas corretamente
+                    if len(df_patrimonio_final.columns) == 2:
+                        df_patrimonio_final.columns = ["index", "Patrimonio Final"]
                     
                     # 🔹 Ordenar os valores acumulados em ordem decrescente
                     df_patrimonio_final = df_patrimonio_final.sort_values(by="Patrimonio Final", ascending=False)
@@ -1799,7 +1810,6 @@ if pagina == "Avançada": #_____________________________________________________
                                     <p style="font-size: 14px; color: #FFA500;">{lider_texto}</p>
                                 </div>
                             """, unsafe_allow_html=True)
-
 
                    
                     # Esse código representa uma implementação sólida e robusta conforme as estratégias discutidas, permitindo uma análise dinâmica e fundamentada na evolução histórica dos Scores das empresas.
