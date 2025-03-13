@@ -1451,7 +1451,7 @@ if pagina == "Avançada": #_____________________________________________________
     
         Retorna: DataFrame com o patrimônio acumulado no Tesouro Selic.
         """
-
+        st.dataframe(dados_macro)
          # 📌 Converter índice para datetime
         dados_macro.index = pd.to_datetime(dados_macro.index, errors='coerce')
         # Converter o índice de dados_macro para apenas "Ano" corretamente
@@ -1463,7 +1463,6 @@ if pagina == "Avançada": #_____________________________________________________
             # Pegar taxa de juros do ano referente à data de aporte
             ano_ref = pd.to_datetime(data).year
             taxa_anual = dados_macro.loc[dados_macro['Ano'] == ano_ref, "Selic"]
-            st.markdown(taxa_anual)
             taxa_mensal = (1 + taxa_anual)**(1/12) - 1
     
             # Atualiza o saldo com base na taxa mensal
