@@ -1658,8 +1658,7 @@ if pagina == "Avançada": #_____________________________________________________
                                                                    
                     # Determinar líderes
                     lideres_por_ano = determinar_lideres(df_scores)
-                    st.dataframe(lideres_por_ano)
-                                                                        
+                                                                           
                     # Baixar preços
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
                                                                                   
