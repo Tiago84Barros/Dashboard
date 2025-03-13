@@ -1346,7 +1346,7 @@ if pagina == "Avançada": #_____________________________________________________
         for ano in anos:
             if ano in lideres_por_ano['Ano'].values:
                 empresa_lider = lideres_por_ano[lideres_por_ano['Ano'] == ano].iloc[0]['ticker']
-                st.markdown(f"empresa lider no ano de {ano} é:{empresa_lider}")
+               # st.markdown(f"empresa lider no ano de {ano} é:{empresa_lider}")
             else:
                 empresa_lider = None  # Ou defina um valor padrão adequado
     
@@ -1463,6 +1463,7 @@ if pagina == "Avançada": #_____________________________________________________
             # Pegar taxa de juros do ano referente à data de aporte
             ano_ref = pd.to_datetime(data).year
             taxa_anual = dados_macro.loc[dados_macro['Ano'] == ano_ref, "Selic"]
+            st.markdown(taxa_anual)
             taxa_mensal = (1 + taxa_anual)**(1/12) - 1
     
             # Atualiza o saldo com base na taxa mensal
