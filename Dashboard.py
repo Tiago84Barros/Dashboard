@@ -1523,6 +1523,7 @@ if pagina == "Avançada": #_____________________________________________________
         return df_patrimonio_selic    
     # Carregar dados macroeconômicos do banco de dados ________________________________________________________________________________________________________________________________________
     dados_macro = load_macro_summary()
+    st.dataframe(dados_macro)
 
     # espaçamento entre os elementos
     st.markdown("""
