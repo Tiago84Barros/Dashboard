@@ -1476,7 +1476,7 @@ if pagina == "Avançada": #_____________________________________________________
     
     # Carregar dados macroeconômicos do banco de dados ________________________________________________________________________________________________________________________________________
     dados_macro = load_macro_summary()
-       
+    st.dataframe(dados_macro)
     # espaçamento entre os elementos
     st.markdown("""
         <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Avançada de Ações</h1>
