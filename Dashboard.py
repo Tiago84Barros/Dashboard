@@ -1710,6 +1710,80 @@ if pagina == "Avançada": #_____________________________________________________
                         # Exibir gráfico no Streamlit
                         st.pyplot(fig)
 
+                    # Inserindo espaçamento entre os elementos
+                    st.markdown("---") # Espaçamento entre diferentes tipos de análise
+                    st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
+
+
+                    # 📌 EXIBIÇÃO DOS QUADRADOS (BLOCOS COM OS RESULTADOS) ===========================================================================================
+                    st.subheader("📊 Patrimônio Final para R$1.000/Mês Investidos desde a Data Inicial")
+                    
+                    # 🔹 Criar um DataFrame consolidado com os resultados finais das empresas, estratégia e Tesouro Selic
+                    df_patrimonio_final = pd.concat([
+                        patrimonio_historico.iloc[-1].rename("Patrimônio Final"),  # Último valor do patrimônio acumulado da estratégia
+                        patrimonio_empresas.iloc[-1].rename("Patrimônio Final"),  # Último valor das empresas individualmente
+                        patrimonio_selic.iloc[-1].rename("Patrimônio Final")  # Último valor do Tesouro Selic
+                    ], axis=1).reset_index()
+                    
+                    df_patrimonio_final.columns = ["index", "Patrimônio Final"]  # Renomeando colunas
+                    
+                    # 🔹 Garantir que o Tesouro Selic esteja presente no DataFrame
+                    if "Tesouro Selic" not in df_patrimonio_final["index"].values:
+                        patrimonio_selic_final = patrimonio_selic.iloc[-1]["Tesouro Selic"]  # Último valor acumulado do Tesouro Selic
+                        df_patrimonio_final = pd.concat([
+                            df_patrimonio_final,
+                            pd.DataFrame([{"index": "Tesouro Selic", "Patrimônio Final": patrimonio_selic_final}])
+                        ], ignore_index=True)
+                    
+                    # 🔹 Ordenar os valores acumulados em ordem decrescente para destacar melhor desempenho
+                    df_patrimonio_final = df_patrimonio_final.sort_values(by="Patrimônio Final", ascending=False)
+                    
+                    # 🔹 Criar layout responsivo com colunas no Streamlit
+                    num_columns = 3  # Número de colunas no layout
+                    columns = st.columns(num_columns)
+                    
+                    # 🔹 Exibir os blocos estilizados organizados corretamente
+                    for i, row in enumerate(df_patrimonio_final.itertuples()):
+                        ticker = row.index
+                        patrimonio = row._2  # Acessando a coluna "Patrimônio Final" corretamente
+                    
+                        # 🔹 Diferenciar a cor e o ícone do Tesouro Selic e da Estratégia
+                        if ticker == "Tesouro Selic":
+                            icone_url = "https://cdn-icons-png.flaticon.com/512/2331/2331949.png"  # Ícone de dinheiro
+                            border_color = "#007bff"  # Azul para diferenciar renda fixa
+                        elif ticker == "Estratégia de Aporte":
+                            icone_url = "https://cdn-icons-png.flaticon.com/512/1019/1019709.png"  # Ícone de estratégia
+                            border_color = "#FF0000"  # Vermelho para destacar a estratégia
+                        else:
+                            icone_url = get_logo_url(ticker)
+                            border_color = "#DAA520" if ticker == lider["ticker"] else "#d3d3d3"  # Dourado para líder, cinza para demais
+                    
+                        # Se o patrimônio for inválido, exibir mensagem
+                        patrimonio_formatado = "Valor indisponível" if pd.isna(patrimonio) else formatar_real(patrimonio)
+                    
+                        # 🔹 Organizando os blocos de forma ordenada da esquerda para a direita e de cima para baixo
+                        col = columns[i % num_columns]  # Garante que os valores sejam distribuídos corretamente
+                        with col:
+                            st.markdown(f"""
+                                <div style="
+                                    background-color: #ffffff;
+                                    border: 3px solid {border_color};
+                                    border-radius: 10px;
+                                    padding: 15px;
+                                    margin: 10px;
+                                    text-align: center;
+                                    box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
+                                    flex: 1;
+                                ">
+                                    <img src="{icone_url}" alt="{ticker}" style="width: 50px; height: auto; margin-bottom: 5px;">
+                                    <h3 style="margin: 0; color: #4a4a4a;">{ticker}</h3>
+                                    <p style="font-size: 18px; margin: 5px 0; font-weight: bold; color: #2ecc71;">
+                                        {patrimonio_formatado}
+                                    </p>
+                                </div>
+                            """, unsafe_allow_html=True)
+
+
                     
                     # Esse código representa uma implementação sólida e robusta conforme as estratégias discutidas, permitindo uma análise dinâmica e fundamentada na evolução histórica dos Scores das empresas.
                    
