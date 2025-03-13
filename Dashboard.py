@@ -1440,7 +1440,7 @@ if pagina == "Avançada": #_____________________________________________________
 
     
     # 📌 Função para calcular o patrimônio acumulado no Tesouro Selic ________________________________________________________________________________________________________________________
-   def calcular_patrimonio_selic_macro(dados_macro, datas_aportes, aporte_mensal=1000):
+    def calcular_patrimonio_selic_macro(dados_macro, datas_aportes, aporte_mensal=1000):
         patrimonio_selic = {}
     
         for data in datas_aportes:
