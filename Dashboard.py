@@ -1383,6 +1383,7 @@ if pagina == "Avançada": #_____________________________________________________
                
         # Converter para DataFrame
         df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
+        st.dataframe(df_patrimonio)
     
         return df_patrimonio, data_inicio  # Retorna tanto o patrimônio quanto a data do primeiro aporte
 
