@@ -1469,14 +1469,15 @@ if pagina == "Avançada": #_____________________________________________________
 
     
     # 📌 Função para calcular o patrimônio acumulado no Tesouro Selic ________________________________________________________________________________________________________________________
-    def calcular_patrimonio_selic_corrigido(dados_macro, datas_aportes, aporte_mensal=1000):
+    def calcular_patrimonio_selic_macro(dados_macro, datas_aportes, aporte_mensal=1000):
         """
         Corrige o cálculo da evolução do patrimônio investido no Tesouro Selic.
         """
         # Garantir que a coluna "Data" seja datetime e definir como índice
         dados_macro["Data"] = pd.to_datetime(dados_macro["Data"], errors='coerce')
         dados_macro.set_index("Data", inplace=True)
-        
+
+             
         # Criar DataFrame para armazenar os valores acumulados
         df_patrimonio = pd.DataFrame(index=datas_aportes, columns=["Tesouro Selic"])
         
