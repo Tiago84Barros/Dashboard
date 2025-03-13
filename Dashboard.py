@@ -1738,31 +1738,37 @@ if pagina == "Avançada": #_____________________________________________________
                             pd.DataFrame([{"index": "Tesouro Selic", "Patrimônio Final": patrimonio_selic_final}])
                         ], ignore_index=True)
                     
-                    # 🔹 Ordenar os valores acumulados em ordem decrescente para destacar melhor desempenho
-                    df_patrimonio_final = df_patrimonio_final.sort_values(by="Patrimônio Final", ascending=False)
-                                        
-                    # 🔹 Criar layout responsivo com colunas no Streamlit
+                    # 🔹 Renomear colunas se necessário para garantir acesso correto
+                    df_patrimonio_final.columns = ["index", "Patrimonio Final"]
+                    
+                    # 🔹 Ordenar os valores acumulados em ordem decrescente
+                    df_patrimonio_final = df_patrimonio_final.sort_values(by="Patrimonio Final", ascending=False)
+                    
+                    # 🔹 Criar colunas para exibição no Streamlit
                     num_columns = 3  # Número de colunas no layout
                     columns = st.columns(num_columns)
-                                   
+                    
                     # 🔹 Contar quantas vezes cada empresa foi líder no score
                     contagem_lideres = df_scores['ticker'].value_counts().to_dict()
                     
                     # 🔹 Iterar sobre os valores do DataFrame ordenado
-                    for i, row in enumerate(df_patrimonio_final.itertuples(index=False)):
+                    for i, row in df_patrimonio_final.itertuples(index=False):
                         ticker = getattr(row, "index", None)
-                        patrimonio = getattr(row, "Patrimônio Final", None)
+                        patrimonio = getattr(row, "Patrimonio Final", None)
                     
                         # 🔹 Definir borda dourada apenas para a estratégia de aporte
-                        if ticker == "Estratégia de Aporte":
+                        if ticker == "Patrimonio":
                             icone_url = "https://cdn-icons-png.flaticon.com/512/1019/1019709.png"
                             border_color = "#DAA520"  # Dourado para a estratégia
+                            nome_exibicao = "Estratégia de Aporte"
                         elif ticker == "Tesouro Selic":
                             icone_url = "https://cdn-icons-png.flaticon.com/512/2331/2331949.png"
                             border_color = "#007bff"  # Azul para Tesouro Selic
+                            nome_exibicao = "Tesouro Selic"
                         else:
                             icone_url = get_logo_url(ticker)
                             border_color = "#d3d3d3"  # Cinza para empresas comuns
+                            nome_exibicao = ticker  # Nome normal para empresas comuns
                     
                         # 🔹 Contagem de quantas vezes uma empresa foi líder
                         vezes_lider = contagem_lideres.get(ticker, 0)
@@ -1785,8 +1791,8 @@ if pagina == "Avançada": #_____________________________________________________
                                     box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
                                     flex: 1;
                                 ">
-                                    <img src="{icone_url}" alt="{ticker}" style="width: 50px; height: auto; margin-bottom: 5px;">
-                                    <h3 style="margin: 0; color: #4a4a4a;">{ticker}</h3>
+                                    <img src="{icone_url}" alt="{nome_exibicao}" style="width: 50px; height: auto; margin-bottom: 5px;">
+                                    <h3 style="margin: 0; color: #4a4a4a;">{nome_exibicao}</h3>
                                     <p style="font-size: 18px; margin: 5px 0; font-weight: bold; color: #2ecc71;">
                                         {patrimonio_formatado}
                                     </p>
