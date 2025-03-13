@@ -1746,27 +1746,27 @@ if pagina == "Avançada": #_____________________________________________________
                     num_columns = 3  # Número de colunas no layout
                     columns = st.columns(num_columns)
                     
-                    # 🔹 Exibir os blocos estilizados organizados corretamente
-                    for i, row in enumerate(df_patrimonio_final.itertuples()):
-                        ticker = row.index
-                        patrimonio = row._2  # Acessando a coluna "Patrimônio Final" corretamente
+                    🔹 Iterar corretamente sobre as linhas do DataFrame
+                    for i, row in enumerate(df_patrimonio_final.itertuples(index=False)):
+                        ticker = getattr(row, "index", None)  # Acessando o nome corretamente
+                        patrimonio = getattr(row, "Patrimônio Final", None)  # Acessando a coluna de patrimônio
                     
-                        # 🔹 Diferenciar a cor e o ícone do Tesouro Selic e da Estratégia
+                        # 🔹 Diferenciar cores e ícones
                         if ticker == "Tesouro Selic":
-                            icone_url = "https://cdn-icons-png.flaticon.com/512/2331/2331949.png"  # Ícone de dinheiro
-                            border_color = "#007bff"  # Azul para diferenciar renda fixa
+                            icone_url = "https://cdn-icons-png.flaticon.com/512/2331/2331949.png"
+                            border_color = "#007bff"
                         elif ticker == "Estratégia de Aporte":
-                            icone_url = "https://cdn-icons-png.flaticon.com/512/1019/1019709.png"  # Ícone de estratégia
-                            border_color = "#FF0000"  # Vermelho para destacar a estratégia
+                            icone_url = "https://cdn-icons-png.flaticon.com/512/1019/1019709.png"
+                            border_color = "#FF0000"
                         else:
                             icone_url = get_logo_url(ticker)
-                            border_color = "#DAA520" if ticker == lider["ticker"] else "#d3d3d3"  # Dourado para líder, cinza para demais
+                            border_color = "#DAA520" if ticker == lider["ticker"] else "#d3d3d3"
                     
-                        # Se o patrimônio for inválido, exibir mensagem
+                        # 🔹 Formatar patrimônio
                         patrimonio_formatado = "Valor indisponível" if pd.isna(patrimonio) else formatar_real(patrimonio)
                     
-                        # 🔹 Organizando os blocos de forma ordenada da esquerda para a direita e de cima para baixo
-                        col = columns[i % num_columns]  # Garante que os valores sejam distribuídos corretamente
+                        # 🔹 Exibir no Streamlit
+                        col = columns[i % num_columns]
                         with col:
                             st.markdown(f"""
                                 <div style="
