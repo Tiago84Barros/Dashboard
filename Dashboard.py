@@ -1380,8 +1380,7 @@ if pagina == "Avançada": #_____________________________________________________
                 # Atualizar patrimônio total
                 patrimonio_total = sum(carteira[empresa] * precos.loc[data_aporte, empresa] for empresa in carteira)
                 patrimonio[data_aporte] = patrimonio_total
-                st.dataframe(patrimonio)
-    
+               
         # Converter para DataFrame
         df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
     
@@ -1667,6 +1666,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # Combinar os resultados para exibição no gráfico
                     patrimonio_final = pd.concat([patrimonio_historico, patrimonio_empresas, patrimonio_selic], axis=1)
+                    st.dataframe(patrimonio_final)
 
                     # 📌 Verificar se df_scores não está vazio antes de tentar acessar a empresa líder
                     if df_scores.empty:
