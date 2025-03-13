@@ -1345,6 +1345,7 @@ if pagina == "Avançada": #_____________________________________________________
         for ano in anos:
             if ano in lideres_por_ano['Ano'].values:
                 empresa_lider = lideres_por_ano[lideres_por_ano['Ano'] == ano].iloc[0]['ticker']
+                st.markdown(f"empresa lider no ano de {ano} é:{empresa_lider}")
             else:
                 empresa_lider = None  # Ou defina um valor padrão adequado
     
