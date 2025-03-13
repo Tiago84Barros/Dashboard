@@ -1740,32 +1740,38 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # 🔹 Ordenar os valores acumulados em ordem decrescente para destacar melhor desempenho
                     df_patrimonio_final = df_patrimonio_final.sort_values(by="Patrimônio Final", ascending=False)
-                    st.dataframe(df_patrimonio_final.head())
-                    
+                                        
                     # 🔹 Criar layout responsivo com colunas no Streamlit
                     num_columns = 3  # Número de colunas no layout
                     columns = st.columns(num_columns)
+                                   
+                    # 🔹 Contar quantas vezes cada empresa foi líder no score
+                    contagem_lideres = df_scores['ticker'].value_counts().to_dict()
                     
-                    #🔹 Iterar corretamente sobre as linhas do DataFrame
+                    # 🔹 Iterar sobre os valores do DataFrame ordenado
                     for i, row in enumerate(df_patrimonio_final.itertuples(index=False)):
-                        ticker = getattr(row, "index", None)  # Acessando o nome corretamente
-                        patrimonio = getattr(row, "Patrimônio Final", None)  # Acessando a coluna de patrimônio
+                        ticker = getattr(row, "index", None)
+                        patrimonio = getattr(row, "Patrimônio Final", None)
                     
-                        # 🔹 Diferenciar cores e ícones
-                        if ticker == "Tesouro Selic":
-                            icone_url = "https://cdn-icons-png.flaticon.com/512/2331/2331949.png"
-                            border_color = "#007bff"
-                        elif ticker == "Estratégia de Aporte":
+                        # 🔹 Definir borda dourada apenas para a estratégia de aporte
+                        if ticker == "Estratégia de Aporte":
                             icone_url = "https://cdn-icons-png.flaticon.com/512/1019/1019709.png"
-                            border_color = "#FF0000"
+                            border_color = "#DAA520"  # Dourado para a estratégia
+                        elif ticker == "Tesouro Selic":
+                            icone_url = "https://cdn-icons-png.flaticon.com/512/2331/2331949.png"
+                            border_color = "#007bff"  # Azul para Tesouro Selic
                         else:
                             icone_url = get_logo_url(ticker)
-                            border_color = "#DAA520" if ticker == lider["ticker"] else "#d3d3d3"
+                            border_color = "#d3d3d3"  # Cinza para empresas comuns
+                    
+                        # 🔹 Contagem de quantas vezes uma empresa foi líder
+                        vezes_lider = contagem_lideres.get(ticker, 0)
+                        lider_texto = f"🏆 {vezes_lider}x Líder" if vezes_lider > 0 else ""
                     
                         # 🔹 Formatar patrimônio
                         patrimonio_formatado = "Valor indisponível" if pd.isna(patrimonio) else formatar_real(patrimonio)
                     
-                        # 🔹 Exibir no Streamlit
+                        # 🔹 Organizar os blocos corretamente
                         col = columns[i % num_columns]
                         with col:
                             st.markdown(f"""
@@ -1784,8 +1790,10 @@ if pagina == "Avançada": #_____________________________________________________
                                     <p style="font-size: 18px; margin: 5px 0; font-weight: bold; color: #2ecc71;">
                                         {patrimonio_formatado}
                                     </p>
+                                    <p style="font-size: 14px; color: #FFA500;">{lider_texto}</p>
                                 </div>
                             """, unsafe_allow_html=True)
+
 
                    
                     # Esse código representa uma implementação sólida e robusta conforme as estratégias discutidas, permitindo uma análise dinâmica e fundamentada na evolução histórica dos Scores das empresas.
