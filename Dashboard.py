@@ -1458,27 +1458,40 @@ if pagina == "Avançada": #_____________________________________________________
         # Agora que o índice está correto, podemos extrair o ano
         dados_macro["Ano"] = dados_macro.index.year
                       
-        patrimonio_selic = {}
+        # Criar um dicionário para armazenar os aportes mensais separados
+        aportes = {}  
+        patrimonio_total = {}
     
         for data in datas_aportes:
-            # Pegar taxa de juros do ano referente à data de aporte
-            ano_ref = pd.to_datetime(data).year
+            ano_ref = pd.to_datetime(data).year  # Pegar o ano do aporte
+    
+            # 📌 Obter taxa Selic anual correspondente
             taxa_anual = dados_macro.loc[dados_macro['Ano'] == ano_ref, "Selic"]
-            taxa_mensal = (1 + taxa_anual)**(1/12) - 1
-            st.markdown(taxa_mensal)
+            if taxa_anual.empty:
+                continue  # Se não encontrar taxa, pula o mês
+            
+            taxa_anual = taxa_anual.iloc[0] / 100  # Converter de % para decimal
+            taxa_mensal = (1 + taxa_anual)**(1/12) - 1  # Transformar em taxa mensal
     
-            # Atualiza o saldo com base na taxa mensal
-            saldo_atual = patrimonio_selic.get(data, 0)
-            st.markdown(saldo_atual)
-            saldo_atual *= (1 + taxa_mensal)
-            saldo_atual += aporte_mensal
+            # 📌 Registrar o novo aporte
+            aportes[data] = aporte_mensal
     
-            patrimonio_selic[data] = saldo_atual
+            # Aplicar rendimento nos aportes anteriores
+            patrimonio_acumulado = 0
+            for aporte_data in aportes.keys():
+                aportes[aporte_data] *= (1 + taxa_mensal)  # Aplicar rendimento
+                patrimonio_acumulado += aportes[aporte_data]  # Soma total dos aportes rendendo
     
-        df_patrimonio_selic = pd.DataFrame.from_dict(patrimonio_selic, orient='index', columns=["Tesouro Selic"])
-        st.dataframe(df_patrimonio_selic)
-        return df_patrimonio_selic
+            # 📌 Armazena o patrimônio total do Tesouro Selic nesse mês
+            patrimonio_total[data] = patrimonio_acumulado
     
+        # 📌 Converter o dicionário em DataFrame
+        df_patrimonio_selic = pd.DataFrame.from_dict(patrimonio_total, orient='index', columns=["Tesouro Selic"])
+    
+        # Ordenar por data
+        df_patrimonio_selic.sort_index(inplace=True)
+    
+        return df_patrimonio_selic    
     # Carregar dados macroeconômicos do banco de dados ________________________________________________________________________________________________________________________________________
     dados_macro = load_macro_summary()
 
