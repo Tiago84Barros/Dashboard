@@ -1725,7 +1725,10 @@ if pagina == "Avançada": #_____________________________________________________
                         patrimonio_selic.iloc[-1].rename("Patrimônio Final")  # Último valor do Tesouro Selic
                     ], axis=1).reset_index()
                     
-                    df_patrimonio_final.columns = ["index", "Patrimônio Final"]  # Renomeando colunas
+                    # 📌 Verificação do formato
+                    if df_patrimonio_final.empty:
+                        st.warning("⚠️ Dados insuficientes para exibir o patrimônio final.")
+                        st.stop()  # Interrompe a execução para evitar erro
                     
                     # 🔹 Garantir que o Tesouro Selic esteja presente no DataFrame
                     if "Tesouro Selic" not in df_patrimonio_final["index"].values:
