@@ -1453,8 +1453,11 @@ if pagina == "Avançada": #_____________________________________________________
         """
        
          # 📌 Converter índice para datetime
-        dados_macro.index = pd.to_datetime(dados_macro.index, errors='coerce')
-        # Converter o índice de dados_macro para apenas "Ano" corretamente
+        # Certificar que o índice está em formato datetime corretamente
+        dados_macro.index = pd.to_datetime(dados_macro.index, errors='coerce')        
+        # Eliminar valores NaT (se houver)
+        dados_macro = dados_macro.dropna(subset=['Selic'])        
+        # Agora, extrair o ano corretamente
         dados_macro['Ano'] = dados_macro.index.year
         st.dataframe(dados_macro)
         
