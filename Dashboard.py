@@ -1457,21 +1457,19 @@ if pagina == "Avançada": #_____________________________________________________
         dados_macro.set_index("Data", inplace=True)        
         # Agora que o índice está correto, podemos extrair o ano
         dados_macro["Ano"] = dados_macro.index.year
-        st.dataframe(dados_macro)
-                
+                      
         patrimonio_selic = {}
-        st.dataframe(datas_aportes)
     
         for data in datas_aportes:
             # Pegar taxa de juros do ano referente à data de aporte
             ano_ref = pd.to_datetime(data).year
-            st.markdown(ano_ref)
             taxa_anual = dados_macro.loc[dados_macro['Ano'] == ano_ref, "Selic"]
-            st.markdown(taxa_anual)
             taxa_mensal = (1 + taxa_anual)**(1/12) - 1
+            st.markdown(taxa_mensal)
     
             # Atualiza o saldo com base na taxa mensal
             saldo_atual = patrimonio_selic.get(data, 0)
+            st.markdown(saldo_atual)
             saldo_atual *= (1 + taxa_mensal)
             saldo_atual += aporte_mensal
     
