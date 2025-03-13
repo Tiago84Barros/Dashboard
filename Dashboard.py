@@ -1339,6 +1339,7 @@ if pagina == "Avançada": #_____________________________________________________
         patrimonio = {}
         carteira = {}
         data_inicio = None  # Inicializa a variável para armazenar a data do primeiro aporte
+        datas_aportes = []  # Inicializando a lista de datas de aporte
     
         anos = sorted(df_scores['Ano'].unique())
     
