@@ -1747,10 +1747,7 @@ if pagina == "Avançada": #_____________________________________________________
                             df_patrimonio_final,
                             pd.DataFrame([{"index": "Tesouro Selic", "Patrimônio Final": patrimonio_selic_final}])
                         ], ignore_index=True)
-                    
-                   # 📌 Exibir DataFrame para depuração
-                    st.dataframe(df_patrimonio_final)
-                    
+                                     
                     # 🔹 Garantir que o índice esteja resetado corretamente
                     if df_patrimonio_final.index.name is not None:
                         df_patrimonio_final = df_patrimonio_final.reset_index()
