@@ -1361,6 +1361,8 @@ if pagina == "Avançada": #_____________________________________________________
                     #st.warning(f"❌ Nenhuma data válida encontrada para {ano + 1}-{mes:02d}")
                     continue
                     
+                datas_aportes.append(data_aporte)  # Armazena a data do aporte
+                
                 # Registra a primeira data de aporte válida
                 if data_inicio is None:
                     data_inicio = data_aporte
@@ -1383,12 +1385,11 @@ if pagina == "Avançada": #_____________________________________________________
                
         # Converter para DataFrame
         df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
-        st.dataframe(df_patrimonio)
-    
-        return df_patrimonio, data_inicio  # Retorna tanto o patrimônio quanto a data do primeiro aporte
+        
+        return df_patrimonio, datas_aportes  # Retorna tanto o patrimônio quanto a data do primeiro aporte
 
     # Função que determina aportes mensais em todas as empresas das empresas filtradas _______________________________________________________________________________________________________________
-    def gerir_carteira_todas_empresas(precos, tickers, data_inicio, aporte_mensal=1000):
+    def gerir_carteira_todas_empresas(precos, tickers, datas_aportes, aporte_mensal=1000):
         """
         Realiza aportes mensais em todas as empresas a partir da data inicial do primeiro aporte da líder.
         
@@ -1404,11 +1405,8 @@ if pagina == "Avançada": #_____________________________________________________
     
         # Converter índice de preços para datetime (se ainda não estiver)
         precos.index = pd.to_datetime(precos.index)
-    
-        # Criar sequência de datas mensais a partir do primeiro aporte
-        datas_aporte = pd.date_range(start=data_inicio, end=precos.index.max(), freq='MS')
-    
-        for data_aporte in datas_aporte:
+            
+        for data_aporte in datas_aportes:
             # Encontrar a data mais próxima disponível no DataFrame de preços
             if data_aporte not in precos.index:
                 data_proxima = precos.index[precos.index >= data_aporte]
@@ -1442,59 +1440,24 @@ if pagina == "Avançada": #_____________________________________________________
 
     
     # 📌 Função para calcular o patrimônio acumulado no Tesouro Selic ________________________________________________________________________________________________________________________
-    def calcular_patrimonio_selic_macro(dados_macro, data_inicio, aporte_mensal=1000):
-        """
-        Simula o crescimento do patrimônio no Tesouro Selic com aportes mensais.
-        - dados_macro: DataFrame com coluna "Selic" e index como datas.
-        - data_inicio: Primeira data do investimento.
-        - aporte_mensal: Valor a ser investido mensalmente.
-        
-        Retorna um DataFrame com a evolução do patrimônio.
-        """
-        dados_macro = dados_macro.copy()
-        dados_macro["Data"] = pd.to_datetime(dados_macro["Data"])
-        dados_macro = dados_macro.set_index("Data").sort_index()
-    
-        # Se data_inicio for NaT, definir um valor padrão
-        if pd.isnull(data_inicio):
-            data_inicio = pd.Timestamp("2010-01-01")
-        
-        # Criar um range de datas mensais para aportes
-        datas_mensais = pd.date_range(start=data_inicio, end=pd.Timestamp.today(), freq='MS')
-    
-        # Dicionário para armazenar a evolução do patrimônio
+   def calcular_patrimonio_selic_macro(dados_macro, datas_aportes, aporte_mensal=1000):
         patrimonio_selic = {}
-        saldo_atual = 0.0  # Começamos sem saldo inicial
     
-        for data in datas_mensais:
-            ano_ref = data.year
+        for data in datas_aportes:
+            # Pegar taxa de juros do ano referente à data de aporte
+            ano_ref = pd.to_datetime(data).year
+            taxa_anual = dados_macro.loc[dados_macro.index.year == ano_ref, "Selic"].iloc[0] / 100
+            taxa_mensal = (1 + taxa_anual)**(1/12) - 1
     
-            # Obter a taxa Selic do ano, se não existir, usar a última disponível
-            if ano_ref in dados_macro.index.year:
-                taxa_anual = dados_macro.loc[dados_macro.index.year == ano_ref, "Selic"].iloc[0] / 100
-            else:
-                taxa_anual = dados_macro["Selic"].iloc[-1] / 100  # Última taxa disponível
-    
-            # Calcular a taxa mensal corretamente
-            taxa_mensal = (1 + taxa_anual) ** (1/12) - 1  # Corrige erro de crescimento explosivo
-    
-            # Aplicar juros sobre o saldo acumulado
+            # Atualiza o saldo com base na taxa mensal
+            saldo_atual = patrimonio_selic.get(data, 0)
             saldo_atual *= (1 + taxa_mensal)
-    
-            # Adicionar o aporte mensal APÓS a capitalização dos juros
             saldo_atual += aporte_mensal
     
-            # Salvar o valor no dicionário
             patrimonio_selic[data] = saldo_atual
     
-        # Converter para DataFrame e ordenar
-        df_patrimonio_selic = pd.DataFrame.from_dict(
-            patrimonio_selic, orient='index', columns=["Tesouro Selic"]
-        )
-        df_patrimonio_selic.sort_index(inplace=True)
-    
+        df_patrimonio_selic = pd.DataFrame.from_dict(patrimonio_selic, orient='index', columns=["Tesouro Selic"])
         return df_patrimonio_selic
-          
     
     # Carregar dados macroeconômicos do banco de dados ________________________________________________________________________________________________________________________________________
     dados_macro = load_macro_summary()
@@ -1657,7 +1620,7 @@ if pagina == "Avançada": #_____________________________________________________
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
                                                                                   
                     # Gerenciamento da carteira
-                    patrimonio_historico, data_inicio_aporte = gerir_carteira(precos, df_scores, lideres_por_ano)
+                    patrimonio_historico, datas_aportes = gerir_carteira(precos, df_scores, lideres_por_ano)
                     
                     # Comparação com Tesouro Selic a partir da mesma data
                     patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, data_inicio_aporte)
