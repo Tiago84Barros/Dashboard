@@ -1337,66 +1337,85 @@ if pagina == "Avançada": #_____________________________________________________
         return data_aporte
     
     # Função para criar uma carteira com aportes apenas na empresa líder do ano ________________________________________________________________________________________________________________
-    def gerir_carteira(precos, df_scores, lideres_por_ano, aporte_mensal=1000):
+    def gerir_carteira(precos, df_scores, lideres_por_ano, aporte_mensal=1000, deterioracao_limite=0.7):
         """
-        Gera a carteira investindo mensalmente apenas na empresa líder do ano e 
-        transfere o patrimônio para a nova líder quando necessário.
+        Gera a carteira investindo mensalmente apenas na empresa líder do ano.
+        Empresas que já foram líderes são mantidas sem novos aportes.
+        Caso o score de uma ex-líder se deteriore além do limite, as ações são vendidas e o patrimônio é realocado na nova líder.
     
         Retorna:
         - DataFrame com a evolução do patrimônio ao longo do tempo.
-        - Data da primeira alocação para sincronização com outras estratégias.
+        - Lista das datas de aporte para sincronização com outras estratégias.
         """
         patrimonio = {}
         carteira = {}
-        data_inicio = None  # Inicializa a variável para armazenar a data do primeiro aporte
-        datas_aportes = []  # Inicializando a lista de datas de aporte
+        data_inicio = None  # Armazena a data do primeiro aporte
+        datas_aportes = []  # Lista de datas dos aportes
     
         anos = sorted(df_scores['Ano'].unique())
+        empresas_mantidas = set()  # Empresas que já foram líderes e permanecem na carteira
     
         for ano in anos:
             if ano in lideres_por_ano['Ano'].values:
                 empresa_lider = lideres_por_ano[lideres_por_ano['Ano'] == ano].iloc[0]['ticker']
-               # st.markdown(f"empresa lider no ano de {ano} é:{empresa_lider}")
             else:
-                empresa_lider = None  # Ou defina um valor padrão adequado
+                empresa_lider = None
     
             for mes in range(1, 13):
-                data_aporte = f"{ano + 1}-{mes:02d}-01"  # Garante o primeiro dia do mês
-                data_aporte = pd.to_datetime(data_aporte)  # Converter para formato datetime
-
-                # Buscar a próxima data disponível com preço
+                data_aporte = f"{ano + 1}-{mes:02d}-01"  # Primeiro dia do mês
+                data_aporte = pd.to_datetime(data_aporte)
+    
+                # Encontrar a próxima data válida no mercado
                 data_aporte = encontrar_proxima_data_valida(data_aporte, precos)
     
-                # Se não houver data válida, pula
                 if data_aporte is None:
-                    #st.warning(f"❌ Nenhuma data válida encontrada para {ano + 1}-{mes:02d}")
-                    continue
-                    
+                    continue  # Pular se não houver data válida
+    
                 datas_aportes.append(data_aporte)  # Armazena a data do aporte
-                
-                # Registra a primeira data de aporte válida
+    
                 if data_inicio is None:
                     data_inicio = data_aporte
-        
-                preco_lider = precos.loc[data_aporte, empresa_lider]
-
-                # Exibir o preço e a data do aporte para conferência
-                #st.write(f"📌 Aporte realizado em {data_aporte.date()} | Preço de {empresa_lider}: {preco_lider}")
-                                    
-                # Verificar se houve mudança de líder
-                if empresa_lider not in carteira:
-                    carteira[empresa_lider] = 0
     
-                # Aporte mensal na líder
-                carteira[empresa_lider] += aporte_mensal / preco_lider
+                preco_lider = precos.loc[data_aporte, empresa_lider]
+    
+                # Se a empresa líder mudou e a anterior ainda existe, adiciona ela às empresas mantidas
+                if empresa_lider not in carteira:
+                    for antiga_lider in carteira.keys():
+                        if antiga_lider != empresa_lider:
+                            empresas_mantidas.add(antiga_lider)
+    
+                # Aporte apenas na nova líder
+                carteira[empresa_lider] = carteira.get(empresa_lider, 0) + (aporte_mensal / preco_lider)
+    
+                # Monitoramento das ex-líderes e venda se deterioração for severa
+                for empresa in list(empresas_mantidas):
+                    score_atual_array = df_scores[(df_scores['Ano'] == ano) & (df_scores['ticker'] == empresa)]['Score_Ajustado'].values
+                    score_inicial_array = df_scores[(df_scores['Ano'] == anos[0]) & (df_scores['ticker'] == empresa)]['Score_Ajustado'].values
+    
+                    if len(score_atual_array) == 0 or len(score_inicial_array) == 0:
+                        continue  # Se não houver dados, ignora
+    
+                    score_atual_val = score_atual_array[0]
+                    score_inicial_val = score_inicial_array[0]
+    
+                    if score_inicial_val == 0:
+                        continue  # Evita divisão por zero
+    
+                    if score_atual_val / score_inicial_val < deterioracao_limite:
+                        # Venda e realocação para a nova líder
+                        patrimonio_venda = carteira.pop(empresa) * precos.loc[data_aporte, empresa]
+                        carteira[empresa_lider] += patrimonio_venda / preco_lider
+                        empresas_mantidas.remove(empresa)  # Remove da lista de empresas mantidas
     
                 # Atualizar patrimônio total
                 patrimonio_total = sum(carteira[empresa] * precos.loc[data_aporte, empresa] for empresa in carteira)
                 patrimonio[data_aporte] = patrimonio_total
-               
+    
         # Converter para DataFrame
         df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
-        return df_patrimonio, datas_aportes  # Retorna tanto o patrimônio quanto a data do primeiro aporte
+    
+        return df_patrimonio, datas_aportes
+
 
     # Função que determina aportes mensais em todas as empresas das empresas filtradas _______________________________________________________________________________________________________________
     def gerir_carteira_todas_empresas(precos, tickers, datas_aportes, aporte_mensal=1000):
