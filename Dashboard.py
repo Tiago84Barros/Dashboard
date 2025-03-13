@@ -1460,6 +1460,7 @@ if pagina == "Avançada": #_____________________________________________________
         st.dataframe(dados_macro)
                 
         patrimonio_selic = {}
+        st.dataframe(datas_aportes)
     
         for data in datas_aportes:
             # Pegar taxa de juros do ano referente à data de aporte
