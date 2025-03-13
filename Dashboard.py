@@ -1368,7 +1368,7 @@ if pagina == "Avançada": #_____________________________________________________
                 preco_lider = precos.loc[data_aporte, empresa_lider]
 
                 # Exibir o preço e a data do aporte para conferência
-                st.write(f"📌 Aporte realizado em {data_aporte.date()} | Preço de {empresa_lider}: {preco_lider}")
+                #st.write(f"📌 Aporte realizado em {data_aporte.date()} | Preço de {empresa_lider}: {preco_lider}")
                                     
                 # Verificar se houve mudança de líder
                 if empresa_lider not in carteira:
@@ -1380,6 +1380,7 @@ if pagina == "Avançada": #_____________________________________________________
                 # Atualizar patrimônio total
                 patrimonio_total = sum(carteira[empresa] * precos.loc[data_aporte, empresa] for empresa in carteira)
                 patrimonio[data_aporte] = patrimonio_total
+                st.dataframe(patrimonio)
     
         # Converter para DataFrame
         df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
