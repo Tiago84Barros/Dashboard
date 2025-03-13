@@ -1720,17 +1720,17 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # 🔹 Criar um DataFrame consolidado com os resultados finais das empresas, estratégia e Tesouro Selic
                     df_patrimonio_final = pd.concat([
-                        patrimonio_historico.iloc[-1].rename("Patrimônio Final"),  # Último valor do patrimônio acumulado da estratégia
-                        patrimonio_empresas.iloc[-1].rename("Patrimônio Final"),  # Último valor das empresas individualmente
-                        patrimonio_selic.iloc[-1].rename("Patrimônio Final")  # Último valor do Tesouro Selic
-                    ], axis=1).reset_index()
+                        patrimonio_historico.iloc[-1:].rename_axis("Data").reset_index().melt(id_vars="Data", var_name="index", value_name="Patrimônio Final"),
+                        patrimonio_empresas.iloc[-1:].rename_axis("Data").reset_index().melt(id_vars="Data", var_name="index", value_name="Patrimônio Final"),
+                        patrimonio_selic.iloc[-1:].rename_axis("Data").reset_index().melt(id_vars="Data", var_name="index", value_name="Patrimônio Final")
+                    ], ignore_index=True)
                     
                     # 📌 Verificação do formato
                     if df_patrimonio_final.empty:
                         st.warning("⚠️ Dados insuficientes para exibir o patrimônio final.")
                         st.stop()  # Interrompe a execução para evitar erro
                     
-                    # 🔹 Garantir que o Tesouro Selic esteja presente no DataFrame
+                    # 🔹 Garantir que "Tesouro Selic" esteja presente no DataFrame
                     if "Tesouro Selic" not in df_patrimonio_final["index"].values:
                         patrimonio_selic_final = patrimonio_selic.iloc[-1]["Tesouro Selic"]  # Último valor acumulado do Tesouro Selic
                         df_patrimonio_final = pd.concat([
@@ -1786,8 +1786,7 @@ if pagina == "Avançada": #_____________________________________________________
                                 </div>
                             """, unsafe_allow_html=True)
 
-
-                    
+                   
                     # Esse código representa uma implementação sólida e robusta conforme as estratégias discutidas, permitindo uma análise dinâmica e fundamentada na evolução histórica dos Scores das empresas.
                    
                      
