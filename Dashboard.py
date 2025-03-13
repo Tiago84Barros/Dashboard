@@ -1746,7 +1746,7 @@ if pagina == "Avançada": #_____________________________________________________
                     num_columns = 3  # Número de colunas no layout
                     columns = st.columns(num_columns)
                     
-                    🔹 Iterar corretamente sobre as linhas do DataFrame
+                    #🔹 Iterar corretamente sobre as linhas do DataFrame
                     for i, row in enumerate(df_patrimonio_final.itertuples(index=False)):
                         ticker = getattr(row, "index", None)  # Acessando o nome corretamente
                         patrimonio = getattr(row, "Patrimônio Final", None)  # Acessando a coluna de patrimônio
