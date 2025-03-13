@@ -1454,14 +1454,15 @@ if pagina == "Avançada": #_____________________________________________________
 
          # 📌 Converter índice para datetime
         dados_macro.index = pd.to_datetime(dados_macro.index, errors='coerce')
+        # Converter o índice de dados_macro para apenas "Ano" corretamente
+        dados_macro['Ano'] = dados_macro.index.year
         
         patrimonio_selic = {}
     
         for data in datas_aportes:
             # Pegar taxa de juros do ano referente à data de aporte
             ano_ref = pd.to_datetime(data).year
-            st.markdown(ano_ref)
-            taxa_anual = dados_macro.loc[dados_macro.index.year == ano_ref, "Selic"].iloc[0] / 100
+            taxa_anual = dados_macro.loc[dados_macro['Ano'] == ano_ref, "Selic"]
             taxa_mensal = (1 + taxa_anual)**(1/12) - 1
     
             # Atualiza o saldo com base na taxa mensal
@@ -1476,7 +1477,7 @@ if pagina == "Avançada": #_____________________________________________________
     
     # Carregar dados macroeconômicos do banco de dados ________________________________________________________________________________________________________________________________________
     dados_macro = load_macro_summary()
-    st.dataframe(dados_macro)
+
     # espaçamento entre os elementos
     st.markdown("""
         <h1 style='text-align: center; font-size: 36px; color: #333;'>Análise Avançada de Ações</h1>
