@@ -1740,6 +1740,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # 🔹 Ordenar os valores acumulados em ordem decrescente para destacar melhor desempenho
                     df_patrimonio_final = df_patrimonio_final.sort_values(by="Patrimônio Final", ascending=False)
+                    st.dataframe(df_patrimonio_final.head())
                     
                     # 🔹 Criar layout responsivo com colunas no Streamlit
                     num_columns = 3  # Número de colunas no layout
