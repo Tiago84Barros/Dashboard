@@ -1697,6 +1697,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
                         # ✅ Criar a coluna 'Ano' aqui
                         multiplos["Ano"] = pd.to_datetime(multiplos["Data"], errors="coerce").dt.year
+                        st.dataframe(multiplos)
                         df_dre["Ano"]    = pd.to_datetime(df_dre["Data"], errors="coerce").dt.year
                                             
                         lista_empresas.append({
