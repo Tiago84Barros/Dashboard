@@ -1437,10 +1437,11 @@ if pagina == "Avançada": #_____________________________________________________
                         carteira[empresa] += (dividendos_mes * carteira[empresa]) / preco_lider
     
                 # 🔹 Aporte mensal somente na empresa líder 🔹
-                if empresa_lider not in carteira:
-                    carteira[empresa_lider] = 0
-                carteira[empresa_lider] += aporte_mensal / preco_lider
-    
+                if empresa_lider_atual not in carteira:
+                    carteira[empresa_lider_atual] = 0    
+                # Aporte mensal na líder válida
+                carteira[empresa_lider_atual] += aporte_mensal / preco_lider
+                
                 # 🔹 VERIFICAÇÃO DE DETERIORAÇÃO DO SCORE 🔹
                 for antiga_lider in list(empresas_mantidas):
                     score_atual = df_scores[(df_scores['Ano'] == ano) & (df_scores['ticker'] == antiga_lider)]['Score_Ajustado'].values
