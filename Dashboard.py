@@ -1727,7 +1727,7 @@ if pagina == "Avançada": #_____________________________________________________
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
 
                     # 🔹 Lista de tickers das empresas que estamos analisando
-                    tickers_filtrados = empresas_filtradas['ticker'].unique()
+                    tickers_filtrados = df_scores['ticker'].unique()
                     
                     # 🔹 Baixar todos os dividendos de uma vez só
                     dividendos_dict, dy_dict = coletar_dividendos_e_dy(tickers_filtrados, precos)
