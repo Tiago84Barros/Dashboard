@@ -1167,7 +1167,7 @@ if pagina == "Avançada": #_____________________________________________________
         metrics = {}
         # PASSO 4
         # =============== MÚLTIPLOS ===============
-        for col in ['Margem_Liquida', 'Margem_Operacional', 'ROE', 'ROIC', 'P/VP', 'Endividamento_Total', 'Alavancagem_Financeira', 'Liquidez_Corrente']:
+        for col in ['Margem_Liquida', 'Margem_Operacional', 'ROE', 'ROA', 'ROIC', 'P/VP', 'Endividamento_Total', 'Alavancagem_Financeira', 'Liquidez_Corrente', 'DY']:
             mean, std = calcular_media_e_std(df_mult, col)
             metrics[f'{col}_mean'] = mean
             metrics[f'{col}_std'] = std
@@ -1179,7 +1179,7 @@ if pagina == "Avançada": #_____________________________________________________
             metrics[f'{col}_growth_approx'] = slope_to_growth_percent(slope)
         
         # Penalização por alta volatilidade (desvio padrão relativo à média) # PASSO 5
-        for col in ['Margem_Liquida', 'ROE', 'ROIC', 'Endividamento_Total', 'Liquidez_Corrente']:
+        for col in ['Margem_Liquida', 'ROE', 'ROA', 'ROIC', 'Endividamento_Total', 'Liquidez_Corrente']:
             if metrics[f'{col}_mean'] != 0:
                 coef_var = metrics[f'{col}_std'] / abs(metrics[f'{col}_mean'])
                 metrics[f'{col}_volatility_penalty'] = min(1.0, coef_var)  # Penalização limitada a 100% 
@@ -1338,7 +1338,7 @@ if pagina == "Avançada": #_____________________________________________________
         return data_aporte
     
     # Função para criar uma carteira com aportes apenas na empresa líder do ano ________________________________________________________________________________________________________________
-    def gerir_carteira(precos, df_scores, lideres_por_ano, aporte_mensal=1000, deterioracao_limite=0.7):
+    def gerir_carteira(precos, df_scores, lideres_por_ano, multiplos, aporte_mensal=1000, deterioracao_limite=0.7):
         """
         Gera a carteira investindo mensalmente apenas na empresa líder do ano.
         Empresas que já foram líderes são mantidas sem novos aportes.
@@ -1646,8 +1646,10 @@ if pagina == "Avançada": #_____________________________________________________
                         'Margem_Liquida_mean': {'peso': 0.15, 'melhor_alto': True},
                         'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},
                         'ROE_mean': {'peso': 0.20, 'melhor_alto': True},
+                        'ROA_mean': {'peso': 0.20, 'melhor_alto': True},
                         'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},
                         'P/VP_mean': {'peso': 0.10, 'melhor_alto': False},
+                        'DY_mean': {'peso': 0.10, 'melhor_alto': True},
                         'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
                         'Alavancagem_Financeira_mean': {'peso': 0.15, 'melhor_alto': False},
                         'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
@@ -1667,7 +1669,7 @@ if pagina == "Avançada": #_____________________________________________________
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
                                                                                   
                     # Gerenciamento da carteira
-                    patrimonio_historico, datas_aportes = gerir_carteira(precos, df_scores, lideres_por_ano)
+                    patrimonio_historico, datas_aportes = gerir_carteira(precos, df_scores, lideres_por_ano, multiplos)
                     
                     # Comparação com Tesouro Selic a partir da mesma data
                     patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aportes)
