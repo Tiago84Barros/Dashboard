@@ -1309,6 +1309,35 @@ if pagina == "Avançada": #_____________________________________________________
         except Exception as e:
             st.error(f"Erro ao baixar preços: {e}")
             return None
+    
+    # 📌 Baixando dividendos das empresas ____________________________________________________________________________________________________________________________________________
+    def coletar_dividendos(tickers):
+        """
+        Baixa os dividendos históricos de todas as empresas de uma só vez.
+        
+        Parâmetros:
+        - tickers: Lista de tickers das empresas.
+    
+        Retorna:
+        - Um dicionário onde cada chave é um ticker e o valor é um DataFrame com dividendos mensais.
+        """
+        dividendos_dict = {}
+    
+        for ticker in tickers:
+            try:
+                ticker_yf = f"{ticker}.SA"
+                div_yf = yf.Ticker(ticker_yf).dividends
+    
+                if not div_yf.empty:
+                    div_yf = div_yf.resample('M').sum()  # Agrega dividendos por mês
+                    dividendos_dict[ticker] = div_yf
+                else:
+                    dividendos_dict[ticker] = pd.Series()  # Se não houver dividendos, retorna um Series vazio
+            except Exception as e:
+                print(f"Erro ao buscar dividendos para {ticker}: {e}")
+                dividendos_dict[ticker] = pd.Series()
+    
+        return dividendos_dict
         
             
     # Função para determinar líder anual com base no Score Ajustado __________________________________________________________________________________________________________________________                      
@@ -1338,13 +1367,15 @@ if pagina == "Avançada": #_____________________________________________________
         return data_aporte
     
     # Função para criar uma carteira com aportes apenas na empresa líder do ano ________________________________________________________________________________________________________________
-    def gerir_carteira(precos, df_scores, lideres_por_ano, aporte_mensal=1000, deterioracao_limite=0.7):
+    def gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict, aporte_mensal=1000, deterioracao_limite=0.7):
         """
         Gera a carteira investindo mensalmente apenas na empresa líder do ano.
         Empresas que já foram líderes são mantidas sem novos aportes.
         Caso o score de uma ex-líder se deteriore além do limite, as ações são vendidas e o patrimônio é realocado na nova líder.
-    
-        Reinvestindo dividendos nas respectivas empresas.
+        
+        Otimizações:
+        - Usa dividendos pré-carregados via `dividendos_dict` para evitar múltiplas chamadas ao Yahoo Finance.
+        - Reduz acessos desnecessários ao DataFrame `precos`.
     
         Retorna:
         - DataFrame com a evolução do patrimônio ao longo do tempo.
@@ -1383,17 +1414,13 @@ if pagina == "Avançada": #_____________________________________________________
     
                 preco_lider = precos.loc[data_aporte, empresa_lider]
     
-                # 🔹 REINVESTIMENTO DE DIVIDENDOS PARA TODAS AS EMPRESAS 🔹
+                # 🔹 REINVESTIMENTO DE DIVIDENDOS (USANDO O DICIONÁRIO PRÉ-CARREGADO) 🔹
                 for empresa in list(carteira.keys()):  
-                    ticker_yf = f"{empresa}.SA"
-                    div_yf = yf.Ticker(ticker_yf).dividends  
-    
+                    div_yf = dividendos_dict.get(empresa, pd.Series())  
                     if div_yf.empty:
                         continue  
     
-                    div_yf.index = pd.to_datetime(div_yf.index)
-    
-                    # Soma os dividendos pagos no mesmo **mês e ano** do aporte
+                    # Busca dividendos pagos no mesmo **mês e ano** do aporte
                     dividendos_mes = div_yf[
                         (div_yf.index.year == data_aporte.year) & (div_yf.index.month == data_aporte.month)
                     ].sum()
@@ -1434,7 +1461,6 @@ if pagina == "Avançada": #_____________________________________________________
     
         df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
         return df_patrimonio, datas_aportes
-
 
 
     # Função que determina aportes mensais em todas as empresas das empresas filtradas _______________________________________________________________________________________________________________
@@ -1686,9 +1712,15 @@ if pagina == "Avançada": #_____________________________________________________
                                                                            
                     # Baixar preços
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
+
+                    # 🔹 Lista de tickers das empresas que estamos analisando
+                    tickers_filtrados = df_scores['ticker'].unique()
+                    
+                    # 🔹 Baixar todos os dividendos de uma vez só
+                    dividendos_dict = coletar_dividendos(tickers_filtrados)
                                                                                   
                     # Gerenciamento da carteira
-                    patrimonio_historico, datas_aportes = gerir_carteira(precos, df_scores, lideres_por_ano)
+                    patrimonio_historico, datas_aportes = gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict)
                     
                     # Comparação com Tesouro Selic a partir da mesma data
                     patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aportes)
