@@ -1704,10 +1704,7 @@ if pagina == "Avançada": #_____________________________________________________
                         'Divida_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': False},
                         'Caixa_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
                     }
-
-                    
-
-                   
+          
                     
                     # Escores das empresas de acordo com segmento e tipo de empresa
                     df_scores = calcular_score_acumulado(lista_empresas, indicadores_score_ajustados, anos_minimos=3)
@@ -1722,8 +1719,7 @@ if pagina == "Avançada": #_____________________________________________________
                     tickers_filtrados = df_scores['ticker'].unique()
                     
                     # 🔹 Baixar todos os dividendos de uma vez só
-                    dividendos_dict = coletar_dividendos(tickers_filtrados)
-                    st.dataframe(dividendos_dict)                    
+                    dividendos_dict = coletar_dividendos(tickers_filtrados)           
                                                                                   
                     # Gerenciamento da carteira
                     patrimonio_historico, datas_aportes = gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict)
