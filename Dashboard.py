@@ -1190,7 +1190,7 @@ if pagina == "Avançada": #_____________________________________________________
         num_anos = df_dre['Ano'].nunique()
         
         def calcular_historico_bonus(anos):
-            return anos / ((10 + anos) ** 10)  # Penalização bem mais severa para novatas
+            return anos / ((10 + anos) ** 2)  # Penalização bem mais severa para novatas
     
         # Aplicando penalização aprimorada
         metrics['historico_bonus'] = calcular_historico_bonus(num_anos)
@@ -1258,12 +1258,13 @@ if pagina == "Avançada": #_____________________________________________________
             # 3) Para cada indicador, winsorize e penalize
             for col, config in indicadores_score.items():
                 if col in df_ano.columns:
+                    if 'historico_bonus' in df_ano.columns:
+                        df_ano[col] *= (df_ano['historico_bonus'] ** 10)  # Penalização mais forte
                     df_ano[col] = winsorize(df_ano[col])
                     vol_col = col.replace("_mean", "_volatility_penalty")
                     if vol_col in df_ano.columns:
                         df_ano[col] *= (1 - df_ano[vol_col])
-                    if 'historico_bonus' in df_ano.columns:
-                        df_ano[col] *= (df_ano['historico_bonus'] ** 10)  # Penalização mais forte
+                    
     
             # Criar Score_Ajustado com 0
             df_ano['Score_Ajustado'] = 0.0
@@ -1461,7 +1462,7 @@ if pagina == "Avançada": #_____________________________________________________
                 patrimonio[data_aporte] = patrimonio_total
     
         df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
-        st.dataframe(df_patrimonio)
+  
         return df_patrimonio, datas_aportes
 
 
