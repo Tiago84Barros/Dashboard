@@ -1311,17 +1311,20 @@ if pagina == "Avançada": #_____________________________________________________
             return None
     
     # 📌 Baixando dividendos das empresas ____________________________________________________________________________________________________________________________________________
-    def coletar_dividendos(tickers):
+    def coletar_dividendos_e_dy(tickers, precos):
         """
-        Baixa os dividendos históricos de todas as empresas de uma só vez.
+        Baixa os dividendos históricos de todas as empresas e calcula o Dividend Yield (DY) anual.
         
         Parâmetros:
         - tickers: Lista de tickers das empresas.
+        - precos: DataFrame com os preços históricos das empresas.
     
         Retorna:
-        - Um dicionário onde cada chave é um ticker e o valor é um DataFrame com dividendos mensais.
+        - dividendos_dict: Dicionário com os dividendos mensais das empresas.
+        - dy_dict: Dicionário com os Dividend Yields anuais calculados corretamente.
         """
         dividendos_dict = {}
+        dy_dict = {}
     
         for ticker in tickers:
             try:
@@ -1329,15 +1332,25 @@ if pagina == "Avançada": #_____________________________________________________
                 div_yf = yf.Ticker(ticker_yf).dividends
     
                 if not div_yf.empty:
-                    div_yf = div_yf.resample('M').sum()  # Agrega dividendos por mês
+                    div_yf = div_yf.resample('M').sum()  # Agregar dividendos por mês
                     dividendos_dict[ticker] = div_yf
                 else:
-                    dividendos_dict[ticker] = pd.Series()  # Se não houver dividendos, retorna um Series vazio
-            except Exception as e:
-                print(f"Erro ao buscar dividendos para {ticker}: {e}")
-                dividendos_dict[ticker] = pd.Series()
+                    dividendos_dict[ticker] = pd.Series()
     
-        return dividendos_dict
+                # 🔹 Cálculo do Dividend Yield (DY) anual 🔹
+                if not div_yf.empty and ticker in precos.columns:
+                    div_anual = div_yf.resample('Y').sum()  # Soma dos dividendos anuais
+                    preco_medio_anual = precos[ticker].resample('Y').mean()  # Preço médio anual da ação
+                    
+                    dy_anual = div_anual / preco_medio_anual  # DY = Dividendos / Preço Médio
+                    dy_dict[ticker] = dy_anual.dropna()  # Remove valores NaN
+    
+            except Exception as e:
+                print(f"Erro ao buscar dividendos/DY para {ticker}: {e}")
+                dividendos_dict[ticker] = pd.Series()
+                dy_dict[ticker] = pd.Series()
+    
+        return dividendos_dict, dy_dict
         
             
     # Função para determinar líder anual com base no Score Ajustado __________________________________________________________________________________________________________________________                      
@@ -1714,10 +1727,10 @@ if pagina == "Avançada": #_____________________________________________________
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
 
                     # 🔹 Lista de tickers das empresas que estamos analisando
-                    tickers_filtrados = df_scores['ticker'].unique()
+                    tickers_filtrados = empresas_filtradas['ticker'].unique()
                     
                     # 🔹 Baixar todos os dividendos de uma vez só
-                    dividendos_dict = coletar_dividendos(tickers_filtrados)
+                    ddividendos_dict, dy_dict = coletar_dividendos_e_dy(tickers_filtrados, precos)
                                                                                   
                     # Gerenciamento da carteira
                     patrimonio_historico, datas_aportes = gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict)
