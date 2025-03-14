@@ -1389,9 +1389,9 @@ if pagina == "Avançada": #_____________________________________________________
         anos = sorted(df_scores['Ano'].unique())
     
         for ano in anos:
-           if ano in lideres_por_ano['Ano'].values:
+            if ano in lideres_por_ano['Ano'].values:
                 empresa_lider = lideres_por_ano[lideres_por_ano['Ano'] == ano].iloc[0]['ticker']
-           else:
+            else:
                 empresa_lider = None
                
             for mes in range(1, 13):
