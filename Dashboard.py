@@ -1463,24 +1463,25 @@ if pagina == "Avançada": #_____________________________________________________
         return df_patrimonio, datas_aportes
 
 
-    # Função que determina aportes mensais em todas as empresas das empresas filtradas _______________________________________________________________________________________________________________
-    def gerir_carteira_todas_empresas(precos, tickers, datas_aportes, aporte_mensal=1000):
+    def gerir_carteira_todas_empresas(precos, tickers, datas_aportes, dividendos_dict, aporte_mensal=1000):
         """
-        Realiza aportes mensais em todas as empresas a partir da data inicial do primeiro aporte da líder.
+        Realiza aportes mensais em todas as empresas filtradas e reinveste dividendos pagos no respectivo mês.
         
-        precos: DataFrame com os preços históricos das empresas.
-        tickers: Lista dos tickers das empresas no portfólio.
-        data_inicio: Data inicial do primeiro aporte na empresa líder (formato YYYY-MM-DD).
-        aporte_mensal: Valor investido em cada empresa a cada mês.
+        - `precos`: DataFrame com os preços históricos das empresas.
+        - `tickers`: Lista dos tickers das empresas no portfólio.
+        - `datas_aportes`: Lista de datas válidas para os aportes mensais.
+        - `dividendos_dict`: Dicionário contendo o histórico de dividendos de cada empresa.
+        - `aporte_mensal`: Valor investido em cada empresa a cada mês.
     
-        Retorna: DataFrame com a evolução do patrimônio por empresa.
+        Retorna:
+        - `df_patrimonio_empresas`: DataFrame com a evolução do patrimônio de cada empresa ao longo do tempo.
         """
         patrimonio = {ticker: {} for ticker in tickers}
         carteira = {ticker: 0 for ticker in tickers}
     
         # Converter índice de preços para datetime (se ainda não estiver)
         precos.index = pd.to_datetime(precos.index)
-            
+    
         for data_aporte in datas_aportes:
             # Encontrar a data mais próxima disponível no DataFrame de preços
             if data_aporte not in precos.index:
@@ -1498,8 +1499,24 @@ if pagina == "Avançada": #_____________________________________________________
                 if pd.isna(preco_atual) or preco_atual == 0:
                     continue  # Se o preço estiver vazio ou for zero, pula
     
-                # Comprar fração de ações com o aporte mensal
-                carteira[ticker] += aporte_mensal / preco_atual
+                # Verificar dividendos pagos no mês e somar ao aporte mensal
+                dividendos_mes = 0
+                if ticker in dividendos_dict:
+                    dividendos_df = dividendos_dict[ticker]
+                    dividendos_df.index = pd.to_datetime(dividendos_df.index)  # Garantir formato datetime
+                    dividendos_ano_mes = dividendos_df[
+                        (dividendos_df.index.year == data_aporte.year) &
+                        (dividendos_df.index.month == data_aporte.month)
+                    ].sum()
+    
+                    # Calcular dividendos recebidos com base na quantidade de ações na carteira
+                    dividendos_mes = dividendos_ano_mes * carteira.get(ticker, 0)
+    
+                # Somar dividendos ao aporte mensal
+                aporte_total = aporte_mensal + dividendos_mes
+    
+                # Comprar fração de ações com o total disponível
+                carteira[ticker] += aporte_total / preco_atual
     
                 # Atualizar o valor do patrimônio da empresa
                 patrimonio[ticker][data_aporte] = carteira[ticker] * preco_atual
@@ -1509,7 +1526,7 @@ if pagina == "Avançada": #_____________________________________________________
     
         # Ordenar por data
         df_patrimonio_empresas.sort_index(inplace=True)
-
+    
         return df_patrimonio_empresas
 
 
@@ -1728,7 +1745,7 @@ if pagina == "Avançada": #_____________________________________________________
                     patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aportes)
                     
                     # Gerir carteira para todas as empresas usando a mesma data de início
-                    patrimonio_empresas = gerir_carteira_todas_empresas(precos, empresas_filtradas['ticker'], datas_aportes)
+                    patrimonio_empresas = gerir_carteira_todas_empresas(precos, empresas_filtradas['ticker'], datas_aportes, dividendos_dict)
                     
                     # Combinar os resultados para exibição no gráfico
                     patrimonio_final = pd.concat([patrimonio_historico, patrimonio_empresas, patrimonio_selic], axis=1)
