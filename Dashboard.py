@@ -1648,7 +1648,7 @@ if pagina == "Avançada": #_____________________________________________________
                         'ROA_mean': {'peso': 0.20, 'melhor_alto': True},
                         'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},
                         'P/VP_mean': {'peso': 0.10, 'melhor_alto': False},
-                        'DY_mean': {'peso': 0.10, 'melhor_alto': True},
+                        'DY_mean': {'peso': 0.20, 'melhor_alto': True},
                         'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
                         'Alavancagem_Financeira_mean': {'peso': 0.15, 'melhor_alto': False},
                         'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
