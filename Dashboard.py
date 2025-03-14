@@ -1415,6 +1415,7 @@ if pagina == "Avançada": #_____________________________________________________
                     continue  
     
                 preco_lider = precos.loc[data_aporte, empresa_lider]
+                st.markdown(preco_lider)
       
                 # 🔹 REINVESTIMENTO DE DIVIDENDOS (USANDO O DICIONÁRIO PRÉ-CARREGADO) 🔹
                 for empresa in list(carteira.keys()):  
