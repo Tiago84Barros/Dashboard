@@ -1622,6 +1622,7 @@ if pagina == "Avançada": #_____________________________________________________
                         ticker = row['ticker']
                         multiplos = load_multiplos_from_db(ticker+".SA").copy()
                         df_dre = load_data_from_db(ticker+".SA").copy()
+                        st.dataframe(multiplos)
                                             
                         if multiplos is None or multiplos.empty:
                             continue
