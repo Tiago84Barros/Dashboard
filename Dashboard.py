@@ -1408,7 +1408,7 @@ if pagina == "Avançada": #_____________________________________________________
                 if data_inicio is None:
                     data_inicio = data_aporte
     
-                if empresa_lider_atual not in precos.columns:
+                if empresa_lider not in precos.columns:
                     continue  
                           
                 preco_lider = precos.loc[data_aporte, empresa_lider]
