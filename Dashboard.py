@@ -1258,12 +1258,12 @@ if pagina == "Avançada": #_____________________________________________________
             # 3) Para cada indicador, winsorize e penalize
             for col, config in indicadores_score.items():
                 if col in df_ano.columns:
-                    if 'historico_bonus' in df_ano.columns:
-                        df_ano[col] *= (df_ano['historico_bonus'] ** 10)  # Penalização mais forte
                     df_ano[col] = winsorize(df_ano[col])
                     vol_col = col.replace("_mean", "_volatility_penalty")
                     if vol_col in df_ano.columns:
                         df_ano[col] *= (1 - df_ano[vol_col])
+                    if 'historico_bonus' in df_ano.columns:
+                       df_ano[col] *= (df_ano['historico_bonus'] ** 10)  # Penalização mais forte
                     
     
             # Criar Score_Ajustado com 0
