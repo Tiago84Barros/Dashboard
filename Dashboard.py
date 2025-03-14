@@ -1589,7 +1589,7 @@ if pagina == "Avançada": #_____________________________________________________
                     st.warning("Não há empresas nesse segmento.")
                 else:
                     # Novo: Adicionando quarto filtro (Crescimento ou Estabelecida) _________________________________________________________________________________________________________
-                    opcao_crescimento = st.selectbox("Tipo de Empresa:", ["Todas", "Crescimento (< 6 anos)", "Estabelecida (>= 6 anos)"])
+                    opcao_crescimento = st.selectbox("Tipo de Empresa:", ["Todas", "Crescimento (< 5 anos)", "Estabelecida (>= 5 anos)"])
        
                     # Lista para armazenar empresas selecionadas
                     empresas_selecionadas = []
@@ -1614,8 +1614,8 @@ if pagina == "Avançada": #_____________________________________________________
                     
                         # Aplicar filtro conforme tempo de existência
                         if (
-                            (opcao_crescimento == "Crescimento (< 6 anos)" and anos_disponiveis < 6) or
-                            (opcao_crescimento == "Estabelecida (>= 6 anos)" and anos_disponiveis >= 6) or
+                            (opcao_crescimento == "Crescimento (< 5 anos)" and anos_disponiveis < 5) or
+                            (opcao_crescimento == "Estabelecida (>= 5 anos)" and anos_disponiveis >= 5) or
                             (opcao_crescimento == "Todas")
                         ):
                             empresas_selecionadas.append(row)
