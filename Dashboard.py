@@ -1568,8 +1568,8 @@ if pagina == "Avançada": #_____________________________________________________
                     
                         # Aplicar filtro conforme tempo de existência
                         if (
-                            (opcao_crescimento == "Crescimento (< 6 anos)" and anos_disponiveis < 5) or
-                            (opcao_crescimento == "Estabelecida (>= 6 anos)" and anos_disponiveis >= 5) or
+                            (opcao_crescimento == "Crescimento (< 6 anos)" and anos_disponiveis < 6) or
+                            (opcao_crescimento == "Estabelecida (>= 6 anos)" and anos_disponiveis >= 6) or
                             (opcao_crescimento == "Todas")
                         ):
                             empresas_selecionadas.append(row)
