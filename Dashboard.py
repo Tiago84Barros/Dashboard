@@ -1392,14 +1392,14 @@ if pagina == "Avançada": #_____________________________________________________
         for ano in anos:
             if ano in lideres_por_ano['Ano'].values:
                 empresa_lider = lideres_por_ano[lideres_por_ano['Ano'] == ano].iloc[0]['ticker']
+                st.markdown(empresa_lider)
             else:
                 empresa_lider = None
     
             for mes in range(1, 13):
                 data_aporte = f"{ano + 1}-{mes:02d}-01"
                 data_aporte = pd.to_datetime(data_aporte)
-                st.markdown(data_aporte)
-    
+
                 data_aporte = encontrar_proxima_data_valida(data_aporte, precos)
     
                 if data_aporte is None:
@@ -1414,8 +1414,7 @@ if pagina == "Avançada": #_____________________________________________________
                     continue  
     
                 preco_lider = precos.loc[data_aporte, empresa_lider]
-                st.markdown(preco_lider)
-    
+      
                 # 🔹 REINVESTIMENTO DE DIVIDENDOS (USANDO O DICIONÁRIO PRÉ-CARREGADO) 🔹
                 for empresa in list(carteira.keys()):  
                     div_yf = dividendos_dict.get(empresa, pd.Series())  
