@@ -1730,7 +1730,7 @@ if pagina == "Avançada": #_____________________________________________________
                     tickers_filtrados = empresas_filtradas['ticker'].unique()
                     
                     # 🔹 Baixar todos os dividendos de uma vez só
-                    ddividendos_dict, dy_dict = coletar_dividendos_e_dy(tickers_filtrados, precos)
+                    dividendos_dict, dy_dict = coletar_dividendos_e_dy(tickers_filtrados, precos)
                                                                                   
                     # Gerenciamento da carteira
                     patrimonio_historico, datas_aportes = gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict)
