@@ -1190,8 +1190,7 @@ if pagina == "Avançada": #_____________________________________________________
         num_anos = df_dre['Ano'].nunique()
         
         def calcular_historico_bonus(anos):
-            """ Penaliza empresas novas mais severamente """
-            return anos / (10 + anos)  # Ajustável, pode ser 15+ se quiser penalizar ainda mais
+            return anos / ((10 + anos) ** 2)  # Penalização bem mais severa para novatas
     
         # Aplicando penalização aprimorada
         metrics['historico_bonus'] = calcular_historico_bonus(num_anos)
@@ -1390,18 +1389,11 @@ if pagina == "Avançada": #_____________________________________________________
         anos = sorted(df_scores['Ano'].unique())
     
         for ano in anos:
-            if ano in lideres_por_ano['Ano'].values:
-                nova_lider = lideres_por_ano[lideres_por_ano['Ano'] == ano].iloc[0]['ticker']
+           if ano in lideres_por_ano['Ano'].values:
+                empresa_lider = lideres_por_ano[lideres_por_ano['Ano'] == ano].iloc[0]['ticker']
             else:
-                nova_lider = None
-    
-            # 📌 Verificar se a nova líder tem preços disponíveis
-            if nova_lider not in precos.columns or precos[nova_lider].dropna().empty:
-                print(f"⚠️ Sem preços para {nova_lider} em {ano}! Mantendo {empresa_lider_atual}.")
-                nova_lider = empresa_lider_atual  # Manter a empresa líder anterior se a nova não tiver preços
-            else:
-                empresa_lider_atual = nova_lider  # Atualizar a nova líder válida
-    
+                empresa_lider = None
+               
             for mes in range(1, 13):
                 data_aporte = f"{ano + 1}-{mes:02d}-01"
                 data_aporte = pd.to_datetime(data_aporte)
@@ -1418,9 +1410,9 @@ if pagina == "Avançada": #_____________________________________________________
     
                 if empresa_lider_atual not in precos.columns:
                     continue  
-    
-                preco_lider = precos.loc[data_aporte, empresa_lider_atual]
-                st.markdown(preco_lider)
+                          
+                preco_lider = precos.loc[data_aporte, empresa_lider]
+               
       
                 # 🔹 REINVESTIMENTO DE DIVIDENDOS (USANDO O DICIONÁRIO PRÉ-CARREGADO) 🔹
                 for empresa in list(carteira.keys()):  
@@ -1437,10 +1429,10 @@ if pagina == "Avançada": #_____________________________________________________
                         carteira[empresa] += (dividendos_mes * carteira[empresa]) / preco_lider
     
                 # 🔹 Aporte mensal somente na empresa líder 🔹
-                if empresa_lider_atual not in carteira:
-                    carteira[empresa_lider_atual] = 0    
+                if empresa_lider not in carteira:
+                    carteira[empresa_lider] = 0    
                 # Aporte mensal na líder válida
-                carteira[empresa_lider_atual] += aporte_mensal / preco_lider
+                carteira[empresa_lider] += aporte_mensal / preco_lider
                 
                 # 🔹 VERIFICAÇÃO DE DETERIORAÇÃO DO SCORE 🔹
                 for antiga_lider in list(empresas_mantidas):
@@ -1703,7 +1695,6 @@ if pagina == "Avançada": #_____________________________________________________
                     
                         # ✅ Criar a coluna 'Ano' aqui
                         multiplos["Ano"] = pd.to_datetime(multiplos["Data"], errors="coerce").dt.year
-                        st.dataframe(multiplos)
                         df_dre["Ano"]    = pd.to_datetime(df_dre["Data"], errors="coerce").dt.year
                                             
                         lista_empresas.append({
@@ -1742,8 +1733,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # Baixar preços
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
-                    st.dataframe(precos)
-
+          
                      # 🔹 Lista de tickers das empresas que estamos analisando
                     tickers_filtrados = df_scores['ticker'].unique()
                     
