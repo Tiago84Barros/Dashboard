@@ -1398,6 +1398,7 @@ if pagina == "Avançada": #_____________________________________________________
             for mes in range(1, 13):
                 data_aporte = f"{ano + 1}-{mes:02d}-01"
                 data_aporte = pd.to_datetime(data_aporte)
+                st.markdown(data_aporte)
     
                 data_aporte = encontrar_proxima_data_valida(data_aporte, precos)
     
@@ -1405,7 +1406,7 @@ if pagina == "Avançada": #_____________________________________________________
                     continue  
     
                 datas_aportes.append(data_aporte)  
-    
+                  
                 if data_inicio is None:
                     data_inicio = data_aporte
     
@@ -1413,6 +1414,7 @@ if pagina == "Avançada": #_____________________________________________________
                     continue  
     
                 preco_lider = precos.loc[data_aporte, empresa_lider]
+                st.markdown(preco_lider)
     
                 # 🔹 REINVESTIMENTO DE DIVIDENDOS (USANDO O DICIONÁRIO PRÉ-CARREGADO) 🔹
                 for empresa in list(carteira.keys()):  
@@ -1460,6 +1462,7 @@ if pagina == "Avançada": #_____________________________________________________
                 patrimonio[data_aporte] = patrimonio_total
     
         df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
+        st.dataframe(df_patrimonio)
         return df_patrimonio, datas_aportes
 
 
@@ -1728,7 +1731,7 @@ if pagina == "Avançada": #_____________________________________________________
                                                                    
                     # Determinar líderes
                     lideres_por_ano = determinar_lideres(df_scores)
-
+                    
                     # Baixar preços
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
 
