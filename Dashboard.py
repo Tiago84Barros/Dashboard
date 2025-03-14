@@ -1338,11 +1338,13 @@ if pagina == "Avançada": #_____________________________________________________
         return data_aporte
     
     # Função para criar uma carteira com aportes apenas na empresa líder do ano ________________________________________________________________________________________________________________
-    def gerir_carteira(precos, df_scores, lideres_por_ano, multiplos, aporte_mensal=1000, deterioracao_limite=0.7):
+    def gerir_carteira(precos, df_scores, lideres_por_ano, aporte_mensal=1000, deterioracao_limite=0.7):
         """
         Gera a carteira investindo mensalmente apenas na empresa líder do ano.
         Empresas que já foram líderes são mantidas sem novos aportes.
         Caso o score de uma ex-líder se deteriore além do limite, as ações são vendidas e o patrimônio é realocado na nova líder.
+    
+        Reinvestindo dividendos nas respectivas empresas.
     
         Retorna:
         - DataFrame com a evolução do patrimônio ao longo do tempo.
@@ -1381,14 +1383,30 @@ if pagina == "Avançada": #_____________________________________________________
     
                 preco_lider = precos.loc[data_aporte, empresa_lider]
     
-                if pd.isna(preco_lider) or preco_lider == 0:
-                    continue  
+                # 🔹 REINVESTIMENTO DE DIVIDENDOS PARA TODAS AS EMPRESAS 🔹
+                for empresa in list(carteira.keys()):  
+                    ticker_yf = f"{empresa}.SA"
+                    div_yf = yf.Ticker(ticker_yf).dividends  
     
+                    if div_yf.empty:
+                        continue  
+    
+                    div_yf.index = pd.to_datetime(div_yf.index)
+    
+                    # Soma os dividendos pagos no mesmo **mês e ano** do aporte
+                    dividendos_mes = div_yf[
+                        (div_yf.index.year == data_aporte.year) & (div_yf.index.month == data_aporte.month)
+                    ].sum()
+    
+                    if dividendos_mes > 0:
+                        carteira[empresa] += (dividendos_mes * carteira[empresa]) / preco_lider
+    
+                # 🔹 Aporte mensal somente na empresa líder 🔹
                 if empresa_lider not in carteira:
                     carteira[empresa_lider] = 0
-    
                 carteira[empresa_lider] += aporte_mensal / preco_lider
     
+                # 🔹 VERIFICAÇÃO DE DETERIORAÇÃO DO SCORE 🔹
                 for antiga_lider in list(empresas_mantidas):
                     score_atual = df_scores[(df_scores['Ano'] == ano) & (df_scores['ticker'] == antiga_lider)]['Score_Ajustado'].values
                     score_inicial = df_scores[(df_scores['Ano'] == anos[0]) & (df_scores['ticker'] == antiga_lider)]['Score_Ajustado'].values
@@ -1402,6 +1420,7 @@ if pagina == "Avançada": #_____________________________________________________
                     if score_inicial_val == 0:
                         continue  
     
+                    # Se o score caiu mais de 30%, vende todas as ações e realoca o valor na líder
                     if score_atual_val / score_inicial_val < deterioracao_limite:
                         if antiga_lider in carteira:
                             patrimonio_venda = carteira.pop(antiga_lider) * precos.loc[data_aporte, antiga_lider]
@@ -1415,6 +1434,7 @@ if pagina == "Avançada": #_____________________________________________________
     
         df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
         return df_patrimonio, datas_aportes
+
 
 
     # Função que determina aportes mensais em todas as empresas das empresas filtradas _______________________________________________________________________________________________________________
@@ -1668,7 +1688,7 @@ if pagina == "Avançada": #_____________________________________________________
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
                                                                                   
                     # Gerenciamento da carteira
-                    patrimonio_historico, datas_aportes = gerir_carteira(precos, df_scores, lideres_por_ano, multiplos)
+                    patrimonio_historico, datas_aportes = gerir_carteira(precos, df_scores, lideres_por_ano)
                     
                     # Comparação com Tesouro Selic a partir da mesma data
                     patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aportes)
