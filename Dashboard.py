@@ -1717,20 +1717,24 @@ if pagina == "Avançada": #_____________________________________________________
                         'Divida_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': False},
                         'Caixa_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
                     }
+
+                    # Baixar preços
+                    precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
+
+                    # 🔹 Lista de tickers das empresas que estamos analisando
+                    tickers_filtrados = empresas_filtradas['ticker'].unique()
+                    
+                    # 🔹 Baixar todos os dividendos de uma vez só
+                    dividendos_dict, dy_dict = coletar_dividendos_e_dy(tickers_filtrados, precos)
+                    st.dataframe(dy_dict)
+                    
                     # Escores das empresas de acordo com segmento e tipo de empresa
                     df_scores = calcular_score_acumulado(lista_empresas, indicadores_score_ajustados, anos_minimos=3)
                                                                    
                     # Determinar líderes
                     lideres_por_ano = determinar_lideres(df_scores)
                                                                            
-                    # Baixar preços
-                    precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
-
-                    # 🔹 Lista de tickers das empresas que estamos analisando
-                    tickers_filtrados = df_scores['ticker'].unique()
                     
-                    # 🔹 Baixar todos os dividendos de uma vez só
-                    dividendos_dict, dy_dict = coletar_dividendos_e_dy(tickers_filtrados, precos)
                                                                                   
                     # Gerenciamento da carteira
                     patrimonio_historico, datas_aportes = gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict)
