@@ -1392,7 +1392,8 @@ if pagina == "Avançada": #_____________________________________________________
         for ano in anos:
             if ano in lideres_por_ano['Ano'].values:
                 empresa_lider = lideres_por_ano[lideres_por_ano['Ano'] == ano].iloc[0]['ticker']
-                st.markdown(ano, empresa_lider)
+                st.markdown(ano)
+                st.markdown(empresa_lider)
             else:
                 empresa_lider = None
     
