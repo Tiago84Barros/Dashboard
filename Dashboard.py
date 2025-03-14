@@ -1190,7 +1190,7 @@ if pagina == "Avançada": #_____________________________________________________
         num_anos = df_dre['Ano'].nunique()
         
         def calcular_historico_bonus(anos):
-            return anos / ((10 + anos) ** 100)  # Penalização bem mais severa para novatas
+            return anos / ((10 + anos) ** 2)  # Penalização bem mais severa para novatas
     
         # Aplicando penalização aprimorada
         metrics['historico_bonus'] = calcular_historico_bonus(num_anos)
@@ -1263,7 +1263,7 @@ if pagina == "Avançada": #_____________________________________________________
                     if vol_col in df_ano.columns:
                         df_ano[col] *= (1 - df_ano[vol_col])
                     if 'historico_bonus' in df_ano.columns:
-                        df_ano[col] *= df_ano['historico_bonus']
+                        df_ano[col] *= (df_ano['historico_bonus'] ** 2)  # Penalização mais forte
     
             # Criar Score_Ajustado com 0
             df_ano['Score_Ajustado'] = 0.0
