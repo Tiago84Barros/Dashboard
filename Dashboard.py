@@ -1279,7 +1279,7 @@ if pagina == "Avançada": #_____________________________________________________
     
             df_resultados.append(df_ano[['Ano','ticker','Score_Ajustado']])
     
-        if df_resultados:
+        if df_resultados
             df_scores = pd.concat(df_resultados, ignore_index=True)
         else:
             df_scores = pd.DataFrame(columns=['Ano','ticker','Score_Ajustado'])
