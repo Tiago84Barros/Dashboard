@@ -1251,6 +1251,9 @@ if pagina == "Avançada": #_____________________________________________________
                 dados_ano.append(row_dict)
     
             # Montar DataFrame com todas as empresas nesse ano
+            st.markdown("Múltiplos usados para o cálculo do score")
+            st.dataframe(df_mult)
+            
             df_ano = pd.DataFrame(dados_ano)
             if df_ano.empty:
                 continue
