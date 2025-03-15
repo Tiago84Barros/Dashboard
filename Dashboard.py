@@ -1249,10 +1249,7 @@ if pagina == "Avançada": #_____________________________________________________
                 row_dict.update(metricas)  # ex: 'Margem_Liquida_mean': X, etc.
     
                 dados_ano.append(row_dict)
-    
-            # Montar DataFrame com todas as empresas nesse ano
-            st.markdown("Múltiplos usados para o cálculo do score")
-            st.dataframe(df_mult)
+               
             
             df_ano = pd.DataFrame(dados_ano)
             if df_ano.empty:
@@ -1735,14 +1732,10 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # Escores das empresas de acordo com segmento e tipo de empresa
                     df_scores = calcular_score_acumulado(lista_empresas, indicadores_score_ajustados, anos_minimos=3)
-                    st.markdown("Scores das empresas")
-                    st.dataframe(df_scores)
-                                                                   
+                                                                                  
                     # Determinar líderes
                     lideres_por_ano = determinar_lideres(df_scores)
-                    st.markdown("Empresas Líderes")
-                    st.dataframe(lideres_por_ano)
-                    
+                                     
                     # Baixar preços
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
                     st.markdown("Preço das ações")
