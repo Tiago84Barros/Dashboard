@@ -1455,9 +1455,7 @@ if pagina == "Avançada": #_____________________________________________________
                 patrimonio[data_aporte] = patrimonio_total
     
         df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
-        st.markdown("Patrimônio da estratégia")
-        st.dataframe(df_patrimonio)
-    
+       
         return df_patrimonio, datas_aportes
 
     def gerir_carteira_todas_empresas(precos, tickers, datas_aportes, dividendos_dict, aporte_mensal=1000):
@@ -1728,9 +1726,7 @@ if pagina == "Avançada": #_____________________________________________________
                                      
                     # Baixar preços
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
-                    st.markdown("Preço das ações")
-                    st.dataframe(precos)
-          
+                    
                      # 🔹 Lista de tickers das empresas que estamos analisando
                     tickers_filtrados = df_scores['ticker'].unique()
                     
