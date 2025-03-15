@@ -1447,8 +1447,8 @@ if pagina == "Avançada": #_____________________________________________________
                     # 🔹 Deterioração do Score
                     if score_atual[0] / score_inicial[0] < deterioracao_limite:
                         preco_antiga_lider = precos.loc[data_aporte, antiga_lider]
-                        if antiga_lider in carteira and preco_lider:
-                            patrimonio_venda = carteira.pop(antiga_lider) * preco_empresa
+                        if antiga_lider in carteira and not pd.isna(preco_antiga_lider) and preco_antiga_lider > 0:
+                            patrimonio_venda = carteira.pop(antiga_lider) * preco_antiga_lider
                             carteira[empresa_lider] += patrimonio_venda / preco_lider
     
                 patrimonio_total = sum(carteira[empresa] * precos.loc[data_aporte, empresa] for empresa in carteira)
