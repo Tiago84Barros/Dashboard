@@ -1197,7 +1197,7 @@ if pagina == "Avançada": #_____________________________________________________
         
         return metrics
 
-    def calcular_score_acumulado(lista_empresas, indicadores_score, anos_minimos=3):
+    def calcular_score_acumulado(lista_empresas, indicadores_score, anos_minimos=4):
         """
         lista_empresas: lista de dicionários, cada um contendo:
            {
