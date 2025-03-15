@@ -1742,6 +1742,8 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # Baixar preços
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
+                    st.markdown("Preço das ações")
+                    st.dataframe(precos)
           
                      # 🔹 Lista de tickers das empresas que estamos analisando
                     tickers_filtrados = df_scores['ticker'].unique()
