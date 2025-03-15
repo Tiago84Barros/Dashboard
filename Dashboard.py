@@ -1400,7 +1400,6 @@ if pagina == "Avançada": #_____________________________________________________
     
                 # 🔴 Se não há preço válido, acumula o aporte para o próximo mês
                 if pd.isna(preco_lider) or preco_lider == 0:
-                    st.warning(f"Preço inválido para {empresa_lider} em {data_aporte}. Aporte acumulado para próximo mês.")
                     aporte_acumulado = patrimonio.get('aporte_acumulado', 0) + aporte_mensal
                     patrimonio['aporte_acumulado'] = aporte_acumulado
                     continue  # Pula mês sem aporte
