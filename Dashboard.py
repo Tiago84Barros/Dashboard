@@ -1461,8 +1461,11 @@ if pagina == "Avançada": #_____________________________________________________
     
                 patrimonio_total = sum(carteira[empresa] * precos.loc[data_aporte, empresa] for empresa in carteira)
                 patrimonio[data_aporte] = patrimonio_total
+                
     
         df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
+        st.markdown("Patrimônio da estratégia")
+        st.dataframe(df_patrimonio)
   
         return df_patrimonio, datas_aportes
 
