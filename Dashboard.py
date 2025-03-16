@@ -1716,6 +1716,8 @@ if pagina == "Avançada": #_____________________________________________________
                         'Caixa_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
                     }
           
+                    # Baixar preços
+                    precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
                     
                     # Escores das empresas de acordo com segmento e tipo de empresa
                     df_scores = calcular_score_acumulado(lista_empresas, indicadores_score_ajustados, anos_minimos=3)
@@ -1723,8 +1725,7 @@ if pagina == "Avançada": #_____________________________________________________
                     # Determinar líderes
                     lideres_por_ano = determinar_lideres(df_scores)
                                      
-                    # Baixar preços
-                    precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
+                    
                     
                      # 🔹 Lista de tickers das empresas que estamos analisando
                     tickers_filtrados = df_scores['ticker'].unique()
