@@ -1600,7 +1600,7 @@ if pagina == "Avançada": #_____________________________________________________
                     st.warning("Não há empresas nesse segmento.")
                 else:
                     # Novo: Adicionando quarto filtro (Crescimento ou Estabelecida) _________________________________________________________________________________________________________
-                    opcao_crescimento = st.selectbox("Tipo de Empresa:", ["Todas", "Crescimento (< 5 anos)", "Estabelecida (>= 5 anos)"])
+                    opcao_crescimento = st.selectbox("Tipo de Empresa:", ["Todas", "Crescimento (< 10 anos)", "Estabelecida (>= 10 anos)"])
        
                     # Lista para armazenar empresas selecionadas
                     empresas_selecionadas = []
@@ -1625,8 +1625,8 @@ if pagina == "Avançada": #_____________________________________________________
                     
                         # Aplicar filtro conforme tempo de existência
                         if (
-                            (opcao_crescimento == "Crescimento (< 5 anos)" and anos_disponiveis < 5) or
-                            (opcao_crescimento == "Estabelecida (>= 5 anos)" and anos_disponiveis >= 5) or
+                            (opcao_crescimento == "Crescimento (< 10 anos)" and anos_disponiveis < 10) or
+                            (opcao_crescimento == "Estabelecida (>= 10 anos)" and anos_disponiveis >= 10) or
                             (opcao_crescimento == "Todas")
                         ):
                             empresas_selecionadas.append(row)
@@ -1723,9 +1723,7 @@ if pagina == "Avançada": #_____________________________________________________
                     df_scores = calcular_score_acumulado(lista_empresas, indicadores_score_ajustados, anos_minimos=3)
                                                                                   
                     # Determinar líderes
-                    lideres_por_ano = determinar_lideres(df_scores)
-                                     
-                    
+                    lideres_por_ano = determinar_lideres(df_scores)             
                     
                      # 🔹 Lista de tickers das empresas que estamos analisando
                     tickers_filtrados = df_scores['ticker'].unique()
