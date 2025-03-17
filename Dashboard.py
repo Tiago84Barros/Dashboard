@@ -1369,18 +1369,44 @@ if pagina == "Avançada": #_____________________________________________________
         
     # Função que utiliza análise técnica de médias móveis para determinar o melhor momento de compra da empresa Líder _______________________________________________________________________________    
     def validar_tendencia_entrada(ticker, precos, data_aporte, janela_curta=20):
-        if ticker not in precos.columns or data_aporte not in precos.index:
-            return False  # Falta preço para validar
-        
-        serie_precos = precos[ticker].loc[:data_aporte].dropna()
-        
-        if len(serie_precos) < janela_curta:
-            return False  # Insuficiência de dados para a média móvel
-        
-        media_movel_curta = serie_precos.tail(janela_curta).mean()
-        preco_atual = serie_precos.iloc[-1]
-        
-        return preco_atual >= media_movel_curta
+        """
+        Avalia o mês inteiro do aporte procurando o primeiro dia em que o preço supera a média móvel curta.
+        Se nenhum dia superar, retorna o último dia útil do mês.
+    
+        Retorna:
+        - data_aporte (data do aporte definida pela análise)
+        - preco_aporte (preço da ação na data do aporte)
+        """
+    
+        # Garantir início e fim do mês da data_aporte
+        inicio_mes = data_aporte.replace(day=1)
+        fim_mes = inicio_mes + pd.offsets.MonthEnd(0)
+    
+        # Preços do mês corrente disponíveis
+        precos_mes = precos.loc[inicio_mes:fim_mes, ticker].dropna()
+    
+        if precos_mes.empty:
+            return None, None  # Não há preços disponíveis
+    
+        # Avaliar cada dia sequencialmente
+        for dia in precos_mes.index:
+            serie_ate_dia = precos[ticker].loc[:dia].dropna()
+            
+            if len(serie_ate_dia) < janela_curta:
+                continue  # Não há dados suficientes ainda
+            
+            media_movel_curta = serie_ate_dia.tail(janela_curta).mean()
+            preco_dia = serie_ate_dia.iloc[-1]
+            
+            if preco_dia >= media_movel_curta:
+                return dia, preco_dia  # Achou um ponto bom para compra
+    
+        # Se nunca ultrapassou, retorna último dia útil do mês
+        ultimo_dia_util = precos_mes.index[-1]
+        preco_final = precos_mes.iloc[-1]
+    
+        return ultimo_dia_util, preco_final
+
 
     # Função responsável por determinar o melhor momento de venda da empresa que apresentou deterioração em seus fundamentos _____________________________________________________________________
     def validar_tendencia_saida(ticker, precos, data_verificacao, janela_longa=50):
@@ -1401,10 +1427,10 @@ if pagina == "Avançada": #_____________________________________________________
     def gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict, aporte_mensal=1000, deterioracao_limite=0.7):
         patrimonio = {}
         carteira = {}
-        data_inicio = None  
+        data_inicio = None
         datas_aportes = []
-        aporte_acumulado = 0  # Novo: Acumulador para aportes não realizados
-        empresas_mantidas = set()  
+        aporte_acumulado = 0
+        empresas_mantidas = set()
     
         anos = sorted(df_scores['Ano'].unique())
     
@@ -1412,81 +1438,53 @@ if pagina == "Avançada": #_____________________________________________________
             if ano in lideres_por_ano['Ano'].values:
                 empresa_lider = lideres_por_ano[lideres_por_ano['Ano'] == ano].iloc[0]['ticker']
             else:
-                empresa_lider = None
                 continue
-            
-            for mes in range(1, 13):
-                data_aporte = f"{ano + 1}-{mes:02d}-01"
-                data_aporte = pd.to_datetime(data_aporte)
-                data_aporte = encontrar_proxima_data_valida(data_aporte, precos)
     
-                if data_aporte is None:
+            for mes in range(1, 13):
+                data_aporte_original = pd.to_datetime(f"{ano + 1}-{mes:02d}-01")
+                data_aporte, preco_lider = validar_tendencia_entrada(empresa_lider, precos, data_aporte_original)
+    
+                if data_aporte is None or preco_lider is None:
+                    aporte_acumulado += aporte_mensal
                     continue
     
                 datas_aportes.append(data_aporte)
-                
+    
                 if data_inicio is None:
                     data_inicio = data_aporte
     
-                preco_lider = precos.loc[data_aporte, empresa_lider] if empresa_lider in precos.columns else None
+                aporte_total = aporte_acumulado + aporte_mensal
+                aporte_acumulado = 0
     
-                # 🔴 Se não há preço válido, acumula o aporte para o próximo mês
-                if pd.isna(preco_lider) or preco_lider == 0:
-                    aporte_acumulado = patrimonio.get('aporte_acumulado', 0) + aporte_mensal
-                    patrimonio['aporte_acumulado'] = aporte_acumulado
-                    continue  # Pula mês sem aporte
-               
-                # 🔹 Validação técnica para entrada
-                if validar_tendencia_entrada(empresa_lider, precos, data_aporte):
-                    aporte_total = aporte_acumulado + aporte_mensal
-                    aporte_acumulado = 0
-                else:
-                    aporte_acumulado += aporte_mensal
-                    continue
-     
-                # 🔹 Usa aporte acumulado se houver, senão usa aporte mensal padrão (ESTRATÉGIA DE APORTES SEM ANÁLISE DE MÉDIA MÓVEL - TÉCNICA)
-                # aporte_total = patrimonio.pop('aporte_acumulado', 0) + aporte_mensal
-    
-                # 🔹 Reinvestir dividendos para todas as empresas em carteira
+                # Reinvestir dividendos
                 for empresa in carteira:
                     div_yf = dividendos_dict.get(empresa, pd.Series())
                     if div_yf.empty:
                         continue
     
-                    dividendos_mes = div_yf[
-                        (div_yf.index.year == data_aporte.year) & 
-                        (div_yf.index.month == data_aporte.month)
-                    ].sum()
-    
+                    dividendos_mes = div_yf[(div_yf.index.year == data_aporte.year) & (div_yf.index.month == data_aporte.month)].sum()
                     preco_empresa = precos.loc[data_aporte, empresa]
                     if preco_empresa and preco_empresa > 0:
                         carteira[empresa] += (dividendos_mes * carteira[empresa]) / preco_empresa
     
-                # Aporte total (mensal + acumulado anterior) na empresa líder atual
+                # Aporte na empresa líder
                 if empresa_lider not in carteira:
                     carteira[empresa_lider] = 0
+    
                 carteira[empresa_lider] += aporte_total / preco_lider
-                
-                # 🔹 Manutenção das empresas anteriores sem novos aportes
+    
+                # Checar deterioração
                 empresas_mantidas = set(carteira.keys()) - {empresa_lider}
                 for antiga_lider in list(empresas_mantidas):
-                    score_atual = df_scores[
-                        (df_scores['Ano'] == ano) & 
-                        (df_scores['ticker'] == antiga_lider)
-                    ]['Score_Ajustado'].values
-                    
-                    score_inicial = df_scores[
-                        (df_scores['Ano'] == anos[0]) & 
-                        (df_scores['ticker'] == antiga_lider)
-                    ]['Score_Ajustado'].values
+                    score_atual = df_scores[(df_scores['Ano'] == ano) & (df_scores['ticker'] == antiga_lider)]['Score_Ajustado'].values
+                    score_inicial = df_scores[(df_scores['Ano'] == anos[0]) & (df_scores['ticker'] == antiga_lider)]['Score_Ajustado'].values
     
                     if len(score_atual) == 0 or len(score_inicial) == 0 or score_inicial[0] == 0:
                         continue
-
+    
                     deteriorou = score_atual[0] / score_inicial[0] < deterioracao_limite
-                        
-                    # 🔹 Deterioração do Score
-                    if deteriorou and validar_tendencia_saida(antiga_lider, precos, data_aporte): 
+    
+                    if deteriorou:
                         preco_antiga_lider = precos.loc[data_aporte, antiga_lider]
                         if antiga_lider in carteira and not pd.isna(preco_antiga_lider) and preco_antiga_lider > 0:
                             patrimonio_venda = carteira.pop(antiga_lider) * preco_antiga_lider
@@ -1496,9 +1494,10 @@ if pagina == "Avançada": #_____________________________________________________
                 patrimonio[data_aporte] = patrimonio_total
     
         df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
-       
+    
         return df_patrimonio, datas_aportes
 
+    # Função para gerir o aporte mensal de todas as empresas do segmento sem estratégia 
     def gerir_carteira_todas_empresas(precos, tickers, datas_aportes, dividendos_dict, aporte_mensal=1000):
         """
         Realiza aportes mensais em todas as empresas filtradas e reinveste dividendos pagos no respectivo mês.
