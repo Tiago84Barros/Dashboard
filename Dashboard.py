@@ -1539,7 +1539,7 @@ if pagina == "Avançada": #_____________________________________________________
                
      
                 # 🔹 Usa aporte acumulado se houver, senão usa aporte mensal padrão
-                 aporte_total = patrimonio.pop('aporte_acumulado', 0) + aporte_mensal
+                aporte_total = patrimonio.pop('aporte_acumulado', 0) + aporte_mensal
     
                 # 🔹 Reinvestir dividendos para todas as empresas em carteira
                 for empresa in carteira:
