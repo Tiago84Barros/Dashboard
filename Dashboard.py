@@ -1354,7 +1354,8 @@ if pagina == "Avançada": #_____________________________________________________
             return "Valor indisponível"
         
         return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
+        
+    # Função para encontrar a próxima data disponível para aporte sem cair em datas onde o mercado está fechado ____________________________________________________________________________________ 
     def encontrar_proxima_data_valida(data_aporte, precos):
         """
         Encontra a próxima data disponível para aporte no DataFrame de preços.
@@ -1365,6 +1366,36 @@ if pagina == "Avançada": #_____________________________________________________
             if data_aporte > precos.index.max():  # Evita sair do intervalo dos dados
                 return None
         return data_aporte
+        
+    # Função que utiliza análise técnica de médias móveis para determinar o melhor momento de compra da empresa Líder _______________________________________________________________________________    
+    def validar_tendencia_entrada(ticker, precos, data_aporte, janela_curta=20):
+    if ticker not in precos.columns or data_aporte not in precos.index:
+        return False  # Falta preço para validar
+    
+    serie_precos = precos[ticker].loc[:data_aporte].dropna()
+    
+    if len(serie_precos) < janela_curta:
+        return False  # Insuficiência de dados para a média móvel
+    
+    media_movel_curta = serie_precos.tail(janela_curta).mean()
+    preco_atual = serie_precos.iloc[-1]
+    
+    return preco_atual >= media_movel_curta
+
+    # Função responsável por determinar o melhor momento de venda da empresa que apresentou deterioração em seus fundamentos _____________________________________________________________________
+    def validar_tendencia_saida(ticker, precos, data_verificacao, janela_longa=50):
+    if ticker not in precos.columns or data_verificacao not in precos.index:
+        return False  # Falta preço para validar
+    
+    serie_precos = precos[ticker].loc[:data_verificacao].dropna()
+    
+    if len(serie_precos) < janela_longa:
+        return False  # Insuficiência de dados para média longa
+    
+    media_movel_longa = serie_precos.tail(janela_longa).mean()
+    preco_atual = serie_precos.iloc[-1]
+    
+    return preco_atual < media_movel_longa
     
     def gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict, aporte_mensal=1000, deterioracao_limite=0.7):
         patrimonio = {}
