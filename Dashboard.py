@@ -1454,7 +1454,6 @@ if pagina == "Avançada": #_____________________________________________________
                     data_inicio = data_aporte
     
                 aporte_total = aporte_acumulado + aporte_mensal
-                st.markdown(f"aporte total: {aporte_total} que multiplica com o preço de {preco_lider} no mês {data_aporte.month} do ano de {data_aporte.year} ")
                 aporte_acumulado = 0
     
                 # Reinvestir dividendos
@@ -1464,9 +1463,7 @@ if pagina == "Avançada": #_____________________________________________________
                         continue
     
                     dividendos_mes = div_yf[(div_yf.index.year == data_aporte.year) & (div_yf.index.month == data_aporte.month)].sum()
-                    st.markdown(f"valor do dividendo é de {dividendos_mes} no mês {data_aporte.month} do ano de {data_aporte.year} ")
                     preco_empresa = precos.loc[data_aporte, empresa]
-                    st.markdown(f"o preço da empresa na data desse dividendo é de {preco_empresa} no mês {data_aporte.month} do ano de {data_aporte.year} ")
                     if preco_empresa and preco_empresa > 0:
                         carteira[empresa] += (dividendos_mes * carteira[empresa]) / preco_empresa
     
@@ -1495,7 +1492,6 @@ if pagina == "Avançada": #_____________________________________________________
     
                 patrimonio_total = sum(carteira[empresa] * precos.loc[data_aporte, empresa] for empresa in carteira)
                 patrimonio[data_aporte] = patrimonio_total
-                st.markdown(f"valor do partimonio acumulado é de {patrimonio_total} no mês {data_aporte.month} do ano de {data_aporte.year} ")
     
         df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
     
@@ -1776,7 +1772,6 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # 🔹 Baixar todos os dividendos de uma vez só
                     dividendos_dict = coletar_dividendos(tickers_filtrados)          
-                    st.dataframe(dividendos_dict)
                                                                                   
                     # Gerenciamento da carteira
                     patrimonio_historico, datas_aportes = gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict)
