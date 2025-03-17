@@ -1771,7 +1771,8 @@ if pagina == "Avançada": #_____________________________________________________
                     tickers_filtrados = df_scores['ticker'].unique()
                     
                     # 🔹 Baixar todos os dividendos de uma vez só
-                    dividendos_dict = coletar_dividendos(tickers_filtrados)           
+                    dividendos_dict = coletar_dividendos(tickers_filtrados)          
+                    st.dataframe(dividendos_dict)
                                                                                   
                     # Gerenciamento da carteira
                     patrimonio_historico, datas_aportes = gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict)
