@@ -1396,7 +1396,8 @@ if pagina == "Avançada": #_____________________________________________________
         preco_atual = serie_precos.iloc[-1]
         
         return preco_atual < media_movel_longa
-    
+        
+    # Função responsável por criar a estratégia de comprar empresas Líderes do segmento e vender empresas com deterioração de fundamentos _____________________________________________________________ 
     def gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict, aporte_mensal=1000, deterioracao_limite=0.7):
         patrimonio = {}
         carteira = {}
@@ -1434,9 +1435,17 @@ if pagina == "Avançada": #_____________________________________________________
                     aporte_acumulado = patrimonio.get('aporte_acumulado', 0) + aporte_mensal
                     patrimonio['aporte_acumulado'] = aporte_acumulado
                     continue  # Pula mês sem aporte
-    
-                # 🔹 Usa aporte acumulado se houver, senão usa aporte mensal padrão
-                aporte_total = patrimonio.pop('aporte_acumulado', 0) + aporte_mensal
+               
+                # 🔹 Validação técnica para entrada
+                if validar_tendencia_entrada(empresa_lider, precos, data_aporte):
+                    aporte_total = aporte_acumulado + aporte_mensal
+                    aporte_acumulado = 0
+                else:
+                    aporte_acumulado += aporte_mensal
+                    continue
+     
+                # 🔹 Usa aporte acumulado se houver, senão usa aporte mensal padrão (ESTRATÉGIA DE APORTES SEM ANÁLISE DE MÉDIA MÓVEL - TÉCNICA)
+                # aporte_total = patrimonio.pop('aporte_acumulado', 0) + aporte_mensal
     
                 # 🔹 Reinvestir dividendos para todas as empresas em carteira
                 for empresa in carteira:
@@ -1473,9 +1482,11 @@ if pagina == "Avançada": #_____________________________________________________
     
                     if len(score_atual) == 0 or len(score_inicial) == 0 or score_inicial[0] == 0:
                         continue
-    
+
+                    deteriorou = score_atual[0] / score_inicial[0] < deterioracao_limite
+                        
                     # 🔹 Deterioração do Score
-                    if score_atual[0] / score_inicial[0] < deterioracao_limite:
+                    if deteriorou and validar_tendencia_saida(antiga_lider, precos, data_aporte): 
                         preco_antiga_lider = precos.loc[data_aporte, antiga_lider]
                         if antiga_lider in carteira and not pd.isna(preco_antiga_lider) and preco_antiga_lider > 0:
                             patrimonio_venda = carteira.pop(antiga_lider) * preco_antiga_lider
