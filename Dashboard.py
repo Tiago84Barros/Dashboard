@@ -1424,7 +1424,6 @@ if pagina == "Avançada": #_____________________________________________________
         return preco_atual < media_movel_longa
         
     # Função responsável por criar a estratégia de comprar empresas Líderes do segmento e vender empresas com deterioração de fundamentos _____________________________________________________________ 
-    """
     def gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict, aporte_mensal=1000, deterioracao_limite=0.7):
         patrimonio = {}
         carteira = {}
@@ -1497,100 +1496,7 @@ if pagina == "Avançada": #_____________________________________________________
         df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
     
         return df_patrimonio, datas_aportes
-    """
-     # Função responsável por criar a estratégia de comprar empresas Líderes do segmento e vender empresas com deterioração de fundamentos _____________________________________________________________ 
-    def gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict, aporte_mensal=1000, deterioracao_limite=0.7):
-        patrimonio = {}
-        carteira = {}
-        data_inicio = None  
-        datas_aportes = []
-        aporte_acumulado = 0  # Novo: Acumulador para aportes não realizados
-        empresas_mantidas = set()  
     
-        anos = sorted(df_scores['Ano'].unique())
-    
-        for ano in anos:
-            if ano in lideres_por_ano['Ano'].values:
-                empresa_lider = lideres_por_ano[lideres_por_ano['Ano'] == ano].iloc[0]['ticker']
-            else:
-                empresa_lider = None
-                continue
-            
-            for mes in range(1, 13):
-                data_aporte = f"{ano + 1}-{mes:02d}-01"
-                data_aporte = pd.to_datetime(data_aporte)
-                data_aporte = encontrar_proxima_data_valida(data_aporte, precos)
-    
-                if data_aporte is None:
-                    continue
-    
-                datas_aportes.append(data_aporte)
-                
-                if data_inicio is None:
-                    data_inicio = data_aporte
-    
-                preco_lider = precos.loc[data_aporte, empresa_lider] if empresa_lider in precos.columns else None
-    
-                # 🔴 Se não há preço válido, acumula o aporte para o próximo mês
-                if pd.isna(preco_lider) or preco_lider == 0:
-                    aporte_acumulado = patrimonio.get('aporte_acumulado', 0) + aporte_mensal
-                    patrimonio['aporte_acumulado'] = aporte_acumulado
-                    continue  # Pula mês sem aporte
-               
-     
-                # 🔹 Usa aporte acumulado se houver, senão usa aporte mensal padrão
-                aporte_total = patrimonio.pop('aporte_acumulado', 0) + aporte_mensal
-    
-                # 🔹 Reinvestir dividendos para todas as empresas em carteira
-                for empresa in carteira:
-                    div_yf = dividendos_dict.get(empresa, pd.Series())
-                    if div_yf.empty:
-                        continue
-    
-                    dividendos_mes = div_yf[
-                        (div_yf.index.year == data_aporte.year) & 
-                        (div_yf.index.month == data_aporte.month)
-                    ].sum()
-    
-                    preco_empresa = precos.loc[data_aporte, empresa]
-                    if preco_empresa and preco_empresa > 0:
-                        carteira[empresa] += (dividendos_mes * carteira[empresa]) / preco_empresa
-    
-                # Aporte total (mensal + acumulado anterior) na empresa líder atual
-                if empresa_lider not in carteira:
-                    carteira[empresa_lider] = 0
-                carteira[empresa_lider] += aporte_total / preco_lider
-                
-                # 🔹 Manutenção das empresas anteriores sem novos aportes
-                empresas_mantidas = set(carteira.keys()) - {empresa_lider}
-                for antiga_lider in list(empresas_mantidas):
-                    score_atual = df_scores[
-                        (df_scores['Ano'] == ano) & 
-                        (df_scores['ticker'] == antiga_lider)
-                    ]['Score_Ajustado'].values
-                    
-                    score_inicial = df_scores[
-                        (df_scores['Ano'] == anos[0]) & 
-                        (df_scores['ticker'] == antiga_lider)
-                    ]['Score_Ajustado'].values
-    
-                    if len(score_atual) == 0 or len(score_inicial) == 0 or score_inicial[0] == 0:
-                        continue
-
-                    deteriorou = score_atual[0] / score_inicial[0]
-                    # 🔹 Deterioração do Score
-                    if  deteriorou < deterioracao_limite:
-                        preco_antiga_lider = precos.loc[data_aporte, antiga_lider]
-                        if antiga_lider in carteira and not pd.isna(preco_antiga_lider) and preco_antiga_lider > 0:
-                            patrimonio_venda = carteira.pop(antiga_lider) * preco_antiga_lider
-                            carteira[empresa_lider] += patrimonio_venda / preco_lider
-    
-                patrimonio_total = sum(carteira[empresa] * precos.loc[data_aporte, empresa] for empresa in carteira)
-                patrimonio[data_aporte] = patrimonio_total
-    
-        df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
-       
-        return df_patrimonio, datas_aportes
 
     # Função para gerir o aporte mensal de todas as empresas do segmento sem estratégia 
     def gerir_carteira_todas_empresas(precos, tickers, datas_aportes, dividendos_dict, aporte_mensal=1000):
