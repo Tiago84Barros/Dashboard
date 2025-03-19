@@ -1425,7 +1425,7 @@ if pagina == "Avançada": #_____________________________________________________
         
     # Função que Calcula a rentabilidade dos valores mantidos no Tesouro Selic _______________________________________________________________________________________________________________
     def calcular_rentabilidade_tesouro(saldo_tesouro, data_inicial, data_final, dados_macro):
-       """Calcula o rendimento do saldo investido no Tesouro Selic entre duas datas."""
+        """Calcula o rendimento do saldo investido no Tesouro Selic entre duas datas."""
     
         # 📌 Garantir que o índice do `dados_macro` seja do tipo string no formato correto
         dados_macro.index = pd.to_datetime(dados_macro.index).strftime('%Y-%m-%d')
