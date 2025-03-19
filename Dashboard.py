@@ -1429,10 +1429,7 @@ if pagina == "Avançada": #_____________________________________________________
     
         # 📌 Garantir que o índice do `dados_macro` seja do tipo string no formato correto
         dados_macro.index = pd.to_datetime(dados_macro.index).strftime('%Y-%m-%d')
-    
-        # 📌 Converter nomes das colunas para minúsculas (caso tenham variações)
-        dados_macro.columns = dados_macro.columns.str.lower()
-    
+               
         # 📌 Determinar o ano inicial do investimento
         ano = pd.to_datetime(data_inicial).year
         chave_data = f"{ano}-12-31"  # Exemplo: "2010-12-31"
@@ -1442,7 +1439,7 @@ if pagina == "Avançada": #_____________________________________________________
             print(f"⚠️ Aviso: Data {chave_data} não encontrada no índice de `dados_macro`! Usando valor mais próximo.")
             chave_data = dados_macro.index[dados_macro.index <= f"{ano}-12-31"][-1]  # Usa a data mais próxima anterior
         
-        taxa_anual = dados_macro.loc[chave_data, "selic"] / 100  # Acessar taxa Selic correta
+        taxa_anual = dados_macro.loc[chave_data, "Selic"] / 100  # Acessar taxa Selic correta
     
         # 📌 Cálculo da rentabilidade proporcional ao tempo mantido no Tesouro Selic
         meses_no_tesouro = (data_final.year - data_inicial.year) * 12 + (data_final.month - data_inicial.month)
