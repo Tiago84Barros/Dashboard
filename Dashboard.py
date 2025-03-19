@@ -1423,13 +1423,69 @@ if pagina == "Avançada": #_____________________________________________________
         
         return preco_atual < media_movel_longa
         
+    # Função que Calcula a rentabilidade dos valores mantidos no Tesouro Selic _______________________________________________________________________________________________________________
+    def calcular_rentabilidade_tesouro(saldo_tesouro, data_inicial, data_final, dados_macro):
+        """
+        Calcula a rentabilidade dos valores mantidos no Tesouro Selic entre `data_inicial` e `data_final`.
+        
+        Parâmetros:
+        - saldo_tesouro: Valor inicial investido no Tesouro Selic.
+        - data_inicial: Data de início do investimento.
+        - data_final: Data de resgate do investimento.
+        - dados_macro: DataFrame contendo as taxas Selic anuais.
+    
+        Retorna:
+        - saldo_final: Valor atualizado do investimento após o período.
+        - imposto: Valor do imposto de renda sobre o rendimento.
+        """
+        if saldo_tesouro == 0 or data_inicial >= data_final:
+            return saldo_tesouro, 0  # Não há rentabilidade
+    
+        # Converter datas para datetime
+        data_inicial = pd.to_datetime(data_inicial)
+        data_final = pd.to_datetime(data_final)
+    
+        saldo_final = saldo_tesouro
+        dias_totais = (data_final - data_inicial).days
+    
+        for ano in range(data_inicial.year, data_final.year + 1):
+            taxa_anual = dados_macro.loc[f"{ano}-12-31", "selic"] / 100  # Selic do ano
+            taxa_diaria = (1 + taxa_anual) ** (1 / 252) - 1  # Conversão para taxa diária
+    
+            if ano == data_inicial.year:
+                dias_no_ano = min((pd.Timestamp(f"{ano}-12-31") - data_inicial).days, dias_totais)
+            elif ano == data_final.year:
+                dias_no_ano = (data_final - pd.Timestamp(f"{ano}-01-01")).days
+            else:
+                dias_no_ano = 252  # Ano completo
+    
+            saldo_final *= (1 + taxa_diaria) ** dias_no_ano
+    
+        # Cálculo do imposto de renda baseado no tempo investido
+        tempo_dias = (data_final - data_inicial).days
+        if tempo_dias <= 180:
+            aliquota_ir = 0.225
+        elif tempo_dias <= 360:
+            aliquota_ir = 0.20
+        elif tempo_dias <= 720:
+            aliquota_ir = 0.175
+        else:
+            aliquota_ir = 0.15
+    
+        lucro = saldo_final - saldo_tesouro
+        imposto = lucro * aliquota_ir
+    
+        return saldo_final - imposto, imposto
+
+        
     # Função responsável por criar a estratégia de comprar empresas Líderes do segmento e vender empresas com deterioração de fundamentos _____________________________________________________________ 
-    def gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict, aporte_mensal=1000, deterioracao_limite=0.7):
+    def gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict, dados_macro, aporte_mensal=1000, deterioracao_limite=0.7):
+
         patrimonio = {}
         carteira = {}
         data_inicio = None
         datas_aportes = []
-        aporte_acumulado = 0
+        saldo_tesouro = 0  # Novo: saldo acumulado no Tesouro Selic
         empresas_mantidas = set()
     
         anos = sorted(df_scores['Ano'].unique())
@@ -1442,19 +1498,26 @@ if pagina == "Avançada": #_____________________________________________________
     
             for mes in range(1, 13):
                 data_aporte_original = pd.to_datetime(f"{ano + 1}-{mes:02d}-01")
+    
+                # Validar tendência de compra (média móvel ou RSI)
                 data_aporte, preco_lider = validar_tendencia_entrada(empresa_lider, precos, data_aporte_original)
     
                 if data_aporte is None or preco_lider is None:
-                    aporte_acumulado += aporte_mensal
+                    saldo_tesouro += aporte_mensal  # Mantém dinheiro no Tesouro Selic
+                    datas_aportes.append(data_aporte_original)  # ✅ Adiciona a data do Tesouro Selic
                     continue
+    
+                # Se há saldo no Tesouro Selic, calcular rentabilidade e resgatar
+                if saldo_tesouro > 0:
+                    saldo_tesouro, imposto_pago = calcular_rentabilidade_tesouro(saldo_tesouro, data_aporte_original, data_aporte, dados_macro)
+    
+                aporte_total = saldo_tesouro + aporte_mensal
+                saldo_tesouro = 0  # Zera saldo do Tesouro após resgate
     
                 datas_aportes.append(data_aporte)
     
                 if data_inicio is None:
                     data_inicio = data_aporte
-    
-                aporte_total = aporte_acumulado + aporte_mensal
-                aporte_acumulado = 0
     
                 # Reinvestir dividendos
                 for empresa in carteira:
@@ -1473,7 +1536,7 @@ if pagina == "Avançada": #_____________________________________________________
     
                 carteira[empresa_lider] += aporte_total / preco_lider
     
-                # Checar deterioração
+                # 🔹 Verificação e saída técnica das empresas deterioradas
                 empresas_mantidas = set(carteira.keys()) - {empresa_lider}
                 for antiga_lider in list(empresas_mantidas):
                     score_atual = df_scores[(df_scores['Ano'] == ano) & (df_scores['ticker'] == antiga_lider)]['Score_Ajustado'].values
@@ -1484,7 +1547,7 @@ if pagina == "Avançada": #_____________________________________________________
     
                     deteriorou = score_atual[0] / score_inicial[0] < deterioracao_limite
     
-                    if deteriorou:
+                    if deteriorou and validar_tendencia_saida(antiga_lider, precos, data_aporte):
                         preco_antiga_lider = precos.loc[data_aporte, antiga_lider]
                         if antiga_lider in carteira and not pd.isna(preco_antiga_lider) and preco_antiga_lider > 0:
                             patrimonio_venda = carteira.pop(antiga_lider) * preco_antiga_lider
@@ -1496,7 +1559,7 @@ if pagina == "Avançada": #_____________________________________________________
         df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
     
         return df_patrimonio, datas_aportes
-    
+        
 
     # Função para gerir o aporte mensal de todas as empresas do segmento sem estratégia 
     def gerir_carteira_todas_empresas(precos, tickers, datas_aportes, dividendos_dict, aporte_mensal=1000):
