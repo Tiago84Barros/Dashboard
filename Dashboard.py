@@ -1425,61 +1425,47 @@ if pagina == "Avançada": #_____________________________________________________
         
     # Função que Calcula a rentabilidade dos valores mantidos no Tesouro Selic _______________________________________________________________________________________________________________
     def calcular_rentabilidade_tesouro(saldo_tesouro, data_inicial, data_final, dados_macro):
-        """
-        Calcula a rentabilidade dos valores mantidos no Tesouro Selic entre `data_inicial` e `data_final`.
-        
-        Parâmetros:
-        - saldo_tesouro: Valor inicial investido no Tesouro Selic.
-        - data_inicial: Data de início do investimento.
-        - data_final: Data de resgate do investimento.
-        - dados_macro: DataFrame contendo as taxas Selic anuais.
+       """Calcula o rendimento do saldo investido no Tesouro Selic entre duas datas."""
     
-        Retorna:
-        - saldo_final: Valor atualizado do investimento após o período.
-        - imposto: Valor do imposto de renda sobre o rendimento.
-        """
-        # 📌 Garantir que o índice do `dados_macro` seja do tipo string para acesso correto
+        # 📌 Garantir que o índice do `dados_macro` seja do tipo string no formato correto
         dados_macro.index = pd.to_datetime(dados_macro.index).strftime('%Y-%m-%d')
     
-        if saldo_tesouro == 0 or data_inicial >= data_final:
-            return saldo_tesouro, 0  # Não há rentabilidade
+        # 📌 Converter nomes das colunas para minúsculas (caso tenham variações)
+        dados_macro.columns = dados_macro.columns.str.lower()
     
-        # Converter datas para datetime
-        data_inicial = pd.to_datetime(data_inicial)
-        data_final = pd.to_datetime(data_final)
+        # 📌 Determinar o ano inicial do investimento
+        ano = pd.to_datetime(data_inicial).year
+        chave_data = f"{ano}-12-31"  # Exemplo: "2010-12-31"
     
-        saldo_final = saldo_tesouro
-        dias_totais = (data_final - data_inicial).days
+        # 📌 Verificação para evitar erro caso a chave não exista no índice
+        if chave_data not in dados_macro.index:
+            print(f"⚠️ Aviso: Data {chave_data} não encontrada no índice de `dados_macro`! Usando valor mais próximo.")
+            chave_data = dados_macro.index[dados_macro.index <= f"{ano}-12-31"][-1]  # Usa a data mais próxima anterior
+        
+        taxa_anual = dados_macro.loc[chave_data, "selic"] / 100  # Acessar taxa Selic correta
     
-        for ano in range(data_inicial.year, data_final.year + 1):
-            taxa_anual = dados_macro.loc[f"{ano}-12-31", "Selic"] / 100  # Selic do ano
-            taxa_diaria = (1 + taxa_anual) ** (1 / 252) - 1  # Conversão para taxa diária
+        # 📌 Cálculo da rentabilidade proporcional ao tempo mantido no Tesouro Selic
+        meses_no_tesouro = (data_final.year - data_inicial.year) * 12 + (data_final.month - data_inicial.month)
+        taxa_mensal = (1 + taxa_anual) ** (1/12) - 1
     
-            if ano == data_inicial.year:
-                dias_no_ano = min((pd.Timestamp(f"{ano}-12-31") - data_inicial).days, dias_totais)
-            elif ano == data_final.year:
-                dias_no_ano = (data_final - pd.Timestamp(f"{ano}-01-01")).days
-            else:
-                dias_no_ano = 252  # Ano completo
+        # Aplicação da taxa sobre o saldo acumulado
+        saldo_tesouro *= (1 + taxa_mensal) ** meses_no_tesouro
     
-            saldo_final *= (1 + taxa_diaria) ** dias_no_ano
+        # 📌 Calcular imposto regressivo sobre o lucro
+        aliquota_ir = 0.225  # Começa com 22,5% (até 6 meses)
+        if meses_no_tesouro > 24:
+            aliquota_ir = 0.15  # 15% para mais de 2 anos
+        elif meses_no_tesouro > 12:
+            aliquota_ir = 0.175  # 17,5% após 1 ano
+        elif meses_no_tesouro > 6:
+            aliquota_ir = 0.20  # 20% após 6 meses
+        
+        lucro = saldo_tesouro - saldo_tesouro / ((1 + taxa_mensal) ** meses_no_tesouro)
+        imposto_pago = lucro * aliquota_ir  # Imposto sobre o lucro apenas
     
-        # Cálculo do imposto de renda baseado no tempo investido
-        tempo_dias = (data_final - data_inicial).days
-        if tempo_dias <= 180:
-            aliquota_ir = 0.225
-        elif tempo_dias <= 360:
-            aliquota_ir = 0.20
-        elif tempo_dias <= 720:
-            aliquota_ir = 0.175
-        else:
-            aliquota_ir = 0.15
-    
-        lucro = saldo_final - saldo_tesouro
-        imposto = lucro * aliquota_ir
-    
-        return saldo_final - imposto, imposto
-
+         # 📌 Retornar apenas o valor líquido após desconto do imposto
+        saldo_liquido = saldo_tesouro - imposto_pago
+        return saldo_liquido
         
     # Função responsável por criar a estratégia de comprar empresas Líderes do segmento e vender empresas com deterioração de fundamentos _____________________________________________________________ 
     def gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict, dados_macro, aporte_mensal=1000, deterioracao_limite=0.7):
@@ -1512,7 +1498,7 @@ if pagina == "Avançada": #_____________________________________________________
     
                 # Se há saldo no Tesouro Selic, calcular rentabilidade e resgatar
                 if saldo_tesouro > 0:
-                    saldo_tesouro, imposto_pago = calcular_rentabilidade_tesouro(saldo_tesouro, data_aporte_original, data_aporte, dados_macro)
+                    saldo_tesouro = calcular_rentabilidade_tesouro(saldo_tesouro, data_aporte_original, data_aporte, dados_macro)
     
                 aporte_total = saldo_tesouro + aporte_mensal
                 saldo_tesouro = 0  # Zera saldo do Tesouro após resgate
