@@ -1423,18 +1423,13 @@ if pagina == "Avançada": #_____________________________________________________
         
         return preco_atual < media_movel_longa
         
-   
-        saldo_liquido = saldo_tesouro - imposto_pago
-        return saldo_liquido
-        
     # Função responsável por criar a estratégia de comprar empresas Líderes do segmento e vender empresas com deterioração de fundamentos _____________________________________________________________ 
-    def gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict, dados_macro, aporte_mensal=1000, deterioracao_limite=0.7):
-
+    def gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict, aporte_mensal=1000, deterioracao_limite=0.7):
         patrimonio = {}
         carteira = {}
         data_inicio = None
         datas_aportes = []
-        saldo_tesouro = 0  # Novo: saldo acumulado no Tesouro Selic
+        aporte_acumulado = 0
         empresas_mantidas = set()
     
         anos = sorted(df_scores['Ano'].unique())
@@ -1447,19 +1442,19 @@ if pagina == "Avançada": #_____________________________________________________
     
             for mes in range(1, 13):
                 data_aporte_original = pd.to_datetime(f"{ano + 1}-{mes:02d}-01")
-    
-                # Validar tendência de compra (média móvel ou RSI)
                 data_aporte, preco_lider = validar_tendencia_entrada(empresa_lider, precos, data_aporte_original)
     
                 if data_aporte is None or preco_lider is None:
-                    saldo_tesouro += aporte_mensal  # Mantém dinheiro no Tesouro Selic
-                    datas_aportes.append(data_aporte_original)  # ✅ Adiciona a data do Tesouro Selic
+                    aporte_acumulado += aporte_mensal
                     continue
-        
+    
                 datas_aportes.append(data_aporte)
     
                 if data_inicio is None:
                     data_inicio = data_aporte
+    
+                aporte_total = aporte_acumulado + aporte_mensal
+                aporte_acumulado = 0
     
                 # Reinvestir dividendos
                 for empresa in carteira:
@@ -1478,7 +1473,7 @@ if pagina == "Avançada": #_____________________________________________________
     
                 carteira[empresa_lider] += aporte_total / preco_lider
     
-                # 🔹 Verificação e saída técnica das empresas deterioradas
+                # Checar deterioração
                 empresas_mantidas = set(carteira.keys()) - {empresa_lider}
                 for antiga_lider in list(empresas_mantidas):
                     score_atual = df_scores[(df_scores['Ano'] == ano) & (df_scores['ticker'] == antiga_lider)]['Score_Ajustado'].values
@@ -1489,7 +1484,7 @@ if pagina == "Avançada": #_____________________________________________________
     
                     deteriorou = score_atual[0] / score_inicial[0] < deterioracao_limite
     
-                    if deteriorou and validar_tendencia_saida(antiga_lider, precos, data_aporte):
+                    if deteriorou:
                         preco_antiga_lider = precos.loc[data_aporte, antiga_lider]
                         if antiga_lider in carteira and not pd.isna(preco_antiga_lider) and preco_antiga_lider > 0:
                             patrimonio_venda = carteira.pop(antiga_lider) * preco_antiga_lider
@@ -1501,7 +1496,7 @@ if pagina == "Avançada": #_____________________________________________________
         df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
     
         return df_patrimonio, datas_aportes
-        
+    
 
     # Função para gerir o aporte mensal de todas as empresas do segmento sem estratégia 
     def gerir_carteira_todas_empresas(precos, tickers, datas_aportes, dividendos_dict, aporte_mensal=1000):
@@ -1779,7 +1774,7 @@ if pagina == "Avançada": #_____________________________________________________
                     dividendos_dict = coletar_dividendos(tickers_filtrados)          
                                                                                   
                     # Gerenciamento da carteira
-                    patrimonio_historico, datas_aportes = gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict, dados_macro)
+                    patrimonio_historico, datas_aportes = gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict)
                     
                     # Comparação com Tesouro Selic a partir da mesma data
                     patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aportes)
@@ -1789,7 +1784,6 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # Combinar os resultados para exibição no gráfico
                     patrimonio_final = pd.concat([patrimonio_historico, patrimonio_empresas, patrimonio_selic], axis=1)
-                    st.dataframe(patrimonio_final)
                  
                     # 📌 Verificar se df_scores não está vazio antes de tentar acessar a empresa líder
                     if df_scores.empty:
