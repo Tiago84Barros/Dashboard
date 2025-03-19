@@ -1438,6 +1438,9 @@ if pagina == "Avançada": #_____________________________________________________
         - saldo_final: Valor atualizado do investimento após o período.
         - imposto: Valor do imposto de renda sobre o rendimento.
         """
+        # 📌 Garantir que o índice do `dados_macro` seja do tipo string para acesso correto
+        dados_macro.index = pd.to_datetime(dados_macro.index).strftime('%Y-%m-%d')
+    
         if saldo_tesouro == 0 or data_inicial >= data_final:
             return saldo_tesouro, 0  # Não há rentabilidade
     
