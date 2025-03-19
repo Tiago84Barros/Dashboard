@@ -1409,19 +1409,19 @@ if pagina == "Avançada": #_____________________________________________________
 
 
     # Função responsável por determinar o melhor momento de venda da empresa que apresentou deterioração em seus fundamentos _____________________________________________________________________
-    def validar_tendencia_saida(ticker, precos, data_verificacao, janela_longa=50):
-        if ticker not in precos.columns or data_verificacao not in precos.index:
-            return False  # Falta preço para validar
+    def validar_tendencia_saida(ticker, precos, data_aporte, janela_rsi=14, limite_rsi=70):
+        if ticker not in precos.columns:
+            return False
         
-        serie_precos = precos[ticker].loc[:data_verificacao].dropna()
+        # Selecionar os preços anteriores ao dia do aporte
+        precos_anteriores = precos.loc[:data_aporte]
+        if len(precos_anteriores) < janela_rsi:
+            return False  # Não há dados suficientes para RSI
         
-        if len(serie_precos) < janela_longa:
-            return False  # Insuficiência de dados para média longa
+        rsi = calcular_rsi(precos_anteriores[ticker], janela_rsi)
+        ultimo_rsi = rsi.iloc[-1]
         
-        media_movel_longa = serie_precos.tail(janela_longa).mean()
-        preco_atual = serie_precos.iloc[-1]
-        
-        return preco_atual < media_movel_longa
+        return ultimo_rsi >= limite_rsi  # Verdadeiro se RSI indicar sobrecompra
         
     # Função responsável por criar a estratégia de comprar empresas Líderes do segmento e vender empresas com deterioração de fundamentos _____________________________________________________________ 
     def gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict, aporte_mensal=1000, deterioracao_limite=0.7):
