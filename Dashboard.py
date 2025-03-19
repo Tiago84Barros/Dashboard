@@ -1368,7 +1368,7 @@ if pagina == "Avançada": #_____________________________________________________
         return data_aporte
         
     # Função que utiliza análise técnica de médias móveis para determinar o melhor momento de compra da empresa Líder _______________________________________________________________________________    
-    def validar_tendencia_entrada(ticker, precos, data_aporte, janela_curta=15):
+    def validar_tendencia_entrada(ticker, precos, data_aporte, janela_curta=10):
         """
         Avalia o mês inteiro do aporte procurando o primeiro dia em que o preço supera a média móvel curta.
         Se nenhum dia superar, retorna o último dia útil do mês.
