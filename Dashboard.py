@@ -1449,7 +1449,7 @@ if pagina == "Avançada": #_____________________________________________________
         dias_totais = (data_final - data_inicial).days
     
         for ano in range(data_inicial.year, data_final.year + 1):
-            taxa_anual = dados_macro.loc[f"{ano}-12-31", "selic"] / 100  # Selic do ano
+            taxa_anual = dados_macro.loc[f"{ano}-12-31", "Selic"] / 100  # Selic do ano
             taxa_diaria = (1 + taxa_anual) ** (1 / 252) - 1  # Conversão para taxa diária
     
             if ano == data_inicial.year:
