@@ -1423,44 +1423,7 @@ if pagina == "Avançada": #_____________________________________________________
         
         return preco_atual < media_movel_longa
         
-    # Função que Calcula a rentabilidade dos valores mantidos no Tesouro Selic _______________________________________________________________________________________________________________
-    def calcular_rentabilidade_tesouro(saldo_tesouro, data_inicial, data_final, dados_macro):
-        """Calcula o rendimento do saldo investido no Tesouro Selic entre duas datas."""
-    
-        # 📌 Garantir que o índice do `dados_macro` seja do tipo string no formato correto
-        dados_macro.index = pd.to_datetime(dados_macro.index).strftime('%Y-%m-%d')
-               
-        # 📌 Determinar o ano inicial do investimento
-        ano = pd.to_datetime(data_inicial).year
-        chave_data = f"{ano}-12-31"  # Exemplo: "2010-12-31"
-    
-        # 📌 Verificação para evitar erro caso a chave não exista no índice
-        if chave_data not in dados_macro.index:
-            print(f"⚠️ Aviso: Data {chave_data} não encontrada no índice de `dados_macro`! Usando valor mais próximo.")
-            chave_data = dados_macro.index[dados_macro.index <= f"{ano}-12-31"][-1]  # Usa a data mais próxima anterior
-        
-        taxa_anual = dados_macro.loc[chave_data, "Selic"] / 100  # Acessar taxa Selic correta
-    
-        # 📌 Cálculo da rentabilidade proporcional ao tempo mantido no Tesouro Selic
-        meses_no_tesouro = (data_final.year - data_inicial.year) * 12 + (data_final.month - data_inicial.month)
-        taxa_mensal = (1 + taxa_anual) ** (1/12) - 1
-    
-        # Aplicação da taxa sobre o saldo acumulado
-        saldo_tesouro *= (1 + taxa_mensal) ** meses_no_tesouro
-    
-        # 📌 Calcular imposto regressivo sobre o lucro
-        aliquota_ir = 0.225  # Começa com 22,5% (até 6 meses)
-        if meses_no_tesouro > 24:
-            aliquota_ir = 0.15  # 15% para mais de 2 anos
-        elif meses_no_tesouro > 12:
-            aliquota_ir = 0.175  # 17,5% após 1 ano
-        elif meses_no_tesouro > 6:
-            aliquota_ir = 0.20  # 20% após 6 meses
-        
-        lucro = saldo_tesouro - saldo_tesouro / ((1 + taxa_mensal) ** meses_no_tesouro)
-        imposto_pago = lucro * aliquota_ir  # Imposto sobre o lucro apenas
-    
-         # 📌 Retornar apenas o valor líquido após desconto do imposto
+   
         saldo_liquido = saldo_tesouro - imposto_pago
         return saldo_liquido
         
@@ -1492,14 +1455,7 @@ if pagina == "Avançada": #_____________________________________________________
                     saldo_tesouro += aporte_mensal  # Mantém dinheiro no Tesouro Selic
                     datas_aportes.append(data_aporte_original)  # ✅ Adiciona a data do Tesouro Selic
                     continue
-    
-                # Se há saldo no Tesouro Selic, calcular rentabilidade e resgatar
-                if saldo_tesouro > 0:
-                    saldo_tesouro = calcular_rentabilidade_tesouro(saldo_tesouro, data_aporte_original, data_aporte, dados_macro)
-    
-                aporte_total = saldo_tesouro + aporte_mensal
-                saldo_tesouro = 0  # Zera saldo do Tesouro após resgate
-    
+        
                 datas_aportes.append(data_aporte)
     
                 if data_inicio is None:
