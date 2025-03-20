@@ -1366,6 +1366,27 @@ if pagina == "Avançada": #_____________________________________________________
             if data_aporte > precos.index.max():  # Evita sair do intervalo dos dados
                 return None
         return data_aporte
+
+    # Função para Calcula o RSI (Relative Strength Index) com base na série de preço __________________________________________________________________________________________________________
+    def calcular_rsi(series_precios, janela=14):
+        """
+        Calcula o RSI (Relative Strength Index) com base na série de preços.
+        
+        Parâmetros:
+        - series_precios: Série de preços históricos da ação.
+        - janela: Período para cálculo do RSI (padrão 14).
+    
+        Retorna:
+        - Série com os valores do RSI calculados.
+        """
+        delta = series_precios.diff()
+        ganho = (delta.where(delta > 0, 0)).rolling(window=janela, min_periods=1).mean()
+        perda = (-delta.where(delta < 0, 0)).rolling(window=janela, min_periods=1).mean()
+    
+        rs = ganho / perda
+        rsi = 100 - (100 / (1 + rs))
+    
+        return rsi
         
     # Função que utiliza análise técnica de médias móveis para determinar o melhor momento de compra da empresa Líder _______________________________________________________________________________    
     def validar_tendencia_entrada(ticker, precos, data_aporte, janela_rsi=14, limite_rsi=30):
