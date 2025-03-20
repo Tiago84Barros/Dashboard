@@ -1712,7 +1712,7 @@ if pagina == "Avançada": #_____________________________________________________
                                         <h4 style="color: #333;">{row.nome_empresa} ({row.ticker})</h4>
                                      
                                     </div>
-                                    "",
+                                    """,
                                     unsafe_allow_html=True
                                 )
                                              
