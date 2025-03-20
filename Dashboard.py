@@ -1608,6 +1608,22 @@ if pagina == "Avançada": #_____________________________________________________
         df_patrimonio.sort_index(inplace=True)
     
         return df_patrimonio
+        
+    # 🔹 Função para obter o setor de uma empresa a partir do DataFrame de setores _________________________________________________________________________________________________________________
+    def obter_setor_da_empresa(ticker, setores_df):
+        """
+        Obtém o setor de uma empresa com base no seu ticker.
+        
+        Parâmetros:
+        - ticker: str -> Código da empresa (ex: 'PETR4')
+        - setores_df: DataFrame -> DataFrame contendo colunas ['ticker', 'SETOR']
+        
+        Retorna:
+        - str -> Nome do setor da empresa ou 'Setor Desconhecido' caso não encontre.
+        """
+        setor = setores_df.loc[setores_df['ticker'] == ticker, 'SETOR']
+        return setor.iloc[0] if not setor.empty else "Setor Desconhecido"
+        
     # Carregar dados macroeconômicos do banco de dados ________________________________________________________________________________________________________________________________________
     dados_macro = load_macro_summary()
  
@@ -1682,6 +1698,7 @@ if pagina == "Avançada": #_____________________________________________________
                         st.warning("Nenhuma empresa atende aos critérios do filtro selecionado.")
                     else:
                         empresas_filtradas = pd.DataFrame(empresas_selecionadas)
+                        st.dataframe(empresas_filtradas)
                         st.success(f"Total de empresas filtradas: {len(empresas_filtradas)}")
 
                     # Exibir empresas selecionadas em blocos estilizados lado a lado __________________________________________________________________________________________________________
@@ -1837,7 +1854,7 @@ if pagina == "Avançada": #_____________________________________________________
                         }
                     }
 
-                    setor_empresa = obter_setor_da_empresa(ticker)  # Função que retorna o setor de uma empresa
+                    setor_empresa = obter_setor_da_empresa(ticker, setores)
                     pesos_utilizados = pesos_por_setor.get(setor_empresa, indicadores_score_ajustados)  # Se não encontrar, usa o genérico
           
                     # Baixar preços
