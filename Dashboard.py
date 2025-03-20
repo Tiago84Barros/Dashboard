@@ -1391,46 +1391,47 @@ if pagina == "Avançada": #_____________________________________________________
     # Função que utiliza análise técnica de médias móveis para determinar o melhor momento de compra da empresa Líder _______________________________________________________________________________    
     def validar_tendencia_entrada(ticker, precos, data_aporte, janela_rsi=14, limite_rsi=30):
         """
-        Valida o melhor momento de entrada no mês utilizando RSI.
+        Valida se há um bom momento de entrada com base no RSI.
         
-        Estratégia:
-        - Se houver pelo menos um dia no mês em que RSI <= limite_rsi (ex: 30), compra nesse dia.
-        - Caso contrário, compra no **último dia útil do mês** como fallback.
-        
+        - Se encontrar um RSI <= limite_rsi em algum dia do mês, retorna essa data.
+        - Se não encontrar, retorna o último dia útil do mês.
+    
+        Parâmetros:
+        - ticker: Nome do ativo.
+        - precos: DataFrame contendo preços históricos.
+        - data_aporte: Data inicial do mês.
+        - janela_rsi: Período de cálculo do RSI.
+        - limite_rsi: Valor de referência do RSI para entrada.
+    
         Retorna:
-        - `data_escolhida`: Data final escolhida para a compra.
-        - `preco_escolhido`: Preço da ação na data escolhida.
-        - `rsi_ok`: Booleano indicando se a entrada foi baseada no RSI ou no fallback.
+        - Data de entrada ideal e o preço na data escolhida.
         """
+    
         if ticker not in precos.columns:
-            return None, None, False
+            return None, None  # Sem dados para validar
     
-        # Selecionar os preços do mês do aporte
-        inicio_mes = data_aporte.replace(day=1)
-        fim_mes = data_aporte + pd.offsets.MonthEnd(0)  # Último dia do mês
+        # Selecionar preços do mês inteiro até a data do aporte
+        precos_mes = precos.loc[:data_aporte, ticker].dropna()
+        
+        if len(precos_mes) < (janela_rsi + 1):
+            return None, None  # Dados insuficientes para calcular RSI
     
-        precos_mes = precos.loc[inicio_mes:fim_mes, ticker].dropna()
-    
-        if len(precos_mes) < janela_rsi + 1:
-            return None, None, False  # Dados insuficientes para calcular RSI
-    
-        # Calcular RSI para todos os dias do mês
+        # Calcular RSI
         rsi_mes = calcular_rsi(precos_mes, janela=janela_rsi)
     
-        # Filtrar os dias em que RSI <= limite (sinal de compra)
+        # Procurar primeiro dia do mês onde RSI está abaixo do limite
         dias_validos = rsi_mes[rsi_mes <= limite_rsi].index
-    
         if not dias_validos.empty:
-            # Se houver pelo menos um dia com RSI ≤ 30, escolhe esse primeiro dia
-            data_escolhida = dias_validos[0]
+            melhor_data = dias_validos[-1]  # Última ocorrência dentro do mês
         else:
-            # Caso contrário, pega o último dia útil do mês
-            data_escolhida = fim_mes
+            # Se não encontrou RSI abaixo de limite, usar o último dia útil do mês
+            melhor_data = precos_mes.index[-1] 
     
-        # Preço da ação na data escolhida
-        preco_escolhido = precos.loc[data_escolhida, ticker]
+        # Garantir que o preço esteja definido antes do retorno
+        preco = precos.loc[melhor_data, ticker] if melhor_data in precos.index else None
     
-        return data_escolhida, preco
+        return melhor_data, preco
+
 
 
     # Função responsável por determinar o melhor momento de venda da empresa que apresentou deterioração em seus fundamentos _____________________________________________________________________
