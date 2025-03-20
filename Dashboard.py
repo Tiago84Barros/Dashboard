@@ -1698,7 +1698,6 @@ if pagina == "Avançada": #_____________________________________________________
                         st.warning("Nenhuma empresa atende aos critérios do filtro selecionado.")
                     else:
                         empresas_filtradas = pd.DataFrame(empresas_selecionadas)
-                        st.dataframe(empresas_filtradas)
                         st.success(f"Total de empresas filtradas: {len(empresas_filtradas)}")
 
                     # Exibir empresas selecionadas em blocos estilizados lado a lado __________________________________________________________________________________________________________
