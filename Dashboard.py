@@ -1900,7 +1900,7 @@ if pagina == "Avançada": #_____________________________________________________
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
                     
                     # Escores das empresas de acordo com segmento e tipo de empresa
-                    df_scores = calcular_score_acumulado(lista_empresas, indicadores_score_ajustados, anos_minimos=3)
+                    df_scores = calcular_score_acumulado(lista_empresas, pesos_utilizados, anos_minimos=3)
                                                                                   
                     # Determinar líderes
                     lideres_por_ano = determinar_lideres(df_scores)             
