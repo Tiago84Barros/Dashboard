@@ -1325,12 +1325,7 @@ if pagina == "Avançada": #_____________________________________________________
                     continue
                     
                 # 🔹 Ajustar pesos macroeconômicos e setoriais
-                pesos_ajustados = ajustar_pesos_macro(
-                    indicadores_score.get(setor_empresa, indicadores_score),
-                    dados_macro,
-                    ano,
-                    setor_empresa
-                )
+                pesos_ajustados = ajustar_pesos_macro(pesos_utilizados, dados_macro, ano, setor_empresa)
     
                 # 🔹 3) Remover outliers
                 colunas_para_filtrar = [
