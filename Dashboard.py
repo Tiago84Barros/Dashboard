@@ -1323,10 +1323,7 @@ if pagina == "Avançada": #_____________________________________________________
     
                 if df_mult.empty or df_dre.empty:
                     continue
-    
-                # 🔹 Identificar setor da empresa
-                setor_empresa = obter_setor_da_empresa(emp['ticker'])
-    
+                    
                 # 🔹 Ajustar pesos macroeconômicos e setoriais
                 pesos_ajustados = ajustar_pesos_macro(
                     indicadores_score.get(setor_empresa, indicadores_score),
