@@ -1268,6 +1268,7 @@ if pagina == "Avançada": #_____________________________________________________
     
             # Criar Score_Ajustado com 0
             df_ano['Score_Ajustado'] = 0.0
+            st.dataframe(df_ano)
     
             # 4) Normalizar as colunas no conjunto (para não cair no caso 1 valor = z=0)
             for col, cfg in indicadores_score.items():
