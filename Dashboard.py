@@ -1215,12 +1215,21 @@ if pagina == "Avançada": #_____________________________________________________
     # Ajuste dinâmico dos pesos de acordo com a situação macroeconômica do País em cada ano___________________________________________________________________________________________________
     def ajustar_pesos_macro(pesos, dados_macro, ano, setor):
         """
-        Ajusta os pesos do score com base no ambiente macroeconômico do ano e setor específico.
+        Ajusta os pesos do score de acordo com a situação macroeconômica do país e o setor específico.
+    
+        Parâmetros:
+        - pesos: Dicionário contendo os pesos dos indicadores do setor.
+        - dados_macro: DataFrame contendo dados macroeconômicos históricos.
+        - ano: Ano para o qual os pesos serão ajustados.
+        - setor: Setor da empresa.
+    
+        Retorna:
+        - Dicionário `pesos_ajustados` com os pesos recalibrados.
         """
         if ano not in dados_macro.index:
-            return pesos  # Se o ano não tiver dados macro, retorna os pesos originais
+            return pesos  # Se não há dados macroeconômicos para o ano, retorna os pesos originais.
     
-        # 🔹 Coletando variáveis macroeconômicas do ano em análise
+        # 🔹 Coletando variáveis macroeconômicas do ano
         selic = dados_macro.loc[ano, "selic"]
         ipca = dados_macro.loc[ano, "ipca"]
         cambio = dados_macro.loc[ano, "cambio"]
@@ -1229,73 +1238,90 @@ if pagina == "Avançada": #_____________________________________________________
         pib = dados_macro.loc[ano, "PIB"]
         divida_publica = dados_macro.loc[ano, "divida_publica"]
     
+        pesos_ajustados = pesos.copy()  # Criar uma cópia para não modificar os pesos originais.
+    
         # 🔹 Ajustes por setor
         if setor == "Financeiro":
             if selic > 10:
-                pesos["DY_mean"]["peso"] *= 1.2  # Juros altos favorecem bancos
-            if divida_publica > divida_publica.mean():
-                pesos["P/VP_mean"]["peso"] *= 0.9  # Reduz peso de P/VP se a dívida pública estiver muito alta
+                pesos_ajustados["DY_mean"]["peso"] *= 1.2  # Juros altos favorecem bancos.
+            if divida_publica > dados_macro["divida_publica"].mean():
+                pesos_ajustados["P/VP_mean"]["peso"] *= 0.9  # Reduz peso de P/VP se a dívida pública estiver alta.
     
         elif setor in ["Consumo Cíclico", "Imobiliário"]:
-            if icc < 0.07:  # Confiança do consumidor baixa
-                pesos["Receita_Liquida_slope_log"]["peso"] *= 0.8  # Reduz peso de crescimento
+            if icc < 0.07:  # Confiança do consumidor baixa.
+                pesos_ajustados["Receita_Liquida_slope_log"]["peso"] *= 0.8
             if selic > 10:
-                pesos["Endividamento_Total_mean"]["peso"] *= 1.2  # Empresas de consumo alavancadas sofrem mais
+                pesos_ajustados["Endividamento_Total_mean"]["peso"] *= 1.2  # Empresas alavancadas sofrem mais.
     
         elif setor in ["Petróleo, Gás e Biocombustíveis", "Materiais Básicos"]:
-            if cambio > cambio.mean():
-                pesos["Receita_Liquida_slope_log"]["peso"] *= 1.1  # Beneficia exportadoras
-            if balanca_comercial > balanca_comercial.mean():
-                pesos["Margem_Operacional_mean"]["peso"] *= 1.15  # Empresas exportadoras tendem a ter maior margem
+            if cambio > dados_macro["cambio"].mean():
+                pesos_ajustados["Receita_Liquida_slope_log"]["peso"] *= 1.1  # Exportadoras beneficiadas.
+            if balanca_comercial > dados_macro["balanca_comercial"].mean():
+                pesos_ajustados["Margem_Operacional_mean"]["peso"] *= 1.15  # Exportação impulsiona margens.
     
         elif setor in ["Tecnologia", "Saúde"]:
-            if PIB > PIB.mean():
-                pesos["Lucro_Liquido_slope_log"]["peso"] *= 1.2  # Empresas de crescimento beneficiadas pela expansão do PIB
-            if selic < 6:  # Juros baixos favorecem setores inovadores
-                pesos["P/VP_mean"]["peso"] *= 1.1  # Empresas tecnológicas mais valorizadas
+            if pib > dados_macro["PIB"].mean():
+                pesos_ajustados["Lucro_Liquido_slope_log"]["peso"] *= 1.2  # Empresas de crescimento são beneficiadas.
+            if selic < 6:
+                pesos_ajustados["P/VP_mean"]["peso"] *= 1.1  # Juros baixos valorizam empresas inovadoras.
     
         elif setor == "Energia":
-            if cambio > cambio.mean():
-                pesos["DY_mean"]["peso"] *= 1.2  # Empresas de energia pagam mais dividendos quando exportam mais
-            if balanca_comercial > balanca_comercial.mean():
-                pesos["Liquidez_Corrente_mean"]["peso"] *= 1.1  # Empresas de energia geralmente estão ligadas à exportação
+            if cambio > dados_macro["cambio"].mean():
+                pesos_ajustados["DY_mean"]["peso"] *= 1.2  # Exportação fortalece dividendos.
+            if balanca_comercial > dados_macro["balanca_comercial"].mean():
+                pesos_ajustados["Liquidez_Corrente_mean"]["peso"] *= 1.1  # Empresas de energia ligadas à exportação.
     
         # 🔹 Ajuste geral baseado no PIB
-        if PIB < PIB.mean():
-            for key in pesos.keys():
-                pesos[key]["peso"] *= 0.9  # Reduz o peso geral em momentos de economia fraca
+        if pib < dados_macro["PIB"].mean():
+            for key in pesos_ajustados.keys():
+                pesos_ajustados[key]["peso"] *= 0.9  # Reduz o peso geral em momentos de economia fraca.
     
-        return pesos
+        return pesos_ajustados
 
     # Ajuste do score baseado nos pesos ajustados ______________________________________________________________________________________________________________________________________________
-    def calcular_score_ajustado(df, setor, dados_macro, ano):
+    def calcular_score_ajustado(df, setor, dados_macro, ano, pesos_por_setor):
         """
-        Calcula o score ajustado incluindo fatores macroeconômicos e setoriais.
-        """
-        pesos_utilizados = ajustar_pesos_macro(pesos_por_setor.get(setor, indicadores_score_ajustados), dados_macro, ano, setor)
+        Calcula o score ajustado considerando fatores macroeconômicos e setoriais.
     
+        Parâmetros:
+        - df: DataFrame contendo os múltiplos financeiros e métricas da empresa.
+        - setor: Setor ao qual a empresa pertence.
+        - dados_macro: DataFrame contendo os indicadores macroeconômicos.
+        - ano: Ano da análise.
+        - pesos_por_setor: Dicionário contendo pesos por setor.
+    
+        Retorna:
+        - DataFrame `df` com a coluna `Score_Ajustado`.
+        """
+        # Ajustar pesos macroeconômicos e setoriais
+        pesos_utilizados = ajustar_pesos_macro(
+            pesos_por_setor.get(setor, indicadores_score_ajustados), dados_macro, ano, setor
+        )
+    
+        # Normalizar os indicadores antes de aplicar os pesos
         df["Margem_Liquida_score"] = z_score_normalize(df["Margem_Liquida_mean"])
         df["ROIC_score"] = z_score_normalize(df["ROIC_mean"])
         df["Momentum_score"] = calcular_momentum_fundamentalista(df, "Lucro_Liquido_slope_log")
     
-        # Score final com pesos ajustados dinamicamente
+        # Score final ponderado pelos pesos ajustados
         df["Score_Ajustado"] = (
             pesos_utilizados["Margem_Liquida_mean"]["peso"] * df["Margem_Liquida_score"] +
             pesos_utilizados["ROIC_mean"]["peso"] * df["ROIC_score"] +
-            pesos_utilizados["Momentum_score"]["peso"] * df["Momentum_score"] +
+            pesos_utilizados.get("Momentum_score", {"peso": 0})["peso"] * df["Momentum_score"] +
             pesos_utilizados["DY_mean"]["peso"] * df["DY_mean"]
         )
-        
+    
         return df
-
+        
     # Calcula o Score para cada empresa de acordo com o segmento que ela está inserido _________________________________________________________________________________________________________
-    def calcular_score_acumulado(lista_empresas, pesos_utilizados, dados_macro, setor_empresa, anos_minimos=4):
+    def calcular_score_acumulado(lista_empresas, setor_empresa, pesos_por_setor, dados_macro, anos_minimos=4):
         """
         Calcula o Score Acumulado ao longo dos anos, considerando ajustes macroeconômicos e setoriais.
     
         Parâmetros:
         - lista_empresas: Lista contendo dados financeiros de cada empresa.
-        - indicadores_score: Dicionário com indicadores e pesos padrão.
+        - setor_empresa: Setor ao qual todas as empresas analisadas pertencem (já determinado previamente).
+        - pesos_por_setor: Dicionário com indicadores e pesos padrão por setor.
         - dados_macro: DataFrame com os indicadores macroeconômicos ao longo dos anos.
         - anos_minimos: Número mínimo de anos para iniciar o cálculo do score.
     
@@ -1303,19 +1329,21 @@ if pagina == "Avançada": #_____________________________________________________
         - DataFrame com Score ajustado ao longo dos anos.
         """
     
-        # 🔹 1) Descobrir todos os anos possíveis
-        anos_disponiveis = set()
-        for emp in lista_empresas:
-            anos_disponiveis.update(emp['multiplos']['Ano'].unique())
-            anos_disponiveis.update(emp['df_dre']['Ano'].unique())
-        anos_disponiveis = sorted(anos_disponiveis)
+        # 🔹 Descobrir todos os anos disponíveis
+        anos_disponiveis = sorted(set(ano for emp in lista_empresas for ano in emp['multiplos']['Ano'].unique()))
     
         df_resultados = []
     
-        # 🔹 2) Percorrer os anos disponíveis (a partir do mínimo necessário)
+        # 🔹 Percorrer os anos disponíveis (a partir do mínimo necessário)
         for idx in range(anos_minimos, len(anos_disponiveis)):
             ano = anos_disponiveis[idx]
             dados_ano = []
+    
+            # 🔹 Ajustar pesos macroeconômicos e setoriais **somente uma vez** para todas as empresas do mesmo setor
+            pesos_ajustados = ajustar_pesos_macro(
+                pesos_utilizados,  # Usa diretamente o conjunto de pesos já filtrado
+                dados_macro, ano, setor_empresa
+            )
     
             for emp in lista_empresas:
                 df_mult = emp['multiplos'][emp['multiplos']['Ano'] <= ano].copy()
@@ -1323,9 +1351,8 @@ if pagina == "Avançada": #_____________________________________________________
     
                 if df_mult.empty or df_dre.empty:
                     continue
-                    
-                # 🔹 Ajustar pesos macroeconômicos e setoriais
-                pesos_ajustados = ajustar_pesos_macro(pesos_utilizados, dados_macro, ano, setor_empresa)
+    
+                ticker = emp['ticker']
     
                 # 🔹 3) Remover outliers
                 colunas_para_filtrar = [
@@ -1338,7 +1365,7 @@ if pagina == "Avançada": #_____________________________________________________
     
                 # 🔹 4) Calcular métricas financeiras
                 metricas = calcular_metricas_historicas_simplificadas(multiplos_corrigido, df_dre_corrigido)
-                row_dict = {'ticker': emp['ticker'], 'Ano': ano}
+                row_dict = {'ticker': ticker, 'Ano': ano}
                 row_dict.update(metricas)
     
                 dados_ano.append(row_dict)
@@ -1347,31 +1374,11 @@ if pagina == "Avançada": #_____________________________________________________
             if df_ano.empty:
                 continue
     
-            # 🔹 5) Normalização e penalizações
-            for col, config in indicadores_score.items():
-                if col in df_ano.columns:
-                    df_ano[col] = winsorize(df_ano[col])
-                    vol_col = col.replace("_mean", "_volatility_penalty")
-                    if vol_col in df_ano.columns:
-                        df_ano[col] *= (1 - df_ano[vol_col])
-                    if 'historico_bonus' in df_ano.columns:
-                        df_ano[col] *= (df_ano['historico_bonus'] ** 10)  # Penalização mais forte
-    
-            # Criar coluna de Score_Ajustado zerada
-            df_ano['Score_Ajustado'] = 0.0
-    
-            # 🔹 6) Aplicar normalização e cálculo final do score
-            for col, cfg in indicadores_score.items():
-                if col in df_ano.columns:
-                    df_ano[col + "_norm"] = z_score_normalize(df_ano[col], cfg['melhor_alto'])
-                    df_ano['Score_Ajustado'] += df_ano[col + "_norm"] * cfg['peso']
-    
-            # 🔹 7) Aplicação do Score Ajustado com influência macroeconômica
-            df_ano = calcular_score_ajustado(df_ano, setor_empresa, dados_macro, ano)
+            df_ano = calcular_score_ajustado(df_ano, setor_empresa, dados_macro, ano, pesos_ajustados)
     
             df_resultados.append(df_ano[['Ano', 'ticker', 'Score_Ajustado']])
     
-        # 🔹 8) Unir todos os resultados e retornar
+        # 🔹 Unir todos os resultados e retornar
         if df_resultados:
             df_scores = pd.concat(df_resultados, ignore_index=True)
         else:
@@ -1979,8 +1986,7 @@ if pagina == "Avançada": #_____________________________________________________
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
                     
                     # Escores das empresas de acordo com segmento e tipo de empresa
-                    df_scores = calcular_score_acumulado(lista_empresas, pesos_utilizados, dados_macro, setor_empresa, anos_minimos=4)
-
+                    df_scores = calcular_score_acumulado(lista_empresas, setor_empresa, pesos_utilizados, dados_macro, anos_minimos=4)
                                                                                   
                     # Determinar líderes
                     lideres_por_ano = determinar_lideres(df_scores)             
