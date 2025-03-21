@@ -1289,7 +1289,7 @@ if pagina == "Avançada": #_____________________________________________________
         return df
 
     # Calcula o Score para cada empresa de acordo com o segmento que ela está inserido _________________________________________________________________________________________________________
-    def calcular_score_acumulado(lista_empresas, indicadores_score, dados_macro, anos_minimos=4):
+    def calcular_score_acumulado(lista_empresas, pesos_utilizados, dados_macro, setor_empresa, anos_minimos=4):
         """
         Calcula o Score Acumulado ao longo dos anos, considerando ajustes macroeconômicos e setoriais.
     
@@ -1987,7 +1987,8 @@ if pagina == "Avançada": #_____________________________________________________
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
                     
                     # Escores das empresas de acordo com segmento e tipo de empresa
-                    df_scores = calcular_score_acumulado(lista_empresas, pesos_utilizados, dados_macro, anos_minimos=4)
+                    df_scores = calcular_score_acumulado(lista_empresas, pesos_utilizados, dados_macro, setor_empresa, anos_minimos=4)
+
                                                                                   
                     # Determinar líderes
                     lideres_por_ano = determinar_lideres(df_scores)             
