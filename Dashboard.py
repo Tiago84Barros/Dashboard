@@ -1211,6 +1211,30 @@ if pagina == "Avançada": #_____________________________________________________
         """
         setor = setores_df.loc[setores_df['ticker'] == ticker, 'SETOR']
         return setor.iloc[0] if not setor.empty else "Setor Desconhecido"
+        
+    # Calcula o momentum fundamentalista baseado na taxa de crescimento da variável especificada.______________________________________________________________________________________________
+    def calcular_momentum_fundamentalista(df, coluna):
+        """
+        Calcula o momentum fundamentalista baseado na taxa de crescimento da variável especificada.
+    
+        Parâmetros:
+        - df: DataFrame contendo os valores financeiros da empresa.
+        - coluna: Nome da coluna a ser usada para calcular o momentum.
+    
+        Retorna:
+        - Uma série com o momentum fundamentalista normalizado.
+        """
+        if coluna not in df.columns or df[coluna].isnull().all():
+            return pd.Series(0, index=df.index)  # Retorna zero se não houver dados suficientes
+    
+        # Calcula a variação percentual entre anos consecutivos
+        momentum = df[coluna].pct_change()
+    
+        # Normaliza os valores
+        momentum_normalizado = z_score_normalize(momentum.fillna(0))
+    
+        return momentum_normalizado
+
 
     # Ajuste dinâmico dos pesos de acordo com a situação macroeconômica do País em cada ano___________________________________________________________________________________________________
     def ajustar_pesos_macro(pesos, dados_macro, ano, setor):
@@ -1279,39 +1303,33 @@ if pagina == "Avançada": #_____________________________________________________
         return pesos_ajustados
 
     # Ajuste do score baseado nos pesos ajustados ______________________________________________________________________________________________________________________________________________
-    def calcular_score_ajustado(df, setor, dados_macro, ano, pesos_por_setor):
+    def calcular_score_ajustado(df, setor, dados_macro, ano, pesos_utilizados):
         """
-        Calcula o score ajustado considerando fatores macroeconômicos e setoriais.
-    
-        Parâmetros:
-        - df: DataFrame contendo os múltiplos financeiros e métricas da empresa.
-        - setor: Setor ao qual a empresa pertence.
-        - dados_macro: DataFrame contendo os indicadores macroeconômicos.
-        - ano: Ano da análise.
-        - pesos_por_setor: Dicionário contendo pesos por setor.
-    
-        Retorna:
-        - DataFrame `df` com a coluna `Score_Ajustado`.
+        Calcula o Score_Ajustado com tratamento completo:
+        - Winsorize
+        - Penalização por volatilidade
+        - Bônus histórico
+        - Normalização z-score
+        - Soma ponderada com pesos ajustados
         """
-        # Ajustar pesos macroeconômicos e setoriais
-        pesos_utilizados = ajustar_pesos_macro(
-            pesos_por_setor.get(setor, indicadores_score_ajustados), dados_macro, ano, setor
-        )
+        for col, cfg in pesos_utilizados.items():
+            if col in df.columns:
+                df[col] = winsorize(df[col])
+                vol_col = col.replace("_mean", "_volatility_penalty")
+                if vol_col in df.columns:
+                    df[col] *= (1 - df[vol_col])
+                if 'historico_bonus' in df.columns:
+                    df[col] *= (df['historico_bonus'] ** 10)
+        
+        df['Score_Ajustado'] = 0.0
     
-        # Normalizar os indicadores antes de aplicar os pesos
-        df["Margem_Liquida_score"] = z_score_normalize(df["Margem_Liquida_mean"])
-        df["ROIC_score"] = z_score_normalize(df["ROIC_mean"])
-        df["Momentum_score"] = calcular_momentum_fundamentalista(df, "Lucro_Liquido_slope_log")
-    
-        # Score final ponderado pelos pesos ajustados
-        df["Score_Ajustado"] = (
-            pesos_utilizados["Margem_Liquida_mean"]["peso"] * df["Margem_Liquida_score"] +
-            pesos_utilizados["ROIC_mean"]["peso"] * df["ROIC_score"] +
-            pesos_utilizados.get("Momentum_score", {"peso": 0})["peso"] * df["Momentum_score"] +
-            pesos_utilizados["DY_mean"]["peso"] * df["DY_mean"]
-        )
+        for col, cfg in pesos_utilizados.items():
+            if col in df.columns:
+                df[col + '_norm'] = z_score_normalize(df[col], cfg['melhor_alto'])
+                df['Score_Ajustado'] += df[col + '_norm'] * cfg['peso']
     
         return df
+
         
     # Calcula o Score para cada empresa de acordo com o segmento que ela está inserido _________________________________________________________________________________________________________
     def calcular_score_acumulado(lista_empresas, setor_empresa, pesos_por_setor, dados_macro, anos_minimos=4):
@@ -1341,7 +1359,7 @@ if pagina == "Avançada": #_____________________________________________________
     
             # 🔹 Ajustar pesos macroeconômicos e setoriais **somente uma vez** para todas as empresas do mesmo setor
             pesos_ajustados = ajustar_pesos_macro(
-                pesos_utilizados,  # Usa diretamente o conjunto de pesos já filtrado
+                pesos_por_setor,  # Usa diretamente o conjunto de pesos já filtrado
                 dados_macro, ano, setor_empresa
             )
     
