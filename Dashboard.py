@@ -1211,6 +1211,47 @@ if pagina == "Avançada": #_____________________________________________________
         """
         setor = setores_df.loc[setores_df['ticker'] == ticker, 'SETOR']
         return setor.iloc[0] if not setor.empty else "Setor Desconhecido"
+
+    # 🔹 Função para obter o setor de uma empresa a partir do DataFrame de Segmento ________________________________________________________________________________________________________________   
+    def obter_segmento_da_empresa(ticker, df_empresas):
+        """
+        Retorna o segmento de uma empresa com base no ticker.
+        
+        Parâmetros:
+        - ticker: str, ticker da empresa (ex: 'PETR3')
+        - df_empresas: DataFrame contendo as colunas ['ticker', 'SEGMENTO']
+        
+        Retorna:
+        - str: nome do segmento, ou 'Desconhecido' se não encontrar
+        """
+        try:
+            segmento = df_empresas.loc[df_empresas['ticker'] == ticker, 'SEGMENTO'].values[0]
+            return segmento
+        except (IndexError, KeyError):
+            return 'Desconhecido'
+
+    # Obter pesos por segmento ________________________________________________________________________________________________________________________________________________________________________
+    def obter_pesos_por_segmento(
+        segmento: str,
+        setor: str,
+        pesos_por_segmento: dict,
+        pesos_por_setor: dict,
+        heranca: dict
+    ):
+        """
+        Retorna os pesos para o segmento específico.
+        Se não encontrar no segmento, tenta na herança.
+        Se não encontrar na herança, retorna os pesos do setor.
+        """
+        if segmento in pesos_por_segmento:
+            return pesos_por_segmento[segmento]
+        
+        if segmento in heranca:
+            segmento_base = heranca[segmento]
+            if segmento_base in pesos_por_segmento:
+                return pesos_por_segmento[segmento_base]
+        
+        return pesos_por_setor.get(setor, {})  # fallback final
         
     # Calcula o momentum fundamentalista baseado na taxa de crescimento da variável especificada.______________________________________________________________________________________________
     def calcular_momentum_fundamentalista(df, coluna):
@@ -1884,7 +1925,7 @@ if pagina == "Avançada": #_____________________________________________________
                         })
                
                     # ================================================
-                    # DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE
+                    # DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE BASEADO NO SETOR DA EMPRESA
                     # ================================================
                     pesos_por_setor = {
                         "Financeiro": {
@@ -2056,6 +2097,10 @@ if pagina == "Avançada": #_____________________________________________________
                                             
                         },
                     }
+
+                    # ================================================
+                    # DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE GENÉRICA
+                    # ================================================
                     
                     indicadores_score_ajustados = {
                         'Margem_Liquida_mean': {'peso': 0.15, 'melhor_alto': True},
@@ -2074,12 +2119,231 @@ if pagina == "Avançada": #_____________________________________________________
                         'Divida_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': False},
                         'Caixa_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
                     }
-                
 
+                     # ================================================
+                    # DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE BASEADO NO SEGMENTO
+                    # ================================================
+
+                    pesos_por_segmento = {
+                        "Minerais Metálicos": {
+                            'ROIC_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'ROE_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                        },
                     
-                    setor_empresa = obter_setor_da_empresa(ticker, empresas_filtradas)
-                    pesos_utilizados = pesos_por_setor.get(setor_empresa, indicadores_score_ajustados)  # Se não encontrar, usa o genérico
-          
+                        "Siderurgia": {
+                            'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                        },
+                    
+                        "Artefatos de Ferro e Aço": {
+                            'ROE_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                            'P/VP_mean': {'peso': 0.10, 'melhor_alto': False},
+                        },
+                    
+                        "Artefatos de Cobre": {
+                            'ROIC_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'ROE_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.10, 'melhor_alto': True},
+                        },
+                    
+                        "Petroquímicos": {
+                            'Margem_Operacional_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},
+                        },
+                    
+                        "Fertilizantes e Defensivos": {
+                            'Receita_Liquida_slope_log': {'peso': 0.25, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.25, 'melhor_alto': True},
+                            'Margem_Liquida_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'ROE_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                        },
+                    
+                        "Madeira": {
+                            'ROIC_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                        },
+                    
+                        "Papel e Celulose": {
+                            'ROIC_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                        },
+
+                         # Mineração
+                        "Minerais Metálicos": {
+                            'ROE_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                        },
+                    
+                        # Siderurgia
+                        "Siderurgia": {
+                            'ROIC_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                        },
+                    
+                        # Artefatos de Ferro e Aço
+                        "Artefatos de Ferro e Aço": {
+                            'ROIC_mean': {'peso': 0.30, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.25, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                            'P/VP_mean': {'peso': 0.10, 'melhor_alto': False},
+                        },
+                    
+                        # Artefatos de Cobre
+                        "Artefatos de Cobre": {
+                            'ROIC_mean': {'peso': 0.30, 'melhor_alto': True},
+                            'Margem_Liquida_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                            'DY_mean': {'peso': 0.10, 'melhor_alto': True},
+                        },
+                    
+                        # Petroquímicos
+                        "Petroquímicos": {
+                            'Margem_Operacional_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                            'DY_mean': {'peso': 0.15, 'melhor_alto': True},
+                        },
+                    
+                        # Fertilizantes e Defensivos
+                        "Fertilizantes e Defensivos": {
+                            'Receita_Liquida_slope_log': {'peso': 0.30, 'melhor_alto': True},
+                            'ROE_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                            'DY_mean': {'peso': 0.10, 'melhor_alto': True},
+                        },
+                    
+                        # Madeira
+                        "Madeira": {
+                            'Margem_Operacional_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'Caixa_Liquido_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                            'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                        },
+                    
+                        # Papel e Celulose
+                        "Papel e Celulose": {
+                            'Margem_Operacional_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                        },
+
+                        "Mineração": {
+                            'ROE_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},
+                        },
+
+                        "Siderurgia": {
+                            'ROIC_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},
+                        },
+
+                        "Petroquímicos": {
+                            'Margem_Liquida_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                        },
+
+                        "Fertilizantes e Defensivos": {
+                            'Receita_Liquida_slope_log': {'peso': 0.25, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                            'Margem_Operacional_mean': {'peso': 0.10, 'melhor_alto': True},
+                        },
+
+                        "Papel e Celulose": {
+                            'DY_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'ROE_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                            'Margem_Operacional_mean': {'peso': 0.10, 'melhor_alto': True},
+                        },
+
+                        "Exploração, Refino e Distribuição": {
+                            'ROIC_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},
+                        },
+                    }
+
+                    # ================================================
+                    # HERANÇA POR SEGUIMENTO
+                    # ================================================
+
+                    heranca_segmento_setor = {
+                        "Artefatos de Ferro e Aço": "Siderurgia",
+                        "Artefatos de Cobre": "Siderurgia",
+                        "Fertilizantes e Defensivos": "Petroquímicos",
+                        "Madeira": "Papel e Celulose",
+                        "Computadores e Equipamentos": "Programas e Serviços",
+                        "Publicidade e Propaganda": "Telecomunicações",
+                        "Serviços de Apoio e Armazenagem": "Transporte Rodoviário",
+                        "Produtos de Limpeza": "Produtos de Cuidado Pessoal",
+                        "Programas de Fidelização": "Serviços Financeiros Diversos",
+                        "Intermediação Imobiliária": "Exploração de Imóveis",
+                        "Resseguradoras": "Seguradoras",
+                        "Holdings Diversificadas": "Serviços Financeiros Diversos"
+                    }
+                
+                    segmento = obter_segmento_da_empresa(ticker, df_empresas)
+                    pesos_utilizados = pesos_por_segmento.get(segmento_empresa) or pesos_por_setor.get(setor_empresa, indicadores_score_ajustados)
+                    
                     # Baixar preços
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
                     
