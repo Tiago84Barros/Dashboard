@@ -2092,7 +2092,6 @@ if pagina == "Avançada": #_____________________________________________________
                             'Caixa_Liquido_slope_log': {'peso': 0.03, 'melhor_alto': True},
                                             
                         },
-
                         indicadores_score_ajustados = {
                             'Margem_Liquida_mean': {'peso': 0.15, 'melhor_alto': True},
                             'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},
@@ -2109,7 +2108,7 @@ if pagina == "Avançada": #_____________________________________________________
                             'Patrimonio_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
                             'Divida_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': False},
                             'Caixa_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
-                        }
+                        },
                     }
 
                     
