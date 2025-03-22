@@ -1888,21 +1888,13 @@ if pagina == "Avançada": #_____________________________________________________
                     # ================================================
                     pesos_por_setor = {
                         "Financeiro": {
-                            'Margem_Liquida_mean': {'peso': 0.08, 'melhor_alto': True},
-                            'Margem_Operacional_mean': {'peso': 0.04, 'melhor_alto': True},
-                            'ROE_mean': {'peso': 0.20, 'melhor_alto': True},
-                            'ROA_mean': {'peso': 0.10, 'melhor_alto': True},
-                            'ROIC_mean': {'peso': 0.08, 'melhor_alto': True},
-                            'P/VP_mean': {'peso': 0.12, 'melhor_alto': False},
-                            'DY_mean': {'peso': 0.12, 'melhor_alto': True},
-                            'Endividamento_Total_mean': {'peso': 0.05, 'melhor_alto': False},
-                            'Alavancagem_Financeira_mean': {'peso': 0.05, 'melhor_alto': False},
-                            'Liquidez_Corrente_mean': {'peso': 0.05, 'melhor_alto': True},
-                            'Receita_Liquida_slope_log': {'peso': 0.02, 'melhor_alto': True},
-                            'Lucro_Liquido_slope_log': {'peso': 0.04, 'melhor_alto': True},
-                            'Patrimonio_Liquido_slope_log': {'peso': 0.02, 'melhor_alto': True},
-                            'Divida_Liquida_slope_log': {'peso': 0.015, 'melhor_alto': False},
-                            'Caixa_Liquido_slope_log': {'peso': 0.01, 'melhor_alto': True}, 
+                            'ROE_mean': {'peso': 0.30, 'melhor_alto': True},  
+                            'P/VP_mean': {'peso': 0.20, 'melhor_alto': False},  
+                            'DY_mean': {'peso': 0.15, 'melhor_alto': True},  
+                            'Endividamento_Total_mean': {'peso': 0.05, 'melhor_alto': False},  
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},  
+                            'Margem_Liquida_mean': {'peso': 0.10, 'melhor_alto': True},  
+                            'Lucro_Liquido_slope_log': {'peso': 0.10, 'melhor_alto': True},  
                         },
                         "Tecnologia da Informação": {
                             'Margem_Liquida_mean': {'peso': 0.08, 'melhor_alto': True},
