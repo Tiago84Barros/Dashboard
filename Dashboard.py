@@ -2498,7 +2498,7 @@ if pagina == "Avançada": #_____________________________________________________
                     }
 
                     segmento_empresa = obter_segmento_da_empresa(ticker, empresas_filtradas)
-                    steor_empresa = obter_setor_da_empresa(ticker, empresas_filtradas)
+                    setor_empresa = obter_setor_da_empresa(ticker, empresas_filtradas)
                     
                     pesos_utilizados = pesos_por_segmento.get(segmento_empresa) or pesos_por_setor.get(setor_empresa, indicadores_score)
                     
