@@ -8,7 +8,7 @@ from sklearn.linear_model import LinearRegression
 import numpy as np
 import sqlite3
 import openai
-import os
+"import os
 
 # Função para obter a URL do logotipo a partir do repositório no GitHub ___________________________________________________________________________________________________________________________________________
 
