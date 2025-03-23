@@ -5,6 +5,8 @@ import plotly.express as px
 import matplotlib.pyplot as plt
 import yfinance as yf
 from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import Ridge
 import numpy as np
 import sqlite3
 import openai
@@ -1244,158 +1246,67 @@ if pagina == "Avançada": #_____________________________________________________
         
         return indicadores_score_ajustados
         
-    # Calcula o momentum fundamentalista baseado na taxa de crescimento da variável especificada.______________________________________________________________________________________________
-    def calcular_momentum_fundamentalista(df, coluna):
+    def calcular_retorno_futuro(precos, ano, ticker, janela_meses=1):
         """
-        Calcula o momentum fundamentalista baseado na taxa de crescimento da variável especificada.
-    
-        Parâmetros:
-        - df: DataFrame contendo os valores financeiros da empresa.
-        - coluna: Nome da coluna a ser usada para calcular o momentum.
-    
-        Retorna:
-        - Uma série com o momentum fundamentalista normalizado.
+        Calcula o retorno futuro da ação com base na média de preços dos últimos e primeiros meses do ano seguinte.
         """
-        if coluna not in df.columns or df[coluna].isnull().all():
-            return pd.Series(0, index=df.index)  # Retorna zero se não houver dados suficientes
+        inicio = f"{ano}-12-01"
+        fim = f"{ano+1}-12-31"
     
-        # Calcula a variação percentual entre anos consecutivos
-        momentum = df[coluna].pct_change()
+        try:
+            preco_inicio = precos[ticker].loc[inicio:].head(21).mean()  # 1 mês (~21 dias úteis)
+            preco_fim = precos[ticker].loc[fim:].head(21).mean()
+        except:
+            return np.nan
     
-        # Normaliza os valores
-        momentum_normalizado = z_score_normalize(momentum.fillna(0))
+        if preco_inicio == 0 or np.isnan(preco_inicio) or np.isnan(preco_fim):
+            return np.nan
     
-        return momentum_normalizado
+        return (preco_fim / preco_inicio) - 1
 
 
     # Função para ajustar os pesos macroeconômicos com base no segmento e fallback para setor _________________________________
-    def ajustar_pesos_macro(pesos, dados_macro, ano, setor, segmento):
-        if ano not in dados_macro.index:
-            return pesos
+    def aprender_pesos_dinamicos(df_indicadores, df_macro, df_precos, horizonte=252):
+        """
+        Aprende pesos para os indicadores fundamentalistas com base nos retornos futuros
+        e cenário macroeconômico.
     
-        selic = dados_macro.loc[ano, "selic"]
-        ipca = dados_macro.loc[ano, "ipca"]
-        cambio = dados_macro.loc[ano, "cambio"]
-        balanca_comercial = dados_macro.loc[ano, "balanca_comercial"]
-        icc = dados_macro.loc[ano, "icc"]
-        pib = dados_macro.loc[ano, "PIB"]
-        divida_publica = dados_macro.loc[ano, "divida_publica"]
+        Parâmetros:
+        - df_indicadores: DataFrame com colunas: ['Ano', 'ticker', indicadores...]
+        - df_macro: DataFrame com colunas macroeconômicas indexado por ano
+        - df_precos: DataFrame com preços ajustados por data e ticker
+        - horizonte: horizonte de retorno futuro (ex: 252 dias úteis ~ 1 ano)
     
-        pesos_ajustados = pesos.copy()
+        Retorna:
+        - dicionário com pesos estimados para cada indicador
+        """
     
-        # --------------------- AJUSTES POR SEGMENTO ---------------------
-        if segmento in ["Exploração, Refino e Distribuição", "Minerais Metálicos", "Petroquímicos", "Siderurgia"]:
-            if cambio > dados_macro["cambio"].mean():
-                pesos_ajustados["Receita_Liquida_slope_log"]["peso"] *= 1.1
-            if balanca_comercial > dados_macro["balanca_comercial"].mean():
-                pesos_ajustados["Margem_Operacional_mean"]["peso"] *= 1.15
+        # 1. Calcular retorno futuro (1 ano à frente)
+        retornos_futuros = calcular_retorno_futuro(df_precos, horizonte)
     
-        elif segmento in ["Material de Transporte", "Material Rodoviário", "Máq. e Equip. Industriais"]:
-            if selic < 6:
-                pesos_ajustados["P/VP_mean"]["peso"] *= 1.15
-            if ipca > 0.07:
-                pesos_ajustados["ROIC_mean"]["peso"] *= 1.1
+        # 2. Mesclar com macroeconômico e indicadores
+        df_merged = df_indicadores.merge(retornos_futuros, on=['ticker', 'Ano'])
+        df_merged = df_merged.merge(df_macro, left_on='Ano', right_index=True)
     
-        elif segmento in ["Incorporações"]:
-            if selic > 10:
-                pesos_ajustados["Endividamento_Total_mean"]["peso"] *= 1.2
-            if icc < 0.07:
-                pesos_ajustados["Receita_Liquida_slope_log"]["peso"] *= 0.85
+        # 3. Preparar dados
+        y = df_merged['retorno_futuro']
+        X = df_merged.drop(columns=['Ano', 'ticker', 'retorno_futuro'])
     
-        elif segmento in ["Carnes e Derivados", "Agricultura"]:
-            if cambio > dados_macro["cambio"].mean():
-                pesos_ajustados["DY_mean"]["peso"] *= 1.2
-            if ipca > 0.07:
-                pesos_ajustados["Margem_Liquida_mean"]["peso"] *= 1.1
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
     
-        elif segmento in ["Serviços Educacionais", "Serviços Médico - Hospitalares, Análises e Diagnósticos"]:
-            if pib > dados_macro["PIB"].mean():
-                pesos_ajustados["Lucro_Liquido_slope_log"]["peso"] *= 1.2
+        # 4. Treinar modelo de regressão penalizada
+        modelo = Ridge(alpha=1.0)
+        modelo.fit(X_scaled, y)
     
-        elif segmento in ["Energia Elétrica"]:
-            if cambio > dados_macro["cambio"].mean():
-                pesos_ajustados["DY_mean"]["peso"] *= 1.15
-            if selic < 6:
-                pesos_ajustados["Liquidez_Corrente_mean"]["peso"] *= 1.1
+        # 5. Recuperar pesos (coeficientes)
+        pesos_dinamicos = dict(zip(X.columns, modelo.coef_))
     
-        elif segmento in ["Bancos"]:
-            if selic > 10:
-                pesos_ajustados["DY_mean"]["peso"] *= 1.2
-            if divida_publica > dados_macro["divida_publica"].mean():
-                pesos_ajustados["P/VP_mean"]["peso"] *= 0.9
+        # Normalizar para somar ~1
+        soma_absoluta = sum(abs(val) for val in pesos_dinamicos.values())
+        pesos_normalizados = {k: v / soma_absoluta for k, v in pesos_dinamicos.items()}
     
-        elif segmento in ["Seguradoras"]:
-            if selic > 10:
-                pesos_ajustados["ROE_mean"]["peso"] *= 1.2
-    
-        # --------------------- FALLBACK PARA SETOR ---------------------
-        elif setor == "Financeiro":
-            if selic > 10:
-                pesos_ajustados["DY_mean"]["peso"] *= 1.2
-            if divida_publica > dados_macro["divida_publica"].mean():
-                pesos_ajustados["P/VP_mean"]["peso"] *= 0.9
-    
-        elif setor in ["Tecnologia da Informação"]:
-            if pib > dados_macro["PIB"].mean():
-                pesos_ajustados["Lucro_Liquido_slope_log"]["peso"] *= 1.2
-            if selic < 6:
-                pesos_ajustados["P/VP_mean"]["peso"] *= 1.1
-    
-        elif setor == "Energia":
-            if cambio > dados_macro["cambio"].mean():
-                pesos_ajustados["DY_mean"]["peso"] *= 1.2
-            if balanca_comercial > dados_macro["balanca_comercial"].mean():
-                pesos_ajustados["Liquidez_Corrente_mean"]["peso"] *= 1.1
-    
-        elif setor == "Industrial":
-            if ipca > 0.06:
-                pesos_ajustados["ROIC_mean"]["peso"] *= 1.1
-            if selic < 6:
-                pesos_ajustados["P/VP_mean"]["peso"] *= 1.1
-    
-        elif setor == "Consumo Cíclico":
-            if icc < 0.07:
-                pesos_ajustados["Receita_Liquida_slope_log"]["peso"] *= 0.85
-            if selic > 10:
-                pesos_ajustados["Endividamento_Total_mean"]["peso"] *= 1.15
-    
-        elif setor == "Consumo não Cíclico":
-            if ipca > 0.06:
-                pesos_ajustados["Margem_Operacional_mean"]["peso"] *= 1.1
-    
-        elif setor == "Materiais Básicos":
-            if cambio > dados_macro["cambio"].mean():
-                pesos_ajustados["Receita_Liquida_slope_log"]["peso"] *= 1.1
-            if balanca_comercial > dados_macro["balanca_comercial"].mean():
-                pesos_ajustados["Margem_Operacional_mean"]["peso"] *= 1.1
-    
-        elif setor == "Petróleo, Gás e Biocombustíveis":
-            if cambio > dados_macro["cambio"].mean():
-                pesos_ajustados["DY_mean"]["peso"] *= 1.1
-    
-        elif setor == "Saúde":
-            if pib > dados_macro["PIB"].mean():
-                pesos_ajustados["Lucro_Liquido_slope_log"]["peso"] *= 1.2
-    
-        elif setor == "Comunicações":
-            if icc > 0.08:
-                pesos_ajustados["Receita_Liquida_slope_log"]["peso"] *= 1.1
-    
-        elif setor == "Bens Industriais":
-            if selic < 6:
-                pesos_ajustados["ROIC_mean"]["peso"] *= 1.1
-    
-        elif setor == "Utilidade Pública":
-            if cambio > dados_macro["cambio"].mean():
-                pesos_ajustados["DY_mean"]["peso"] *= 1.1
-    
-        # 🔹 Ajuste geral baseado no PIB
-        if pib < dados_macro["PIB"].mean():
-            for key in pesos_ajustados:
-                pesos_ajustados[key]["peso"] *= 0.9
-    
-        return pesos_ajustados
-
+        return pesos_normalizados
     # Ajuste do score baseado nos pesos ajustados ______________________________________________________________________________________________________________________________________________
     def calcular_score_ajustado(df, pesos_utilizados):
         """
