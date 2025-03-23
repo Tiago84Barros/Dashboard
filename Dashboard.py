@@ -1237,7 +1237,7 @@ if pagina == "Avançada": #_____________________________________________________
         Se não houver, usa o setor correspondente. Se ainda assim não houver, usa os pesos genéricos.
         """
         if segmento in pesos_por_segmento:
-        return pesos_por_segmento[segmento]
+            return pesos_por_segmento[segmento]
     
         elif setor in pesos_por_setor:
             return pesos_por_setor[setor]
