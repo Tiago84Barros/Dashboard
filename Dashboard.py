@@ -1269,7 +1269,7 @@ if pagina == "Avançada": #_____________________________________________________
 
 
     # Função para ajustar os pesos macroeconômicos com base no segmento e fallback para setor _________________________________
-    def ajustar_pesos_macro_por_segmento(pesos, dados_macro, ano, setor, segmento):
+    def ajustar_pesos_macro(pesos, dados_macro, ano, setor, segmento):
         if ano not in dados_macro.index:
             return pesos
     
@@ -1459,8 +1459,7 @@ if pagina == "Avançada": #_____________________________________________________
                     continue
                         
                 # Ajustar com contexto macro
-                pesos_ajustados = ajustar_pesos_macro(pesos_por_segmento=pesos_por_segmento, pesos_por_setor=pesos_por_setor, 
-                                                      dados_macro=dados_macro, ano=ano, segmento=segmento_empresa, setor=setor_empresa)
+                pesos_ajustados = ajustar_pesos_macro(pesos_utilizados, dados_macro, ano, setores_empresa, segmento_empresa)
     
                 colunas_para_filtrar = [
                     'Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida',
