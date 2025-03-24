@@ -1245,68 +1245,115 @@ if pagina == "Avançada": #_____________________________________________________
             return pesos_por_setor[setor]
         
         return indicadores_score_ajustados
-        
-    def calcular_retorno_futuro(precos, ano, ticker, janela_meses=1):
-        """
-        Calcula o retorno futuro da ação com base na média de preços dos últimos e primeiros meses do ano seguinte.
-        """
-        inicio = f"{ano}-12-01"
-        fim = f"{ano+1}-12-31"
     
-        try:
-            preco_inicio = precos[ticker].loc[inicio:].head(21).mean()  # 1 mês (~21 dias úteis)
-            preco_fim = precos[ticker].loc[fim:].head(21).mean()
-        except:
-            return np.nan
-    
-        if preco_inicio == 0 or np.isnan(preco_inicio) or np.isnan(preco_fim):
-            return np.nan
-    
-        return (preco_fim / preco_inicio) - 1
-
-
-    # Função para ajustar os pesos macroeconômicos com base no segmento e fallback para setor _________________________________
-    def aprender_pesos_dinamicos(df_indicadores, df_macro, df_precos, horizonte=252):
+    # Calcula o retorno futuro da ação com base na média de preços dos últimos e primeiros meses do ano seguinte. ___________________________________________________________________________
+    def calcular_retorno_futuro(df_precos, ano_base, horizonte_anos=1, dias_janela=21):
         """
-        Aprende pesos para os indicadores fundamentalistas com base nos retornos futuros
-        e cenário macroeconômico.
+        Calcula o retorno futuro para um ano específico (ano_base), para cada ticker.
     
         Parâmetros:
-        - df_indicadores: DataFrame com colunas: ['Ano', 'ticker', indicadores...]
-        - df_macro: DataFrame com colunas macroeconômicas indexado por ano
-        - df_precos: DataFrame com preços ajustados por data e ticker
-        - horizonte: horizonte de retorno futuro (ex: 252 dias úteis ~ 1 ano)
+        - df_precos: DataFrame com preços diários (índice: datas, colunas: tickers)
+        - ano_base: ano para o qual se quer calcular o retorno futuro (ex: 2013)
+        - horizonte_anos: quantos anos à frente (padrão: 1)
+        - dias_janela: quantos dias usar na média móvel para suavizar o preço
     
         Retorna:
-        - dicionário com pesos estimados para cada indicador
+        - DataFrame com colunas: ['ticker', 'Ano', 'Retorno_Futuro']
         """
     
-        # 1. Calcular retorno futuro (1 ano à frente)
-        retornos_futuros = calcular_retorno_futuro(df_precos, horizonte)
+        retornos = []
     
-        # 2. Mesclar com macroeconômico e indicadores
-        df_merged = df_indicadores.merge(retornos_futuros, on=['ticker', 'Ano'])
-        df_merged = df_merged.merge(df_macro, left_on='Ano', right_index=True)
+        for ticker in df_precos.columns:
+            try:
+                # Janela inicial (ex: dez/2013)
+                inicio_inicio = pd.Timestamp(f"{ano_base}-12-01")
+                fim_inicio = inicio_inicio + pd.Timedelta(days=dias_janela * 2)
     
-        # 3. Preparar dados
-        y = df_merged['retorno_futuro']
-        X = df_merged.drop(columns=['Ano', 'ticker', 'retorno_futuro'])
+                # Janela final (ex: dez/2014)
+                inicio_fim = pd.Timestamp(f"{ano_base + horizonte_anos}-12-01")
+                fim_fim = inicio_fim + pd.Timedelta(days=dias_janela * 2)
     
+                precos_inicio = df_precos.loc[(df_precos.index >= inicio_inicio) &
+                                              (df_precos.index <= fim_inicio), ticker].dropna()
+                preco_medio_inicio = precos_inicio.tail(dias_janela).mean()
+    
+                precos_fim = df_precos.loc[(df_precos.index >= inicio_fim) &
+                                           (df_precos.index <= fim_fim), ticker].dropna()
+                preco_medio_fim = precos_fim.tail(dias_janela).mean()
+    
+                if np.isnan(preco_medio_inicio) or np.isnan(preco_medio_fim) or preco_medio_inicio == 0:
+                    continue
+    
+                retorno = (preco_medio_fim / preco_medio_inicio) - 1
+    
+                retornos.append({
+                    'ticker': ticker,
+                    'Ano': ano_base,
+                    'Retorno_Futuro': retorno
+                })
+    
+            except Exception:
+                continue
+    
+        return pd.DataFrame(retornos)
+   
+    # Função para ajustar pesos via aprendizado de máquina (regressão ridge) #_________________________________________________________________________________________________________________
+    def ajustar_pesos_via_ml(df_metricas, df_retorno_futuro, colunas_indicadores, ano_teste, anos_treinamento_minimos=3):
+        """
+        Ajusta pesos dos indicadores com base no retorno futuro utilizando regressão linear com regularização (Ridge).
+    
+        Parâmetros:
+        - df_metricas: DataFrame com colunas ['ticker', 'Ano', ...indicadores...]
+        - df_retorno_futuro: DataFrame com colunas ['ticker', 'Ano', 'Retorno_Futuro']
+        - colunas_indicadores: lista com os nomes das colunas dos indicadores a usar como preditores
+        - ano_teste: ano que será previsto (não deve ser usado no treinamento)
+        - anos_treinamento_minimos: quantidade mínima de anos para treinamento
+    
+        Retorna:
+        - dicionário com pesos ajustados no formato {coluna: {'peso': valor, 'melhor_alto': True}}
+        """
+    
+        # Filtra os dados de treino (antes do ano de teste)
+        df_treino = df_metricas[df_metricas["Ano"] < ano_teste].copy()
+        df_retorno_treino = df_retorno_futuro[df_retorno_futuro["Ano"] < ano_teste].copy()
+    
+        # Junta métricas e retornos
+        df_join = pd.merge(df_treino, df_retorno_treino, on=["ticker", "Ano"], how="inner")
+    
+        # Verifica se há dados suficientes
+        anos_disponiveis = df_join["Ano"].nunique()
+        if anos_disponiveis < anos_treinamento_minimos:
+            return None  # Não há dados suficientes para ajustar pesos
+    
+        # Remove linhas com valores ausentes nos indicadores
+        df_join = df_join.dropna(subset=colunas_indicadores + ['Retorno_Futuro'])
+    
+        # Se ainda assim não houver dados, retorna None
+        if df_join.empty:
+            return None
+    
+        # Padroniza os dados
+        X = df_join[colunas_indicadores].values
+        y = df_join["Retorno_Futuro"].values
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(X)
     
-        # 4. Treinar modelo de regressão penalizada
+        # Regressão ridge para evitar overfitting
         modelo = Ridge(alpha=1.0)
         modelo.fit(X_scaled, y)
     
-        # 5. Recuperar pesos (coeficientes)
-        pesos_dinamicos = dict(zip(X.columns, modelo.coef_))
+        # Normaliza os coeficientes para que somem aproximadamente 1 (ou 100%)
+        coef = modelo.coef_
+        coef_normalizado = coef / np.sum(np.abs(coef))
     
-        # Normalizar para somar ~1
-        soma_absoluta = sum(abs(val) for val in pesos_dinamicos.values())
-        pesos_normalizados = {k: v / soma_absoluta for k, v in pesos_dinamicos.items()}
+        # Gera dicionário de pesos no formato padrão
+        pesos_ajustados = {
+            col: {'peso': float(p), 'melhor_alto': True}
+            for col, p in zip(colunas_indicadores, coef_normalizado)
+        }
     
-        return pesos_normalizados
+        return pesos_ajustados
+    
     # Ajuste do score baseado nos pesos ajustados ______________________________________________________________________________________________________________________________________________
     def calcular_score_ajustado(df, pesos_utilizados):
         """
