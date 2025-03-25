@@ -1256,7 +1256,7 @@ if pagina == "Avançada": #_____________________________________________________
             # Ex: se seu `dados_macro` tiver colunas [Ano, selic, ipca, ...],
             #    vamos pegar a média ou o valor do (ano-1).
             # Ajuste conforme seu formato:
-            df_macro_ate_ano = dados_macro[dados_macro['Ano'] < ano]
+            df_macro_ate_ano = dados_macro[dados_macro.index.year < ano]
             if not df_macro_ate_ano.empty:
                 # Exemplo simples: pega a média
                 macro_atual = df_macro_ate_ano.mean(numeric_only=True)
