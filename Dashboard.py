@@ -1255,7 +1255,7 @@ if pagina == "Avançada": #_____________________________________________________
             # ----------------------------
             # Ex: se seu `dados_macro` tiver colunas [Ano, selic, ipca, ...],
             #    vamos pegar a média ou o valor do (ano-1).
-
+            st.dataframe(dados_macro)
             dados_macro["Date"] = pd.to_datetime(dados_macro["Date"])
             dados_macro.set_index("Date", inplace=True)
             df_macro_ate_ano = dados_macro[dados_macro.index.year < ano]
