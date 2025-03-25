@@ -1273,7 +1273,7 @@ if pagina == "Avançada": #_____________________________________________________
             # ----------------------------
             # 2) PEGAR PREÇO/RETORNO das AÇÕES
             # ----------------------------
-            print(preco.columns.tolist())
+            st.markdown(preco.columns.tolist())
             # Precisamos filtrar para (ano-1) e o ticker atual
             preco[f"Retorno_12m_{ticker}"] = preco[ticker].pct_change(252)
             preco["Date"] = pd.to_datetime(preco["Date"])  # garantir que é datetime
