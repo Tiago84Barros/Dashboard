@@ -1200,146 +1200,119 @@ if pagina == "Avançada": #_____________________________________________________
         return metrics
     
     # Calcula o retorno futuro da ação com base na média de preços dos últimos e primeiros meses do ano seguinte. ___________________________________________________________________________
-    def preparar_dados_para_treino(lista_empresas, dados_macro, precos, ano, dias_anuais=252):
+    def preparar_dados_para_treino(lista_empresas, dados_macro, preco, ano):
         """
-        Ajusta o DataFrame 'precos' (no formato wide), criando colunas de retorno 12m
-        e filtrando registros até (ano - 1).
-    
-        Parâmetros:
-        -----------
-        lista_empresas: list
-            Lista de dicionários (ou strings) com os tickers que você quer analisar.
-            Ex.: [{'ticker': 'OIBR3'}, {'ticker': 'VIVT3'}] 
-            ou mesmo ['OIBR3', 'VIVT3'].
-        dados_macro: DataFrame ou outro objeto (não implementado no exemplo),
-            caso você queira injetar macro nas colunas.
-        precos: DataFrame (wide) com colunas [Date, OIBR3, VIVT3, ...]
-        ano: int
-            Vamos usar dados até (ano - 1).
-        dias_anuais: int
-            Quantos pregões correspondem a ~12 meses (normalmente 252).
+        Monta o dataset de treinamento (X_train, y_train) usando os dados até (ano - 1).
+        
+        - `lista_empresas`: Lista de "empresas", onde cada `emp` tem ao menos:
+            emp['ticker'], emp['multiplos'], emp['df_dre'] 
+          (conforme snippet anterior).
+          
+        - `dados_macro`: DataFrame com dados macroeconômicos (ex.: colunas [Ano, selic, ipca, ...])
+          que você vai integrar nas features. Ajuste conforme seu formato real.
+          
+        - `preco`: DataFrame que contém os preços (e possivelmente o 'Retorno_12m')
+          para cada empresa, ou pode ser o DataFrame "wide" ou "longo" - ajuste
+          dependendo do seu design. Neste exemplo, assumo algo do tipo:
+            preco[ticker][ano], ou `preco` com colunas [ticker, Ano, Preco, Retorno_12m, ...].
+          
+        - `ano`: int (usaremos dados até (ano - 1) para construir X e y).
     
         Retorna:
         --------
-        df_out: DataFrame
-            O mesmo DataFrame com as colunas adicionais "Retorno_12m_<ticker>"
-            para cada ticker, filtrado para datas < ano.
+        X_train : pd.DataFrame  # features
+        y_train : pd.Series     # alvo, ex.: retorno futuro
         """
     
-        # Copiamos para não alterar o original
-        df = precos.copy()
+        # Aqui você cria listas (ou dataframes) para armazenar as features e o alvo
+        X = []
+        y = []
         
-        # 1) Ordena pelo Date
-        df.sort_values("Date", inplace=True)
-    
-        # Converte a coluna Date para datetime, se necessário
-        df["Date"] = pd.to_datetime(df["Date"])
-    
-        # 2) Cria as colunas de retorno de 12 meses, para cada coluna (exceto 'Date')
-        #    Precisamos identificar as colunas de ativos
-        cols_tickers = df.columns.difference(["Date"])  # ex.: ['OIBR3', 'VIVT3', ...]
-        
-        # Se lista_empresas for no formato [{'ticker': 'OIBR3'}], extraímos a string
-        tickers_lista = []
-        for item in lista_empresas:
-            if isinstance(item, dict) and 'ticker' in item:
-                tickers_lista.append(item['ticker'])
-            elif isinstance(item, str):
-                tickers_lista.append(item)
+        # Itera sobre cada "empresa" da lista
+        for emp in lista_empresas:
+            ticker = emp['ticker']
+            
+            # Pega todos os registros até ano-1 em multiplos / df_dre
+            df_mult = emp['multiplos'][emp['multiplos']['Ano'] < ano].copy()
+            df_dre  = emp['df_dre'][emp['df_dre']['Ano'] < ano].copy()
+            
+            if df_mult.empty or df_dre.empty:
+                # Se não tem dados suficientes, pula a empresa
+                continue
+            
+            colunas_para_filtrar = [
+                'Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida',
+                'Divida_Total', 'Passivo_Circulante', 'Liquidez_Corrente',
+                'Crescimento_Receita', 'Crescimento_Lucro'
+            ]
+            multiplos_corrigido = remover_outliers_iqr(df_mult, colunas_para_filtrar)
+            df_dre_corrigido = remover_outliers_iqr(df_dre, colunas_para_filtrar)
+            
+            metricas = calcular_metricas_historicas_simplificadas(multiplos_corrigido, df_dre_corrigido)
+            
+            # ----------------------------
+            # 1) INTEGRAR DADOS MACRO
+            # ----------------------------
+            # Ex: se seu `dados_macro` tiver colunas [Ano, selic, ipca, ...],
+            #    vamos pegar a média ou o valor do (ano-1).
+            # Ajuste conforme seu formato:
+            df_macro_ate_ano = dados_macro[dados_macro['Ano'] < ano]
+            if not df_macro_ate_ano.empty:
+                # Exemplo simples: pega a média
+                macro_atual = df_macro_ate_ano.mean(numeric_only=True)
+                # Adiciona no dicionário "metricas"
+                # (Substitua 'selic' e 'ipca' pelos nomes das colunas do seu DF macro)
+                metricas['macro_selic'] = macro_atual.get('selic', None)
+                metricas['macro_ipca']  = macro_atual.get('ipca', None)
             else:
-                print(f"Formato de item inesperado: {item}")
-    
-        # Vamos iterar somente nos tickers que existem no DataFrame
-        cols_selecionadas = [c for c in cols_tickers if c in tickers_lista]
-    
-        for col in cols_selecionadas:
-            # nova coluna = 'Retorno_12m_'+col
-            ret_col = "Retorno_12m_" + col
-            # Calcula o retorno usando pct_change(252)
-            df[ret_col] = df[col].pct_change(periods=dias_anuais)
-    
-        # 3) Filtra datas até (ano - 1)
-        df["Year"] = df["Date"].dt.year
-        df_out = df[df["Year"] < ano].copy()
-    
-        # 4) (Opcional) injetar dados macro aqui, se quiser:
-        #    Exemplo de algo fictício:
-        # df_out["macro_selic"] = dados_macro.loc[???]
-        # ...
-        # Ajuste conforme seu design.
+                # Se não tiver dados macro, ou se quiser defaultar
+                metricas['macro_selic'] = None
+                metricas['macro_ipca']  = None
+            
+            # ----------------------------
+            # 2) PEGAR PREÇO/RETORNO das AÇÕES
+            # ----------------------------
+          
+            # Precisamos filtrar para (ano-1) e o ticker atual
+            
+            preco[f"Retorno_12m_{ticker}"] = (preco.loc[preco["ticker"] == ticker, "Preco"].pct_change(252))
+            df_preco_emp = preco[(preco['ticker'] == ticker) & (preco['Ano'] == (ano - 1))]
+                    
+            if df_preco_emp.empty:
+                # se não tiver info de preço, pula
+                continue
+            
+            # Exemplo: pegamos o 'Retorno_12m' do final do (ano - 1) como alvo
+            # (isso seria o "retorno futuro"? Depende do seu design)
+            if 'Retorno_12m' in df_preco_emp.columns:
+                # Pega o valor (por exemplo a 1a linha)
+                retorno_futuro = df_preco_emp['Retorno_12m'].values[0]
+            else:
+                # Se não existir col Retorno_12m, precisa criar ou extrair de outro jeito
+                continue
+            
+            # Podemos também pegar o Preço, se quiser como feature
+            if 'Preco' in df_preco_emp.columns:
+                # Exemplo: metricas['Preco_ano_anterior'] = ...
+                metricas['Preco_ano_anterior'] = df_preco_emp['Preco'].values[0]
+            
+            # Se o DataFrame `preco` for "wide" (colunas OIBR3, VIVT3, ... e 1 col 'Date'),
+            # terá de adequar. Ex.:
+            metricas['Preco_ano_anterior'] = preco.loc[ (preco['Date'].dt.year == ano-1), ticker ].iloc[-1]
+            
+            # ----------------------------
+            # 3) Monta X e y
+            # ----------------------------
+            # metricas (um dict) vira uma "row" de X
+            X.append(metricas)    # dict de features
+            y.append(retorno_futuro)  # target
         
-        # OBS: se quiser remover as linhas iniciais que ficaram NaN,
-        # por conta do pct_change(252), pode fazer:
-        # df_out.dropna(subset=[col for col in df_out.columns if col.startswith("Retorno_12m_")],
-        #               inplace=True)
-    
-        # Esse df_out já possui as colunas "Retorno_12m_<ticker>".
-        # Se você quiser separar em X e y, depende do que seu y será (qual ticker?).
-        # Por exemplo, se seu y é Retorno_12m_OIBR3 e X são as colunas de OIBR3 e VIVT3,
-        # faça algo do tipo:
-    
-        # Exemplo (opcional):
-        # y = df_out["Retorno_12m_OIBR3"]  # se OIBR3 for seu alvo
-        # X = df_out[["Date", "OIBR3", "VIVT3", ...]]  # ou algo do tipo
-    
-        return df_out
-    # Função para ajustar pesos via aprendizado de máquina (regressão ridge) #_________________________________________________________________________________________________________________
-    def ajustar_pesos_via_ml(df_metricas, df_retorno_futuro, colunas_indicadores, ano_teste, anos_treinamento_minimos=3):
-        """
-        Ajusta pesos dos indicadores com base no retorno futuro utilizando regressão linear com regularização (Ridge).
-    
-        Parâmetros:
-        - df_metricas: DataFrame com colunas ['ticker', 'Ano', ...indicadores...]
-        - df_retorno_futuro: DataFrame com colunas ['ticker', 'Ano', 'Retorno_Futuro']
-        - colunas_indicadores: lista com os nomes das colunas dos indicadores a usar como preditores
-        - ano_teste: ano que será previsto (não deve ser usado no treinamento)
-        - anos_treinamento_minimos: quantidade mínima de anos para treinamento
-    
-        Retorna:
-        - dicionário com pesos ajustados no formato {coluna: {'peso': valor, 'melhor_alto': True}}
-        """
-    
-        # Filtra os dados de treino (antes do ano de teste)
-        df_treino = df_metricas[df_metricas["Ano"] < ano_teste].copy()
-        df_retorno_treino = df_retorno_futuro[df_retorno_futuro["Ano"] < ano_teste].copy()
-    
-        # Junta métricas e retornos
-        df_join = pd.merge(df_treino, df_retorno_treino, on=["ticker", "Ano"], how="inner")
-    
-        # Verifica se há dados suficientes
-        anos_disponiveis = df_join["Ano"].nunique()
-        if anos_disponiveis < anos_treinamento_minimos:
-            return None  # Não há dados suficientes para ajustar pesos
-    
-        # Remove linhas com valores ausentes nos indicadores
-        df_join = df_join.dropna(subset=colunas_indicadores + ['Retorno_Futuro'])
-    
-        # Se ainda assim não houver dados, retorna None
-        if df_join.empty:
-            return None
-    
-        # Padroniza os dados
-        X = df_join[colunas_indicadores].values
-        y = df_join["Retorno_Futuro"].values
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
-    
-        # Regressão ridge para evitar overfitting
-        modelo = Ridge(alpha=1.0)
-        modelo.fit(X_scaled, y)
-    
-        # Normaliza os coeficientes para que somem aproximadamente 1 (ou 100%)
-        coef = modelo.coef_
-        coef_normalizado = coef / np.sum(np.abs(coef))
-    
-        # Gera dicionário de pesos no formato padrão
-        pesos_ajustados = {
-            col: {'peso': float(p), 'melhor_alto': True}
-            for col, p in zip(colunas_indicadores, coef_normalizado)
-        }
-    
-        return pesos_ajustados
-    
+        # Converte listas em DataFrame
+        X_train = pd.DataFrame(X)  # cada row = 1 empresa
+        y_train = pd.Series(y)
+        
+        return X_train, y_train   
+           
     # Ajuste do score baseado nos pesos ajustados ______________________________________________________________________________________________________________________________________________
     def calcular_score_ajustado(df, pesos_utilizados):
         """
@@ -1369,7 +1342,7 @@ if pagina == "Avançada": #_____________________________________________________
         return df
         
     # Calcula o Score para cada empresa de acordo com o segmento que ela está inserido _________________________________________________________________________________________________________
-    def calcular_score_acumulado(lista_empresas, dados_macro, anos_minimos=4):
+    def calcular_score_acumulado(lista_empresas, dados_macro, precos, anos_minimos=4):
         """
         Calcula o Score Acumulado ao longo dos anos, considerando ajustes macroeconômicos e pesos específicos por segmento ou setor.
     
@@ -1387,6 +1360,35 @@ if pagina == "Avançada": #_____________________________________________________
     
         for idx in range(anos_minimos, len(anos_disponiveis)):
             ano = anos_disponiveis[idx]
+
+            # ------------------------------------------------------------------
+            # 1) Preparar dados de treino (até ano - 1)
+            # ------------------------------------------------------------------
+            X_train, y_train = preparar_dados_para_treino(lista_empresas, dados_macro, precos, ano)
+            
+            if X_train.empty:
+                # Se não tiver dados suficientes para treinar, pula
+                continue
+            # ------------------------------------------------------------------
+            # 2) Treinar modelo (RidgeCV) para esse "corte" de tempo
+            # ------------------------------------------------------------------
+            
+            scaler = StandardScaler()
+            X_train_scaled = scaler.fit_transform(X_train)
+            
+            modelo = RidgeCV(alphas=[0.01, 0.1, 1.0, 10.0, 100.0], cv=5)
+            modelo.fit(X_train_scaled, y_train)
+            
+            # Pegamos os coeficientes aprendidos
+            pesos_coefs = modelo.coef_  
+            
+            # Se quiser ver qual alpha foi escolhido:
+            # alpha_escolhido = modelo.alpha_
+            
+            # ------------------------------------------------------------------
+            # 3) Gerar dados para CALCULAR o SCORE das empresas no "ano" atual
+            # ------------------------------------------------------------------
+                
             dados_ano = []
     
             for emp in lista_empresas:
@@ -1396,10 +1398,7 @@ if pagina == "Avançada": #_____________________________________________________
     
                 if df_mult.empty or df_dre.empty:
                     continue
-                        
-                # Ajustar com contexto macro
-                pesos_ajustados = ajustar_pesos_macro(pesos_utilizados, dados_macro, ano, setores_empresa, segmento_empresa)
-    
+                               
                 colunas_para_filtrar = [
                     'Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida',
                     'Divida_Total', 'Passivo_Circulante', 'Liquidez_Corrente',
@@ -1409,23 +1408,48 @@ if pagina == "Avançada": #_____________________________________________________
                 df_dre_corrigido = remover_outliers_iqr(df_dre, colunas_para_filtrar)
     
                 metricas = calcular_metricas_historicas_simplificadas(multiplos_corrigido, df_dre_corrigido)
-                row_dict = {'ticker': ticker, 'Ano': ano}
-                row_dict.update(metricas)
-    
+                
+                # Transformar metricas em DataFrame de 1 linha
+                X_ano_emp = pd.DataFrame([metricas])
+                
+                # Normaliza usando MESMO scaler treinado no X_train
+                X_ano_emp_scaled = scaler.transform(X_ano_emp)
+                
+                # ------------------------------------------------------------------
+                # 4) Aplica o modelo para obter "score" (previsão).
+                #    Se for regressão pura, o "score" é o y_pred
+                #    Se quiser só multiplicar pelos coeficientes, faz o dot.
+                # ------------------------------------------------------------------
+                # Exemplo 1: Usar a predição do modelo como Score
+                y_pred = modelo.predict(X_ano_emp_scaled)[0]
+                
+                # Exemplo 2: ou usar "dot" dos coeficientes
+                # score_linear = X_ano_emp_scaled.dot(pesos_coefs)
+                
+                row_dict = {
+                    'ticker': ticker,
+                    'Ano': ano,
+                    'Score_Ajustado': y_pred  # ou score_linear[0]
+                }
                 dados_ano.append(row_dict)
-    
+            
+            # Cria df com scores desse ano
             df_ano = pd.DataFrame(dados_ano)
             if df_ano.empty:
                 continue
+            
+            # Se quiser, você ainda pode chamar sua função de "calcular_score_ajustado"
+            # para penalizações adicionais, normalizações, etc.
+            df_ano = calcular_score_ajustado(df_ano, pesos_ajustados=None) # se quiser
     
-            df_ano = calcular_score_ajustado(df_ano, pesos_ajustados)
             df_resultados.append(df_ano[['Ano', 'ticker', 'Score_Ajustado']])
-    
+        
+        # Concatena resultado de todos os anos
         if df_resultados:
             df_scores = pd.concat(df_resultados, ignore_index=True)
         else:
             df_scores = pd.DataFrame(columns=['Ano', 'ticker', 'Score_Ajustado'])
-    
+        
         return df_scores
         
     # 📌 Baixando preços de fechamento das empresas ____________________________________________________________________________________________________________________________________________
@@ -1905,9 +1929,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # Baixar preços
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
-                    
-                    st.markdown(lista_empresas)   
-                    
+                                   
                     # Escores das empresas de acordo com segmento e tipo de empresa
                     df_scores = calcular_score_acumulado(lista_empresas, dados_macro, anos_minimos=4)
                                                                                   
