@@ -1200,56 +1200,89 @@ if pagina == "Avançada": #_____________________________________________________
         return metrics
     
     # Calcula o retorno futuro da ação com base na média de preços dos últimos e primeiros meses do ano seguinte. ___________________________________________________________________________
-    def calcular_retorno_futuro(df_precos, ano_base, horizonte_anos=1, dias_janela=21):
+    def preparar_dados_para_treino(lista_empresas, dados_macro, precos, ano, dias_anuais=252):
         """
-        Calcula o retorno futuro para um ano específico (ano_base), para cada ticker.
+        Ajusta o DataFrame 'precos' (no formato wide), criando colunas de retorno 12m
+        e filtrando registros até (ano - 1).
     
         Parâmetros:
-        - df_precos: DataFrame com preços diários (índice: datas, colunas: tickers)
-        - ano_base: ano para o qual se quer calcular o retorno futuro (ex: 2013)
-        - horizonte_anos: quantos anos à frente (padrão: 1)
-        - dias_janela: quantos dias usar na média móvel para suavizar o preço
+        -----------
+        lista_empresas: list
+            Lista de dicionários (ou strings) com os tickers que você quer analisar.
+            Ex.: [{'ticker': 'OIBR3'}, {'ticker': 'VIVT3'}] 
+            ou mesmo ['OIBR3', 'VIVT3'].
+        dados_macro: DataFrame ou outro objeto (não implementado no exemplo),
+            caso você queira injetar macro nas colunas.
+        precos: DataFrame (wide) com colunas [Date, OIBR3, VIVT3, ...]
+        ano: int
+            Vamos usar dados até (ano - 1).
+        dias_anuais: int
+            Quantos pregões correspondem a ~12 meses (normalmente 252).
     
         Retorna:
-        - DataFrame com colunas: ['ticker', 'Ano', 'Retorno_Futuro']
+        --------
+        df_out: DataFrame
+            O mesmo DataFrame com as colunas adicionais "Retorno_12m_<ticker>"
+            para cada ticker, filtrado para datas < ano.
         """
     
-        retornos = []
+        # Copiamos para não alterar o original
+        df = precos.copy()
+        
+        # 1) Ordena pelo Date
+        df.sort_values("Date", inplace=True)
     
-        for ticker in df_precos.columns:
-            try:
-                # Janela inicial (ex: dez/2013)
-                inicio_inicio = pd.Timestamp(f"{ano_base}-12-01")
-                fim_inicio = inicio_inicio + pd.Timedelta(days=dias_janela * 2)
+        # Converte a coluna Date para datetime, se necessário
+        df["Date"] = pd.to_datetime(df["Date"])
     
-                # Janela final (ex: dez/2014)
-                inicio_fim = pd.Timestamp(f"{ano_base + horizonte_anos}-12-01")
-                fim_fim = inicio_fim + pd.Timedelta(days=dias_janela * 2)
+        # 2) Cria as colunas de retorno de 12 meses, para cada coluna (exceto 'Date')
+        #    Precisamos identificar as colunas de ativos
+        cols_tickers = df.columns.difference(["Date"])  # ex.: ['OIBR3', 'VIVT3', ...]
+        
+        # Se lista_empresas for no formato [{'ticker': 'OIBR3'}], extraímos a string
+        tickers_lista = []
+        for item in lista_empresas:
+            if isinstance(item, dict) and 'ticker' in item:
+                tickers_lista.append(item['ticker'])
+            elif isinstance(item, str):
+                tickers_lista.append(item)
+            else:
+                print(f"Formato de item inesperado: {item}")
     
-                precos_inicio = df_precos.loc[(df_precos.index >= inicio_inicio) &
-                                              (df_precos.index <= fim_inicio), ticker].dropna()
-                preco_medio_inicio = precos_inicio.tail(dias_janela).mean()
+        # Vamos iterar somente nos tickers que existem no DataFrame
+        cols_selecionadas = [c for c in cols_tickers if c in tickers_lista]
     
-                precos_fim = df_precos.loc[(df_precos.index >= inicio_fim) &
-                                           (df_precos.index <= fim_fim), ticker].dropna()
-                preco_medio_fim = precos_fim.tail(dias_janela).mean()
+        for col in cols_selecionadas:
+            # nova coluna = 'Retorno_12m_'+col
+            ret_col = "Retorno_12m_" + col
+            # Calcula o retorno usando pct_change(252)
+            df[ret_col] = df[col].pct_change(periods=dias_anuais)
     
-                if np.isnan(preco_medio_inicio) or np.isnan(preco_medio_fim) or preco_medio_inicio == 0:
-                    continue
+        # 3) Filtra datas até (ano - 1)
+        df["Year"] = df["Date"].dt.year
+        df_out = df[df["Year"] < ano].copy()
     
-                retorno = (preco_medio_fim / preco_medio_inicio) - 1
+        # 4) (Opcional) injetar dados macro aqui, se quiser:
+        #    Exemplo de algo fictício:
+        # df_out["macro_selic"] = dados_macro.loc[???]
+        # ...
+        # Ajuste conforme seu design.
+        
+        # OBS: se quiser remover as linhas iniciais que ficaram NaN,
+        # por conta do pct_change(252), pode fazer:
+        # df_out.dropna(subset=[col for col in df_out.columns if col.startswith("Retorno_12m_")],
+        #               inplace=True)
     
-                retornos.append({
-                    'ticker': ticker,
-                    'Ano': ano_base,
-                    'Retorno_Futuro': retorno
-                })
+        # Esse df_out já possui as colunas "Retorno_12m_<ticker>".
+        # Se você quiser separar em X e y, depende do que seu y será (qual ticker?).
+        # Por exemplo, se seu y é Retorno_12m_OIBR3 e X são as colunas de OIBR3 e VIVT3,
+        # faça algo do tipo:
     
-            except Exception:
-                continue
+        # Exemplo (opcional):
+        # y = df_out["Retorno_12m_OIBR3"]  # se OIBR3 for seu alvo
+        # X = df_out[["Date", "OIBR3", "VIVT3", ...]]  # ou algo do tipo
     
-        return pd.DataFrame(retornos)
-   
+        return df_out
     # Função para ajustar pesos via aprendizado de máquina (regressão ridge) #_________________________________________________________________________________________________________________
     def ajustar_pesos_via_ml(df_metricas, df_retorno_futuro, colunas_indicadores, ano_teste, anos_treinamento_minimos=3):
         """
@@ -1872,8 +1905,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # Baixar preços
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
-                    st.dataframe(precos)
-                    
+                    st.dataframe(lista_empresas)                    
                     # Escores das empresas de acordo com segmento e tipo de empresa
                     df_scores = calcular_score_acumulado(lista_empresas, dados_macro, anos_minimos=4)
                                                                                   
