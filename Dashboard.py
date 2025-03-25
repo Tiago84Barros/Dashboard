@@ -1872,6 +1872,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # Baixar preços
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
+                    st.dataframe(precos)
                     
                     # Escores das empresas de acordo com segmento e tipo de empresa
                     df_scores = calcular_score_acumulado(lista_empresas, dados_macro, anos_minimos=4)
