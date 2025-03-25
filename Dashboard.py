@@ -1275,7 +1275,7 @@ if pagina == "Avançada": #_____________________________________________________
             # ----------------------------
           
             # Precisamos filtrar para (ano-1) e o ticker atual
-            
+            st.dataframe(preco)
             preco[f"Retorno_12m_{ticker}"] = (preco.loc[preco["ticker"] == ticker, "Preco"].pct_change(252))
             df_preco_emp = preco[(preco['ticker'] == ticker) & (preco['Ano'] == (ano - 1))]
                     
