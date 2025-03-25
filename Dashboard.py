@@ -1275,8 +1275,9 @@ if pagina == "Avançada": #_____________________________________________________
             # ----------------------------
           
             # Precisamos filtrar para (ano-1) e o ticker atual
-            st.dataframe(preco)
-            preco[f"Retorno_12m_{ticker}"] = (preco.loc[preco["ticker"] == ticker, "Preco"].pct_change(252))
+            preco[f"Retorno_12m_{ticker}"] = preco[ticker].pct_change(252)
+            preco["Date"] = pd.to_datetime(preco["Date"])  # garantir que é datetime
+            preco["Ano"] = preco["Date"].dt.year
             df_preco_emp = preco[(preco['ticker'] == ticker) & (preco['Ano'] == (ano - 1))]
                     
             if df_preco_emp.empty:
