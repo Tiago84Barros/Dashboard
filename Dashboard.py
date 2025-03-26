@@ -1204,117 +1204,123 @@ if pagina == "Avançada": #_____________________________________________________
         """
         Monta o dataset de treinamento (X_train, y_train) usando os dados até (ano - 1).
         
-        - `lista_empresas`: Lista de "empresas", onde cada `emp` tem ao menos:
-            emp['ticker'], emp['multiplos'], emp['df_dre'] 
-          (conforme snippet anterior).
-          
-        - `dados_macro`: DataFrame com dados macroeconômicos (ex.: colunas [Ano, selic, ipca, ...])
-          que você vai integrar nas features. Ajuste conforme seu formato real.
-          
-        - `preco`: DataFrame que contém os preços (e possivelmente o 'Retorno_12m')
-          para cada empresa, ou pode ser o DataFrame "wide" ou "longo" - ajuste
-          dependendo do seu design. Neste exemplo, assumo algo do tipo:
-            preco[ticker][ano], ou `preco` com colunas [ticker, Ano, Preco, Retorno_12m, ...].
-          
-        - `ano`: int (usaremos dados até (ano - 1) para construir X e y).
-    
+        - lista_empresas: lista de dicionários, cada emp tem 'ticker', 'multiplos', 'df_dre'.
+        - dados_macro: DataFrame, possuindo col 'Data' (datetimes), e ex.: ['Selic','Cambio','IPCA','ICC','PIB','BALANÇA_COMERCIAL']
+        - preco: DataFrame wide, colunas ['Date','OIBR3','VIVT3', ...]
+        - ano: int (usamos dados até ano-1).
+        
         Retorna:
         --------
-        X_train : pd.DataFrame  # features
-        y_train : pd.Series     # alvo, ex.: retorno futuro
+        (X_train, y_train): DataFrame e Series com as features e o alvo.
         """
     
-        # Aqui você cria listas (ou dataframes) para armazenar as features e o alvo
+        # 1) Ajustar dados_macro: garantir que "Data" é datetime e criar "Ano"
+        # --------------------------------------------------------------------
+        dados_macro = dados_macro.copy()  # para não alterar o original
+        st.write("## dados_macro.columns:", dados_macro.columns.tolist())  # debug
+        
+        if "Data" not in dados_macro.columns:
+            st.error("A coluna 'Data' não existe em dados_macro!")
+            # ou raise Exception("Coluna 'Data' não existe")
+        else:
+            dados_macro["Data"] = pd.to_datetime(dados_macro["Data"])
+            # não faz set_index("Data"), pois depois queremos usar a col 'Ano'
+            dados_macro["Ano"]  = dados_macro["Data"].dt.year
+    
+        # 2) Ajustar preco: garantir que "Date" é datetime e criar "Ano" (se wide)
+        # ------------------------------------------------------------------------
+        preco = preco.copy()
+        st.write("## preco.columns antes:", preco.columns.tolist())
+        
+        # Se o "Date" estiver no índice, mas chamamos "reset_index()"
+        # Ajuste conforme seu real design. Ex:
+        if preco.index.name == "Date":
+            preco.reset_index(inplace=True)
+        
+        # agora assumimos "Date" seja uma coluna real
+        if "Date" not in preco.columns:
+            st.error("A coluna 'Date' não existe em preco!")
+            # raise Exception("Coluna 'Date' não existe")
+        else:
+            preco["Date"] = pd.to_datetime(preco["Date"])
+            preco["Ano"]  = preco["Date"].dt.year
+        
+        st.write("## preco.columns depois:", preco.columns.tolist())
+    
         X = []
         y = []
         
-        # Itera sobre cada "empresa" da lista
         for emp in lista_empresas:
             ticker = emp['ticker']
-            
-            # Pega todos os registros até ano-1 em multiplos / df_dre
+    
+            # 3) Pega df_mult e df_dre até ano-1, gera métricas
             df_mult = emp['multiplos'][emp['multiplos']['Ano'] < ano].copy()
             df_dre  = emp['df_dre'][emp['df_dre']['Ano'] < ano].copy()
             
             if df_mult.empty or df_dre.empty:
-                # Se não tem dados suficientes, pula a empresa
                 continue
             
+            # Remoção de outliers e cálculo de métricas
             colunas_para_filtrar = [
-                'Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida',
-                'Divida_Total', 'Passivo_Circulante', 'Liquidez_Corrente',
-                'Crescimento_Receita', 'Crescimento_Lucro'
+                'Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC',
+                'Margem_Liquida', 'Divida_Total', 'Passivo_Circulante', 
+                'Liquidez_Corrente','Crescimento_Receita','Crescimento_Lucro'
             ]
             multiplos_corrigido = remover_outliers_iqr(df_mult, colunas_para_filtrar)
-            df_dre_corrigido = remover_outliers_iqr(df_dre, colunas_para_filtrar)
+            df_dre_corrigido    = remover_outliers_iqr(df_dre, colunas_para_filtrar)
             
             metricas = calcular_metricas_historicas_simplificadas(multiplos_corrigido, df_dre_corrigido)
             
-            # ----------------------------
-            # 1) INTEGRAR DADOS MACRO
-            # ----------------------------
-            # Ex: se seu `dados_macro` tiver colunas [Ano, selic, ipca, ...],
-            #    vamos pegar a média ou o valor do (ano-1).
-            st.markdown(dados_macro.columns)
-            dados_macro["Data"] = pd.to_datetime(dados_macro["Data"])
-            dados_macro.set_index("Data", inplace=True)
-            df_macro_ate_ano = dados_macro[dados_macro.index.year < ano]
-            if not df_macro_ate_ano.empty:
-                # Exemplo simples: pega a média
-                macro_atual = df_macro_ate_ano.mean(numeric_only=True)
-                # Adiciona no dicionário "metricas"
-                # (Substitua 'selic' e 'ipca' pelos nomes das colunas do seu DF macro)
-                metricas['macro_selic'] = macro_atual.get('selic', None)
-                metricas['macro_ipca']  = macro_atual.get('ipca', None)
-            else:
-                # Se não tiver dados macro, ou se quiser defaultar
-                metricas['macro_selic'] = None
-                metricas['macro_ipca']  = None
+            # 4) Injetar dados macro (ex.: média até ano-1)
+            if "Ano" in dados_macro.columns:
+                df_macro_ate_ano = dados_macro[dados_macro["Ano"] < ano]
+                if not df_macro_ate_ano.empty:
+                    macro_atual = df_macro_ate_ano.mean(numeric_only=True)
+                    metricas['macro_selic'] = macro_atual.get('Selic', None)
+                    metricas['macro_ipca']  = macro_atual.get('IPCA', None)
+                else:
+                    metricas['macro_selic'] = None
+                    metricas['macro_ipca']  = None
             
-            # ----------------------------
-            # 2) PEGAR PREÇO/RETORNO das AÇÕES
-            # ----------------------------
-            # Precisamos filtrar para (ano-1) e o ticker atual
-            preco[f"Retorno_12m_{ticker}"] = preco[ticker].pct_change(252)
-            preco.reset_index(inplace=True)
-            preco["Date"] = pd.to_datetime(preco["Date"])  # garantir que é datetime
-            preco["Ano"] = preco["Date"].dt.year
-            df_preco_emp = preco[ preco["Ano"] == (ano - 1) ].copy()
-                    
-            if df_preco_emp.empty:
-                # se não tiver info de preço, pula
+            # 5) PEGAR PREÇO/RETORNO das AÇÕES - wide format
+            # -----------------------------------------------
+            # Precisamos criar a col "Retorno_12m_ticker" se não existir
+            # Lembrando que preco[ticker] é a coluna do ticker
+            if ticker not in preco.columns:
+                st.warning(f"Ticker {ticker} não existe em preco.columns!")
                 continue
             
-            # Exemplo: pegamos o 'Retorno_12m' do final do (ano - 1) como alvo
-            # (isso seria o "retorno futuro"? Depende do seu design)
-            if 'Retorno_12m' in df_preco_emp.columns:
-                # Pega o valor (por exemplo a 1a linha)
-                retorno_futuro = df_preco_emp['Retorno_12m'].values[0]
-            else:
-                # Se não existir col Retorno_12m, precisa criar ou extrair de outro jeito
+            # Cria col Retorno_12m_<ticker>, se não existir
+            col_ret = f"Retorno_12m_{ticker}"
+            if col_ret not in preco.columns:
+                preco[col_ret] = preco[ticker].pct_change(252)
+            
+            # Filtra (ano-1)
+            df_preco_ano = preco[preco["Ano"] == (ano - 1)].copy()
+            if df_preco_ano.empty:
                 continue
             
-            # Podemos também pegar o Preço, se quiser como feature
-            if 'Preco' in df_preco_emp.columns:
-                # Exemplo: metricas['Preco_ano_anterior'] = ...
-                metricas['Preco_ano_anterior'] = df_preco_emp['Preco'].values[0]
+            # Ex pega o último registro do ano
+            retorno_colunas = df_preco_ano[col_ret].dropna()
+            if retorno_colunas.empty:
+                continue
             
-            # Se o DataFrame `preco` for "wide" (colunas OIBR3, VIVT3, ... e 1 col 'Date'),
-            # terá de adequar. Ex.:
-            metricas['Preco_ano_anterior'] = preco.loc[ (preco['Date'].dt.year == ano-1), ticker ].iloc[-1]
+            retorno_futuro = retorno_colunas.iloc[-1]   # y
+            # Podemos também extrair o Preco final
+            preco_final = df_preco_ano[ticker].dropna().iloc[-1] if not df_preco_ano[ticker].dropna().empty else None
             
-            # ----------------------------
-            # 3) Monta X e y
-            # ----------------------------
-            # metricas (um dict) vira uma "row" de X
-            X.append(metricas)    # dict de features
-            y.append(retorno_futuro)  # target
-        
-        # Converte listas em DataFrame
-        X_train = pd.DataFrame(X)  # cada row = 1 empresa
+            # Salva no dicionário de features
+            metricas['preco_ano_anterior'] = preco_final
+            
+            # 6) Monta X e y
+            X.append(metricas)
+            y.append(retorno_futuro)
+    
+        X_train = pd.DataFrame(X)
         y_train = pd.Series(y)
         
-        return X_train, y_train   
+        return X_train, y_train
+      
            
     # Ajuste do score baseado nos pesos ajustados ______________________________________________________________________________________________________________________________________________
     def calcular_score_ajustado(df, pesos_utilizados):
