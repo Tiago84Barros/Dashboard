@@ -1273,10 +1273,9 @@ if pagina == "Avançada": #_____________________________________________________
             # ----------------------------
             # 2) PEGAR PREÇO/RETORNO das AÇÕES
             # ----------------------------
-            st.markdown(preco.columns.tolist())
-            st.dataframe(preco)
             # Precisamos filtrar para (ano-1) e o ticker atual
             preco[f"Retorno_12m_{ticker}"] = preco[ticker].pct_change(252)
+            preco.reset_index(inplace=True)
             preco["Date"] = pd.to_datetime(preco["Date"])  # garantir que é datetime
             preco["Ano"] = preco["Date"].dt.year
             df_preco_emp = preco[(preco['ticker'] == ticker) & (preco['Ano'] == (ano - 1))]
