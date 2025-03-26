@@ -1278,7 +1278,7 @@ if pagina == "Avançada": #_____________________________________________________
             preco.reset_index(inplace=True)
             preco["Date"] = pd.to_datetime(preco["Date"])  # garantir que é datetime
             preco["Ano"] = preco["Date"].dt.year
-            df_preco_emp = preco[(preco['ticker'] == ticker) & (preco['Ano'] == (ano - 1))]
+            df_preco_emp = preco[ preco["Ano"] == (ano - 1) ].copy()
                     
             if df_preco_emp.empty:
                 # se não tiver info de preço, pula
