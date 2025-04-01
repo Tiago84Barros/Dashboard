@@ -1217,7 +1217,7 @@ if pagina == "Avançada": #_____________________________________________________
         # 1) Ajustar dados_macro: garantir que "Data" é datetime e criar "Ano"
         # --------------------------------------------------------------------
         dados_macro = dados_macro.copy()  # para não alterar o original
-        st.write("## dados_macro.columns:", dados_macro.columns.tolist())  # debug
+        #st.write("## dados_macro.columns:", dados_macro.columns.tolist())  # debug
         
         if "Data" not in dados_macro.columns:
             st.error("A coluna 'Data' não existe em dados_macro!")
@@ -1384,7 +1384,9 @@ if pagina == "Avançada": #_____________________________________________________
             
             scaler = StandardScaler()
             X_train_scaled = scaler.fit_transform(X_train)
-            
+
+            st.markdown(f"X_train shape:, {X_train_scaled.shape}")
+            st.markdown(f"y_train shape:, {y_train.shape}")
             modelo = RidgeCV(alphas=[0.01, 0.1, 1.0, 10.0, 100.0], cv=5)
             modelo.fit(X_train_scaled, y_train)
             
