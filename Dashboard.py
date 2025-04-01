@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import yfinance as yf
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
-from from sklearn.linear_model import RidgeCV
+from sklearn.linear_model import RidgeCV
 import numpy as np
 import sqlite3
 import openai
