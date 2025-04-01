@@ -1213,7 +1213,7 @@ if pagina == "Avançada": #_____________________________________________________
         --------
         (X_train, y_train): DataFrame e Series com as features e o alvo.
         """
-    
+       
         # 1) Ajustar dados_macro: garantir que "Data" é datetime e criar "Ano"
         # --------------------------------------------------------------------
         dados_macro = dados_macro.copy()  # para não alterar o original
@@ -1256,7 +1256,8 @@ if pagina == "Avançada": #_____________________________________________________
             # 3) Pega df_mult e df_dre até ano-1, gera métricas
             df_mult = emp['multiplos'][emp['multiplos']['Ano'] < ano].copy()
             df_dre  = emp['df_dre'][emp['df_dre']['Ano'] < ano].copy()
-            
+
+            st.dataframe(df_mult)
             if df_mult.empty or df_dre.empty:
                 continue
             
