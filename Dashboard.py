@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import yfinance as yf
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import Ridge
+from from sklearn.linear_model import RidgeCV
 import numpy as np
 import sqlite3
 import openai
@@ -1230,7 +1230,7 @@ if pagina == "Avançada": #_____________________________________________________
         # 2) Ajustar preco: garantir que "Date" é datetime e criar "Ano" (se wide)
         # ------------------------------------------------------------------------
         preco = preco.copy()
-        st.write("## preco.columns antes:", preco.columns.tolist())
+       # st.write("## preco.columns antes:", preco.columns.tolist())
         
         # Se o "Date" estiver no índice, mas chamamos "reset_index()"
         # Ajuste conforme seu real design. Ex:
@@ -1245,7 +1245,7 @@ if pagina == "Avançada": #_____________________________________________________
             preco["Date"] = pd.to_datetime(preco["Date"])
             preco["Ano"]  = preco["Date"].dt.year
         
-        st.write("## preco.columns depois:", preco.columns.tolist())
+       # st.write("## preco.columns depois:", preco.columns.tolist())
     
         X = []
         y = []
