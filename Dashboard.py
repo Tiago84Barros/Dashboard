@@ -1257,7 +1257,6 @@ if pagina == "Avançada": #_____________________________________________________
             df_mult = emp['multiplos'][emp['multiplos']['Ano'] < ano].copy()
             df_dre  = emp['df_dre'][emp['df_dre']['Ano'] < ano].copy()
 
-            st.dataframe(df_mult)
             if df_mult.empty or df_dre.empty:
                 continue
             
@@ -1271,6 +1270,7 @@ if pagina == "Avançada": #_____________________________________________________
             df_dre_corrigido    = remover_outliers_iqr(df_dre, colunas_para_filtrar)
             
             metricas = calcular_metricas_historicas_simplificadas(multiplos_corrigido, df_dre_corrigido)
+            st.dataframe(metricas)
             
             # 4) Injetar dados macro (ex.: média até ano-1)
             if "Ano" in dados_macro.columns:
