@@ -1160,7 +1160,7 @@ if pagina == "Avançada": #_____________________________________________________
         # Converter Data -> Ano
         df_mult['Ano'] = pd.to_datetime(df_mult['Data'], errors='coerce').dt.year
         df_dre['Ano']  = pd.to_datetime(df_dre['Data'], errors='coerce').dt.year
-                
+        st.dataframe(df_mult)
         # Ordenar por Ano
         df_mult.sort_values('Ano', inplace=True)
         df_dre.sort_values('Ano', inplace=True)
