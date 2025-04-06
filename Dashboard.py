@@ -5,8 +5,6 @@ import plotly.express as px
 import matplotlib.pyplot as plt
 import yfinance as yf
 from sklearn.linear_model import LinearRegression
-from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import RidgeCV
 import numpy as np
 import sqlite3
 import openai
@@ -1096,8 +1094,8 @@ if pagina == "Avançada": #_____________________________________________________
         """
         return np.exp(slope) - 1
 
-    # Determina média e desvio padrão dos indicadores financeiros ___________________________________________________________________________________________________________________________
-    def calcular_media_e_std(df, col):
+
+    def calcular_media_e_std(df, col): # ____________________________________________________________________________________________________________________________________________________
         """
         Retorna a média e o desvio padrão da coluna `col` do DataFrame `df`.
         Remove valores nulos e infinitos antes do cálculo e exibe informações
@@ -1134,8 +1132,8 @@ if pagina == "Avançada": #_____________________________________________________
           
         return (media, std)
 
-    # Retira valores que distoam muito dos valores médios e podem comprometer os cálculos causando distorções _________________________________________________________________________________ 
-    def winsorize(series, lower_quantile=0.05, upper_quantile=0.95): 
+      
+    def winsorize(series, lower_quantile=0.05, upper_quantile=0.95): # Retira valores que distoam muito dos valores médios e podem comprometer os cálculos causando distorções ____________
         """
         Trunca outliers abaixo do 5º percentil e acima do 95º percentil.
         """
@@ -1160,7 +1158,7 @@ if pagina == "Avançada": #_____________________________________________________
         # Converter Data -> Ano
         df_mult['Ano'] = pd.to_datetime(df_mult['Data'], errors='coerce').dt.year
         df_dre['Ano']  = pd.to_datetime(df_dre['Data'], errors='coerce').dt.year
-        st.dataframe(df_mult)
+                
         # Ordenar por Ano
         df_mult.sort_values('Ano', inplace=True)
         df_dre.sort_values('Ano', inplace=True)
@@ -1198,131 +1196,206 @@ if pagina == "Avançada": #_____________________________________________________
         metrics['historico_bonus'] = calcular_historico_bonus(num_anos)
         
         return metrics
-    
-    # Calcula o retorno futuro da ação com base na média de preços dos últimos e primeiros meses do ano seguinte. ___________________________________________________________________________
-    def preparar_dados_para_treino(lista_empresas, dados_macro, preco, ano):
+
+    # 🔹 Função para obter o setor de uma empresa a partir do DataFrame de setores _________________________________________________________________________________________________________________
+    def obter_setor_da_empresa(ticker, setores_df):
         """
-        Monta o dataset de treinamento (X_train, y_train) usando os dados até (ano - 1).
+        Obtém o setor de uma empresa com base no seu ticker.
         
-        - lista_empresas: lista de dicionários, cada emp tem 'ticker', 'multiplos', 'df_dre'.
-        - dados_macro: DataFrame, possuindo col 'Data' (datetimes), e ex.: ['Selic','Cambio','IPCA','ICC','PIB','BALANÇA_COMERCIAL']
-        - preco: DataFrame wide, colunas ['Date','OIBR3','VIVT3', ...]
-        - ano: int (usamos dados até ano-1).
+        Parâmetros:
+        - ticker: str -> Código da empresa (ex: 'PETR4')
+        - setores_df: DataFrame -> DataFrame contendo colunas ['ticker', 'SETOR']
         
         Retorna:
-        --------
-        (X_train, y_train): DataFrame e Series com as features e o alvo.
+        - str -> Nome do setor da empresa ou 'Setor Desconhecido' caso não encontre.
         """
-       
-        # 1) Ajustar dados_macro: garantir que "Data" é datetime e criar "Ano"
-        # --------------------------------------------------------------------
-        dados_macro = dados_macro.copy()  # para não alterar o original
-        #st.write("## dados_macro.columns:", dados_macro.columns.tolist())  # debug
-        
-        if "Data" not in dados_macro.columns:
-            st.error("A coluna 'Data' não existe em dados_macro!")
-            # ou raise Exception("Coluna 'Data' não existe")
-        else:
-            dados_macro["Data"] = pd.to_datetime(dados_macro["Data"])
-            # não faz set_index("Data"), pois depois queremos usar a col 'Ano'
-            dados_macro["Ano"]  = dados_macro["Data"].dt.year
-    
-        # 2) Ajustar preco: garantir que "Date" é datetime e criar "Ano" (se wide)
-        # ------------------------------------------------------------------------
-        preco = preco.copy()
-       # st.write("## preco.columns antes:", preco.columns.tolist())
-        
-        # Se o "Date" estiver no índice, mas chamamos "reset_index()"
-        # Ajuste conforme seu real design. Ex:
-        if preco.index.name == "Date":
-            preco.reset_index(inplace=True)
-        
-        # agora assumimos "Date" seja uma coluna real
-        if "Date" not in preco.columns:
-            st.error("A coluna 'Date' não existe em preco!")
-            # raise Exception("Coluna 'Date' não existe")
-        else:
-            preco["Date"] = pd.to_datetime(preco["Date"])
-            preco["Ano"]  = preco["Date"].dt.year
-        
-       # st.write("## preco.columns depois:", preco.columns.tolist())
-    
-        X = []
-        y = []
-        
-        for emp in lista_empresas:
-            ticker = emp['ticker']
-    
-            # 3) Pega df_mult e df_dre até ano-1, gera métricas
-            df_mult = emp['multiplos'][emp['multiplos']['Ano'] < ano].copy()
-            df_dre  = emp['df_dre'][emp['df_dre']['Ano'] < ano].copy()
+        setor = setores_df.loc[setores_df['ticker'] == ticker, 'SETOR']
+        return setor.iloc[0] if not setor.empty else "Setor Desconhecido"
 
-            if df_mult.empty or df_dre.empty:
-                continue
-            
-            # Remoção de outliers e cálculo de métricas
-            colunas_para_filtrar = [
-                'Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC',
-                'Margem_Liquida', 'Divida_Total', 'Passivo_Circulante', 
-                'Liquidez_Corrente','Crescimento_Receita','Crescimento_Lucro'
-            ]
-            multiplos_corrigido = remover_outliers_iqr(df_mult, colunas_para_filtrar)
-            df_dre_corrigido    = remover_outliers_iqr(df_dre, colunas_para_filtrar)
-            
-            metricas = calcular_metricas_historicas_simplificadas(multiplos_corrigido, df_dre_corrigido)
-            st.dataframe(metricas)
-            
-            # 4) Injetar dados macro (ex.: média até ano-1)
-            if "Ano" in dados_macro.columns:
-                df_macro_ate_ano = dados_macro[dados_macro["Ano"] < ano]
-                if not df_macro_ate_ano.empty:
-                    macro_atual = df_macro_ate_ano.mean(numeric_only=True)
-                    metricas['macro_selic'] = macro_atual.get('Selic', None)
-                    metricas['macro_ipca']  = macro_atual.get('IPCA', None)
-                else:
-                    metricas['macro_selic'] = None
-                    metricas['macro_ipca']  = None
-            
-            # 5) PEGAR PREÇO/RETORNO das AÇÕES - wide format
-            # -----------------------------------------------
-            # Precisamos criar a col "Retorno_12m_ticker" se não existir
-            # Lembrando que preco[ticker] é a coluna do ticker
-            if ticker not in preco.columns:
-                st.warning(f"Ticker {ticker} não existe em preco.columns!")
-                continue
-            
-            # Cria col Retorno_12m_<ticker>, se não existir
-            col_ret = f"Retorno_12m_{ticker}"
-            if col_ret not in preco.columns:
-                preco[col_ret] = preco[ticker].pct_change(252)
-            
-            # Filtra (ano-1)
-            df_preco_ano = preco[preco["Ano"] == (ano - 1)].copy()
-            if df_preco_ano.empty:
-                continue
-            
-            # Ex pega o último registro do ano
-            retorno_colunas = df_preco_ano[col_ret].dropna()
-            if retorno_colunas.empty:
-                continue
-            
-            retorno_futuro = retorno_colunas.iloc[-1]   # y
-            # Podemos também extrair o Preco final
-            preco_final = df_preco_ano[ticker].dropna().iloc[-1] if not df_preco_ano[ticker].dropna().empty else None
-            
-            # Salva no dicionário de features
-            metricas['preco_ano_anterior'] = preco_final
-            
-            # 6) Monta X e y
-            X.append(metricas)
-            y.append(retorno_futuro)
-    
-        X_train = pd.DataFrame(X)
-        y_train = pd.Series(y)
+    # 🔹 Função para obter o setor de uma empresa a partir do DataFrame de Segmento ________________________________________________________________________________________________________________   
+    def obter_segmento_da_empresa(ticker, df_empresas):
+        """
+        Retorna o segmento de uma empresa com base no ticker.
         
-        return X_train, y_train
-      
-           
+        Parâmetros:
+        - ticker: str, ticker da empresa (ex: 'PETR3')
+        - df_empresas: DataFrame contendo as colunas ['ticker', 'SEGMENTO']
+        
+        Retorna:
+        - str: nome do segmento, ou 'Desconhecido' se não encontrar
+        """
+        try:
+            segmento = df_empresas.loc[df_empresas['ticker'] == ticker, 'SEGMENTO'].values[0]
+            return segmento
+        except (IndexError, KeyError):
+            return 'Desconhecido'
+
+    # Obter pesos por segmento ________________________________________________________________________________________________________________________________________________________________________
+    def obter_pesos_por_segmento(segmento, setor, pesos_por_segmento, pesos_por_setor, indicadores_score_ajustados):
+        """
+        Retorna os pesos para o segmento especificado. 
+        Se não houver, usa o setor correspondente. Se ainda assim não houver, usa os pesos genéricos.
+        """
+        if segmento in pesos_por_segmento:
+            return pesos_por_segmento[segmento]
+    
+        elif setor in pesos_por_setor:
+            return pesos_por_setor[setor]
+        
+        return indicadores_score_ajustados
+        
+    # Calcula o momentum fundamentalista baseado na taxa de crescimento da variável especificada.______________________________________________________________________________________________
+    def calcular_momentum_fundamentalista(df, coluna):
+        """
+        Calcula o momentum fundamentalista baseado na taxa de crescimento da variável especificada.
+    
+        Parâmetros:
+        - df: DataFrame contendo os valores financeiros da empresa.
+        - coluna: Nome da coluna a ser usada para calcular o momentum.
+    
+        Retorna:
+        - Uma série com o momentum fundamentalista normalizado.
+        """
+        if coluna not in df.columns or df[coluna].isnull().all():
+            return pd.Series(0, index=df.index)  # Retorna zero se não houver dados suficientes
+    
+        # Calcula a variação percentual entre anos consecutivos
+        momentum = df[coluna].pct_change()
+    
+        # Normaliza os valores
+        momentum_normalizado = z_score_normalize(momentum.fillna(0))
+    
+        return momentum_normalizado
+
+
+    # Função para ajustar os pesos macroeconômicos com base no segmento e fallback para setor _________________________________
+    def ajustar_pesos_macro(pesos, dados_macro, ano, setor, segmento):
+        if ano not in dados_macro.index:
+            return pesos
+    
+        selic = dados_macro.loc[ano, "selic"]
+        ipca = dados_macro.loc[ano, "ipca"]
+        cambio = dados_macro.loc[ano, "cambio"]
+        balanca_comercial = dados_macro.loc[ano, "balanca_comercial"]
+        icc = dados_macro.loc[ano, "icc"]
+        pib = dados_macro.loc[ano, "PIB"]
+        divida_publica = dados_macro.loc[ano, "divida_publica"]
+    
+        pesos_ajustados = pesos.copy()
+    
+        # --------------------- AJUSTES POR SEGMENTO ---------------------
+        if segmento in ["Exploração, Refino e Distribuição", "Minerais Metálicos", "Petroquímicos", "Siderurgia"]:
+            if cambio > dados_macro["cambio"].mean():
+                pesos_ajustados["Receita_Liquida_slope_log"]["peso"] *= 1.1
+            if balanca_comercial > dados_macro["balanca_comercial"].mean():
+                pesos_ajustados["Margem_Operacional_mean"]["peso"] *= 1.15
+    
+        elif segmento in ["Material de Transporte", "Material Rodoviário", "Máq. e Equip. Industriais"]:
+            if selic < 6:
+                pesos_ajustados["P/VP_mean"]["peso"] *= 1.15
+            if ipca > 0.07:
+                pesos_ajustados["ROIC_mean"]["peso"] *= 1.1
+    
+        elif segmento in ["Incorporações"]:
+            if selic > 10:
+                pesos_ajustados["Endividamento_Total_mean"]["peso"] *= 1.2
+            if icc < 0.07:
+                pesos_ajustados["Receita_Liquida_slope_log"]["peso"] *= 0.85
+    
+        elif segmento in ["Carnes e Derivados", "Agricultura"]:
+            if cambio > dados_macro["cambio"].mean():
+                pesos_ajustados["DY_mean"]["peso"] *= 1.2
+            if ipca > 0.07:
+                pesos_ajustados["Margem_Liquida_mean"]["peso"] *= 1.1
+    
+        elif segmento in ["Serviços Educacionais", "Serviços Médico - Hospitalares, Análises e Diagnósticos"]:
+            if pib > dados_macro["PIB"].mean():
+                pesos_ajustados["Lucro_Liquido_slope_log"]["peso"] *= 1.2
+    
+        elif segmento in ["Energia Elétrica"]:
+            if cambio > dados_macro["cambio"].mean():
+                pesos_ajustados["DY_mean"]["peso"] *= 1.15
+            if selic < 6:
+                pesos_ajustados["Liquidez_Corrente_mean"]["peso"] *= 1.1
+    
+        elif segmento in ["Bancos"]:
+            if selic > 10:
+                pesos_ajustados["DY_mean"]["peso"] *= 1.2
+            if divida_publica > dados_macro["divida_publica"].mean():
+                pesos_ajustados["P/VP_mean"]["peso"] *= 0.9
+    
+        elif segmento in ["Seguradoras"]:
+            if selic > 10:
+                pesos_ajustados["ROE_mean"]["peso"] *= 1.2
+    
+        # --------------------- FALLBACK PARA SETOR ---------------------
+        elif setor == "Financeiro":
+            if selic > 10:
+                pesos_ajustados["DY_mean"]["peso"] *= 1.2
+            if divida_publica > dados_macro["divida_publica"].mean():
+                pesos_ajustados["P/VP_mean"]["peso"] *= 0.9
+    
+        elif setor in ["Tecnologia da Informação"]:
+            if pib > dados_macro["PIB"].mean():
+                pesos_ajustados["Lucro_Liquido_slope_log"]["peso"] *= 1.2
+            if selic < 6:
+                pesos_ajustados["P/VP_mean"]["peso"] *= 1.1
+    
+        elif setor == "Energia":
+            if cambio > dados_macro["cambio"].mean():
+                pesos_ajustados["DY_mean"]["peso"] *= 1.2
+            if balanca_comercial > dados_macro["balanca_comercial"].mean():
+                pesos_ajustados["Liquidez_Corrente_mean"]["peso"] *= 1.1
+    
+        elif setor == "Industrial":
+            if ipca > 0.06:
+                pesos_ajustados["ROIC_mean"]["peso"] *= 1.1
+            if selic < 6:
+                pesos_ajustados["P/VP_mean"]["peso"] *= 1.1
+    
+        elif setor == "Consumo Cíclico":
+            if icc < 0.07:
+                pesos_ajustados["Receita_Liquida_slope_log"]["peso"] *= 0.85
+            if selic > 10:
+                pesos_ajustados["Endividamento_Total_mean"]["peso"] *= 1.15
+    
+        elif setor == "Consumo não Cíclico":
+            if ipca > 0.06:
+                pesos_ajustados["Margem_Operacional_mean"]["peso"] *= 1.1
+    
+        elif setor == "Materiais Básicos":
+            if cambio > dados_macro["cambio"].mean():
+                pesos_ajustados["Receita_Liquida_slope_log"]["peso"] *= 1.1
+            if balanca_comercial > dados_macro["balanca_comercial"].mean():
+                pesos_ajustados["Margem_Operacional_mean"]["peso"] *= 1.1
+    
+        elif setor == "Petróleo, Gás e Biocombustíveis":
+            if cambio > dados_macro["cambio"].mean():
+                pesos_ajustados["DY_mean"]["peso"] *= 1.1
+    
+        elif setor == "Saúde":
+            if pib > dados_macro["PIB"].mean():
+                pesos_ajustados["Lucro_Liquido_slope_log"]["peso"] *= 1.2
+    
+        elif setor == "Comunicações":
+            if icc > 0.08:
+                pesos_ajustados["Receita_Liquida_slope_log"]["peso"] *= 1.1
+    
+        elif setor == "Bens Industriais":
+            if selic < 6:
+                pesos_ajustados["ROIC_mean"]["peso"] *= 1.1
+    
+        elif setor == "Utilidade Pública":
+            if cambio > dados_macro["cambio"].mean():
+                pesos_ajustados["DY_mean"]["peso"] *= 1.1
+    
+        # 🔹 Ajuste geral baseado no PIB
+        if pib < dados_macro["PIB"].mean():
+            for key in pesos_ajustados:
+                pesos_ajustados[key]["peso"] *= 0.9
+    
+        return pesos_ajustados
+
     # Ajuste do score baseado nos pesos ajustados ______________________________________________________________________________________________________________________________________________
     def calcular_score_ajustado(df, pesos_utilizados):
         """
@@ -1350,14 +1423,19 @@ if pagina == "Avançada": #_____________________________________________________
                 df['Score_Ajustado'] += df[col + '_norm'] * cfg['peso']
     
         return df
+
         
     # Calcula o Score para cada empresa de acordo com o segmento que ela está inserido _________________________________________________________________________________________________________
-    def calcular_score_acumulado(lista_empresas, dados_macro, precos, anos_minimos=4):
+    def calcular_score_acumulado(lista_empresas, setores_empresa, segmento_empresa, pesos_utilizados, dados_macro, anos_minimos=4):
         """
         Calcula o Score Acumulado ao longo dos anos, considerando ajustes macroeconômicos e pesos específicos por segmento ou setor.
     
         Parâmetros:
         - lista_empresas: Lista contendo dados financeiros de cada empresa.
+        - setores_df: DataFrame com colunas ['ticker', 'SETOR', 'SEGMENTO'].
+        - pesos_por_segmento: Dicionário com pesos ajustados por segmento.
+        - pesos_por_setor: Dicionário com pesos ajustados por setor.
+        - indicadores_score_ajustados: Dicionário de fallback com pesos genéricos.
         - dados_macro: DataFrame com os indicadores macroeconômicos ao longo dos anos.
         - anos_minimos: Número mínimo de anos para iniciar o cálculo do score.
     
@@ -1370,37 +1448,6 @@ if pagina == "Avançada": #_____________________________________________________
     
         for idx in range(anos_minimos, len(anos_disponiveis)):
             ano = anos_disponiveis[idx]
-
-            # ------------------------------------------------------------------
-            # 1) Preparar dados de treino (até ano - 1)
-            # ------------------------------------------------------------------
-            X_train, y_train = preparar_dados_para_treino(lista_empresas, dados_macro, precos, ano)
-            
-            if X_train.empty:
-                # Se não tiver dados suficientes para treinar, pula
-                continue
-            # ------------------------------------------------------------------
-            # 2) Treinar modelo (RidgeCV) para esse "corte" de tempo
-            # ------------------------------------------------------------------
-            
-            scaler = StandardScaler()
-            X_train_scaled = scaler.fit_transform(X_train)
-
-            st.markdown(f"X_train shape:, {X_train_scaled.shape}")
-            st.markdown(f"y_train shape:, {y_train.shape}")
-            modelo = RidgeCV(alphas=[0.01, 0.1, 1.0, 10.0, 100.0], cv=5)
-            modelo.fit(X_train_scaled, y_train)
-            
-            # Pegamos os coeficientes aprendidos
-            pesos_coefs = modelo.coef_  
-            
-            # Se quiser ver qual alpha foi escolhido:
-            # alpha_escolhido = modelo.alpha_
-            
-            # ------------------------------------------------------------------
-            # 3) Gerar dados para CALCULAR o SCORE das empresas no "ano" atual
-            # ------------------------------------------------------------------
-                
             dados_ano = []
     
             for emp in lista_empresas:
@@ -1410,7 +1457,10 @@ if pagina == "Avançada": #_____________________________________________________
     
                 if df_mult.empty or df_dre.empty:
                     continue
-                               
+                        
+                # Ajustar com contexto macro
+                pesos_ajustados = ajustar_pesos_macro(pesos_utilizados, dados_macro, ano, setores_empresa, segmento_empresa)
+    
                 colunas_para_filtrar = [
                     'Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida',
                     'Divida_Total', 'Passivo_Circulante', 'Liquidez_Corrente',
@@ -1420,48 +1470,23 @@ if pagina == "Avançada": #_____________________________________________________
                 df_dre_corrigido = remover_outliers_iqr(df_dre, colunas_para_filtrar)
     
                 metricas = calcular_metricas_historicas_simplificadas(multiplos_corrigido, df_dre_corrigido)
-                
-                # Transformar metricas em DataFrame de 1 linha
-                X_ano_emp = pd.DataFrame([metricas])
-                
-                # Normaliza usando MESMO scaler treinado no X_train
-                X_ano_emp_scaled = scaler.transform(X_ano_emp)
-                
-                # ------------------------------------------------------------------
-                # 4) Aplica o modelo para obter "score" (previsão).
-                #    Se for regressão pura, o "score" é o y_pred
-                #    Se quiser só multiplicar pelos coeficientes, faz o dot.
-                # ------------------------------------------------------------------
-                # Exemplo 1: Usar a predição do modelo como Score
-                y_pred = modelo.predict(X_ano_emp_scaled)[0]
-                
-                # Exemplo 2: ou usar "dot" dos coeficientes
-                # score_linear = X_ano_emp_scaled.dot(pesos_coefs)
-                
-                row_dict = {
-                    'ticker': ticker,
-                    'Ano': ano,
-                    'Score_Ajustado': y_pred  # ou score_linear[0]
-                }
+                row_dict = {'ticker': ticker, 'Ano': ano}
+                row_dict.update(metricas)
+    
                 dados_ano.append(row_dict)
-            
-            # Cria df com scores desse ano
+    
             df_ano = pd.DataFrame(dados_ano)
             if df_ano.empty:
                 continue
-            
-            # Se quiser, você ainda pode chamar sua função de "calcular_score_ajustado"
-            # para penalizações adicionais, normalizações, etc.
-            df_ano = calcular_score_ajustado(df_ano, pesos_ajustados=None) # se quiser
     
+            df_ano = calcular_score_ajustado(df_ano, pesos_ajustados)
             df_resultados.append(df_ano[['Ano', 'ticker', 'Score_Ajustado']])
-        
-        # Concatena resultado de todos os anos
+    
         if df_resultados:
             df_scores = pd.concat(df_resultados, ignore_index=True)
         else:
             df_scores = pd.DataFrame(columns=['Ano', 'ticker', 'Score_Ajustado'])
-        
+    
         return df_scores
         
     # 📌 Baixando preços de fechamento das empresas ____________________________________________________________________________________________________________________________________________
@@ -1610,6 +1635,8 @@ if pagina == "Avançada": #_____________________________________________________
     
         return melhor_data, preco
 
+
+
     # Função responsável por determinar o melhor momento de venda da empresa que apresentou deterioração em seus fundamentos _____________________________________________________________________
     def validar_tendencia_saida(ticker, precos, data_aporte, janela_rsi=14, limite_rsi=70):
         if ticker not in precos.columns:
@@ -1699,7 +1726,8 @@ if pagina == "Avançada": #_____________________________________________________
     
         return df_patrimonio, datas_aportes
     
-    # Função para gerir o aporte mensal de todas as empresas do segmento sem estratégia __________________________________________________________________________________________________________ 
+
+    # Função para gerir o aporte mensal de todas as empresas do segmento sem estratégia 
     def gerir_carteira_todas_empresas(precos, tickers, datas_aportes, dividendos_dict, aporte_mensal=1000):
         """
         Realiza aportes mensais em todas as empresas filtradas e reinveste dividendos pagos no respectivo mês.
@@ -1765,6 +1793,8 @@ if pagina == "Avançada": #_____________________________________________________
         df_patrimonio_empresas.sort_index(inplace=True)
     
         return df_patrimonio_empresas
+
+
     
     # 📌 Função para calcular o patrimônio acumulado no Tesouro Selic ________________________________________________________________________________________________________________________
     def calcular_patrimonio_selic_macro(dados_macro, datas_aportes, aporte_mensal=1000):
@@ -1936,14 +1966,547 @@ if pagina == "Avançada": #_____________________________________________________
                             'multiplos': multiplos,
                             'df_dre': df_dre
                         })
-                                                          
-    # ======================================= FOI ELIMINADO A DETERMINAÇÃO DE PESOS ARBITRÁRIOS POR MACHINE LEARNING =========================================================
+               
+                    # ================================================
+                    # DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE BASEADO NO SETOR DA EMPRESA
+                    # ================================================
+                    pesos_por_setor = {
+                        "Financeiro": {
+                            'ROE_mean': {'peso': 0.30, 'melhor_alto': True},  
+                            'P/VP_mean': {'peso': 0.20, 'melhor_alto': False},  
+                            'DY_mean': {'peso': 0.15, 'melhor_alto': True},  
+                            'Endividamento_Total_mean': {'peso': 0.05, 'melhor_alto': False},  
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},  
+                            'Margem_Liquida_mean': {'peso': 0.10, 'melhor_alto': True},  
+                            'Lucro_Liquido_slope_log': {'peso': 0.10, 'melhor_alto': True},  
+                        },
+                        "Tecnologia da Informação": {
+                            'Margem_Liquida_mean': {'peso': 0.08, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.12, 'melhor_alto': True},
+                            'ROE_mean': {'peso': 0.08, 'melhor_alto': True},
+                            'ROA_mean': {'peso': 0.05, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'P/VP_mean': {'peso': 0.05, 'melhor_alto': False},
+                            'DY_mean': {'peso': 0.03, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.05, 'melhor_alto': False},
+                            'Alavancagem_Financeira_mean': {'peso': 0.05, 'melhor_alto': False},
+                            'Liquidez_Corrente_mean': {'peso': 0.05, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.14, 'melhor_alto': True},
+                            'Patrimonio_Liquido_slope_log': {'peso': 0.05, 'melhor_alto': True},
+                            'Divida_Liquida_slope_log': {'peso': 0.02, 'melhor_alto': False},
+                            'Caixa_Liquido_slope_log': {'peso': 0.05, 'melhor_alto': True},
+                        },
+                        "Energia": {
+                            'Margem_Liquida_mean': {'peso': 0.07, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'ROE_mean': {'peso': 0.06, 'melhor_alto': True},
+                            'ROA_mean': {'peso': 0.05, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.05, 'melhor_alto': True},
+                            'P/VP_mean': {'peso': 0.04, 'melhor_alto': False},
+                            'DY_mean': {'peso': 0.18, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                            'Alavancagem_Financeira_mean': {'peso': 0.05, 'melhor_alto': False},
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.04, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.06, 'melhor_alto': True},
+                            'Patrimonio_Liquido_slope_log': {'peso': 0.02, 'melhor_alto': True},
+                            'Divida_Liquida_slope_log': {'peso': 0.02, 'melhor_alto': False},
+                            'Caixa_Liquido_slope_log': {'peso': 0.06, 'melhor_alto': True},
+                        },
+                        "Industrial": {
+                            'Margem_Liquida_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'ROE_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'ROA_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'P/VP_mean': {'peso': 0.10, 'melhor_alto': False},
+                            'DY_mean': {'peso': 0.05, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                            'Alavancagem_Financeira_mean': {'peso': 0.05, 'melhor_alto': False},
+                            'Liquidez_Corrente_mean': {'peso': 0.05, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.10, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.10, 'melhor_alto': True},
+                            'Patrimonio_Liquido_slope_log': {'peso': 0.05, 'melhor_alto': True},
+                            'Divida_Liquida_slope_log': {'peso': 0.05, 'melhor_alto': False},
+                            'Caixa_Liquido_slope_log': {'peso': 0.05, 'melhor_alto': True},  
+                        },
+                        "Consumo Cíclico": {
+                            'Margem_Liquida_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'ROE_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'ROA_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'P/VP_mean': {'peso': 0.10, 'melhor_alto': False},
+                            'DY_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                            'Alavancagem_Financeira_mean': {'peso': 0.05, 'melhor_alto': False},
+                            'Liquidez_Corrente_mean': {'peso': 0.05, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.10, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.10, 'melhor_alto': True},
+                            'Patrimonio_Liquido_slope_log': {'peso': 0.05, 'melhor_alto': True},
+                            'Divida_Liquida_slope_log': {'peso': 0.05, 'melhor_alto': False},
+                            'Caixa_Liquido_slope_log': {'peso': 0.05, 'melhor_alto': True},  
+                        },
+                        "Consumo não Cíclico": {
+                            'Margem_Liquida_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'ROE_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'ROA_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'P/VP_mean': {'peso': 0.10, 'melhor_alto': False},
+                            'DY_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.05, 'melhor_alto': False},
+                            'Alavancagem_Financeira_mean': {'peso': 0.05, 'melhor_alto': False},
+                            'Liquidez_Corrente_mean': {'peso': 0.05, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.10, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.10, 'melhor_alto': True},
+                            'Patrimonio_Liquido_slope_log': {'peso': 0.05, 'melhor_alto': True},
+                            'Divida_Liquida_slope_log': {'peso': 0.05, 'melhor_alto': False},
+                            'Caixa_Liquido_slope_log': {'peso': 0.05, 'melhor_alto': True},  
+                        },
+                        "Materiais Básicos": {
+                            'Margem_Liquida_mean': {'peso': 0.08, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'ROE_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'ROA_mean': {'peso': 0.05, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.08, 'melhor_alto': True},
+                            'P/VP_mean': {'peso': 0.07, 'melhor_alto': False},
+                            'DY_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.06, 'melhor_alto': False},
+                            'Alavancagem_Financeira_mean': {'peso': 0.05, 'melhor_alto': False},
+                            'Liquidez_Corrente_mean': {'peso': 0.05, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.08, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.08, 'melhor_alto': True},
+                            'Patrimonio_Liquido_slope_log': {'peso': 0.05, 'melhor_alto': True},
+                            'Divida_Liquida_slope_log': {'peso': 0.04, 'melhor_alto': False},
+                            'Caixa_Liquido_slope_log': {'peso': 0.01, 'melhor_alto': True}, 
+                        },
+                        "Petróleo, Gás e Biocombustíveis": {
+                            'DY_mean': {'peso': 0.35, 'melhor_alto': True},  
+                            'Margem_Operacional_mean': {'peso': 0.25, 'melhor_alto': True},  
+                            'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},  
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},  
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},  
+                        },
+                        "Saúde": {
+                            'Receita_Liquida_slope_log': {'peso': 0.25, 'melhor_alto': True},  
+                            'Lucro_Liquido_slope_log': {'peso': 0.25, 'melhor_alto': True},  
+                            'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},  
+                            'ROE_mean': {'peso': 0.15, 'melhor_alto': True},  
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},  
+                        },
+                        "Comunicações": {
+                            'Margem_Liquida_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'ROE_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'ROA_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'P/VP_mean': {'peso': 0.05, 'melhor_alto': False},
+                            'DY_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                            'Alavancagem_Financeira_mean': {'peso': 0.05, 'melhor_alto': False},
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.10, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.10, 'melhor_alto': True},
+                            'Patrimonio_Liquido_slope_log': {'peso': 0.05, 'melhor_alto': True},
+                            'Divida_Liquida_slope_log': {'peso': 0.05, 'melhor_alto': False},
+                            'Caixa_Liquido_slope_log': {'peso': 0.05, 'melhor_alto': True},
+                        },
+                        "Bens Industriais": {
+                             'Margem_Operacional_mean': {'peso': 0.25, 'melhor_alto': True},  
+                            'ROIC_mean': {'peso': 0.25, 'melhor_alto': True},  
+                            'Receita_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': True},  
+                            'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},  
+                            'P/VP_mean': {'peso': 0.10, 'melhor_alto': False},  
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},  
+                        },
+                        "Utilidade Pública": {
+                            'Margem_Liquida_mean': {'peso': 0.07, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'ROE_mean': {'peso': 0.05, 'melhor_alto': True},
+                            'ROA_mean': {'peso': 0.03, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.05, 'melhor_alto': True},
+                            'P/VP_mean': {'peso': 0.05, 'melhor_alto': False},
+                            'DY_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                            'Alavancagem_Financeira_mean': {'peso': 0.08, 'melhor_alto': False},
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.03, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.05, 'melhor_alto': True},
+                            'Patrimonio_Liquido_slope_log': {'peso': 0.02, 'melhor_alto': True},
+                            'Divida_Liquida_slope_log': {'peso': 0.04, 'melhor_alto': False},
+                            'Caixa_Liquido_slope_log': {'peso': 0.03, 'melhor_alto': True},
+                                            
+                        },
+                    }
+
+                    # ================================================
+                    # DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE GENÉRICO
+                    # ================================================
+                    
+                    indicadores_score = {
+                        'Margem_Liquida_mean': {'peso': 0.15, 'melhor_alto': True},
+                        'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},
+                        'ROE_mean': {'peso': 0.20, 'melhor_alto': True},
+                        'ROA_mean': {'peso': 0.20, 'melhor_alto': True},
+                        'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},
+                        'P/VP_mean': {'peso': 0.10, 'melhor_alto': False},
+                        'DY_mean': {'peso': 0.30, 'melhor_alto': True},
+                        'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                        'Alavancagem_Financeira_mean': {'peso': 0.15, 'melhor_alto': False},
+                        'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                        'Receita_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                        'Lucro_Liquido_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                        'Patrimonio_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                        'Divida_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': False},
+                        'Caixa_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                    }
+
+                    # ================================================
+                    # DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE BASEADO NO SEGMENTO
+                    # ================================================
+
+                    pesos_por_segmento = {
+                                       
+                        # __________________________________ Bens Materiais ______________________________________________________________
+                         
+                        "Material de Transporte": {
+                            'ROIC_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'P/VP_mean': {'peso': 0.10, 'melhor_alto': False},
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                        },                        
+                        "Produtos para Construção": {
+                            'Margem_Operacional_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},
+                        },
+                        "Material Aeronáutico e de Defesa": {
+                            'ROIC_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'ROE_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                        },
+                        "Material Rodoviário": {
+                            'ROIC_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                        },
+                        "Máq. e Equip. Industriais": {
+                            'ROIC_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                        },
+                        "Serviços Diversos": {
+                            'Receita_Liquida_slope_log': {'peso': 0.25, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.25, 'melhor_alto': True},
+                            'ROE_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                        },
+                        "Exploração de Rodovias": {
+                            'DY_mean': {'peso': 0.30, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                        },
+                        "Serviços de Apoio e Armazenagem": {
+                            'Receita_Liquida_slope_log': {'peso': 0.25, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'ROE_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.10, 'melhor_alto': True},
+                        },
+                        "Transporte Hidroviário": {
+                            'ROIC_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                            'Lucro_Liquido_slope_log': {'peso': 0.10, 'melhor_alto': True},
+                        },
+
+                        # __________________________________ Comunicações ______________________________________________________________
+
+                        "Telecomunicações": {
+                            'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},  # Eficiência operacional é chave
+                            'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},  # Eficiência no uso de capital investido
+                            'Receita_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': True},  # Crescimento de receita
+                            'DY_mean': {'peso': 0.15, 'melhor_alto': True},  # Empresas maduras com dividendos atrativos
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},  # Sensibilidade ao endividamento
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},  # Capacidade de pagar obrigações
+                            'Lucro_Liquido_slope_log': {'peso': 0.10, 'melhor_alto': True},  # Estabilidade no lucro ao longo do tempo
+                        },        
+
+                        # __________________________________ Consumo Cíclico ______________________________________________________________
+
+                        "Automóveis e Motocicletas": {
+                            'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                            'DY_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.10, 'melhor_alto': True},
+                        },
+                        "Incorporações": {
+                            'Endividamento_Total_mean': {'peso': 0.20, 'melhor_alto': False},
+                            'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'ROE_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'P/VP_mean': {'peso': 0.10, 'melhor_alto': False},
+                            'Lucro_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.10, 'melhor_alto': True},
+                        },
+                        "Serviços Educacionais": {
+                            'Lucro_Liquido_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'P/VP_mean': {'peso': 0.10, 'melhor_alto': False},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                        },
+                        "Calçados": {
+                            'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.10, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                            'P/VP_mean': {'peso': 0.10, 'melhor_alto': False},
+                        },
+                        "Fios e Tecidos": {
+                            'Margem_Liquida_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'ROE_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                            'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.10, 'melhor_alto': True},
+                            'P/VP_mean': {'peso': 0.10, 'melhor_alto': False},
+                        },
+
+                        # __________________________________ Consumo não Cíclico ___________________________________________________________
+
+                        "Agricultura": {
+                            "Receita_Liquida_slope_log": {"peso": 0.20, "melhor_alto": True},
+                            "Lucro_Liquido_slope_log": {"peso": 0.20, "melhor_alto": True},
+                            "ROIC_mean": {"peso": 0.15, "melhor_alto": True},
+                            "Margem_Operacional_mean": {"peso": 0.15, "melhor_alto": True},
+                            "Liquidez_Corrente_mean": {"peso": 0.10, "melhor_alto": True},
+                            "Endividamento_Total_mean": {"peso": 0.10, "melhor_alto": False},
+                            "DY_mean": {"peso": 0.10, "melhor_alto": True}
+                        },
+                        "Carnes e Derivados": {
+                            'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},       # Eficiência operacional é crucial
+                            'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},                     # Retorno sobre o capital empregado
+                            'Receita_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': True},    # Crescimento de receita é importante
+                            'Lucro_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},      # Sustentação do lucro
+                            'DY_mean': {'peso': 0.10, 'melhor_alto': True},                       # Dividendos são atrativos no setor
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},       # Gestão de capital de giro é crítica
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},    # Monitoramento da dívida
+                        },
+
+                        # __________________________________ Financeiro ____________________________________________________________________
+
+                        "Exploração de Imóveis": {
+                            'P/VP_mean': {'peso': 0.25, 'melhor_alto': False},
+                            'ROE_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                            'Margem_Liquida_mean': {'peso': 0.10, 'melhor_alto': True},
+                        },
+                        "Intermediação Imobiliária": {
+                            'Receita_Liquida_slope_log': {'peso': 0.25, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.25, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                        },
+                        "Bancos": {
+                            'ROE_mean': {'peso': 0.30, 'melhor_alto': True},
+                            'P/VP_mean': {'peso': 0.20, 'melhor_alto': False},
+                            'DY_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Margem_Liquida_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.10, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.05, 'melhor_alto': False},
+                        },
+                        "Seguradoras": {
+                            'ROE_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'P/VP_mean': {'peso': 0.20, 'melhor_alto': False},
+                            'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Margem_Liquida_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.05, 'melhor_alto': False},
+                        },
+
+                        # __________________________________ Materiais Básicos ______________________________________________________________
+
+                        "Madeira": {
+                            'ROIC_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                        },
+                        "Papel e Celulose": {
+                            'Margem_Operacional_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                        },
+                        "Minerais Metálicos": {
+                            'ROE_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},
+                        },
+                        "Fertilizantes e Defensivos": {
+                            'Receita_Liquida_slope_log': {'peso': 0.25, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.25, 'melhor_alto': True},
+                            'Margem_Liquida_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'ROE_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                        },
+                        "Petroquímicos": {
+                            'Margem_Operacional_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},
+                        },
+                        "Artefatos de Ferro e Aço": {
+                            'ROE_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                            'P/VP_mean': {'peso': 0.10, 'melhor_alto': False},
+                        },
+                        "Siderurgia": {
+                            'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                        },
+                        "Artefatos de Cobre": {
+                            'ROIC_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'ROE_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.10, 'melhor_alto': True},
+                        },           
+
+                     # __________________________________ Petróleo, Gás e Biocombustíveis ________________________________________________
+
+                        "Exploração, Refino e Distribuição": {
+                            'ROIC_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},
+                        },
+                        "Equipamentos e Serviços": {
+                            'ROIC_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                            'Receita_Liquida_slope_log': {'peso': 0.10, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},
+                        },          
+
+                     # __________________________________ Saúde ___________________________________________________________________________
+
+                        "Medicamentos e Outros Produtos": {
+                            'Margem_Liquida_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'ROE_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.10, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                            'Liquidez_Corrente_mean': {'peso': 0.15, 'melhor_alto': True},
+                        },
+                        "Serviços Médico - Hospitalares, Análises e Diagnósticos": {
+                            'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.20, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.15, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.15, 'melhor_alto': False},
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.10, 'melhor_alto': True},
+                        },
+
+                        # __________________________________ Tecnologia da Informação ________________________________________________________
+
+                        "Programas e Serviços": {
+                            'Receita_Liquida_slope_log': {'peso': 0.25, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.25, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'DY_mean': {'peso': 0.05, 'melhor_alto': True},
+                            'P/VP_mean': {'peso': 0.05, 'melhor_alto': False},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                        },
+
+                        # __________________________________ Utilidade Pública ______________________________________________________________
+
+                        "Energia Elétrica": {
+                            'DY_mean': {'peso': 0.30, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                            'Lucro_Liquido_slope_log': {'peso': 0.10, 'melhor_alto': True},
+                            'P/VP_mean': {'peso': 0.05, 'melhor_alto': False},
+                        },
+                        "Água e Saneamento": {
+                            'DY_mean': {'peso': 0.25, 'melhor_alto': True},
+                            'Margem_Operacional_mean': {'peso': 0.20, 'melhor_alto': True},
+                            'ROIC_mean': {'peso': 0.15, 'melhor_alto': True},
+                            'Endividamento_Total_mean': {'peso': 0.10, 'melhor_alto': False},
+                            'Liquidez_Corrente_mean': {'peso': 0.10, 'melhor_alto': True},
+                            'Lucro_Liquido_slope_log': {'peso': 0.10, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log': {'peso': 0.10, 'melhor_alto': True},
+                        },
+                    }
+
+                    segmento_empresa = obter_segmento_da_empresa(ticker, empresas_filtradas)
+                    setor_empresa = obter_setor_da_empresa(ticker, empresas_filtradas)
+                    
+                    pesos_utilizados = pesos_por_segmento.get(segmento_empresa) or pesos_por_setor.get(setor_empresa, indicadores_score)
                     
                     # Baixar preços
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
-                                   
+                    
                     # Escores das empresas de acordo com segmento e tipo de empresa
-                    df_scores = calcular_score_acumulado(lista_empresas, dados_macro, precos, anos_minimos=4)
+                    df_scores = calcular_score_acumulado(lista_empresas, setor_empresa, segmento_empresa, pesos_utilizados, dados_macro, anos_minimos=4)
                                                                                   
                     # Determinar líderes
                     lideres_por_ano = determinar_lideres(df_scores)             
