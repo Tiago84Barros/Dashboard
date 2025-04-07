@@ -1212,24 +1212,7 @@ if pagina == "Avançada": #_____________________________________________________
         setor = setores_df.loc[setores_df['ticker'] == ticker, 'SETOR']
         return setor.iloc[0] if not setor.empty else "Setor Desconhecido"
 
-    # 🔹 Função para obter o setor de uma empresa a partir do DataFrame de Segmento ________________________________________________________________________________________________________________   
-    def obter_segmento_da_empresa(ticker, df_empresas):
-        """
-        Retorna o segmento de uma empresa com base no ticker.
-        
-        Parâmetros:
-        - ticker: str, ticker da empresa (ex: 'PETR3')
-        - df_empresas: DataFrame contendo as colunas ['ticker', 'SEGMENTO']
-        
-        Retorna:
-        - str: nome do segmento, ou 'Desconhecido' se não encontrar
-        """
-        try:
-            segmento = df_empresas.loc[df_empresas['ticker'] == ticker, 'SEGMENTO'].values[0]
-            return segmento
-        except (IndexError, KeyError):
-            return 'Desconhecido'
-         
+            
     # Calcula o momentum fundamentalista baseado na taxa de crescimento da variável especificada.______________________________________________________________________________________________
     def calcular_momentum_fundamentalista(df, coluna):
         """
@@ -1400,8 +1383,8 @@ if pagina == "Avançada": #_____________________________________________________
                     continue
                         
                 # Ajustar com contexto macro
-                #pesos_ajustados = ajustar_pesos_macro(pesos_utilizados, dados_macro, ano, setores_empresa)
-                pesos_ajustados = pesos_utilizados
+                pesos_ajustados = ajustar_pesos_macro(pesos_utilizados, dados_macro, ano, setores_empresa)
+                #pesos_ajustados = pesos_utilizados
     
                 colunas_para_filtrar = [
                     'Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida',
