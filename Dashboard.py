@@ -1226,7 +1226,7 @@ if pagina == "Avançada": #_____________________________________________________
             dados_macro["Data"] = pd.to_datetime(dados_macro["Data"])
             # não faz set_index("Data"), pois depois queremos usar a col 'Ano'
             dados_macro["Ano"]  = dados_macro["Data"].dt.year
-    
+ 
         # 2) Ajustar preco: garantir que "Date" é datetime e criar "Ano" (se wide)
         # ------------------------------------------------------------------------
         preco = preco.copy()
@@ -1244,11 +1244,13 @@ if pagina == "Avançada": #_____________________________________________________
         else:
             preco["Date"] = pd.to_datetime(preco["Date"])
             preco["Ano"]  = preco["Date"].dt.year
+            st.markdown("valores dos preços da açao")
+            st.dataframe(preco)
         
        # st.write("## preco.columns depois:", preco.columns.tolist())
     
-        X = []
-        y = []
+        X = [] # Entradas
+        y = [] # Saída
         
         for emp in lista_empresas:
             ticker = emp['ticker']
@@ -1256,6 +1258,9 @@ if pagina == "Avançada": #_____________________________________________________
             # 3) Pega df_mult e df_dre até ano-1, gera métricas
             df_mult = emp['multiplos'][emp['multiplos']['Ano'] < ano].copy()
             df_dre  = emp['df_dre'][emp['df_dre']['Ano'] < ano].copy()
+
+            st.markdown("Multiplos para todos anos menor que ano mínimo")
+            st.dataframe(df_mult)
 
             if df_mult.empty or df_dre.empty:
                 continue
@@ -1268,12 +1273,17 @@ if pagina == "Avançada": #_____________________________________________________
             ]
             multiplos_corrigido = remover_outliers_iqr(df_mult, colunas_para_filtrar)
             df_dre_corrigido    = remover_outliers_iqr(df_dre, colunas_para_filtrar)
+            st.markdown("Multiplos corrigido para retirada de outliers")
+            st.dataframe(df_mult)
             
             metricas = calcular_metricas_historicas_simplificadas(multiplos_corrigido, df_dre_corrigido)
+            st.markdown("Métricas com os valores de média, desvio padrão entre outros)
+            st.write(metricas)
                         
             # 4) Injetar dados macro (ex.: média até ano-1)
             if "Ano" in dados_macro.columns:
                 df_macro_ate_ano = dados_macro[dados_macro["Ano"] < ano]
+                
                 if not df_macro_ate_ano.empty:
                     macro_atual = df_macro_ate_ano.mean(numeric_only=True)
                     metricas['macro_selic'] = macro_atual.get('Selic', None)
@@ -1281,7 +1291,9 @@ if pagina == "Avançada": #_____________________________________________________
                 else:
                     metricas['macro_selic'] = None
                     metricas['macro_ipca']  = None
-            
+            st.markdown("Insere em métricas parâmetros macroeconômicos")
+            st.write(metricas)
+        
             # 5) PEGAR PREÇO/RETORNO das AÇÕES - wide format
             # -----------------------------------------------
             # Precisamos criar a col "Retorno_12m_ticker" se não existir
@@ -1306,11 +1318,14 @@ if pagina == "Avançada": #_____________________________________________________
                 continue
             
             retorno_futuro = retorno_colunas.iloc[-1]   # y
+            st.markdown(f"Esse será o valor do Y_train {retorno_futuro}")
             # Podemos também extrair o Preco final
             preco_final = df_preco_ano[ticker].dropna().iloc[-1] if not df_preco_ano[ticker].dropna().empty else None
             
             # Salva no dicionário de features
             metricas['preco_ano_anterior'] = preco_final
+            st.markdown("Insere os valores do preço também em métricas para ser usado como entrada")
+            st.write(metricas)
             
             # 6) Monta X e y
             X.append(metricas)
