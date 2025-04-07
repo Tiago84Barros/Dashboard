@@ -1160,7 +1160,7 @@ if pagina == "Avançada": #_____________________________________________________
         # Converter Data -> Ano
         df_mult['Ano'] = pd.to_datetime(df_mult['Data'], errors='coerce').dt.year
         df_dre['Ano']  = pd.to_datetime(df_dre['Data'], errors='coerce').dt.year
-        st.dataframe(df_mult)
+       
         # Ordenar por Ano
         df_mult.sort_values('Ano', inplace=True)
         df_dre.sort_values('Ano', inplace=True)
@@ -1270,8 +1270,7 @@ if pagina == "Avançada": #_____________________________________________________
             df_dre_corrigido    = remover_outliers_iqr(df_dre, colunas_para_filtrar)
             
             metricas = calcular_metricas_historicas_simplificadas(multiplos_corrigido, df_dre_corrigido)
-            st.dataframe(metricas)
-            
+                        
             # 4) Injetar dados macro (ex.: média até ano-1)
             if "Ano" in dados_macro.columns:
                 df_macro_ate_ano = dados_macro[dados_macro["Ano"] < ano]
@@ -1354,7 +1353,7 @@ if pagina == "Avançada": #_____________________________________________________
     # Calcula o Score para cada empresa de acordo com o segmento que ela está inserido _________________________________________________________________________________________________________
     def calcular_score_acumulado(lista_empresas, dados_macro, precos, anos_minimos=4):
         """
-        Calcula o Score Acumulado ao longo dos anos, considerando ajustes macroeconômicos e pesos específicos por segmento ou setor.
+        Calcula o Score Acumulado ao longo dos anos, considerando ajustes macroeconômicos e pesos específicos determinados em uma abordagem de aprendizagem de máquina
     
         Parâmetros:
         - lista_empresas: Lista contendo dados financeiros de cada empresa.
