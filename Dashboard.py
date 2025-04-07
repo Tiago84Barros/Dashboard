@@ -1205,65 +1205,72 @@ if pagina == "Avançada": #_____________________________________________________
         Monta o dataset de treinamento (X_train, y_train) usando os dados até (ano - 1).
         
         - lista_empresas: lista de dicionários, cada emp tem 'ticker', 'multiplos', 'df_dre'.
-        - dados_macro: DataFrame, possuindo col 'Data' (datetimes), e ex.: ['Selic','Cambio','IPCA','ICC','PIB','BALANÇA_COMERCIAL']
+        - dados_macro: DataFrame, possuindo col 'Data' (datetimes) e ex.: ['Selic','Cambio','IPCA','ICC','PIB','BALANÇA_COMERCIAL'].
         - preco: DataFrame wide, colunas ['Date','OIBR3','VIVT3', ...]
         - ano: int (usamos dados até ano-1).
         
         Retorna:
-        --------
-        (X_train, y_train): DataFrame e Series com as features e o alvo.
+            X_train (DataFrame) e y_train (Series) com as features e o alvo.
         """
-       
-        # 1) Ajustar dados_macro: garantir que "Data" é datetime e criar "Ano"
-        # --------------------------------------------------------------------
-        dados_macro = dados_macro.copy()  # para não alterar o original
-        #st.write("## dados_macro.columns:", dados_macro.columns.tolist())  # debug
+        
+        st.markdown("## Iniciando preparação dos dados de treinamento")
+        
+        # 1) Ajustar dados_macro: converter 'Data' em datetime e criar 'Ano'
+        dados_macro = dados_macro.copy()
+        st.markdown("### Dados Macro - Colunas Originais:")
+        st.write(dados_macro.columns.tolist())
         
         if "Data" not in dados_macro.columns:
             st.error("A coluna 'Data' não existe em dados_macro!")
-            # ou raise Exception("Coluna 'Data' não existe")
+            return pd.DataFrame(), pd.Series()
         else:
-            dados_macro["Data"] = pd.to_datetime(dados_macro["Data"])
-            # não faz set_index("Data"), pois depois queremos usar a col 'Ano'
+            dados_macro["Data"] = pd.to_datetime(dados_macro["Data"], errors="coerce")
             dados_macro["Ano"]  = dados_macro["Data"].dt.year
- 
-        # 2) Ajustar preco: garantir que "Date" é datetime e criar "Ano" (se wide)
-        # ------------------------------------------------------------------------
-        preco = preco.copy()
-       # st.write("## preco.columns antes:", preco.columns.tolist())
+            st.markdown("### Dados Macro - Preview após conversão:")
+            st.dataframe(dados_macro.head())
         
-        # Se o "Date" estiver no índice, mas chamamos "reset_index()"
-        # Ajuste conforme seu real design. Ex:
+        # 2) Ajustar preco: converter 'Date' em datetime e criar 'Ano'
+        preco = preco.copy()
+        st.markdown("### Preços - Colunas Originais:")
+        st.write(preco.columns.tolist())
+        
+        # Se o índice estiver com nome "Date", reseta
         if preco.index.name == "Date":
             preco.reset_index(inplace=True)
+            st.markdown("Índice reseteado; Preview dos Preços:")
+            st.dataframe(preco.head())
         
-        # agora assumimos "Date" seja uma coluna real
         if "Date" not in preco.columns:
             st.error("A coluna 'Date' não existe em preco!")
-            # raise Exception("Coluna 'Date' não existe")
+            return pd.DataFrame(), pd.Series()
         else:
-            preco["Date"] = pd.to_datetime(preco["Date"])
+            preco["Date"] = pd.to_datetime(preco["Date"], errors="coerce")
             preco["Ano"]  = preco["Date"].dt.year
-            st.markdown("valores dos preços da açao")
-            st.dataframe(preco)
+            st.markdown("### Preços - Preview após conversão:")
+            st.dataframe(preco.head())
         
-       # st.write("## preco.columns depois:", preco.columns.tolist())
-    
-        X = [] # Entradas
-        y = [] # Saída
+        X = []  # lista de dicionários com features
+        y = []  # lista de alvos
         
+        st.markdown("## Processando cada empresa")
         for emp in lista_empresas:
             ticker = emp['ticker']
-    
-            # 3) Pega df_mult e df_dre até ano-1, gera métricas
+            st.markdown(f"**Processando empresa: {ticker}**")
+            
+            # 3) Filtrar dados financeiros até (ano - 1)
             df_mult = emp['multiplos'][emp['multiplos']['Ano'] < ano].copy()
             df_dre  = emp['df_dre'][emp['df_dre']['Ano'] < ano].copy()
-
-            st.markdown("Multiplos para todos anos menor que ano mínimo")
-            st.dataframe(df_mult)
-
+            
+            st.markdown(f"**{ticker} - df_mult shape:** {df_mult.shape}")
+            st.markdown(f"**{ticker} - df_dre shape:** {df_dre.shape}")
+            
             if df_mult.empty or df_dre.empty:
+                st.warning(f"{ticker} pulado por falta de dados (df_mult ou df_dre vazio).")
                 continue
+            
+            # Exibir preview dos dados
+            st.markdown(f"**{ticker} - Preview df_mult:**")
+            st.dataframe(df_mult.head())
             
             # Remoção de outliers e cálculo de métricas
             colunas_para_filtrar = [
@@ -1273,17 +1280,19 @@ if pagina == "Avançada": #_____________________________________________________
             ]
             multiplos_corrigido = remover_outliers_iqr(df_mult, colunas_para_filtrar)
             df_dre_corrigido    = remover_outliers_iqr(df_dre, colunas_para_filtrar)
-            st.markdown("Multiplos corrigido para retirada de outliers")
-            st.dataframe(df_mult)
             
+            st.markdown(f"**{ticker} - Preview multiplos_corrigido:**")
+            st.dataframe(multiplos_corrigido.head())
+            
+            # Calcula métricas históricas
             metricas = calcular_metricas_historicas_simplificadas(multiplos_corrigido, df_dre_corrigido)
-            st.markdown("Métricas com os valores de média, desvio padrão entre outros)
-            st.write(metricas)
-                        
-            # 4) Injetar dados macro (ex.: média até ano-1)
+            st.markdown(f"**{ticker} - Métricas calculadas:**")
+            st.json(metricas)
+            
+            # 4) Injetar dados macro: filtra dados até (ano - 1) e pega média
             if "Ano" in dados_macro.columns:
                 df_macro_ate_ano = dados_macro[dados_macro["Ano"] < ano]
-                
+                st.markdown(f"**Dados Macro filtrados (< {ano}) - shape:** {df_macro_ate_ano.shape}")
                 if not df_macro_ate_ano.empty:
                     macro_atual = df_macro_ate_ano.mean(numeric_only=True)
                     metricas['macro_selic'] = macro_atual.get('Selic', None)
@@ -1291,48 +1300,59 @@ if pagina == "Avançada": #_____________________________________________________
                 else:
                     metricas['macro_selic'] = None
                     metricas['macro_ipca']  = None
-            st.markdown("Insere em métricas parâmetros macroeconômicos")
-            st.write(metricas)
-        
-            # 5) PEGAR PREÇO/RETORNO das AÇÕES - wide format
-            # -----------------------------------------------
-            # Precisamos criar a col "Retorno_12m_ticker" se não existir
-            # Lembrando que preco[ticker] é a coluna do ticker
+                st.markdown(f"**{ticker} - Métricas após injeção macro:**")
+                st.json(metricas)
+            else:
+                st.warning("dados_macro não contém a coluna 'Ano'.")
+            
+            # 5) Recuperar preço/retorno das ações - formato wide
             if ticker not in preco.columns:
                 st.warning(f"Ticker {ticker} não existe em preco.columns!")
                 continue
             
-            # Cria col Retorno_12m_<ticker>, se não existir
+            # Cria coluna de retorno, se necessário
             col_ret = f"Retorno_12m_{ticker}"
             if col_ret not in preco.columns:
                 preco[col_ret] = preco[ticker].pct_change(252)
+                st.markdown(f"**{ticker} - Coluna {col_ret} criada via pct_change(252).**")
             
-            # Filtra (ano-1)
+            # Filtrar o DataFrame preco para o ano (ano - 1)
             df_preco_ano = preco[preco["Ano"] == (ano - 1)].copy()
+            st.markdown(f"**{ticker} - df_preco_ano shape:** {df_preco_ano.shape}")
             if df_preco_ano.empty:
+                st.warning(f"{ticker} pulado por não ter dados de preço no ano {ano - 1}.")
                 continue
             
-            # Ex pega o último registro do ano
             retorno_colunas = df_preco_ano[col_ret].dropna()
             if retorno_colunas.empty:
+                st.warning(f"{ticker} pulado por não ter retorno calculado.")
                 continue
             
-            retorno_futuro = retorno_colunas.iloc[-1]   # y
-            st.markdown(f"Esse será o valor do Y_train {retorno_futuro}")
-            # Podemos também extrair o Preco final
-            preco_final = df_preco_ano[ticker].dropna().iloc[-1] if not df_preco_ano[ticker].dropna().empty else None
+            retorno_futuro = retorno_colunas.iloc[-1]
+            st.markdown(f"**{ticker} - Retorno Futuro (y):** {retorno_futuro}")
             
-            # Salva no dicionário de features
-            metricas['preco_ano_anterior'] = preco_final
-            st.markdown("Insere os valores do preço também em métricas para ser usado como entrada")
-            st.write(metricas)
+            # Opcional: extrair o preço final do ano
+            if ticker in df_preco_ano.columns:
+                preco_final = df_preco_ano[ticker].dropna().iloc[-1] if not df_preco_ano[ticker].dropna().empty else None
+                metricas['preco_ano_anterior'] = preco_final
+                st.markdown(f"**{ticker} - Preço final do ano adicionado às métricas:** {preco_final}")
+            else:
+                st.warning(f"Ticker {ticker} não encontrado em df_preco_ano.")
             
-            # 6) Monta X e y
+            st.markdown(f"**{ticker} - Métricas Final (entrada):**")
+            st.json(metricas)
+            
             X.append(metricas)
             y.append(retorno_futuro)
-    
+        
+        st.markdown(f"**Total de amostras geradas:** {len(X)}")
         X_train = pd.DataFrame(X)
         y_train = pd.Series(y)
+        
+        st.markdown("### X_train Final")
+        st.dataframe(X_train)
+        st.markdown("### y_train Final")
+        st.dataframe(y_train.to_frame(name="y_train"))
         
         return X_train, y_train
       
