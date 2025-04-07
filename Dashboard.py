@@ -1201,6 +1201,7 @@ if pagina == "Avançada": #_____________________________________________________
     
     # Calcula o retorno futuro da ação com base na média de preços dos últimos e primeiros meses do ano seguinte. ___________________________________________________________________________
     def preparar_dados_para_treino(lista_empresas, dados_macro, preco, ano):
+        st.write("Entrando na função preparar_dados_para_treino")
         """
         Monta o dataset de treinamento (X_train, y_train) usando os dados até (ano - 1).
         
