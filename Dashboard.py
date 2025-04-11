@@ -1226,31 +1226,7 @@ if pagina == "Avançada": #_____________________________________________________
         return setor.iloc[0] if not setor.empty else "Setor Desconhecido"
 
             
-    # Calcula o momentum fundamentalista baseado na taxa de crescimento da variável especificada.______________________________________________________________________________________________
-    def calcular_momentum_fundamentalista(df, coluna):
-        """
-        Calcula o momentum fundamentalista baseado na taxa de crescimento da variável especificada.
-    
-        Parâmetros:
-        - df: DataFrame contendo os valores financeiros da empresa.
-        - coluna: Nome da coluna a ser usada para calcular o momentum.
-    
-        Retorna:
-        - Uma série com o momentum fundamentalista normalizado.
-        """
-        if coluna not in df.columns or df[coluna].isnull().all():
-            return pd.Series(0, index=df.index)  # Retorna zero se não houver dados suficientes
-    
-        # Calcula a variação percentual entre anos consecutivos
-        momentum = df[coluna].pct_change()
-    
-        # Normaliza os valores
-        momentum_normalizado = z_score_normalize(momentum.fillna(0))
-    
-        return momentum_normalizado
-
-
-    # Função para ajustar os pesos macroeconômicos com base no segmento e fallback para setor _________________________________
+   # Função para ajustar os pesos macroeconômicos com base no segmento e fallback para setor _________________________________
     def ajustar_pesos_macro(pesos, dados_macro, ano, setor):
         if ano not in dados_macro.index:
             return pesos
