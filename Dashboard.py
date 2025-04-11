@@ -5,6 +5,7 @@ import plotly.express as px
 import matplotlib.pyplot as plt
 import yfinance as yf
 from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import TheilSenRegressor
 import numpy as np
 import sqlite3
 import openai
