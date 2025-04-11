@@ -1388,8 +1388,8 @@ if pagina == "Avançada": #_____________________________________________________
                     continue
                         
                 # Ajustar com contexto macro
-                #pesos_ajustados = ajustar_pesos_macro(pesos_utilizados, dados_macro, ano, setores_empresa)
-                pesos_ajustados = pesos_utilizados
+                pesos_ajustados = ajustar_pesos_macro(pesos_utilizados, dados_macro, ano, setores_empresa)
+                #pesos_ajustados = pesos_utilizados
     
                 colunas_para_filtrar = [
                     'Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida',
@@ -1875,6 +1875,8 @@ if pagina == "Avançada": #_____________________________________________________
                     # =====================================================================
                     # FLUXO PRINCIPAL - Cálculo de métricas e Score
                     # =====================================================================
+
+                    # Determina a lista de empresas com seus múltiplos, demonstrações financeiras, ticker, ano e data _______________________________________________________________________
                 
                     lista_empresas = []
                     for i, row in empresas_filtradas.iterrows():
