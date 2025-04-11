@@ -1039,19 +1039,7 @@ if pagina == "Avançada": #_____________________________________________________
     #                FUNÇÕES AUXILIARES
     # ===============================================
        
-    # Função para remover outliers usando o método IQR __________________________________________________________________________________________________________________
-    def remover_outliers_iqr(df, colunas):
-        df_filtrado = df.copy()
-        for col in colunas:
-            if col in df.columns:
-                Q1 = df[col].quantile(0.25)
-                Q3 = df[col].quantile(0.75)
-                IQR = Q3 - Q1
-                limite_inferior = Q1 - 1.5 * IQR
-                limite_superior = Q3 + 1.5 * IQR
-                df_filtrado = df_filtrado[(df_filtrado[col] >= limite_inferior) & (df_filtrado[col] <= limite_superior)]
-        return df_filtrado
-
+  
     # Função que realiza a normalização dos dados (comparabilidade dos múltiplos, reduzindo distorções causadas por concentração de valores em um extremo)_______________________________
     def z_score_normalize(series, melhor_alto=True):
         series = series.replace([np.inf, -np.inf], np.nan)
@@ -1138,16 +1126,24 @@ if pagina == "Avançada": #_____________________________________________________
         return (media, std)
 
       
-    def winsorize(series, lower_quantile=0.05, upper_quantile=0.95): # Retira valores que distoam muito dos valores médios e podem comprometer os cálculos causando distorções ____________
+    def aplicar_winsorize_multiplas(df, colunas, lower_quantile=0.05, upper_quantile=0.95):
         """
-        Trunca outliers abaixo do 5º percentil e acima do 95º percentil.
+        Aplica winsorize nas colunas especificadas do DataFrame.
+        
+        Parâmetros:
+          - df: DataFrame com os dados.
+          - colunas: Lista de nomes das colunas a serem winsorizadas.
+          - lower_quantile: Quantil inferior (padrão 5%).
+          - upper_quantile: Quantil superior (padrão 95%).
+          
+        Retorna:
+          - DataFrame com os valores das colunas winsorizados.
         """
-        s = series.dropna()
-        if s.empty:
-            return series
-        l_val = s.quantile(lower_quantile)
-        u_val = s.quantile(upper_quantile)
-        return series.clip(l_val, u_val)
+        df_copy = df.copy()
+        for col in colunas:
+            if col in df_copy.columns:
+                df_copy[col] = winsorize(df_copy[col], lower_quantile, upper_quantile)
+        return df_copy
      
     # ===============================================
     # FUNÇÃO PRINCIPAL: Calcular Métricas Históricas
@@ -1337,7 +1333,7 @@ if pagina == "Avançada": #_____________________________________________________
         """
         for col, cfg in pesos_utilizados.items():
             if col in df.columns:
-                df[col] = winsorize(df[col])
+                #df[col] = winsorize(df[col])
                 vol_col = col.replace("_mean", "_volatility_penalty")
                 if vol_col in df.columns:
                     df[col] *= (1 - df[vol_col])
@@ -1388,16 +1384,17 @@ if pagina == "Avançada": #_____________________________________________________
                     continue
                         
                 # Ajustar com contexto macro
-                pesos_ajustados = ajustar_pesos_macro(pesos_utilizados, dados_macro, ano, setores_empresa)
-                #pesos_ajustados = pesos_utilizados
+                #pesos_ajustados = ajustar_pesos_macro(pesos_utilizados, dados_macro, ano, setores_empresa)
+                pesos_ajustados = pesos_utilizados
     
                 colunas_para_filtrar = [
                     'Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida',
                     'Divida_Total', 'Passivo_Circulante', 'Liquidez_Corrente',
                     'Crescimento_Receita', 'Crescimento_Lucro'
                 ]
-                multiplos_corrigido = remover_outliers_iqr(df_mult, colunas_para_filtrar)
-                df_dre_corrigido = remover_outliers_iqr(df_dre, colunas_para_filtrar)
+                
+                multiplos_corrigido = aplicar_winsorize_multiplas(df_mult, colunas_para_filtrar)
+                df_dre_corrigido = aplicar_winsorize_multiplas(df_dre, colunas_para_filtrar)
     
                 metricas = calcular_metricas_historicas_simplificadas(multiplos_corrigido, df_dre_corrigido)
                 row_dict = {'ticker': ticker, 'Ano': ano}
