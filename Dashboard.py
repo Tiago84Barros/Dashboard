@@ -1065,26 +1065,30 @@ if pagina == "Avançada": #_____________________________________________________
         return normalized.fillna(0.0) if melhor_alto else -normalized.fillna(0.0)
     
     
-    def slope_regressao_log(df, col): # Finalidade de encontrar a taxa de crescimento de variáveis (mais robusto que o CAGR) ______________________________________________________________
+    def slope_regressao_log(df, col):
         """
-        Faz regressão linear de ln(col) vs Ano, retornando o slope (beta).
-        Filtra valores <= 0, pois ln(<=0) não é definido.
+        Faz regressão linear robusta de ln(col) vs Ano utilizando o TheilSenRegressor,
+        retornando o slope (beta). Filtra valores <= 0, pois ln(<=0) não é definido.
         Retorna 0.0 se não houver dados suficientes.
         """
+        # Filtra dados válidos: não-nulos para 'Ano' e a coluna, e valores positivos para a coluna
         df_valid = df.dropna(subset=['Ano', col]).copy()
-        # Apenas valores positivos
         df_valid = df_valid[df_valid[col] > 0]
         if len(df_valid) < 2:
             return 0.0
-        
-        # ln(col)
+    
+        # Calcula o logaritmo natural da coluna
         df_valid['ln_col'] = np.log(df_valid[col])
-        
+    
+        # Cria a variável preditora X (Ano) e a variável alvo y (ln da coluna)
         X = df_valid[['Ano']].values
         y = df_valid['ln_col'].values
-        model = LinearRegression()
+    
+        # Ajusta o modelo robusto de regressão Theil-Sen
+        model = TheilSenRegressor(random_state=42)
         model.fit(X, y)
         slope = model.coef_[0]
+        
         return slope
     
     def slope_to_growth_percent(slope): # transforma o valor absoluto do valor encontrado na regressão para porcentagem ____________________________________________________________________
