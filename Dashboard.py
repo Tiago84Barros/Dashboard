@@ -1038,6 +1038,18 @@ if pagina == "Avançada": #_____________________________________________________
     # ===============================================
     #                FUNÇÕES AUXILIARES
     # ===============================================
+
+    def winsorize(series, lower_quantile=0.05, upper_quantile=0.95):
+        """
+        Aplica winsorização à série: substitui valores abaixo do quantil inferior e acima do quantil superior
+        pelos próprios limites.
+        """
+        s = series.dropna()
+        if s.empty:
+            return series
+        lower_bound = s.quantile(lower_quantile)
+        upper_bound = s.quantile(upper_quantile)
+        return series.clip(lower=lower_bound, upper=upper_bound)
        
   
     # Função que realiza a normalização dos dados (comparabilidade dos múltiplos, reduzindo distorções causadas por concentração de valores em um extremo)_______________________________
