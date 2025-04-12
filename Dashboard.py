@@ -1039,6 +1039,18 @@ if pagina == "Avançada": #_____________________________________________________
     #                FUNÇÕES AUXILIARES
     # ===============================================
 
+    def remover_outliers_iqr(df, colunas):
+        df_filtrado = df.copy()
+        for col in colunas:
+            if col in df.columns:
+                Q1 = df[col].quantile(0.25)
+                Q3 = df[col].quantile(0.75)
+                IQR = Q3 - Q1
+                limite_inferior = Q1 - 1.5 * IQR
+                limite_superior = Q3 + 1.5 * IQR
+                df_filtrado = df_filtrado[(df_filtrado[col] >= limite_inferior) & (df_filtrado[col] <= limite_superior)]
+        return df_filtrado
+
     def winsorize(series, lower_quantile=0.05, upper_quantile=0.95):
         """
         Aplica winsorização à série: substitui valores abaixo do quantil inferior e acima do quantil superior
@@ -1381,8 +1393,11 @@ if pagina == "Avançada": #_____________________________________________________
                     'Crescimento_Receita', 'Crescimento_Lucro'
                 ]
                 
-                multiplos_corrigido = aplicar_winsorize_multiplas(df_mult, colunas_para_filtrar)
-                df_dre_corrigido = aplicar_winsorize_multiplas(df_dre, colunas_para_filtrar)
+                #multiplos_corrigido = aplicar_winsorize_multiplas(df_mult, colunas_para_filtrar)
+                #df_dre_corrigido = aplicar_winsorize_multiplas(df_dre, colunas_para_filtrar)
+
+                multiplos_corrigido = remover_outliers_iqr(df_mult, colunas_para_filtrar)
+                df_dre_corrigido = remover_outliers_iqr(df_dre, colunas_para_filtrar)
     
                 metricas = calcular_metricas_historicas_simplificadas(multiplos_corrigido, df_dre_corrigido)
                 row_dict = {'ticker': ticker, 'Ano': ano}
