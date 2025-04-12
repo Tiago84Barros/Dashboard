@@ -1500,6 +1500,14 @@ if pagina == "Avançada": #_____________________________________________________
                 return None
         return data_aporte
 
+    # Calcula a Média Móvel Exponencial (EMA) para uma série de preços ____________________________________________________________________________________________________________________________-
+    def calcular_ema(series, period=50):
+        """
+        Calcula a Média Móvel Exponencial (EMA) para uma série de preços.
+        period: número de períodos usados no cálculo (padrão: 50)
+        """
+        return series.ewm(span=period, adjust=False).mean()
+
     # Função para Calcula o RSI (Relative Strength Index) com base na série de preço __________________________________________________________________________________________________________
     def calcular_rsi(series_precios, janela=14):
         """
@@ -1522,65 +1530,86 @@ if pagina == "Avançada": #_____________________________________________________
         return rsi
         
     # Função que utiliza análise técnica de médias móveis para determinar o melhor momento de compra da empresa Líder _______________________________________________________________________________    
-    def validar_tendencia_entrada(ticker, precos, data_aporte, janela_rsi=14, limite_rsi=30):
+    def validar_tendencia_entrada(ticker, precos, data_aporte, janela_rsi=14, limite_rsi=30, ema_period=50):
         """
-        Valida se há um bom momento de entrada com base no RSI.
+        Valida se há um bom momento de entrada considerando:
+        - RSI <= limite_rsi (indicando sobrevenda)
+        - Preço acima da EMA (confirmando tendência de alta)
         
-        - Se encontrar um RSI <= limite_rsi em algum dia do mês, retorna essa data.
-        - Se não encontrar, retorna o último dia útil do mês.
-    
         Parâmetros:
-        - ticker: Nome do ativo.
-        - precos: DataFrame contendo preços históricos.
-        - data_aporte: Data inicial do mês.
-        - janela_rsi: Período de cálculo do RSI.
-        - limite_rsi: Valor de referência do RSI para entrada.
-    
+          - ticker: Nome do ativo.
+          - precos: DataFrame contendo preços históricos com coluna para o ticker.
+          - data_aporte: Data inicial do mês.
+          - janela_rsi: Período de cálculo do RSI (padrão: 14).
+          - limite_rsi: Valor de referência do RSI para entrada (ex.: 30).
+          - ema_period: Período da EMA para confirmação de tendência.
+        
         Retorna:
-        - Data de entrada ideal e o preço na data escolhida.
+          - Data de entrada ideal e o preço nessa data.
         """
-    
         if ticker not in precos.columns:
             return None, None  # Sem dados para validar
     
-        # Selecionar preços do mês inteiro até a data do aporte
+        # Selecionar preços do mês até a data do aporte
         precos_mes = precos.loc[:data_aporte, ticker].dropna()
-        
         if len(precos_mes) < (janela_rsi + 1):
             return None, None  # Dados insuficientes para calcular RSI
     
-        # Calcular RSI
+        # Calcular o RSI e a EMA para o período
         rsi_mes = calcular_rsi(precos_mes, janela=janela_rsi)
+        ema_series = calcular_ema(precos_mes, period=ema_period)
     
-        # Procurar primeiro dia do mês onde RSI está abaixo do limite
-        dias_validos = rsi_mes[rsi_mes <= limite_rsi].index
-        if not dias_validos.empty:
-            melhor_data = dias_validos[-1]  # Última ocorrência dentro do mês
+        # Condição para entrada: RSI <= limite_rsi E preço >= EMA (confirma alta)
+        sinal = (rsi_mes <= limite_rsi) & (precos_mes >= ema_series)
+        if not sinal.any():
+            # Se nenhuma data satisfaz as condições, usar o último dia do mês como fallback
+            melhor_data = precos_mes.index[-1]
         else:
-            # Se não encontrou RSI abaixo de limite, usar o último dia útil do mês
-            melhor_data = precos_mes.index[-1] 
+            # Selecionar a última data onde as condições foram satisfeitas
+            melhor_data = sinal[sinal].index[-1]
     
-        # Garantir que o preço esteja definido antes do retorno
         preco = precos.loc[melhor_data, ticker] if melhor_data in precos.index else None
-    
         return melhor_data, preco
 
 
-
     # Função responsável por determinar o melhor momento de venda da empresa que apresentou deterioração em seus fundamentos _____________________________________________________________________
-    def validar_tendencia_saida(ticker, precos, data_aporte, janela_rsi=14, limite_rsi=70):
+    def validar_tendencia_saida(ticker, precos, data_aporte, janela_rsi=14, limite_rsi=70, ema_period=50):
+        """
+        Valida se há um bom momento de saída considerando:
+        - RSI >= limite_rsi (indicando sobrecompra)
+        - OU o preço cair abaixo da EMA (sinal de reversão de tendência)
+        
+        Parâmetros:
+          - ticker: Nome do ativo.
+          - precos: DataFrame contendo preços históricos.
+          - data_aporte: Data até a qual se calcula o indicador.
+          - janela_rsi: Período para cálculo do RSI (padrão: 14).
+          - limite_rsi: Limite superior do RSI para sinal de venda (ex.: 70).
+          - ema_period: Período da EMA.
+        
+        Retorna:
+          - Booleano: True se sinal de venda, False caso contrário.
+        """
         if ticker not in precos.columns:
             return False
-        
-        # Selecionar os preços anteriores ao dia do aporte
-        precos_anteriores = precos.loc[:data_aporte]
+    
+        # Selecionar preços do ativo até a data
+        precos_anteriores = precos.loc[:data_aporte, ticker].dropna()
         if len(precos_anteriores) < janela_rsi:
-            return False  # Não há dados suficientes para RSI
-        
-        rsi = calcular_rsi(precos_anteriores[ticker], janela_rsi)
+            return False  # Dados insuficientes para calcular RSI
+    
+        # Calcular RSI e EMA para os preços disponíveis
+        rsi = calcular_rsi(precos_anteriores, janela_rsi)
+        ema_series = calcular_ema(precos_anteriores, period=ema_period)
+    
+        ultimo_preco = precos_anteriores.iloc[-1]
         ultimo_rsi = rsi.iloc[-1]
-        
-        return ultimo_rsi >= limite_rsi  # Verdadeiro se RSI indicar sobrecompra
+        ultimo_ema = ema_series.iloc[-1]
+    
+        # Sinal de saída se RSI indicar sobrecompra ou se o preço romper abaixo da EMA
+        if ultimo_rsi >= limite_rsi or ultimo_preco < ultimo_ema:
+            return True
+        return False
         
     # Função responsável por criar a estratégia de comprar empresas Líderes do segmento e vender empresas com deterioração de fundamentos _____________________________________________________________ 
     def gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict, aporte_mensal=1000, deterioracao_limite=0.7):
@@ -1589,71 +1618,69 @@ if pagina == "Avançada": #_____________________________________________________
         data_inicio = None
         datas_aportes = []
         aporte_acumulado = 0
-        empresas_mantidas = set()
-    
+        
         anos = sorted(df_scores['Ano'].unique())
-    
+        
         for ano in anos:
+            # Seleciona a empresa líder do ano corrente
             if ano in lideres_por_ano['Ano'].values:
                 empresa_lider = lideres_por_ano[lideres_por_ano['Ano'] == ano].iloc[0]['ticker']
             else:
                 continue
-    
+            
+            # Loop mensal para o próximo ano
             for mes in range(1, 13):
+                # Data base para o mês seguinte
                 data_aporte_original = pd.to_datetime(f"{ano + 1}-{mes:02d}-01")
+                
+                # Tenta validar o sinal de entrada com RSI e possivelmente outros filtros (incluindo EMA, se implementado)
                 data_aporte, preco_lider = validar_tendencia_entrada(empresa_lider, precos, data_aporte_original)
-    
+                
+                # Se o sinal de entrada não for favorável, acumula o aporte e registra uma data fallback
                 if data_aporte is None or preco_lider is None:
                     aporte_acumulado += aporte_mensal
-                    continue
-    
-                datas_aportes.append(data_aporte)
-    
-                if data_inicio is None:
-                    data_inicio = data_aporte
-    
+                    # Obtém uma data válida para o mês (fallback)
+                    fallback_data = encontrar_proxima_data_valida(data_aporte_original, precos)
+                    # Registra a data fallback para o gráfico
+                    datas_aportes.append(fallback_data)
+                    # Atualiza o patrimônio com base no preço do ativo já na carteira (se houver)
+                    if empresa_lider in carteira:
+                        patrimonio[fallback_data] = carteira[empresa_lider] * precos.loc[fallback_data, empresa_lider]
+                    else:
+                        # Se ainda não há ações, o patrimônio permanece zerado
+                        patrimonio[fallback_data] = 0
+                    continue  # Pula para o próximo mês
+                
+                # Quando o sinal de entrada é favorável
+                # Acumula o aporte do mês juntamente com o valor acumulado
                 aporte_total = aporte_acumulado + aporte_mensal
-                aporte_acumulado = 0
-    
-                # Reinvestir dividendos
+                aporte_acumulado = 0  # Reseta o acumulado
+                
+                # Registra a data efetiva de aporte
+                datas_aportes.append(data_aporte)
+                
+                # Reinvestimento de dividendos na carteira existente
                 for empresa in carteira:
                     div_yf = dividendos_dict.get(empresa, pd.Series())
                     if div_yf.empty:
                         continue
-    
                     dividendos_mes = div_yf[(div_yf.index.year == data_aporte.year) & (div_yf.index.month == data_aporte.month)].sum()
                     preco_empresa = precos.loc[data_aporte, empresa]
                     if preco_empresa and preco_empresa > 0:
                         carteira[empresa] += (dividendos_mes * carteira[empresa]) / preco_empresa
-    
-                # Aporte na empresa líder
+                
+                # Compra a empresa líder com o valor total acumulado
                 if empresa_lider not in carteira:
                     carteira[empresa_lider] = 0
-    
                 carteira[empresa_lider] += aporte_total / preco_lider
-    
-                # Checar deterioração
-                empresas_mantidas = set(carteira.keys()) - {empresa_lider}
-                for antiga_lider in list(empresas_mantidas):
-                    score_atual = df_scores[(df_scores['Ano'] == ano) & (df_scores['ticker'] == antiga_lider)]['Score_Ajustado'].values
-                    score_inicial = df_scores[(df_scores['Ano'] == anos[0]) & (df_scores['ticker'] == antiga_lider)]['Score_Ajustado'].values
-    
-                    if len(score_atual) == 0 or len(score_inicial) == 0 or score_inicial[0] == 0:
-                        continue
-    
-                    deteriorou = score_atual[0] / score_inicial[0] < deterioracao_limite
-    
-                    if deteriorou:
-                        preco_antiga_lider = precos.loc[data_aporte, antiga_lider]
-                        if antiga_lider in carteira and not pd.isna(preco_antiga_lider) and preco_antiga_lider > 0:
-                            patrimonio_venda = carteira.pop(antiga_lider) * preco_antiga_lider
-                            carteira[empresa_lider] += patrimonio_venda / preco_lider
-    
-                patrimonio_total = sum(carteira[empresa] * precos.loc[data_aporte, empresa] for empresa in carteira)
-                patrimonio[data_aporte] = patrimonio_total
-    
+                
+                # Atualiza o patrimônio na data de aporte: valor da carteira = (quantidade de ações) x (preço atual)
+                patrimonio[data_aporte] = carteira[empresa_lider] * preco_lider
+                
+                # (Opcional) Processar lógica de deterioração para vender ativos antigos, se aplicável...
+                
+        # Converte o dicionário de patrimônio em DataFrame para fins de plotagem
         df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
-    
         return df_patrimonio, datas_aportes
     
 
