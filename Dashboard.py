@@ -1204,21 +1204,21 @@ if pagina == "Avançada": #_____________________________________________________
             metrics[f'{col}_growth_approx'] = slope_to_growth_percent(slope)
         
         # Penalização por alta volatilidade (desvio padrão relativo à média) # PASSO 5
-        for col in ['Margem_Liquida', 'ROE', 'ROA', 'ROIC', 'Endividamento_Total', 'Liquidez_Corrente']:
-            if metrics[f'{col}_mean'] != 0:
-                coef_var = metrics[f'{col}_std'] / abs(metrics[f'{col}_mean'])
-                metrics[f'{col}_volatility_penalty'] = min(1.0, coef_var)  # Penalização limitada a 100% 
-            else:
-                metrics[f'{col}_volatility_penalty'] = 1.0  # Penalização máxima se a média for zero
+        #for col in ['Margem_Liquida', 'ROE', 'ROA', 'ROIC', 'Endividamento_Total', 'Liquidez_Corrente']:
+         #   if metrics[f'{col}_mean'] != 0:
+          #      coef_var = metrics[f'{col}_std'] / abs(metrics[f'{col}_mean'])
+           #     metrics[f'{col}_volatility_penalty'] = min(1.0, coef_var)  # Penalização limitada a 100% 
+            #else:
+              #  metrics[f'{col}_volatility_penalty'] = 1.0  # Penalização máxima se a média for zero
         
          # 📌 NOVA Penalização por Histórico Longo → Agora mais severa # PASSO 5
-        num_anos = df_dre['Ano'].nunique()
+       # num_anos = df_dre['Ano'].nunique()
         
-        def calcular_historico_bonus(anos):
-            return anos / ((10 + anos) ** 10)  # Penalização bem mais severa para novatas
+        #def calcular_historico_bonus(anos):
+            #return anos / ((10 + anos) ** 10)  # Penalização bem mais severa para novatas
     
         # Aplicando penalização aprimorada
-        metrics['historico_bonus'] = calcular_historico_bonus(num_anos)
+       # metrics['historico_bonus'] = calcular_historico_bonus(num_anos)
         
         return metrics
 
