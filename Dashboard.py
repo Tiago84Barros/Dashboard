@@ -1535,57 +1535,60 @@ if pagina == "Avançada": #_____________________________________________________
         return rsi
         
     # Função que utiliza análise técnica de médias móveis para determinar o melhor momento de compra da empresa Líder _______________________________________________________________________________    
-    def validar_tendencia_entrada(ticker, precos, data_aporte, janela_rsi=14, limite_rsi=30, ema_period=50):
+    def validar_tendencia_entrada(ticker, precos, data_aporte_original, janela_rsi=14, limite_rsi=30, ema_period=50, window_days=30):
         """
-        Valida se há um bom momento de entrada considerando:
-        - RSI <= limite_rsi (indicando sobrevenda)
-        - Preço acima da EMA (confirmando tendência de alta)
-        
+        Valida se a data de aporte é um bom momento para entrada, usando um window (ex.: 30 dias)
+        para calcular RSI e EMA. Essa função verifica apenas o indicador no dia final (data de aporte válida).
+    
         Parâmetros:
           - ticker: Nome do ativo.
           - precos: DataFrame contendo preços históricos com coluna para o ticker.
-          - data_aporte: Data inicial do mês.
-          - janela_rsi: Período de cálculo do RSI (padrão: 14).
-          - limite_rsi: Valor de referência do RSI para entrada (ex.: 30).
+          - data_aporte_original: Data inicial informada para o aporte.
+          - janela_rsi: Período para o cálculo do RSI (padrão: 14).
+          - limite_rsi: Limite inferior do RSI para sinal de compra (ex.: 30).
           - ema_period: Período da EMA para confirmação de tendência.
-        
+          - window_days: Número de dias anteriores à data (incluindo-a) para formar a janela de cálculo.
+    
         Retorna:
-          - Data de entrada ideal e o preço nessa data.
+          - (data_aporte_valid, preço_na_data) se o sinal estiver positivo;
+          - (None, None) se não for favorável.
         """
-        if ticker not in precos.columns:
-            return None, None  # Sem dados para validar
+        # Primeiro, encontra a data válida, caso data_aporte_original não seja dia de negociação
+        data_aporte_valid = encontrar_proxima_data_valida(data_aporte_original, precos)
+        if data_aporte_valid is None or ticker not in precos.columns:
+            return None, None
     
-        # Selecionar preços do mês até a data do aporte
-        precos_mes = precos.loc[:data_aporte, ticker].dropna()
-        st.markdown("O valor do dataframe precos_mes é:")
-        st.dataframe(precos_mes)
-        
-        if len(precos_mes) < (janela_rsi + 1):
-            return None, None  # Dados insuficientes para calcular RSI
+        # Defina a janela de dados: dos últimos window_days até a data válida
+        inicio_janela = data_aporte_valid - pd.Timedelta(days=window_days - 1)
+        window = precos.loc[inicio_janela:data_aporte_valid, ticker].dropna()
     
-        # Calcular o RSI e a EMA para o período
-        rsi_mes = calcular_rsi(precos_mes, janela=janela_rsi)
-        ema_series = calcular_ema(precos_mes, period=ema_period)
+        if len(window) < janela_rsi:
+            return None, None  # Dados insuficientes para um cálculo robusto do RSI
     
-        # Condição para entrada: RSI <= limite_rsi E preço >= EMA (confirma alta)
-        sinal = (rsi_mes <= limite_rsi) & (precos_mes >= ema_series)
-        st.markdown(f"Esse é o sinal encontrado ao analisar o rsi_mes e o ema:")
-        st.dataframe(sinal)
-        if not sinal.any():
-            # Se nenhuma data satisfaz as condições, usar o último dia do mês como fallback
-            melhor_data = precos_mes.index[-1]
-            st.markdown(f"a melhor data de fallback devido a não haver sinal de compra é {melhor_data}")
+        # Calcular o RSI e a EMA usando a janela definida
+        rsi_valores = calcular_rsi(window, janela=janela_rsi)
+        ema_valores = calcular_ema(window, period=ema_period)
+    
+        # Pegue os valores na data final (data_aporte_valid)
+        rsi_final = rsi_valores.iloc[-1]
+        ema_final = ema_valores.iloc[-1]
+        preco_final = window.iloc[-1]
+    
+        st.markdown(f"Data de aporte válida: {data_aporte_valid}")
+        st.markdown(f"RSI final: {rsi_final:.2f}, EMA final: {ema_final:.2f}, Preço: {preco_final:.2f}")
+    
+        # Critérios para sinal: RSI <= limite e preço >= EMA na data
+        if rsi_final <= limite_rsi and preco_final >= ema_final:
+            st.markdown(f"A condição de entrada está satisfeita em {data_aporte_valid}.")
+            return data_aporte_valid, preco_final
         else:
-            # Selecionar a última data onde as condições foram satisfeitas
-            melhor_data = sinal[sinal].index[-1]
-            st.markdown(f"A melhor data de compra segundo o sinal de compra é {melhor_data}")
-    
-        preco = precos.loc[melhor_data, ticker] if melhor_data in precos.index else None
-        return melhor_data, preco
+            st.markdown(f"A condição de entrada NÃO está satisfeita em {data_aporte_valid}.")
+            return None, None
+
 
 
     # Função responsável por determinar o melhor momento de venda da empresa que apresentou deterioração em seus fundamentos _____________________________________________________________________
-    def validar_tendencia_saida(ticker, precos, data_aporte, janela_rsi=14, limite_rsi=70, ema_period=50):
+    def validar_tendencia_saida(ticker, precos, data_aporte_original, janela_rsi=14, limite_rsi=70, ema_period=50):
         """
         Valida se há um bom momento de saída considerando:
         - RSI >= limite_rsi (indicando sobrecompra)
@@ -1602,6 +1605,10 @@ if pagina == "Avançada": #_____________________________________________________
         Retorna:
           - Booleano: True se sinal de venda, False caso contrário.
         """
+
+        # Primeiro, verifica se a data_aporte_original é válida
+        data_aporte_valida = encontrar_proxima_data_valida(data_aporte_original, precos)
+
         if ticker not in precos.columns:
             return False
     
