@@ -1421,7 +1421,7 @@ if pagina == "Avançada": #_____________________________________________________
             df_scores = pd.DataFrame(columns=['Ano', 'ticker', 'Score_Ajustado'])
 
         st.markdown("Então os anos relacionados aos scores das empresas são:")  
-        st.dataframe(df_score)
+        st.dataframe(df_scores)
                     
         return df_scores
 
