@@ -1569,7 +1569,8 @@ if pagina == "Avançada": #_____________________________________________________
     
         # Condição para entrada: RSI <= limite_rsi E preço >= EMA (confirma alta)
         sinal = (rsi_mes <= limite_rsi) & (precos_mes >= ema_series)
-        st.markdown(f"Esse é o sinal encontrado ao analisar o rsi_mes e o ema {sinal}")
+        st.markdown(f"Esse é o sinal encontrado ao analisar o rsi_mes e o ema:")
+        st.dataframe(sinal)
         if not sinal.any():
             # Se nenhuma data satisfaz as condições, usar o último dia do mês como fallback
             melhor_data = precos_mes.index[-1]
