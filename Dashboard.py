@@ -1369,10 +1369,13 @@ if pagina == "Avançada": #_____________________________________________________
         """
     
         anos_disponiveis = sorted(set(ano for emp in lista_empresas for ano in emp['multiplos']['Ano'].unique()))
+        st.markdown(f"Todos os anos disponíveis no banco de dados das empresas é {anos_disponíveis}")
         df_resultados = []
     
         for idx in range(anos_minimos, len(anos_disponiveis)):
             ano = anos_disponiveis[idx]
+            st.markdown(f"Os anos inseridos para determinar o score são {ano}")
+            
             dados_ano = []
     
             for emp in lista_empresas:
@@ -1417,9 +1420,9 @@ if pagina == "Avançada": #_____________________________________________________
         else:
             df_scores = pd.DataFrame(columns=['Ano', 'ticker', 'Score_Ajustado'])
 
-        st.markdown("Empresas Líderes")
-        st.dataframe(df_scores)
-    
+        st.markdown("Então os anos relacionados aos scores das empresas são:)  
+        st.dataframe(df_score)
+                    
         return df_scores
 
     
@@ -1626,17 +1629,20 @@ if pagina == "Avançada": #_____________________________________________________
         datas_aportes_dict = {}
     
         anos = sorted(df_scores['Ano'].unique())
+        st.markdown(f"Os anos de df_scores são:")
         st.dataframe(anos)
     
         for ano in anos:
             if ano in lideres_por_ano['Ano'].values:
                 empresa_lider = lideres_por_ano[lideres_por_ano['Ano'] == ano].iloc[0]['ticker']
                 st.markdown(f"A empresa Líder do ano {ano} é {empresa_lider}")
+                st.markdown(f"logo o ano que deve ser previsto é {ano+1}")
             else:
                 continue
     
             for mes in range(1, 13):
                 data_aporte_original = pd.to_datetime(f"{ano + 1}-{mes:02d}-01")
+                st.markdown(f"A data do aporte original é {data_aporte_original}")
     
                 data_aporte, preco_lider = validar_tendencia_entrada(empresa_lider, precos, data_aporte_original)
                 st.markdown(f"A data do aporte aleatório é {data_aporte}")
