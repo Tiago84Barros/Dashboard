@@ -1616,73 +1616,79 @@ if pagina == "Avançada": #_____________________________________________________
         patrimonio = {}
         carteira = {}
         data_inicio = None
-        datas_aportes = []
         aporte_acumulado = 0
-        
+    
+        # Em vez de uma lista simples, use um dicionário mapeando (ano, mês) -> data
+        datas_aportes_dict = {}
+    
         anos = sorted(df_scores['Ano'].unique())
-        
+    
         for ano in anos:
-            # Seleciona a empresa líder do ano corrente
             if ano in lideres_por_ano['Ano'].values:
                 empresa_lider = lideres_por_ano[lideres_por_ano['Ano'] == ano].iloc[0]['ticker']
             else:
                 continue
-            
-            # Loop mensal para o próximo ano
+    
             for mes in range(1, 13):
-                # Data base para o mês seguinte
                 data_aporte_original = pd.to_datetime(f"{ano + 1}-{mes:02d}-01")
-                
-                # Tenta validar o sinal de entrada com RSI e possivelmente outros filtros (incluindo EMA, se implementado)
+    
                 data_aporte, preco_lider = validar_tendencia_entrada(empresa_lider, precos, data_aporte_original)
-                
-                # Se o sinal de entrada não for favorável, acumula o aporte e registra uma data fallback
+    
+                # Chave para nosso dicionário => (ano, mês)
+                month_key = (data_aporte_original.year, data_aporte_original.month)
+    
                 if data_aporte is None or preco_lider is None:
+                    # Se não houver sinal de compra, acumula aporte e registra fallback
                     aporte_acumulado += aporte_mensal
-                    # Obtém uma data válida para o mês (fallback)
+    
                     fallback_data = encontrar_proxima_data_valida(data_aporte_original, precos)
-                    # Registra a data fallback para o gráfico
-                    datas_aportes.append(fallback_data)
-                    # Atualiza o patrimônio com base no preço do ativo já na carteira (se houver)
-                    if empresa_lider in carteira:
-                        patrimonio[fallback_data] = carteira[empresa_lider] * precos.loc[fallback_data, empresa_lider]
+                    # Garante que ao menos guardemos uma data do mês para ver a variação do ativo
+                    if fallback_data is not None:
+                        datas_aportes_dict[month_key] = fallback_data
+                        # Atualiza patrimônio baseado no preço do que já existe na carteira
+                        if empresa_lider in carteira:
+                            patrimonio[fallback_data] = carteira[empresa_lider] * precos.loc[fallback_data, empresa_lider]
+                        else:
+                            patrimonio[fallback_data] = 0
                     else:
-                        # Se ainda não há ações, o patrimônio permanece zerado
-                        patrimonio[fallback_data] = 0
-                    continue  # Pula para o próximo mês
-                
-                # Quando o sinal de entrada é favorável
-                # Acumula o aporte do mês juntamente com o valor acumulado
+                        # Caso não encontre data válida, ainda podemos registrar a data original
+                        datas_aportes_dict[month_key] = data_aporte_original
+                        patrimonio[data_aporte_original] = patrimonio.get(data_aporte_original, 0)
+    
+                    # Pula para o próximo mês
+                    continue
+    
+                # Se houve sinal de compra
                 aporte_total = aporte_acumulado + aporte_mensal
-                aporte_acumulado = 0  # Reseta o acumulado
-                
-                # Registra a data efetiva de aporte
-                datas_aportes.append(data_aporte)
-                
-                # Reinvestimento de dividendos na carteira existente
+                aporte_acumulado = 0
+    
+                # Garante que o dicionário de datas tenha apenas UMA data para esse mês
+                datas_aportes_dict[month_key] = data_aporte
+    
+                # Reinvestir dividendos na carteira existente
                 for empresa in carteira:
                     div_yf = dividendos_dict.get(empresa, pd.Series())
-                    if div_yf.empty:
-                        continue
-                    dividendos_mes = div_yf[(div_yf.index.year == data_aporte.year) & (div_yf.index.month == data_aporte.month)].sum()
-                    preco_empresa = precos.loc[data_aporte, empresa]
-                    if preco_empresa and preco_empresa > 0:
-                        carteira[empresa] += (dividendos_mes * carteira[empresa]) / preco_empresa
-                
-                # Compra a empresa líder com o valor total acumulado
+                    if not div_yf.empty:
+                        dividendos_mes = div_yf[(div_yf.index.year == data_aporte.year) & (div_yf.index.month == data_aporte.month)].sum()
+                        preco_empresa = precos.loc[data_aporte, empresa]
+                        if preco_empresa and preco_empresa > 0:
+                            carteira[empresa] += (dividendos_mes * carteira[empresa]) / preco_empresa
+    
+                # Compra a empresa líder
                 if empresa_lider not in carteira:
                     carteira[empresa_lider] = 0
+    
                 carteira[empresa_lider] += aporte_total / preco_lider
-                
-                # Atualiza o patrimônio na data de aporte: valor da carteira = (quantidade de ações) x (preço atual)
                 patrimonio[data_aporte] = carteira[empresa_lider] * preco_lider
-                
-                # (Opcional) Processar lógica de deterioração para vender ativos antigos, se aplicável...
-                
-        # Converte o dicionário de patrimônio em DataFrame para fins de plotagem
+    
+        # Ao final, convertemos datas_aportes_dict em uma lista ordenada de datas
+        # Assim, teremos apenas UMA data por mês de contribuição/fallback.
+        datas_aportes = sorted(datas_aportes_dict.values())
+    
         df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
-        st.dataframe(datas_aportes)
+    
         return df_patrimonio, datas_aportes
+
     
 
     # Função para gerir o aporte mensal de todas as empresas do segmento sem estratégia 
