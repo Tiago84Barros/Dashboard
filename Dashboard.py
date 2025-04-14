@@ -1382,6 +1382,9 @@ if pagina == "Avançada": #_____________________________________________________
                 ticker = emp['ticker']
                 df_mult = emp['multiplos'][emp['multiplos']['Ano'] <= ano].copy()
                 df_dre = emp['df_dre'][emp['df_dre']['Ano'] <= ano].copy()
+
+                st.markdown("Os valores de df_dre que serão usados para o score das empresas está limitado até a data")
+                st.dataframe(df_dre)
     
                 if df_mult.empty or df_dre.empty:
                     continue
