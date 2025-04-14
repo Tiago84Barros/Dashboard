@@ -1369,7 +1369,7 @@ if pagina == "Avançada": #_____________________________________________________
         """
     
         anos_disponiveis = sorted(set(ano for emp in lista_empresas for ano in emp['multiplos']['Ano'].unique()))
-        st.markdown(f"Todos os anos disponíveis no banco de dados das empresas é {anos_disponíveis}")
+        st.markdown(f"Todos os anos disponíveis no banco de dados das empresas é {anos_disponiveis}")
         df_resultados = []
     
         for idx in range(anos_minimos, len(anos_disponiveis)):
