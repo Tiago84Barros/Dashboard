@@ -1369,23 +1369,18 @@ if pagina == "Avançada": #_____________________________________________________
         """
     
         anos_disponiveis = sorted(set(ano for emp in lista_empresas for ano in emp['multiplos']['Ano'].unique()))
-        st.markdown(f"Todos os anos disponíveis no banco de dados das empresas é {anos_disponiveis}")
         df_resultados = []
     
         for idx in range(anos_minimos, len(anos_disponiveis)):
             ano = anos_disponiveis[idx]
-            st.markdown(f"Os anos inseridos para determinar o score são {ano}")
-            
+                     
             dados_ano = []
     
             for emp in lista_empresas:
                 ticker = emp['ticker']
                 df_mult = emp['multiplos'][emp['multiplos']['Ano'] <= ano].copy()
                 df_dre = emp['df_dre'][emp['df_dre']['Ano'] <= ano].copy()
-
-                st.markdown("Os valores de df_dre que serão usados para o score das empresas está limitado até a data")
-                st.dataframe(df_dre)
-    
+                  
                 if df_mult.empty or df_dre.empty:
                     continue
                         
