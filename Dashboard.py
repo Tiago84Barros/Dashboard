@@ -1416,9 +1416,13 @@ if pagina == "Avançada": #_____________________________________________________
             df_scores = pd.concat(df_resultados, ignore_index=True)
         else:
             df_scores = pd.DataFrame(columns=['Ano', 'ticker', 'Score_Ajustado'])
+
+        st.markdown("Empresas Líderes")
+        st.dataframe(df_scores)
     
         return df_scores
-        
+
+    
     # 📌 Baixando preços de fechamento das empresas ____________________________________________________________________________________________________________________________________________
     def baixar_precos(tickers, start="2010-01-01"):
         """
@@ -1622,10 +1626,12 @@ if pagina == "Avançada": #_____________________________________________________
         datas_aportes_dict = {}
     
         anos = sorted(df_scores['Ano'].unique())
+        st.dataframe(anos)
     
         for ano in anos:
             if ano in lideres_por_ano['Ano'].values:
                 empresa_lider = lideres_por_ano[lideres_por_ano['Ano'] == ano].iloc[0]['ticker']
+                st.markdown(f"A empresa Líder do ano {ano} é {empresa_lider}")
             else:
                 continue
     
@@ -1633,6 +1639,7 @@ if pagina == "Avançada": #_____________________________________________________
                 data_aporte_original = pd.to_datetime(f"{ano + 1}-{mes:02d}-01")
     
                 data_aporte, preco_lider = validar_tendencia_entrada(empresa_lider, precos, data_aporte_original)
+                st.markdown(f"A data do aporte aleatório é {data_aporte}")
     
                 # Chave para nosso dicionário => (ano, mês)
                 month_key = (data_aporte_original.year, data_aporte_original.month)
@@ -1642,6 +1649,8 @@ if pagina == "Avançada": #_____________________________________________________
                     aporte_acumulado += aporte_mensal
     
                     fallback_data = encontrar_proxima_data_valida(data_aporte_original, precos)
+                    st.markdown(f"Os preços de fallback para confirmação negativa de compra são: {fallback_data}")
+                    
                     # Garante que ao menos guardemos uma data do mês para ver a variação do ativo
                     if fallback_data is not None:
                         datas_aportes_dict[month_key] = fallback_data
