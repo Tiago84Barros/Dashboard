@@ -1686,6 +1686,7 @@ if pagina == "Avançada": #_____________________________________________________
         datas_aportes = sorted(datas_aportes_dict.values())
     
         df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
+        st.dataframe(datas_aportes)
     
         return df_patrimonio, datas_aportes
 
