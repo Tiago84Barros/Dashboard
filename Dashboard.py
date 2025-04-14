@@ -1557,6 +1557,9 @@ if pagina == "Avançada": #_____________________________________________________
     
         # Selecionar preços do mês até a data do aporte
         precos_mes = precos.loc[:data_aporte, ticker].dropna()
+        st.markdown("O valor do dataframe precos_mes é:")
+        st.dataframe(precos_mes)
+        
         if len(precos_mes) < (janela_rsi + 1):
             return None, None  # Dados insuficientes para calcular RSI
     
@@ -1566,12 +1569,15 @@ if pagina == "Avançada": #_____________________________________________________
     
         # Condição para entrada: RSI <= limite_rsi E preço >= EMA (confirma alta)
         sinal = (rsi_mes <= limite_rsi) & (precos_mes >= ema_series)
+        st.markdown(f"Esse é o sinal encontrado ao analisar o rsi_mes e o ema {sinal}")
         if not sinal.any():
             # Se nenhuma data satisfaz as condições, usar o último dia do mês como fallback
             melhor_data = precos_mes.index[-1]
+            st.markdown(f"a melhor data de fallback devido a não haver sinal de compra é {melhor_data}")
         else:
             # Selecionar a última data onde as condições foram satisfeitas
             melhor_data = sinal[sinal].index[-1]
+            st.markdown(f"A melhor data de compra segundo o sinal de compra é {melhor_data}")
     
         preco = precos.loc[melhor_data, ticker] if melhor_data in precos.index else None
         return melhor_data, preco
