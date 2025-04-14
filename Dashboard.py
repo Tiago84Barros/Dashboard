@@ -1632,7 +1632,7 @@ if pagina == "Avançada": #_____________________________________________________
         
     # Função responsável por criar a estratégia de comprar empresas Líderes do segmento e vender empresas com deterioração de fundamentos _____________________________________________________________ 
     def gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict, aporte_mensal=1000, deterioracao_limite=0.7):
-        patrimonio = {}
+        patrimonio = {
         carteira = {}
         data_inicio = None
         aporte_acumulado = 0
