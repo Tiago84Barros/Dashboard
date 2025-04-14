@@ -1681,6 +1681,7 @@ if pagina == "Avançada": #_____________________________________________________
                 
         # Converte o dicionário de patrimônio em DataFrame para fins de plotagem
         df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
+        st.dataframe(datas_aportes)
         return df_patrimonio, datas_aportes
     
 
