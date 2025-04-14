@@ -1345,7 +1345,7 @@ if pagina == "Avançada": #_____________________________________________________
         for col, cfg in pesos_utilizados.items():
             if col in df.columns:
                 df[col + '_norm'] = z_score_normalize(df[col], cfg['melhor_alto'])
-                df['Score_Ajustado'] += df[col + '_norm'] * cfg['peso']
+                df['Score_Ajustado] += df[col + '_norm'] * cfg['peso']
     
         return df
 
