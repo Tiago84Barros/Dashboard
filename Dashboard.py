@@ -1560,13 +1560,11 @@ if pagina == "Avançada": #_____________________________________________________
         ano = data_aporte_valid.year
         mes = data_aporte_valid.month
         mes_inicio = pd.Timestamp(year=ano, month=mes, day=1)
-        mes_fim = mes_inicio + pd.offsets.MonthEnd(0)
+        mes_fim = mes_inicio + pd.offsets.MonthEnd(
         
         # Seleciona os preços do ticker para todo o mês
         dados_mes = precos.loc[mes_inicio:mes_fim, ticker].dropna()
-        st.markdown("Os dados do mês que será usado na análise RSI e EMA são:")
-        st.dataframe(dados_mes)
-        
+               
         # Se os dados do mês forem insuficientes, use o primeiro dia como fallback
         if len(dados_mes) < janela_rsi:
             fallback = dados_mes.index[0] if not dados_mes.empty else None
