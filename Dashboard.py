@@ -1622,7 +1622,7 @@ if pagina == "Avançada": #_____________________________________________________
         ano = data_sell_valid.year
         mes = data_sell_valid.month
         mes_inicio = pd.Timestamp(year=ano, month=mes, day=1)
-        mes_fim = mes_inicio + pd.offsets.MonthEnd(0)
+        mes_fim = mes_inicio + pd.offsets.MonthEnd(0
         
         # Seleciona os preços do ticker para todo o mês
         dados_mes = precos.loc[mes_inicio:mes_fim, ticker].dropna()
