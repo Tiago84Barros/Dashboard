@@ -1564,6 +1564,9 @@ if pagina == "Avançada": #_____________________________________________________
         
         # Seleciona os preços do ticker para todo o mês
         dados_mes = precos.loc[mes_inicio:mes_fim, ticker].dropna()
+        st.markdown("Os dados do mês que será usado na análise RSI e EMA são:")
+        st.dataframe(dados_mes)
+        
         # Se os dados do mês forem insuficientes, use o primeiro dia como fallback
         if len(dados_mes) < janela_rsi:
             fallback = dados_mes.index[0] if not dados_mes.empty else None
@@ -1573,13 +1576,18 @@ if pagina == "Avançada": #_____________________________________________________
         for d in dados_mes.index:
             # Define uma janela que abrange os dados do mês até o dia 'd'
             window = dados_mes.loc[:d]
+            st.markdown("A janela utilizada para é:")
+            st.dataframe(window)
+            
             if len(window) < janela_rsi:
                 continue  # Não há dados suficientes para calcular os indicadores
             rsi_val = calcular_rsi(window, janela=janela_rsi).iloc[-1]
             ema_val = calcular_ema(window, period=ema_period).iloc[-1]
             preco_val = window.iloc[-1]
+                       
             # Testa os critérios: RSI <= limite e preço >= EMA
             if rsi_val <= limite_rsi and preco_val >= ema_val:
+                st.markdown(f"O preço encontrado para compra é {preco_val} e a data é {d}")
                 # Se encontrar, retorna essa data e o preço
                 return d, preco_val
     
