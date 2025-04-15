@@ -1391,7 +1391,7 @@ if pagina == "Avançada": #_____________________________________________________
                 colunas_para_filtrar = [
                     'Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida',
                     'Divida_Total', 'Passivo_Circulante', 'Liquidez_Corrente',
-                    'Crescimento_Receita', 'Crescimento_Lucro'
+                    'Crescimento_Receita', 'Crescimento_Lucro']
               
                 
                 #multiplos_corrigido = aplicar_winsorize_multiplas(df_mult, colunas_para_filtrar)
