@@ -1417,9 +1417,6 @@ if pagina == "Avançada": #_____________________________________________________
             df_scores = pd.concat(df_resultados, ignore_index=True)
         else:
             df_scores = pd.DataFrame(columns=['Ano', 'ticker', 'Score_Ajustado'])
-
-        st.markdown("Então os anos relacionados aos scores das empresas são:")  
-        st.dataframe(df_scores)
                     
         return df_scores
 
@@ -1665,14 +1662,12 @@ if pagina == "Avançada": #_____________________________________________________
         datas_aportes_dict = {}
     
         anos = sorted(df_scores['Ano'].unique())
-        st.markdown(f"Os anos de df_scores são:")
-        st.dataframe(anos)
-    
+
         for ano in anos:
             if ano in lideres_por_ano['Ano'].values:
                 empresa_lider = lideres_por_ano[lideres_por_ano['Ano'] == ano].iloc[0]['ticker']
                 st.markdown(f"A empresa Líder do ano {ano} é {empresa_lider}")
-                st.markdown(f"logo o ano que deve ser previsto é {ano+1}")
+
             else:
                 continue
     
