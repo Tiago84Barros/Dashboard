@@ -1659,63 +1659,67 @@ if pagina == "Avançada": #_____________________________________________________
     def gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict, aporte_mensal=1000, deterioracao_limite=0.7):
         patrimonio = {}
         carteira = {}
-        data_inicio = None
         aporte_acumulado = 0
     
-        # Em vez de uma lista simples, use um dicionário mapeando (ano, mês) -> data
+        # Dicionário para mapear (ano, mês) -> data de aporte (ou fallback)
         datas_aportes_dict = {}
     
+        # Obter data atual para limitar a busca dos meses no último ano
+        data_atual = pd.Timestamp.today()
+    
         anos = sorted(df_scores['Ano'].unique())
-
         for ano in anos:
+            # Identifica a empresa líder do ano histórico
             if ano in lideres_por_ano['Ano'].values:
                 empresa_lider = lideres_por_ano[lideres_por_ano['Ano'] == ano].iloc[0]['ticker']
-                st.markdown(f"A empresa Líder do ano {ano} é {empresa_lider}")
-
+                st.markdown(f"A empresa líder do ano {ano} é {empresa_lider}")
             else:
                 continue
     
+            # Para o ano de aporte, normalmente usamos ano + 1
+            ano_aporte = ano + 1
+    
+            # Se o ano de aporte for o mesmo que o ano atual, limite os meses até o mês corrente.
             for mes in range(1, 13):
-                data_aporte_original = pd.to_datetime(f"{ano + 1}-{mes:02d}-01")
-                st.markdown(f"A data do aporte original é {data_aporte_original}")
+                data_aporte_original = pd.to_datetime(f"{ano_aporte}-{mes:02d}-01")
+                # Se a data de aporte original for posterior à data atual, interrompa a iteração para este ano
+                if data_atual.year == ano_aporte and data_aporte_original.month > data_atual.month:
+                    st.markdown(f"Pulando meses futuros (data {data_aporte_original.date()})")
+                    break
     
+                st.markdown(f"Data do aporte original: {data_aporte_original}")
+    
+                # Chama a função que testa os dias do mês e retorna o sinal de entrada
                 data_aporte, preco_lider = validar_tendencia_entrada(empresa_lider, precos, data_aporte_original)
-                st.markdown(f"A data do aporte baseado na saída de validar_tendencia_entrada é {data_aporte}")
+                st.markdown(f"Data retornada pela validação: {data_aporte}")
     
-                # Chave para nosso dicionário => (ano, mês)
                 month_key = (data_aporte_original.year, data_aporte_original.month)
     
                 if data_aporte is None or preco_lider is None:
-                    # Se não houver sinal de compra, acumula aporte e registra fallback
+                    # Sem sinal favorável: acumula aporte e utiliza o fallback (primeiro dia válido do mês)
                     aporte_acumulado += aporte_mensal
-    
                     fallback_data = encontrar_proxima_data_valida(data_aporte_original, precos)
-                    st.markdown(f"Os preços de fallback para confirmação negativa de compra são: {fallback_data}")
+                    st.markdown(f"Fallback para o mês: {fallback_data}")
                     
-                    # Garante que ao menos guardemos uma data do mês para ver a variação do ativo
                     if fallback_data is not None:
                         datas_aportes_dict[month_key] = fallback_data
-                        # Atualiza patrimônio baseado no preço do que já existe na carteira
                         if empresa_lider in carteira:
                             patrimonio[fallback_data] = carteira[empresa_lider] * precos.loc[fallback_data, empresa_lider]
                         else:
                             patrimonio[fallback_data] = 0
                     else:
-                        # Caso não encontre data válida, ainda podemos registrar a data original
                         datas_aportes_dict[month_key] = data_aporte_original
                         patrimonio[data_aporte_original] = patrimonio.get(data_aporte_original, 0)
-    
-                    # Pula para o próximo mês
                     continue
     
-                # Se houve sinal de compra
+                # Se encontrar sinal favorável, fixa a data para o mês
+                datas_aportes_dict[month_key] = data_aporte
+    
+                # Junta o aporte acumulado com o aporte do mês e reseta o acumulado
                 aporte_total = aporte_acumulado + aporte_mensal
                 aporte_acumulado = 0
     
-                # Garante que o dicionário de datas tenha apenas UMA data para esse mês
-                datas_aportes_dict[month_key] = data_aporte
-    
-                # Reinvestir dividendos na carteira existente
+                # Reinvestimento de dividendos nas ações já mantidas
                 for empresa in carteira:
                     div_yf = dividendos_dict.get(empresa, pd.Series())
                     if not div_yf.empty:
@@ -1724,21 +1728,17 @@ if pagina == "Avançada": #_____________________________________________________
                         if preco_empresa and preco_empresa > 0:
                             carteira[empresa] += (dividendos_mes * carteira[empresa]) / preco_empresa
     
-                # Compra a empresa líder
+                # Compra da empresa líder com o aporte total
                 if empresa_lider not in carteira:
                     carteira[empresa_lider] = 0
-    
                 carteira[empresa_lider] += aporte_total / preco_lider
                 patrimonio[data_aporte] = carteira[empresa_lider] * preco_lider
     
-        # Ao final, convertemos datas_aportes_dict em uma lista ordenada de datas
-        # Assim, teremos apenas UMA data por mês de contribuição/fallback.
+        # Converte o dicionário de datas em uma lista ordenada
         datas_aportes = sorted(datas_aportes_dict.values())
-    
         df_patrimonio = pd.DataFrame.from_dict(patrimonio, orient='index', columns=['Patrimonio']).sort_index()
-           
+    
         return df_patrimonio, datas_aportes
-
     
 
     # Função para gerir o aporte mensal de todas as empresas do segmento sem estratégia 
