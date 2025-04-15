@@ -1627,9 +1627,7 @@ if pagina == "Avançada": #_____________________________________________________
         
         # Seleciona os preços do ticker para todo o mês
         dados_mes = precos.loc[mes_inicio:mes_fim, ticker].dropna()
-        st.markdown(f"Janela de dados para avaliação de venda: de {mes_inicio.date()} a {mes_fim.date()}")
-        st.dataframe(dados_mes)
-        
+                
         if len(dados_mes) < janela_rsi:
             return None, None  # Dados insuficientes para cálculo do RSI
         
@@ -1647,11 +1645,9 @@ if pagina == "Avançada": #_____________________________________________________
             
             # Se o RSI estiver acima do limite ou o preço cair abaixo da EMA, sinaliza venda
             if rsi_val >= limite_rsi or preco_val < ema_val:
-                st.markdown(f"Sinal de venda encontrado em {d.date()} com preço {preco_val:.2f}")
                 return d, preco_val
     
         # Se nenhum dia do mês apresenta sinal de venda, retorna (None, None)
-        st.markdown("Nenhum sinal de venda favorável identificado neste mês.")
         return None, None
 
         
@@ -1672,7 +1668,6 @@ if pagina == "Avançada": #_____________________________________________________
             # Identifica a empresa líder do ano histórico
             if ano in lideres_por_ano['Ano'].values:
                 empresa_lider = lideres_por_ano[lideres_por_ano['Ano'] == ano].iloc[0]['ticker']
-                st.markdown(f"A empresa líder do ano {ano} é {empresa_lider}")
             else:
                 continue
     
@@ -1684,10 +1679,7 @@ if pagina == "Avançada": #_____________________________________________________
                 data_aporte_original = pd.to_datetime(f"{ano_aporte}-{mes:02d}-01")
                 # Se a data de aporte original for posterior à data atual, interrompa a iteração para este ano
                 if data_atual.year == ano_aporte and data_aporte_original.month > data_atual.month:
-                    st.markdown(f"Pulando meses futuros (data {data_aporte_original.date()})")
                     break
-    
-                st.markdown(f"Data do aporte original: {data_aporte_original}")
     
                 # Chama a função que testa os dias do mês e retorna o sinal de entrada
                 data_aporte, preco_lider = validar_tendencia_entrada(empresa_lider, precos, data_aporte_original)
