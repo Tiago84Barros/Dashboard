@@ -1627,7 +1627,7 @@ if pagina == "Avançada": #_____________________________________________________
         # Seleciona os preços do ticker para todo o mês
         dados_mes = precos.loc[mes_inicio:mes_fim, ticker].dropna()
         st.markdown(f"Janela de dados para avaliação de venda: de {mes_inicio.date()} a {mes_fim.date()}")
-        st.dataframe(dados_mes
+        st.dataframe(dados_mes)
         
         if len(dados_mes) < janela_rsi:
             return None, None  # Dados insuficientes para cálculo do RSI
