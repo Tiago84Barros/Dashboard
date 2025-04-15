@@ -1,4 +1,4 @@
-import streamlit as 
+import streamlit asst
 import pandas as pd
 import requests
 import plotly.express as px
