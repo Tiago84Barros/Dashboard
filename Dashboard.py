@@ -1566,7 +1566,7 @@ if pagina == "Avançada": #_____________________________________________________
         dados_mes = precos.loc[mes_inicio:mes_fim, ticker].dropna()
                
         # Se os dados do mês forem insuficientes, use o primeiro dia como fallback
-        if len(dados_mes) < janela_rsi
+        if len(dados_mes) < janela_rsi:
             fallback = dados_mes.index[0] if not dados_mes.empty else None
             return fallback, precos.loc[fallback, ticker] if fallback is not None else (None, None)
         
