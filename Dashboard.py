@@ -1576,7 +1576,7 @@ if pagina == "Avançada": #_____________________________________________________
         for d in dados_mes.index:
             # Define uma janela que abrange os dados do mês até o dia 'd'
             window = dados_mes.loc[:d]
-            st.markdown("A janela utilizada para é:")
+            st.markdown("A janela utilizada para realizar a análise é:")
             st.dataframe(window)
             
             if len(window) < janela_rsi:
@@ -1684,7 +1684,7 @@ if pagina == "Avançada": #_____________________________________________________
                 st.markdown(f"A data do aporte original é {data_aporte_original}")
     
                 data_aporte, preco_lider = validar_tendencia_entrada(empresa_lider, precos, data_aporte_original)
-                st.markdown(f"A data do aporte baseado na análise técnica é {data_aporte}")
+                st.markdown(f"A data do aporte baseado na saída de validar_tendencia_entrada é {data_aporte}")
     
                 # Chave para nosso dicionário => (ano, mês)
                 month_key = (data_aporte_original.year, data_aporte_original.month)
