@@ -1576,9 +1576,7 @@ if pagina == "Avançada": #_____________________________________________________
         for d in dados_mes.index:
             # Define uma janela que abrange os dados do mês até o dia 'd'
             window = dados_mes.loc[:d]
-            st.markdown("A janela utilizada para realizar a análise é:")
-            st.dataframe(window)
-            
+                       
             if len(window) < janela_rsi:
                 continue  # Não há dados suficientes para calcular os indicadores
             rsi_val = calcular_rsi(window, janela=janela_rsi).iloc[-1]
