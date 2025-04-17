@@ -1532,7 +1532,7 @@ if pagina == "Avançada": #_____________________________________________________
         return rsi
         
     # Função que utiliza análise técnica de médias móveis para determinar o melhor momento de compra da empresa Líder _______________________________________________________________________________    
-    def validar_tendencia_entrada(ticker, precos, data_aporte_original, janela_rsi=14, limite_rsi=35, ema_period=20):
+    def validar_tendencia_entrada(ticker, precos, data_aporte_original, janela_rsi=10, limite_rsi=35, ema_period=20):
         """
         Para o mês correspondente à data_aporte_original, essa função testa diariamente se os indicadores 
         técnicos indicam oportunidade de compra. Se encontrar um sinal favorável em algum dia do mês, retorna 
