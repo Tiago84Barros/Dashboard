@@ -1589,7 +1589,7 @@ if pagina == "Avançada": #_____________________________________________________
     
         # Se nenhum dia do mês satisfizer os critérios, use como fallback o primeiro dia de negociação válido do mês
         fallback = dados_mes.index[0]
-        st.markdown(f"Nenhum dia do mês satisfez os critérios. Esse é o fallback é {dados_mes}")
+        st.markdown(f"Nenhum dia do mês satisfez os critérios. Esse é o fallback é {fallback}")
         return fallback, precos.loc[fallback, ticker]
 
     # Função responsável por determinar o melhor momento de venda da empresa que apresentou deterioração em seus fundamentos _____________________________________________________________________
