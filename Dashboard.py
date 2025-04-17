@@ -1685,12 +1685,12 @@ if pagina == "Avançada": #_____________________________________________________
                  
                 month_key = (data_aporte_original.year, data_aporte_original.month)
     
-                if data_aporte is None or preco_lider is None:
+                if preco_lider is None:
                     # Sem sinal favorável: acumula aporte e utiliza o fallback (primeiro dia válido do mês)
                     aporte_acumulado += aporte_mensal
                    
-                    fallback_data = encontrar_proxima_data_valida(data_aporte_original, precos)
-                    st.markdown(f"Fallback para o mês: {fallback_data}")
+                    fallback_data = data_aporte
+                    st.markdown(f"O valor do aporte_acumulado é: {aporte_acumulado}")
                     
                     if fallback_data is not None:
                         datas_aportes_dict[month_key] = fallback_data
