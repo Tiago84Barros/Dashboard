@@ -1532,7 +1532,7 @@ if pagina == "Avançada": #_____________________________________________________
         return rsi
         
     # Função que utiliza análise técnica de médias móveis para determinar o melhor momento de compra da empresa Líder _______________________________________________________________________________    
-    def validar_tendencia_entrada(ticker, precos, data_aporte_original, janela_rsi=10, limite_rsi=35, ema_period=20):
+    def validar_tendencia_entrada(ticker, precos, data_aporte_original, janela_rsi=5, limite_rsi=10, ema_period=10):
         """
         Para o mês correspondente à data_aporte_original, essa função testa diariamente se os indicadores 
         técnicos indicam oportunidade de compra. Se encontrar um sinal favorável em algum dia do mês, retorna 
@@ -1592,7 +1592,7 @@ if pagina == "Avançada": #_____________________________________________________
         return fallback, precos.loc[fallback, ticker]
 
     # Função responsável por determinar o melhor momento de venda da empresa que apresentou deterioração em seus fundamentos _____________________________________________________________________
-    def validar_tendencia_saida(ticker, precos, data_aporte_original, janela_rsi=14, limite_rsi=60, ema_period=20):
+    def validar_tendencia_saida(ticker, precos, data_aporte_original, janela_rsi=5, limite_rsi=60, ema_period=10):
         """
         Para o mês correspondente à data_aporte_original, essa função percorre dia a dia os
         dados de negociação e avalia se os indicadores técnicos indicam um bom momento para venda.
@@ -1640,9 +1640,7 @@ if pagina == "Avançada": #_____________________________________________________
             rsi_val = calcular_rsi(janela, janela=janela_rsi).iloc[-1]
             ema_val = calcular_ema(janela, period=ema_period).iloc[-1]
             preco_val = janela.iloc[-1]
-            
-            st.markdown(f"Data: {d.date()} | Preço: {preco_val:.2f} | RSI: {rsi_val:.2f} | EMA: {ema_val:.2f}")
-            
+                           
             # Se o RSI estiver acima do limite ou o preço cair abaixo da EMA, sinaliza venda
             if rsi_val >= limite_rsi or preco_val < ema_val:
                 return d, preco_val
