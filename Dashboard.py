@@ -1590,7 +1590,7 @@ if pagina == "Avançada": #_____________________________________________________
         # Se nenhum dia do mês satisfizer os critérios, use como fallback o primeiro dia de negociação válido do mês
         fallback = dados_mes.index[0]
         st.markdown(f"Nenhum dia do mês satisfez os critérios. Esse é o fallback é {fallback}")
-        return fallback, precos.loc[fallback, ticker]
+        return fallback, None
 
     # Função responsável por determinar o melhor momento de venda da empresa que apresentou deterioração em seus fundamentos _____________________________________________________________________
     def validar_tendencia_saida(ticker, precos, data_aporte_original, janela_rsi=14, limite_rsi=60, ema_period=20):
@@ -1686,22 +1686,13 @@ if pagina == "Avançada": #_____________________________________________________
                  
                 month_key = (data_aporte_original.year, data_aporte_original.month)
     
-                if preco_lider is None:
-                    # Sem sinal favorável: acumula aporte e utiliza o fallback (primeiro dia válido do mês)
+                # se não houve sinal real, preco_lider será None
+                if data_aporte is None or preco_lider is None:
                     aporte_acumulado += aporte_mensal
-                   
-                    fallback_data = data_aporte
-                    st.markdown(f"O valor do aporte_acumulado é: {aporte_acumulado}")
-                    
-                    if fallback_data is not None:
-                        datas_aportes_dict[month_key] = fallback_data
-                        if empresa_lider in carteira:
-                            patrimonio[fallback_data] = carteira[empresa_lider] * precos.loc[fallback_data, empresa_lider]
-                        else:
-                            patrimonio[fallback_data] = 0
-                    else:
-                        datas_aportes_dict[month_key] = data_aporte_original
-                        patrimonio[data_aporte_original] = patrimonio.get(data_aporte_original, 0)
+                    st.markdown(f"Valor do aporte acumulado é: {aporte_acumulado}")
+                    fallback_data = data_aporte or data_aporte_original
+                    datas_aportes_dict[month_key] = fallback_data
+                    patrimonio[fallback_data] = carteira.get(empresa_lider, 0) * precos.loc[fallback_data, empresa_lider]
                     continue
     
                 # Se encontrar sinal favorável, fixa a data para o mês
