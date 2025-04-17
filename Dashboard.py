@@ -1588,6 +1588,7 @@ if pagina == "Avançada": #_____________________________________________________
                 return d, preco_val
     
         # Se nenhum dia do mês satisfizer os critérios, use como fallback o primeiro dia de negociação válido do mês
+        st.markdown(f"Nenhum dia do mês satisfez os critérios. Esse é o fallback é {dados_mes}")
         fallback = dados_mes.index[0]
         return fallback, precos.loc[fallback, ticker]
 
@@ -1681,13 +1682,13 @@ if pagina == "Avançada": #_____________________________________________________
     
                 # Chama a função que testa os dias do mês e retorna o sinal de entrada
                 data_aporte, preco_lider = validar_tendencia_entrada(empresa_lider, precos, data_aporte_original)
-                st.markdown(f"Data retornada pela validação: {data_aporte}")
-    
+                 
                 month_key = (data_aporte_original.year, data_aporte_original.month)
     
                 if data_aporte is None or preco_lider is None:
                     # Sem sinal favorável: acumula aporte e utiliza o fallback (primeiro dia válido do mês)
                     aporte_acumulado += aporte_mensal
+                   
                     fallback_data = encontrar_proxima_data_valida(data_aporte_original, precos)
                     st.markdown(f"Fallback para o mês: {fallback_data}")
                     
