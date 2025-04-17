@@ -1682,6 +1682,7 @@ if pagina == "Avançada": #_____________________________________________________
     
                 # Chama a função que testa os dias do mês e retorna o sinal de entrada
                 data_aporte, preco_lider = validar_tendencia_entrada(empresa_lider, precos, data_aporte_original)
+                st.markdown(f"O valor de preco_lider é {preco_lider}")
                  
                 month_key = (data_aporte_original.year, data_aporte_original.month)
     
