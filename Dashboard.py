@@ -1659,7 +1659,7 @@ if pagina == "Avançada": #_____________________________________________________
         lideres_por_ano,
         dividendos_dict,
         aporte_mensal=1000,
-        deterioracao_limite=0.7,
+        deterioracao_limite=0.5,
     ):
         # -------------------- estado ---------------------------------
         carteira         = defaultdict(float)   # ticker -> nº de ações
