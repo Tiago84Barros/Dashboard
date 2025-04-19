@@ -1693,7 +1693,7 @@ if pagina == "Avançada": #_____________________________________________________
                                 (df_div.index.month == data_sinal.month)
                             ].sum()
                 
-                            preco_empresa = precos.loc[data_sinal, empresa] if data_aporte in precos.index else None
+                            preco_empresa = precos.loc[data_sinal, empresa] if data_sinal in precos.index else None
                 
                             if preco_empresa and preco_empresa > 0:
                                 valor_reinvestido = dividendos_mes * carteira[empresa]
