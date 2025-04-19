@@ -1661,17 +1661,14 @@ if pagina == "Avançada": #_____________________________________________________
         registros = []  # vai virar DataFrame no fim
     
         anos = sorted(df_scores['Ano'].unique())
+        
         for ano in anos:
-            empresa_lider = (
-                lideres_por_ano
-                .query("Ano == @ano")['ticker']
-                .iloc[0]
-            )
+            empresa_lider = (lideres_por_ano.query("Ano == @ano")['ticker'].iloc[0])
+            
             for mes in range(1, 13):
+                
                 data_aporte = pd.Timestamp(f"{ano+1}-{mes:02d}-01")
-                data_sinal, preco_sinal = validar_tendencia_entrada(
-                    empresa_lider, precos, data_aporte
-                )
+                data_sinal, preco_sinal = validar_tendencia_entrada(empresa_lider, precos, data_aporte)
     
                 # Se não teve sinal real, acumula
                 if preco_sinal is None:
@@ -1686,10 +1683,12 @@ if pagina == "Avançada": #_____________________________________________________
                 for antiga in list(carteira):
                     if antiga == empresa_lider:
                         continue
+                        
                     score_ini = df_scores.query("Ano == @anos[0] and ticker == @antiga")['Score_Ajustado']
                     score_atual = df_scores.query("Ano == @ano and ticker == @antiga")['Score_Ajustado']
-                    if (len(score_ini) and len(score_atual)
-                        and (score_atual.values[0] / score_ini.values[0] < deterioracao_limite)):
+                    
+                    if (len(score_ini) and len(score_atual) and (score_atual.values[0] / score_ini.values[0] < deterioracao_limite)):
+                        
                         # vende tudo
                         preco_venda = precos.loc[data_sinal, antiga]
                         carteira[empresa_lider] += carteira[antiga] * preco_venda / (preco_sinal or 1)
@@ -1706,18 +1705,15 @@ if pagina == "Avançada": #_____________________________________________________
                         val = qtd * precos.loc[data_sinal, tk]
                     else:
                         val = 0.0
-                    registro[f"value_{tk}"] = val
+                    #registro[f"value_{tk}"] = val
                     total += val
                 registro['Total'] = total
     
                 registros.append(registro)
     
         # Converte em DataFrame e indexa pela data
-        df_patrimonio = (
-            pd.DataFrame(registros)
-              .set_index('date')
-              .sort_index()
-        )
+        df_patrimonio = (pd.DataFrame(registros).set_index('date').sort_index())
+        
         # E lista de datas para reinvestir dividendos ou simulações adicionais:
         datas_aportes = df_patrimonio.index.unique().tolist()
     
