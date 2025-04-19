@@ -1665,6 +1665,7 @@ if pagina == "Avançada": #_____________________________________________________
         carteira         = defaultdict(float)   # ticker -> nº de ações
         aporte_acumulado = 0.0
         registros        = []                   # lista de dicionários p/ DataFrame
+        preco_aporte     = []
         # -------------------------------------------------------------
     
         anos = sorted(df_scores['Ano'].unique())
@@ -1681,8 +1682,8 @@ if pagina == "Avançada": #_____________________________________________________
 
                 data_sinal = encontrar_proxima_data_valida(data_nominal, precos)
                 preco_sinal = precos.loc[data_sinal, empresa_lider] if data_sinal in precos.index else None
-                st.markdown(f"A data de compra é {data_sinal} no preço de {preco_sinal} para a empresa {empresa_lider}")
-    
+                preco_aporte = append(preco_sinal)
+        
                 # ---------- aporte ----------
                 if preco_sinal is None or np.isnan(preco_sinal):
                     # impossível comprar – acumula
@@ -1691,8 +1692,7 @@ if pagina == "Avançada": #_____________________________________________________
                     total_a_comprar = aporte_mensal + aporte_acumulado
                     aporte_acumulado = 0.0
                     carteira[empresa_lider] += total_a_comprar / preco_sinal
-                    st.markdown(f"O total de ações compradas é de {carteira[empresa_lider]} da empresa {empresa_lider}")
-                    
+                                        
     
                 # ---------- deterioração ----------
                 for antiga in list(carteira):
@@ -1720,7 +1720,7 @@ if pagina == "Avançada": #_____________________________________________________
                     if data_sinal not in precos.index:
                         continue
                     val = qtd * precos.loc[data_sinal, tk]
-                    registro[f"value_{tk}"] = val
+                    #registro[f"value_{tk}"] = val
                     total += val
     
                 registro['Patrimônio'] = total              # <<< nome oficial
@@ -1737,6 +1737,8 @@ if pagina == "Avançada": #_____________________________________________________
         df_patrimonio = df_patrimonio[(df_patrimonio != 0).any(axis=1)]
 
         datas_aportes = df_patrimonio.index.unique().tolist()
+
+        st.dataframe(preco_aporte)
         return df_patrimonio, datas_aportes
 
     # Função para gerir o aporte mensal de todas as empresas do segmento sem estratégia 
