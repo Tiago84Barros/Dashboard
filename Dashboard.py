@@ -1199,7 +1199,7 @@ if pagina == "Avançada": #_____________________________________________________
             metrics[f'{col}_std'] = std
         
         # =============== DEMONSTRAÇÕES ===============
-        for col in ['Receita_Liquida', 'Lucro_Liquido', 'Patrimonio_Liquido', 'Divida_Liquida', 'Caixa_Liquido']:
+        for col in ['Receita_Liquida', 'Lucro_Liquido', 'Patrimonio_Liquido', 'Divida_Liquida', 'Caixa_Liquido']
             slope = slope_regressao_log(df_dre, col)
             metrics[f'{col}_slope_log'] = slope
             metrics[f'{col}_growth_approx'] = slope_to_growth_percent(slope)
