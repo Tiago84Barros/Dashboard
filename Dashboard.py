@@ -1645,6 +1645,7 @@ if pagina == "Avançada": #_____________________________________________________
                            
             # Se o RSI estiver acima do limite ou o preço cair abaixo da EMA, sinaliza venda
             if rsi_val >= limite_rsi or preco_val < ema_val:
+                st.markdown(f"O preço encontrado para saída é {preco_val} e a data é {d}")
                 return d, preco_val
     
         # Se nenhum dia do mês apresenta sinal de venda, retorna (None, None)
@@ -1652,73 +1653,87 @@ if pagina == "Avançada": #_____________________________________________________
 
         
     # Função responsável por criar a estratégia de comprar empresas Líderes do segmento e vender empresas com deterioração de fundamentos _____________________________________________________________ 
-    def gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict, aporte_mensal=1000, deterioracao_limite=0.7):
-        # carteira mantém nº de ações de cada ticker
-        carteira = defaultdict(float)
+    def gerir_carteira(
+        precos,
+        df_scores,
+        lideres_por_ano,
+        dividendos_dict,
+        aporte_mensal=1000,
+        deterioracao_limite=0.7,
+    ):
+        # -------------------- estado ---------------------------------
+        carteira         = defaultdict(float)   # ticker -> nº de ações
         aporte_acumulado = 0.0
-    
-        # Para registrar valores ao longo do tempo:
-        registros = []  # vai virar DataFrame no fim
+        registros        = []                   # lista de dicionários p/ DataFrame
+        # -------------------------------------------------------------
     
         anos = sorted(df_scores['Ano'].unique())
-        
-        for ano in anos:
-            empresa_lider = (lideres_por_ano.query("Ano == @ano")['ticker'].iloc[0])
-            
-            for mes in range(1, 13):
-                
-                data_aporte = pd.Timestamp(f"{ano+1}-{mes:02d}-01")
-                data_sinal, preco_sinal = validar_tendencia_entrada(empresa_lider, precos, data_aporte)
     
-                # Se não teve sinal real, acumula
-                if preco_sinal is None:
+        for ano in anos:
+            empresa_lider = lideres_por_ano.query("Ano == @ano")['ticker'].iloc[0]
+    
+            for mes in range(1, 13):
+                data_nominal = pd.Timestamp(f"{ano+1}-{mes:02d}-01")
+    
+                # ► data_sinal SEMPRE devolve uma data válida (fallback)
+                data_sinal, preco_sinal = validar_tendencia_entrada(
+                    empresa_lider, precos, data_nominal
+                )
+    
+                # ---------- aporte ----------
+                if preco_sinal is None or np.isnan(preco_sinal):
+                    # impossível comprar – acumula
                     aporte_acumulado += aporte_mensal
                 else:
-                    # faz aporte
-                    total_a_aplicar = aporte_mensal + aporte_acumulado
-                    aporte_acumulado = 0
-                    carteira[empresa_lider] += total_a_aplicar / preco_sinal
+                    total_a_comprar = aporte_mensal + aporte_acumulado
+                    aporte_acumulado = 0.0
+                    carteira[empresa_lider] += total_a_comprar / preco_sinal
     
-                # Checa deterioração e vende apenas se ultrapassar o limite
+                # ---------- deterioração ----------
                 for antiga in list(carteira):
                     if antiga == empresa_lider:
                         continue
-                        
-                    score_ini = df_scores.query("Ano == @anos[0] and ticker == @antiga")['Score_Ajustado']
-                    score_atual = df_scores.query("Ano == @ano and ticker == @antiga")['Score_Ajustado']
-                    
-                    if (len(score_ini) and len(score_atual) and (score_atual.values[0] / score_ini.values[0] < deterioracao_limite)):
-                        
-                        # vende tudo
+    
+                    score_ini    = df_scores.query(
+                        "Ano == @anos[0] and ticker == @antiga"
+                    )['Score_Ajustado']
+                    score_atual  = df_scores.query(
+                        "Ano == @ano     and ticker == @antiga"
+                    )['Score_Ajustado']
+    
+                    if score_ini.empty or score_atual.empty:
+                        continue
+    
+                    if score_atual.values[0] / score_ini.values[0] < deterioracao_limite:
+                        # vende tudo da antiga líder
                         preco_venda = precos.loc[data_sinal, antiga]
-                        carteira[empresa_lider] += carteira[antiga] * preco_venda / (preco_sinal or 1)
-                        del carteira[antiga]
+                        if not np.isnan(preco_venda) and preco_venda > 0:
+                            carteira[empresa_lider] += (
+                                carteira.pop(antiga) * preco_venda / preco_sinal
+                            )
     
-                # Agora, **recalcula o valor de cada posição** neste data_sinal (ou fallback)
-                # e armazena num registro:
-                #    registro = { 'date': data_sinal, 'ticker_A1': val_A1, 'ticker_A2': val_A2, ..., 'Total': soma }
+                # ---------- registra valores ----------
                 registro = {'date': data_sinal}
-                total = 0.0
+                total    = 0.0
                 for tk, qtd in carteira.items():
-                    # se não houver preço nesta data, pula
-                    if data_sinal in precos.index:
-                        val = qtd * precos.loc[data_sinal, tk]
-                    else:
-                        val = 0.0
-                    #registro[f"value_{tk}"] = val
+                    if data_sinal not in precos.index:
+                        continue
+                    val = qtd * precos.loc[data_sinal, tk]
+                    registro[f"value_{tk}"] = val
                     total += val
-                registro['Total'] = total
     
+                registro['Patrimônio'] = total              # <<< nome oficial
                 registros.append(registro)
     
-        # Converte em DataFrame e indexa pela data
-        df_patrimonio = (pd.DataFrame(registros).set_index('date').sort_index())
-        
-        # E lista de datas para reinvestir dividendos ou simulações adicionais:
-        datas_aportes = df_patrimonio.index.unique().tolist()
+        df_patrimonio = (
+            pd.DataFrame(registros)
+              .set_index('date')
+              .sort_index()
+              .fillna(method='ffill')       # suaviza buracos de preço
+        )
     
+        datas_aportes = df_patrimonio.index.unique().tolist()
         return df_patrimonio, datas_aportes
-        
 
     # Função para gerir o aporte mensal de todas as empresas do segmento sem estratégia 
     def gerir_carteira_todas_empresas(precos, tickers, datas_aportes, dividendos_dict, aporte_mensal=1000):
@@ -1786,7 +1801,6 @@ if pagina == "Avançada": #_____________________________________________________
         df_patrimonio_empresas.sort_index(inplace=True)
     
         return df_patrimonio_empresas
-
 
     
     # 📌 Função para calcular o patrimônio acumulado no Tesouro Selic ________________________________________________________________________________________________________________________
@@ -2207,38 +2221,39 @@ if pagina == "Avançada": #_____________________________________________________
                     # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO =======================================================================================================
                     st.subheader("📈 Evolução do Patrimônio com Aportes Mensais")
                     
-                    fig, ax = plt.subplots(figsize=(12, 6))
-                    
-                    # Garantir que os dados estão ordenados corretamente
+                    # df_patrimonio_evolucao
                     df_patrimonio_evolucao = patrimonio_final.copy()
                     df_patrimonio_evolucao.index = pd.to_datetime(df_patrimonio_evolucao.index, errors='coerce')
                     df_patrimonio_evolucao = df_patrimonio_evolucao.sort_index()
-                                     
-                    # Se não houver dados, exibir aviso
-                    if df_patrimonio_evolucao.empty:
-                        st.warning("⚠️ Dados insuficientes para plotar a evolução do patrimônio.")
-                    else:
-                        for ticker in df_patrimonio_evolucao.columns:
-                            if ticker == "Total":  # Destacando a estratégia principal
-                                df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, color="red", label="Estratégia de Aporte")
-                            elif ticker == "Tesouro Selic":
-                                df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, linestyle="-.", color="blue", label="Tesouro Selic")
-                            else:
-                                df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=1, linestyle="--", alpha=0.6, color="gray", label=ticker)
                     
-                        # Melhorias no gráfico
-                        ax.set_title("Evolução do Patrimônio Acumulado")
-                        ax.set_xlabel("Data")
-                        ax.set_ylabel("Patrimônio (R$)")
-                        ax.legend()
+                    fig, ax = plt.subplots(figsize=(12, 6))
                     
-                        # Exibir gráfico no Streamlit
-                        st.pyplot(fig)
-
-                    # Inserindo espaçamento entre os elementos
-                    st.markdown("---") # Espaçamento entre diferentes tipos de análise
-                    st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
-
+                    # --- Estratégia principal ---
+                    if 'Patrimônio' in df_patrimonio_evolucao:
+                        df_patrimonio_evolucao['Patrimônio'].plot(
+                            ax=ax, label="Estratégia de Aporte", color="red", linewidth=2
+                        )
+                    
+                    # --- Tesouro Selic ---
+                    if 'Tesouro Selic' in df_patrimonio_evolucao:
+                        df_patrimonio_evolucao['Tesouro Selic'].plot(
+                            ax=ax, label="Tesouro Selic",
+                            color="blue", linewidth=2, linestyle="-."
+                        )
+                    
+                    # --- posições individuais (value_*) ---
+                    for col in df_patrimonio_evolucao.columns:
+                        if col.startswith('value_'):
+                            df_patrimonio_evolucao[col].plot(
+                                ax=ax, color="gray", linewidth=1, linestyle="--", alpha=0.5
+                            )
+                    
+                    ax.set_title("Evolução do Patrimônio Acumulado")
+                    ax.set_xlabel("Data")
+                    ax.set_ylabel("Patrimônio (R$)")
+                    ax.legend()
+                    st.pyplot(fig)
+                    
 
                     # 📌 EXIBIÇÃO DOS QUADRADOS (BLOCOS COM OS RESULTADOS) ====================================================================================================================
                     st.subheader("📊 Patrimônio Final para R$1.000/Mês Investidos desde a Data Inicial")
