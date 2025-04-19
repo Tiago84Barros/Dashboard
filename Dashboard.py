@@ -1678,7 +1678,7 @@ if pagina == "Avançada": #_____________________________________________________
                 # ► data_sinal SEMPRE devolve uma data válida (fallback)
                 #data_sinal, preco_sinal = validar_tendencia_entrada(empresa_lider, precos, data_nominal)
 
-                data_aporte = encontrar_proxima_data_valida(data_nominal, precos)
+                data_sinal = encontrar_proxima_data_valida(data_nominal, precos)
                 preco_sinal = precos.loc[data_aporte, empresa_lider] if data_aporte in precos.index else None
     
                 # ---------- aporte ----------
