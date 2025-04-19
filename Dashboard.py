@@ -2238,7 +2238,7 @@ if pagina == "Avançada": #_____________________________________________________
                     df_patrimonio_evolucao = df_patrimonio_evolucao.sort_index()
                                      
                     # Se não houver dados, exibir aviso
-                    if df_patrimonio_evolucao.empty
+                    if df_patrimonio_evolucao.empty:
                         st.warning("⚠️ Dados insuficientes para plotar a evolução do patrimônio.")
                     else:
                         for ticker in df_patrimonio_evolucao.columns:
