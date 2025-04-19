@@ -2294,8 +2294,8 @@ if pagina == "Avançada": #_____________________________________________________
                         df_patrimonio_final = df_patrimonio_final.reset_index()
                                                       
                     # 🔹 Ajustar nomes de colunas, se necessário
-                    if "index" in df_patrimonio_final.columns and "Patrimônio" in df_patrimonio_final.columns:
-                        df_patrimonio_final.rename(columns={"index": "Ticker", "Patrimônio": "Valor Final"}, inplace=True)
+                    if "index" in df_patrimonio_final.columns and "Patrimônio Final" in df_patrimonio_final.columns:
+                        df_patrimonio_final.rename(columns={"index": "Ticker", "Patrimônio Final": "Valor Final"}, inplace=True)
                     
                     # 🔹 Ordenar os valores acumulados em ordem decrescente
                     if "Valor Final" in df_patrimonio_final.columns:
@@ -2317,7 +2317,7 @@ if pagina == "Avançada": #_____________________________________________________
                         patrimonio = row["Valor Final"]
                     
                         # 🔹 Definir borda dourada apenas para a estratégia de aporte
-                        if ticker == "Total":
+                        if ticker == "Patrimônio":
                             icone_url = "https://cdn-icons-png.flaticon.com/512/1019/1019709.png"
                             border_color = "#DAA520"  # Dourado para a estratégia
                             nome_exibicao = "Estratégia de Aporte"
