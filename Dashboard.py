@@ -2194,13 +2194,19 @@ if pagina == "Avançada": #_____________________________________________________
                                                                                   
                     # Gerenciamento da carteira
                     patrimonio_historico, datas_aportes = gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict)
+                    st.markdown("Valores que vem de gerir carteira")
+                    st.dataframe(patrimonio_historico)
                                               
                     # Comparação com Tesouro Selic a partir da mesma data
                     patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aportes)
+                    st.markdown("Valores que vem da selic")
+                    st.dataframe(patrimonio_selic)
                                  
                     # Gerir carteira para todas as empresas usando a mesma data de início
                     patrimonio_empresas = gerir_carteira_todas_empresas(precos, empresas_filtradas['ticker'], datas_aportes, dividendos_dict)
-                    patrimonio_empresas = patrimonio_empresas.add_prefix("value_")  # ⬅️ mesmo padrão
+                    st.markdown("Valores que vem das carteiras genéricas")
+                    st.dataframe(patrimonio_empresas)
+                    
                     
                     
                     # Combinar os resultados para exibição no gráfico
