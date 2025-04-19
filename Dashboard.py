@@ -1719,7 +1719,7 @@ if pagina == "Avançada": #_____________________________________________________
                     if data_sinal not in precos.index:
                         continue
                     val = qtd * precos.loc[data_sinal, tk]
-                    registro[f"value_{tk}"] = val
+                    #registro[f"value_{tk}"] = val
                     total += val
     
                 registro['Patrimônio'] = total              # <<< nome oficial
@@ -2193,9 +2193,9 @@ if pagina == "Avançada": #_____________________________________________________
                     dividendos_dict = coletar_dividendos(tickers_filtrados)          
                                                                                   
                     # Gerenciamento da carteira
-                    patrimonio_historico, datas_aportes = gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict)
+                    patrimonio_estrategia, datas_aportes = gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict)
                     st.markdown("Valores que vem de gerir carteira")
-                    st.dataframe(patrimonio_historico)
+                    st.dataframe(patrimonio_estrategia)
                                               
                     # Comparação com Tesouro Selic a partir da mesma data
                     patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aportes)
@@ -2210,7 +2210,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     
                     # Combinar os resultados para exibição no gráfico
-                    patrimonio_final = pd.concat([patrimonio_historico, patrimonio_empresas, patrimonio_selic], axis=1)
+                    patrimonio_final = pd.concat([patrimonio_estrategia, patrimonio_empresas, patrimonio_selic], axis=1)
                  
                     # 📌 Verificar se df_scores não está vazio antes de tentar acessar a empresa líder
                     if df_scores.empty:
@@ -2231,6 +2231,8 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # Garantir que os dados estão ordenados corretamente
                     df_patrimonio_evolucao = patrimonio_final.copy()
+                    st.markdonw("Combinação de estratégia, tesouro selic, compra empresas")
+                    st.dataframe(df_patrimonio)
                     df_patrimonio_evolucao.index = pd.to_datetime(df_patrimonio_evolucao.index, errors='coerce')
                     df_patrimonio_evolucao = df_patrimonio_evolucao.sort_index()
                                      
@@ -2353,7 +2355,9 @@ if pagina == "Avançada": #_____________________________________________________
                                     <p style="font-size: 14px; color: #FFA500;">{lider_texto}</p>
                                 </div>
                             """, unsafe_allow_html=True)
-                            
+                    
+                    st.markdown("---") # Espaçamento entre diferentes tipos de análise
+                    st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
                             
                     st.markdown("### Comparação de Indicadores (Múltiplos) entre Empresas do Segmento") #______GRÁFICO DOS MÚLTIPLOS_____________________________________________________________________________________________
                     
