@@ -1623,7 +1623,7 @@ if pagina == "Avançada": #_____________________________________________________
     
         # Define o período do mês: desde o primeiro dia até o último dia do mês
         ano = data_sell_valid.year
-        mes = data_sell_valid.month
+        mes = data_sell_valid.mont
         mes_inicio = pd.Timestamp(year=ano, month=mes, day=1)
         mes_fim = mes_inicio + pd.offsets.MonthEnd(0)
         
