@@ -1671,8 +1671,7 @@ if pagina == "Avançada": #_____________________________________________________
     
         for ano in anos:
             empresa_lider = lideres_por_ano.query("Ano == @ano")['ticker'].iloc[0]
-            st.markdown(f"A empresa líder do ano de {ano} é {empresa_lider}")
-    
+          
             for mes in range(1, 13):
                 data_nominal = pd.Timestamp(f"{ano+1}-{mes:02d}-01")
     
