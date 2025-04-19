@@ -1756,7 +1756,7 @@ if pagina == "Avançada": #_____________________________________________________
         - `df_patrimonio_empresas`: DataFrame com a evolução do patrimônio de cada empresa ao longo do tempo.
         """
         patrimonio = {ticker: {} for ticker in tickers}
-        carteira = {ticker: 0 for ticker in tickers}
+        carteira = {ticker: 0 for ticker in tickers
     
         # Converter índice de preços para datetime (se ainda não estiver)
         precos.index = pd.to_datetime(precos.index)
