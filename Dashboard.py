@@ -2223,7 +2223,7 @@ if pagina == "Avançada": #_____________________________________________________
                         st.warning("⚠️ Dados insuficientes para plotar a evolução do patrimônio.")
                     else:
                         for ticker in df_patrimonio_evolucao.columns:
-                            if ticker == "Patrimonio":  # Destacando a estratégia principal
+                            if ticker == "Total":  # Destacando a estratégia principal
                                 df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, color="red", label="Estratégia de Aporte")
                             elif ticker == "Tesouro Selic":
                                 df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, linestyle="-.", color="blue", label="Tesouro Selic")
