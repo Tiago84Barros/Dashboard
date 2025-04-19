@@ -2194,8 +2194,7 @@ if pagina == "Avançada": #_____________________________________________________
                                                                                   
                     # Gerenciamento da carteira
                     patrimonio_historico, datas_aportes = gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict)
-                    patrimonio_historico = (patrimonio_historico.rename(columns={"Patrimônio": "Total"}))  # ⬅️ padroniza
-                            
+                                              
                     # Comparação com Tesouro Selic a partir da mesma data
                     patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aportes)
                                  
@@ -2222,34 +2221,37 @@ if pagina == "Avançada": #_____________________________________________________
 
                     # Mostrar resultado final =========================================== GRÁFICO COMPARATIVO ESTRATÉGIA LIDER VS CONCORRENTES VS TESOURO SELIC ===================================               
                     # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO =======================================================================================================
-                    st.subheader("📈 Evolução do Patrimônio com Aportes Mensais")
+                   fig, ax = plt.subplots(figsize=(12, 6))
                     
-                    # df_patrimonio_evolucao
+                    # Garantir que os dados estão ordenados corretamente
                     df_patrimonio_evolucao = patrimonio_final.copy()
                     df_patrimonio_evolucao.index = pd.to_datetime(df_patrimonio_evolucao.index, errors='coerce')
                     df_patrimonio_evolucao = df_patrimonio_evolucao.sort_index()
+                                     
+                    # Se não houver dados, exibir aviso
+                    if df_patrimonio_evolucao.empty:
+                        st.warning("⚠️ Dados insuficientes para plotar a evolução do patrimônio.")
+                    else:
+                        for ticker in df_patrimonio_evolucao.columns:
+                            if ticker == "Total":  # Destacando a estratégia principal
+                                df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, color="red", label="Estratégia de Aporte")
+                            elif ticker == "Tesouro Selic":
+                                df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, linestyle="-.", color="blue", label="Tesouro Selic")
+                            else:
+                                df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=1, linestyle="--", alpha=0.6, color="gray", label=ticker)
                     
-                    st.subheader("📈 Evolução do Patrimônio Acumulado")
+                        # Melhorias no gráfico
+                        ax.set_title("Evolução do Patrimônio Acumulado")
+                        ax.set_xlabel("Data")
+                        ax.set_ylabel("Patrimônio (R$)")
+                        ax.legend()
+                    
+                        # Exibir gráfico no Streamlit
+                        st.pyplot(fig)
 
-                    fig, ax = plt.subplots(figsize=(12, 6))
-                    
-                    # Linha vermelha – estratégia
-                    patrimonio_final['Total'].plot(ax=ax, label="Estratégia de Aporte",
-                                                   color="red", linewidth=2)
-                    
-                    # Tesouro Selic
-                    if 'Tesouro Selic' in patrimonio_final:
-                        patrimonio_final['Tesouro Selic'].plot(ax=ax, label="Tesouro Selic",
-                                                               color="blue", linewidth=2, linestyle="-.")
-                    # Posições individuais
-                    for col in patrimonio_final.filter(like="value_").columns:
-                        patrimonio_final[col].plot(ax=ax, color="gray", linewidth=1,
-                                                   linestyle="--", alpha=0.5)
-                    
-                    ax.set_xlabel("Data");  ax.set_ylabel("Patrimônio (R$)")
-                    ax.set_title("Evolução do Patrimônio Acumulado")
-                    ax.legend()
-                    st.pyplot(fig)
+                    # Inserindo espaçamento entre os elementos
+                    st.markdown("---") # Espaçamento entre diferentes tipos de análise
+                    st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
                     
 
                     # 📌 EXIBIÇÃO DOS QUADRADOS (BLOCOS COM OS RESULTADOS) ====================================================================================================================
