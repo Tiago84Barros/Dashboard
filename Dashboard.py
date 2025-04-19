@@ -1683,7 +1683,7 @@ if pagina == "Avançada": #_____________________________________________________
                 preco_sinal = precos.loc[data_sinal, empresa_lider] if data_sinal in precos.index else None
 
                 # 🔄 Reinvestimento de dividendos
-                for empresa in list(carteira)
+                for empresa in list(carteira):
                     if empresa in dividendos_dict:
                         df_div = dividendos_dict[empresa]
                         if not df_div.empty:
