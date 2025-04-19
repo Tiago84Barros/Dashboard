@@ -2194,12 +2194,14 @@ if pagina == "Avançada": #_____________________________________________________
                                                                                   
                     # Gerenciamento da carteira
                     patrimonio_historico, datas_aportes = gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict)
+                    patrimonio_historico = patrimonio_historico.rename(columns={'Patrimônio': 'Total'})
                     
                     # Comparação com Tesouro Selic a partir da mesma data
                     patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aportes)
                     
                     # Gerir carteira para todas as empresas usando a mesma data de início
                     patrimonio_empresas = gerir_carteira_todas_empresas(precos, empresas_filtradas['ticker'], datas_aportes, dividendos_dict)
+                    
                     
                     # Combinar os resultados para exibição no gráfico
                     patrimonio_final = pd.concat([patrimonio_historico, patrimonio_empresas, patrimonio_selic], axis=1)
