@@ -1671,6 +1671,7 @@ if pagina == "Avançada": #_____________________________________________________
     
         for ano in anos:
             empresa_lider = lideres_por_ano.query("Ano == @ano")['ticker'].iloc[0]
+            st.markdown(f"A empresa líder do ano de {ano} é {empresa_lider}")
     
             for mes in range(1, 13):
                 data_nominal = pd.Timestamp(f"{ano+1}-{mes:02d}-01")
@@ -1680,6 +1681,7 @@ if pagina == "Avançada": #_____________________________________________________
 
                 data_sinal = encontrar_proxima_data_valida(data_nominal, precos)
                 preco_sinal = precos.loc[data_sinal, empresa_lider] if data_sinal in precos.index else None
+                st.markdown(f"A data de compra é {data_sinal} no preço de {preco_sinal} para a empresa {empresa_lider}")
     
                 # ---------- aporte ----------
                 if preco_sinal is None or np.isnan(preco_sinal):
@@ -1689,6 +1691,8 @@ if pagina == "Avançada": #_____________________________________________________
                     total_a_comprar = aporte_mensal + aporte_acumulado
                     aporte_acumulado = 0.0
                     carteira[empresa_lider] += total_a_comprar / preco_sinal
+                    st.markdown(f"O total de ações compradas é de {carteira{empresa_lider]} da empresa {empresa_lider}")
+                    
     
                 # ---------- deterioração ----------
                 for antiga in list(carteira):
@@ -1704,10 +1708,10 @@ if pagina == "Avançada": #_____________________________________________________
                     if score_atual.values[0] / score_ini.values[0] < deterioracao_limite:
                         # vende tudo da antiga líder
                         preco_venda = precos.loc[data_sinal, antiga]
+                        st.markdown(f"Após deterioração o valor de venda da empresa {antiga} na {data_sinal} é de {preco_venda}")
                         if not np.isnan(preco_venda) and preco_venda > 0:
-                            carteira[empresa_lider] += (
-                                carteira.pop(antiga) * preco_venda / preco_sinal
-                            )
+                            carteira[empresa_lider] += (carteira.pop(antiga) * preco_venda / preco_sinal)
+                            st.markdown(f"A nova quantidade de ações da empresa líder {empresa_lider} após a venda de {antiga} é de {carteira[empresa_lider]}")
     
                 # ---------- registra valores ----------
                 registro = {'date': data_sinal}
