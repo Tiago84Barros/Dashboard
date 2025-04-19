@@ -2194,8 +2194,7 @@ if pagina == "Avançada": #_____________________________________________________
                                                                                   
                     # Gerenciamento da carteira
                     patrimonio_historico, datas_aportes = gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict)
-                    patrimonio_historico = patrimonio_historico.rename(columns={'Patrimônio': 'Total'}) 
-                    
+                            
                     # Comparação com Tesouro Selic a partir da mesma data
                     patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aportes)
                     
