@@ -2242,7 +2242,7 @@ if pagina == "Avançada": #_____________________________________________________
                         st.warning("⚠️ Dados insuficientes para plotar a evolução do patrimônio.")
                     else:
                         for ticker in df_patrimonio_evolucao.columns:
-                            if ticker == "patrimônio":  # Destacando a estratégia principal
+                            if ticker == "Patrimônio":  # Destacando a estratégia principal
                                 df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, color="red", label="Estratégia de Aporte")
                             elif ticker == "Tesouro Selic":
                                 df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, linestyle="-.", color="blue", label="Tesouro Selic")
@@ -2265,15 +2265,24 @@ if pagina == "Avançada": #_____________________________________________________
 
                     # 📌 EXIBIÇÃO DOS QUADRADOS (BLOCOS COM OS RESULTADOS) ====================================================================================================================
                     st.subheader("📊 Patrimônio Final para R$1.000/Mês Investidos desde a Data Inicial")
-                    
-                    # 🔹 Criar um DataFrame consolidado com os resultados finais das empresas, estratégia e Tesouro Selic
-                    df_patrimonio_final = pd.concat([
-                        patrimonio_estrategia.iloc[-1:].rename_axis("Data").reset_index().melt(id_vars="Data", var_name="index", value_name="Patrimônio Final"),
-                        patrimonio_empresas.iloc[-1:].rename_axis("Data").reset_index().melt(id_vars="Data", var_name="index", value_name="Patrimônio Final"),
-                        patrimonio_selic.iloc[-1:].rename_axis("Data").reset_index().melt(id_vars="Data", var_name="index", value_name="Patrimônio Final")
-                    ], ignore_index=True)
 
-                    st.markdown("Dataframe com valores consolidados com o s resultados finais das empresas")
+                    # 🔹 Criar um DataFrame consolidado com os resultados finais das empresas,
+                    #    da estratégia e do Tesouro Selic
+                    df_patrimonio_final = pd.concat(
+                        [
+                            patrimonio_estrategia.iloc[-1:].rename_axis("Data").reset_index()
+                            .melt(id_vars="Data", var_name="index", value_name="Patrimônio Final"),
+                    
+                            patrimonio_empresas.iloc[-1:].rename_axis("Data").reset_index()
+                            .melt(id_vars="Data", var_name="index", value_name="Patrimônio Final"),
+                    
+                            patrimonio_selic.iloc[-1:].rename_axis("Data").reset_index()
+                            .melt(id_vars="Data", var_name="index", value_name="Patrimônio Final")
+                        ],
+                        ignore_index=True
+                    )  # ⬅️ alterado
+                    
+                    st.markdown("Dataframe com valores consolidados dos resultados finais das empresas")
                     st.dataframe(df_patrimonio_final)
                     
                     # 📌 Verificação do formato
@@ -2283,61 +2292,71 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # 🔹 Garantir que "Tesouro Selic" esteja presente no DataFrame
                     if "Tesouro Selic" not in df_patrimonio_final["index"].values:
-                        patrimonio_selic_final = patrimonio_selic.iloc[-1]["Tesouro Selic"]  # Último valor acumulado do Tesouro Selic
-                        df_patrimonio_final = pd.concat([
-                            df_patrimonio_final,
-                            pd.DataFrame([{"index": "Tesouro Selic", "Patrimônio Final": patrimonio_selic_final}])
-                        ], ignore_index=True)
-                                     
+                        patrimonio_selic_final = patrimonio_selic.iloc[-1]["Tesouro Selic"]
+                        df_patrimonio_final = pd.concat(
+                            [
+                                df_patrimonio_final,
+                                pd.DataFrame([{"index": "Tesouro Selic",
+                                               "Patrimônio Final": patrimonio_selic_final}])
+                            ],
+                            ignore_index=True
+                        )  # ⬅️ alterado
+                    
                     # 🔹 Garantir que o índice esteja resetado corretamente
                     if df_patrimonio_final.index.name is not None:
-                        df_patrimonio_final = df_patrimonio_final.reset_index()
-                                                      
+                        df_patrimonio_final = df_patrimonio_final.reset_index()  # ⬅️ alterado
+                    
                     # 🔹 Ajustar nomes de colunas, se necessário
-                    if "index" in df_patrimonio_final.columns and "Patrimônio Final" in df_patrimonio_final.columns:
-                        df_patrimonio_final.rename(columns={"index": "Ticker", "Patrimônio Final": "Valor Final"}, inplace=True)
+                    if {"index", "Patrimônio Final"}.issubset(df_patrimonio_final.columns):
+                        df_patrimonio_final.rename(
+                            columns={"index": "Ticker", "Patrimônio Final": "Valor Final"},
+                            inplace=True
+                        )  # ⬅️ alterado
                     
                     # 🔹 Ordenar os valores acumulados em ordem decrescente
                     if "Valor Final" in df_patrimonio_final.columns:
-                        df_patrimonio_final = df_patrimonio_final.sort_values(by="Valor Final", ascending=False)
+                        df_patrimonio_final = df_patrimonio_final.sort_values(
+                            by="Valor Final", ascending=False
+                        )  # ⬅️ alterado
                     else:
                         st.error("Coluna 'Valor Final' não encontrada!")
                     
-                    # 🔹 Criar colunas para exibição no Streamlit
-                    num_columns = 3  # Número de colunas no layout
+                    # 🔹 Layout de exibição em blocos/colunas
+                    num_columns = 3
                     columns = st.columns(num_columns)
                     
-                    # 🔹 Contar quantas vezes cada empresa foi líder no score
-                    #contagem_lideres = df_scores['ticker'].value_counts().to_dict()
+                    # 🔹 Contagem de quantas vezes cada empresa foi líder no score
                     contagem_lideres = lideres_por_ano['ticker'].value_counts().to_dict()
                     
                     # 🔹 Iterar sobre os valores do DataFrame ordenado
-                    for i, (index, row) in enumerate(df_patrimonio_final.iterrows()):
+                    for i, (_, row) in enumerate(df_patrimonio_final.iterrows()):
                         ticker = row["Ticker"]
                         patrimonio = row["Valor Final"]
                     
-                        # 🔹 Definir borda dourada apenas para a estratégia de aporte
+                        # Definir ícone e borda
                         if ticker == "Total":
                             icone_url = "https://cdn-icons-png.flaticon.com/512/1019/1019709.png"
-                            border_color = "#DAA520"  # Dourado para a estratégia
+                            border_color = "#DAA520"   # dourado
                             nome_exibicao = "Estratégia de Aporte"
                         elif ticker == "Tesouro Selic":
                             icone_url = "https://cdn-icons-png.flaticon.com/512/2331/2331949.png"
-                            border_color = "#007bff"  # Azul para Tesouro Selic
+                            border_color = "#007bff"   # azul
                             nome_exibicao = "Tesouro Selic"
                         else:
                             icone_url = get_logo_url(ticker)
-                            border_color = "#d3d3d3"  # Cinza para empresas comuns
-                            nome_exibicao = ticker  # Nome normal para empresas comuns
+                            border_color = "#d3d3d3"   # cinza
+                            nome_exibicao = ticker
                     
-                        # 🔹 Contagem de quantas vezes uma empresa foi líder
+                        # Quantas vezes foi líder
                         vezes_lider = contagem_lideres.get(ticker, 0)
                         lider_texto = f"🏆 {vezes_lider}x Líder" if vezes_lider > 0 else ""
                     
-                        # 🔹 Formatar patrimônio
-                        patrimonio_formatado = "Valor indisponível" if pd.isna(patrimonio) else formatar_real(patrimonio)
+                        # Formatar patrimônio
+                        patrimonio_formatado = (
+                            "Valor indisponível" if pd.isna(patrimonio) else formatar_real(patrimonio)
+                        )
                     
-                        # 🔹 Organizar os blocos corretamente
+                        # Bloco visual no Streamlit
                         col = columns[i % num_columns]
                         with col:
                             st.markdown(f"""
@@ -2351,7 +2370,8 @@ if pagina == "Avançada": #_____________________________________________________
                                     box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
                                     flex: 1;
                                 ">
-                                    <img src="{icone_url}" alt="{nome_exibicao}" style="width: 50px; height: auto; margin-bottom: 5px;">
+                                    <img src="{icone_url}" alt="{nome_exibicao}"
+                                         style="width: 50px; height: auto; margin-bottom: 5px;">
                                     <h3 style="margin: 0; color: #4a4a4a;">{nome_exibicao}</h3>
                                     <p style="font-size: 18px; margin: 5px 0; font-weight: bold; color: #2ecc71;">
                                         {patrimonio_formatado}
