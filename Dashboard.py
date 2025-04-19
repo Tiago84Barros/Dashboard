@@ -1742,7 +1742,7 @@ if pagina == "Avançada": #_____________________________________________________
                 )
     
         df_patrimonio = (
-            pd.Series(patrimonio, name="Patrimonio").to_frame().sort_index()
+            pd.Series(patrimonio, name="Total").to_frame().sort_index()
         )
         return df_patrimonio, datas_aportes
 
