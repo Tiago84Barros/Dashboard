@@ -2227,7 +2227,7 @@ if pagina == "Avançada": #_____________________________________________________
 
                     # Mostrar resultado final =========================================== GRÁFICO COMPARATIVO ESTRATÉGIA LIDER VS CONCORRENTES VS TESOURO SELIC ===================================               
                     # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO =======================================================================================================
-                   fig, ax = plt.subplots(figsize=(12, 6))
+                    fig, ax = plt.subplots(figsize=(12, 6))
                     
                     # Garantir que os dados estão ordenados corretamente
                     df_patrimonio_evolucao = patrimonio_final.copy()
