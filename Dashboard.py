@@ -2187,14 +2187,14 @@ if pagina == "Avançada": #_____________________________________________________
                     lideres_por_ano = determinar_lideres(df_scores)             
                     
                      # 🔹 Lista de tickers das empresas que estamos analisando
-                    tickers_filtrados = df_scores['ticker'].unique()
+                    tickers_filtrados = df_scores['ticker'].unique(
                     
                     # 🔹 Baixar todos os dividendos de uma vez só
                     dividendos_dict = coletar_dividendos(tickers_filtrados)          
                                                                                   
                     # Gerenciamento da carteira
                     patrimonio_historico, datas_aportes = gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict)
-                    patrimonio_historico = patrimonio_historico.rename(columns={'Patrimônio': 'Total'})
+                    patrimonio_historico = patrimonio_historico.rename(columns={'Patrimônio': 'Total'}) 
                     
                     # Comparação com Tesouro Selic a partir da mesma data
                     patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aportes)
