@@ -2257,12 +2257,31 @@ if pagina == "Avançada": #_____________________________________________________
 
                     ultimo = patrimonio_final.iloc[-1]
                     
-                    df_cards = (
-                        ultimo.rename({"Total": "Estratégia de Aporte"})
-                              .reset_index()
-                              .rename(columns={"index": "Item", 0: "Valor"})
-                              .sort_values("Valor", ascending=False)
+                   # --- cria a Series com nomes amigáveis ---------------------------
+                    ultimo = (
+                        patrimonio_final.iloc[-1]
+                                       .rename({"Total": "Estratégia de Aporte"})
                     )
+                    
+                    # --- transforma em DataFrame já com o nome correto ----------------
+                    df_cards = (
+                        ultimo.to_frame(name="Valor")   # ⬅️ aqui o campo já se chama "Valor"
+                              .reset_index()
+                              .rename(columns={"index": "Item"})  # coluna dos tickers
+                    )
+                    
+                    # --- garante presença do Tesouro Selic ----------------------------
+                    if "Tesouro Selic" not in df_cards["Item"].values:
+                        df_cards = pd.concat([
+                            df_cards,
+                            pd.DataFrame(
+                                [{"Item": "Tesouro Selic",
+                                  "Valor": patrimonio_final["Tesouro Selic"].iloc[-1]}]
+                            )
+                        ], ignore_index=True)
+                    
+                    # --- ordena do maior para o menor ---------------------------------
+                    df_cards = df_cards.sort_values("Valor", ascending=False)
                     
                     # garantimos que Tesouro Selic esteja presente
                     if "Tesouro Selic" not in df_cards["Item"].values:
