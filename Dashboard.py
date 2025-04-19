@@ -1731,8 +1731,11 @@ if pagina == "Avançada": #_____________________________________________________
               .sort_index()
               .fillna(method='ffill')       # suaviza buracos de preço
         )
-    
+        
+        # Elimina linhas onde todas as colunas (exceto o índice) são 0 ou NaN
+        df_patrimonio = df_patrimonio[(df_patrimonio != 0).any(axis=1)]    
         datas_aportes = df_patrimonio.index.unique().tolist()
+        
         return df_patrimonio, datas_aportes
 
     # Função para gerir o aporte mensal de todas as empresas do segmento sem estratégia 
@@ -2268,7 +2271,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # 🔹 Criar um DataFrame consolidado com os resultados finais das empresas, estratégia e Tesouro Selic
                     df_patrimonio_final = pd.concat([
-                        patrimonio_historico.iloc[-1:].rename_axis("Data").reset_index().melt(id_vars="Data", var_name="index", value_name="Patrimônio Final"),
+                        patrimonio_estrategia.iloc[-1:].rename_axis("Data").reset_index().melt(id_vars="Data", var_name="index", value_name="Patrimônio Final"),
                         patrimonio_empresas.iloc[-1:].rename_axis("Data").reset_index().melt(id_vars="Data", var_name="index", value_name="Patrimônio Final"),
                         patrimonio_selic.iloc[-1:].rename_axis("Data").reset_index().melt(id_vars="Data", var_name="index", value_name="Patrimônio Final")
                     ], ignore_index=True)
