@@ -2242,7 +2242,7 @@ if pagina == "Avançada": #_____________________________________________________
                         st.warning("⚠️ Dados insuficientes para plotar a evolução do patrimônio.")
                     else:
                         for ticker in df_patrimonio_evolucao.columns:
-                            if ticker == "Total":  # Destacando a estratégia principal
+                            if ticker == "patrimônio":  # Destacando a estratégia principal
                                 df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, color="red", label="Estratégia de Aporte")
                             elif ticker == "Tesouro Selic":
                                 df_patrimonio_evolucao[ticker].plot(ax=ax, linewidth=2, linestyle="-.", color="blue", label="Tesouro Selic")
@@ -2268,10 +2268,13 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # 🔹 Criar um DataFrame consolidado com os resultados finais das empresas, estratégia e Tesouro Selic
                     df_patrimonio_final = pd.concat([
-                        patrimonio_historico.iloc[-1:].rename_axis("Data").reset_index().melt(id_vars="Data", var_name="index", value_name="Patrimônio Final"),
+                        patrimonio_estrategia.iloc[-1:].rename_axis("Data").reset_index().melt(id_vars="Data", var_name="index", value_name="Patrimônio Final"),
                         patrimonio_empresas.iloc[-1:].rename_axis("Data").reset_index().melt(id_vars="Data", var_name="index", value_name="Patrimônio Final"),
                         patrimonio_selic.iloc[-1:].rename_axis("Data").reset_index().melt(id_vars="Data", var_name="index", value_name="Patrimônio Final")
                     ], ignore_index=True)
+
+                    st.markdown("Dataframe com valores consolidados com o s resultados finais das empresas")
+                    st.dataframe(df_patrimonio_final)
                     
                     # 📌 Verificação do formato
                     if df_patrimonio_final.empty:
