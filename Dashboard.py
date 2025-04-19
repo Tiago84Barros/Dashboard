@@ -2295,7 +2295,7 @@ if pagina == "Avançada": #_____________________________________________________
                         patrimonio = row["Valor Final"]
                     
                         # 🔹 Definir borda dourada apenas para a estratégia de aporte
-                        if ticker == "Patrimonio":
+                        if ticker == "Total":
                             icone_url = "https://cdn-icons-png.flaticon.com/512/1019/1019709.png"
                             border_color = "#DAA520"  # Dourado para a estratégia
                             nome_exibicao = "Estratégia de Aporte"
