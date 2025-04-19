@@ -1689,11 +1689,11 @@ if pagina == "Avançada": #_____________________________________________________
                         if not df_div.empty:
                             df_div.index = pd.to_datetime(df_div.index)  # Garantir tipo datetime
                             dividendos_mes = df_div[
-                                (df_div.index.year == data_aporte.year) &
-                                (df_div.index.month == data_aporte.month)
+                                (df_div.index.year == data_sinal.year) &
+                                (df_div.index.month == data_sinal.month)
                             ].sum()
                 
-                            preco_empresa = precos.loc[data_aporte, empresa] if data_aporte in precos.index else None
+                            preco_empresa = precos.loc[data_sinal, empresa] if data_aporte in precos.index else None
                 
                             if preco_empresa and preco_empresa > 0:
                                 valor_reinvestido = dividendos_mes * carteira[empresa]
