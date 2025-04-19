@@ -2197,9 +2197,7 @@ if pagina == "Avançada": #_____________________________________________________
                                                                                   
                     # Gerenciamento da carteira
                     patrimonio_estrategia, datas_aportes = gerir_carteira(precos, df_scores, lideres_por_ano, dividendos_dict)
-                    st.markdown("Valores que vem de gerir carteira")
-                    st.dataframe(patrimonio_estrategia)
-                                              
+                                               
                     # Comparação com Tesouro Selic a partir da mesma data
                     patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aportes)
                                              
