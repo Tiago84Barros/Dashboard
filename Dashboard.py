@@ -1683,21 +1683,22 @@ if pagina == "Avançada": #_____________________________________________________
                 preco_sinal = precos.loc[data_sinal, empresa_lider] if data_sinal in precos.index else None
 
                 # 🔄 Reinvestimento de dividendos
-                for empresa in list(carteira):
-                    if empresa in dividendos_dict:
-                        df_div = dividendos_dict[empresa]
-                        if not df_div.empty:
-                            df_div.index = pd.to_datetime(df_div.index)  # Garantir tipo datetime
-                            dividendos_mes = df_div[
-                                (df_div.index.year == data_sinal.year) &
-                                (df_div.index.month == data_sinal.month)
-                            ].sum()
+                if data_sinal is not None:
+                    for empresa in list(carteira):
+                        if empresa in dividendos_dict:
+                            df_div = dividendos_dict[empresa]
+                            if not df_div.empty:
+                                df_div.index = pd.to_datetime(df_div.index)  # Garantir tipo datetime
+                                dividendos_mes = df_div[
+                                    (df_div.index.year == data_sinal.year) &
+                                    (df_div.index.month == data_sinal.month)
+                                ].sum()
                 
-                            preco_empresa = precos.loc[data_sinal, empresa] if data_sinal in precos.index else None
+                                preco_empresa = precos.loc[data_sinal, empresa] if data_sinal in precos.index else None
                 
-                            if preco_empresa and preco_empresa > 0:
-                                valor_reinvestido = dividendos_mes * carteira[empresa]
-                                carteira[empresa] += valor_reinvestido / preco_empresa
+                                if preco_empresa and preco_empresa > 0:
+                                    valor_reinvestido = dividendos_mes * carteira[empresa]
+                                    carteira[empresa] += valor_reinvestido / preco_empresa
         
                 # ---------- aporte ----------
                 if preco_sinal is None or np.isnan(preco_sinal):
