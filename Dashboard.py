@@ -1733,7 +1733,7 @@ if pagina == "Avançada": #_____________________________________________________
         df_patrimonio = df_patrimonio[(df_patrimonio != 0).any(axis=1)]
 
         datas_aportes = df_patrimonio.index.unique().tolist()
-        retur df_patrimonio, datas_aportes
+        return df_patrimonio, datas_aportes
 
     # Função para gerir o aporte mensal de todas as empresas do segmento sem estratégia 
     def gerir_carteira_todas_empresas(precos, tickers, datas_aportes, dividendos_dict, aporte_mensal=1000):
