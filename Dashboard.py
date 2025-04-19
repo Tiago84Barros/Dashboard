@@ -2294,8 +2294,8 @@ if pagina == "Avançada": #_____________________________________________________
                         df_patrimonio_final = df_patrimonio_final.reset_index()
                                                       
                     # 🔹 Ajustar nomes de colunas, se necessário
-                    if "index" in df_patrimonio_final.columns and "Patrimônio Final" in df_patrimonio_final.columns:
-                        df_patrimonio_final.rename(columns={"index": "Ticker", "Patrimônio Final": "Valor Final"}, inplace=True)
+                    if "index" in df_patrimonio_final.columns and "Patrimônio" in df_patrimonio_final.columns:
+                        df_patrimonio_final.rename(columns={"index": "Ticker", "Patrimônio": "Valor Final"}, inplace=True)
                     
                     # 🔹 Ordenar os valores acumulados em ordem decrescente
                     if "Valor Final" in df_patrimonio_final.columns:
