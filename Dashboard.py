@@ -2202,15 +2202,9 @@ if pagina == "Avançada": #_____________________________________________________
                                               
                     # Comparação com Tesouro Selic a partir da mesma data
                     patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aportes)
-                    st.markdown("Valores que vem da selic")
-                    st.dataframe(patrimonio_selic)
-                                 
+                                             
                     # Gerir carteira para todas as empresas usando a mesma data de início
-                    patrimonio_empresas = gerir_carteira_todas_empresas(precos, empresas_filtradas['ticker'], datas_aportes, dividendos_dict)
-                    st.markdown("Valores que vem das carteiras genéricas")
-                    st.dataframe(patrimonio_empresas)
-                    
-                    
+                    patrimonio_empresas = gerir_carteira_todas_empresas(precos, empresas_filtradas['ticker'], datas_aportes, dividendos_dict)              
                     
                     # Combinar os resultados para exibição no gráfico
                     patrimonio_final = pd.concat([patrimonio_estrategia, patrimonio_empresas, patrimonio_selic], axis=1)
@@ -2234,9 +2228,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # Garantir que os dados estão ordenados corretamente
                     df_patrimonio_evolucao = patrimonio_final.copy()
-                    st.markdown("Combinação de estratégia, tesouro selic, compra empresas")
-                    st.dataframe(df_patrimonio_evolucao)
-                    
+                  
                     df_patrimonio_evolucao.index = pd.to_datetime(df_patrimonio_evolucao.index, errors='coerce')
                     df_patrimonio_evolucao = df_patrimonio_evolucao.sort_index()
                                      
