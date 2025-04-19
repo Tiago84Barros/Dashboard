@@ -10,7 +10,7 @@ from collections import defaultdict
 import numpy as np
 import sqlite3
 import openai
-import os
+import o
 
 # Função para obter a URL do logotipo a partir do repositório no GitHub ___________________________________________________________________________________________________________________________________________
 
