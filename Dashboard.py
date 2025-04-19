@@ -1665,7 +1665,6 @@ if pagina == "Avançada": #_____________________________________________________
         carteira         = defaultdict(float)   # ticker -> nº de ações
         aporte_acumulado = 0.0
         registros        = []                   # lista de dicionários p/ DataFrame
-        preco_aporte     = []
         # -------------------------------------------------------------
     
         anos = sorted(df_scores['Ano'].unique())
@@ -1682,7 +1681,6 @@ if pagina == "Avançada": #_____________________________________________________
 
                 data_sinal = encontrar_proxima_data_valida(data_nominal, precos)
                 preco_sinal = precos.loc[data_sinal, empresa_lider] if data_sinal in precos.index else None
-                preco_aporte = append(preco_sinal)
         
                 # ---------- aporte ----------
                 if preco_sinal is None or np.isnan(preco_sinal):
@@ -1726,19 +1724,14 @@ if pagina == "Avançada": #_____________________________________________________
                 registro['Patrimônio'] = total              # <<< nome oficial
                 registros.append(registro)
     
-        df_patrimonio = (
-            pd.DataFrame(registros)
-              .set_index('date')
-              .sort_index()
-              .fillna(method='ffill')       # suaviza buracos de preço
-        )
+        df_patrimonio = (pd.DataFrame(registros).set_index('date').sort_index().fillna(method='ffill'))       # suaviza buracos de preço
 
         # Elimina linhas onde todas as colunas (exceto o índice) são 0 ou NaN
         df_patrimonio = df_patrimonio[(df_patrimonio != 0).any(axis=1)]
 
         datas_aportes = df_patrimonio.index.unique().tolist()
 
-        st.dataframe(preco_aporte)
+        st.dataframe(datas_aportes)
         return df_patrimonio, datas_aportes
 
     # Função para gerir o aporte mensal de todas as empresas do segmento sem estratégia 
