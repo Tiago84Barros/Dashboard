@@ -1720,7 +1720,7 @@ if pagina == "Avançada": #_____________________________________________________
                     if data_sinal not in precos.index:
                         continue
                     val = qtd * precos.loc[data_sinal, tk]
-                    #registro[f"value_{tk}"] = val
+                    registro[f"value_{tk}"] = val
                     total += val
     
                 registro['Patrimônio'] = total              # <<< nome oficial
