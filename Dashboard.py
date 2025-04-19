@@ -1691,7 +1691,7 @@ if pagina == "Avançada": #_____________________________________________________
                     total_a_comprar = aporte_mensal + aporte_acumulado
                     aporte_acumulado = 0.0
                     carteira[empresa_lider] += total_a_comprar / preco_sinal
-                    st.markdown(f"O total de ações compradas é de {carteira{empresa_lider]} da empresa {empresa_lider}")
+                    st.markdown(f"O total de ações compradas é de {carteira[empresa_lider]} da empresa {empresa_lider}")
                     
     
                 # ---------- deterioração ----------
