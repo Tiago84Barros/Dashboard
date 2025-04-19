@@ -2231,7 +2231,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # Garantir que os dados estão ordenados corretamente
                     df_patrimonio_evolucao = patrimonio_final.copy()
-                    st.markdonw("Combinação de estratégia, tesouro selic, compra empresas")
+                    st.markdown("Combinação de estratégia, tesouro selic, compra empresas")
                     st.dataframe(df_patrimonio)
                     df_patrimonio_evolucao.index = pd.to_datetime(df_patrimonio_evolucao.index, errors='coerce')
                     df_patrimonio_evolucao = df_patrimonio_evolucao.sort_index()
