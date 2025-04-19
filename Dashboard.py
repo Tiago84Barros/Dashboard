@@ -2261,7 +2261,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
 
                     # 📌 EXIBIÇÃO DOS QUADRADOS (BLOCOS COM OS RESULTADOS) ====================================================================================================================
-                     st.subheader("📊 Patrimônio Final para R$1.000/Mês Investidos desde a Data Inicial")
+                    st.subheader("📊 Patrimônio Final para R$1.000/Mês Investidos desde a Data Inicial")
                     
                     # 🔹 Criar um DataFrame consolidado com os resultados finais das empresas, estratégia e Tesouro Selic
                     df_patrimonio_final = pd.concat([
