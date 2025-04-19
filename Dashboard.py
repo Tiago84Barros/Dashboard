@@ -2187,7 +2187,7 @@ if pagina == "Avançada": #_____________________________________________________
                     lideres_por_ano = determinar_lideres(df_scores)             
                     
                      # 🔹 Lista de tickers das empresas que estamos analisando
-                    tickers_filtrados = df_scores['ticker'].unique(
+                    tickers_filtrados = df_scores['ticker'].unique()
                     
                     # 🔹 Baixar todos os dividendos de uma vez só
                     dividendos_dict = coletar_dividendos(tickers_filtrados)          
