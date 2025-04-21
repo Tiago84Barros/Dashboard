@@ -1645,7 +1645,6 @@ if pagina == "Avançada": #_____________________________________________________
                            
             # Se o RSI estiver acima do limite ou o preço cair abaixo da EMA, sinaliza venda
             if rsi_val >= limite_rsi or preco_val < ema_val:
-                st.markdown(f"O preço encontrado para saída é {preco_val} e a data é {d}")
                 return d, preco_val
     
         # Se nenhum dia do mês apresenta sinal de venda, retorna (None, None)
@@ -1723,11 +1722,9 @@ if pagina == "Avançada": #_____________________________________________________
                     if score_atual.values[0] / score_ini.values[0] < deterioracao_limite:
                         # vende tudo da antiga líder
                         preco_venda = precos.loc[data_sinal, antiga]
-                        st.markdown(f"Após deterioração o valor de venda da empresa {antiga} na {data_sinal} é de {preco_venda}")
                         if not np.isnan(preco_venda) and preco_venda > 0:
                             carteira[empresa_lider] += (carteira.pop(antiga) * preco_venda / preco_sinal)
-                            st.markdown(f"A nova quantidade de ações da empresa líder {empresa_lider} após a venda de {antiga} é de {carteira[empresa_lider]}")
-    
+              
                 # ---------- registra valores ----------
                 registro = {'date': data_sinal}
                 total    = 0.0
