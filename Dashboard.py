@@ -1660,92 +1660,101 @@ if pagina == "Avançada": #_____________________________________________________
         aporte_mensal=1000,
         deterioracao_limite=0.0,
     ):
-        # -------------------- estado ---------------------------------
-        carteira         = defaultdict(float)   # ticker -> nº de ações
+        from collections import defaultdict
+    
+        carteira = defaultdict(float)
         aporte_acumulado = 0.0
-        registros        = []                   # lista de dicionários p/ DataFrame
-        # -------------------------------------------------------------
+        registros = []
+        lideres_atuais = []  # ✅ manter a lista de líderes ao longo do tempo
     
         anos = sorted(df_scores['Ano'].unique())
     
         for ano in anos:
             empresa_lider = lideres_por_ano.query("Ano == @ano")['ticker'].iloc[0]
-          
+    
+            # ✅ Se a nova líder ainda não estiver na lista de líderes, adiciona
+            if empresa_lider not in lideres_atuais:
+                lideres_atuais.append(empresa_lider)
+    
             for mes in range(1, 13):
                 data_nominal = pd.Timestamp(f"{ano+1}-{mes:02d}-01")
-    
-                # ► data_sinal SEMPRE devolve uma data válida (fallback)
-                #data_sinal, preco_sinal = validar_tendencia_entrada(empresa_lider, precos, data_nominal)
-
                 data_sinal = encontrar_proxima_data_valida(data_nominal, precos)
-                preco_sinal = precos.loc[data_sinal, empresa_lider] if data_sinal in precos.index else None
-
-                # 🔄 Reinvestimento de dividendos
-                if data_sinal is not None:
-                    for empresa in list(carteira):
-                        if empresa in dividendos_dict:
-                            df_div = dividendos_dict[empresa]
-                            if not df_div.empty:
-                                df_div.index = pd.to_datetime(df_div.index)  # Garantir tipo datetime
-                                dividendos_mes = df_div[
-                                    (df_div.index.year == data_sinal.year) &
-                                    (df_div.index.month == data_sinal.month)
-                                ].sum()
-                
-                                preco_empresa = precos.loc[data_sinal, empresa] if data_sinal in precos.index else None
-                
-                                if preco_empresa and preco_empresa > 0:
-                                    valor_reinvestido = dividendos_mes * carteira[empresa]
-                                    carteira[empresa] += valor_reinvestido / preco_empresa
-        
-                # ---------- aporte ----------
-                if preco_sinal is None or np.isnan(preco_sinal):
-                    # impossível comprar – acumula
-                    aporte_acumulado += aporte_mensal
-                else:
-                    total_a_comprar = aporte_mensal + aporte_acumulado
-                    aporte_acumulado = 0.0
-                    carteira[empresa_lider] += total_a_comprar / preco_sinal
-                                        
     
-                # ---------- deterioração ----------
+                if data_sinal is None:
+                    continue
+    
+                # 🔄 Reinvestimento de dividendos
+                for empresa in list(carteira):
+                    if empresa in dividendos_dict:
+                        df_div = dividendos_dict[empresa]
+                        if not df_div.empty:
+                            df_div.index = pd.to_datetime(df_div.index)
+                            dividendos_mes = df_div[
+                                (df_div.index.year == data_sinal.year) &
+                                (df_div.index.month == data_sinal.month)
+                            ].sum()
+    
+                            preco_empresa = precos.loc[data_sinal, empresa] if data_sinal in precos.index else None
+                            if preco_empresa and preco_empresa > 0:
+                                valor_reinvestido = dividendos_mes * carteira[empresa]
+                                carteira[empresa] += valor_reinvestido / preco_empresa
+    
+                # ---------- Aporte dividido entre as líderes atuais ----------
+                total_a_aportar = aporte_mensal + aporte_acumulado
+                aporte_acumulado = 0.0
+    
+                if lideres_atuais:
+                    aporte_por_empresa = total_a_aportar / len(lideres_atuais)
+    
+                    for lider in lideres_atuais:
+                        preco_lider = precos.loc[data_sinal, lider] if lider in precos.columns and data_sinal in precos.index else None
+    
+                        if preco_lider is None or np.isnan(preco_lider) or preco_lider <= 0:
+                            # Se não conseguir comprar, acumula o aporte daquela empresa
+                            aporte_acumulado += aporte_por_empresa
+                            continue
+    
+                        carteira[lider] += aporte_por_empresa / preco_lider
+    
+                # ---------- Deterioração (mantido conforme sua lógica) ----------
                 for antiga in list(carteira):
-                    if antiga == empresa_lider:
+                    if antiga in lideres_atuais:
                         continue
     
-                    score_ini    = df_scores.query("Ano == @anos[0] and ticker == @antiga")['Score_Ajustado']
-                    score_atual  = df_scores.query("Ano == @ano     and ticker == @antiga")['Score_Ajustado']
+                    score_ini = df_scores.query("Ano == @anos[0] and ticker == @antiga")['Score_Ajustado']
+                    score_atual = df_scores.query("Ano == @ano     and ticker == @antiga")['Score_Ajustado']
     
                     if score_ini.empty or score_atual.empty:
                         continue
     
                     if score_atual.values[0] / score_ini.values[0] < deterioracao_limite:
-                        # vende tudo da antiga líder
-                        preco_venda = precos.loc[data_sinal, antiga]
-                        if not np.isnan(preco_venda) and preco_venda > 0:
-                            carteira[empresa_lider] += (carteira.pop(antiga) * preco_venda / preco_sinal)
-              
-                # ---------- registra valores ----------
-                registro = {'date': data_sinal}
-                total    = 0.0
-                for tk, qtd in carteira.items():
-                    if data_sinal not in precos.index:
-                        continue
-                    val = qtd * precos.loc[data_sinal, tk]
-                    #registro[f"value_{tk}"] = val
-                    total += val
+                        preco_venda = precos.loc[data_sinal, antiga] if antiga in precos.columns and data_sinal in precos.index else None
+                        if preco_venda and not np.isnan(preco_venda) and preco_venda > 0:
+                            carteira[empresa_lider] += (carteira.pop(antiga) * preco_venda / preco_lider)
     
-                registro['Patrimônio'] = total              # <<< nome oficial
+                # ---------- Registro ----------
+                registro = {'date': data_sinal}
+                total = 0.0
+                for tk, qtd in carteira.items():
+                    if tk in precos.columns and data_sinal in precos.index:
+                        val = qtd * precos.loc[data_sinal, tk]
+                        total += val
+                registro['Patrimônio'] = total
                 registros.append(registro)
     
-        df_patrimonio = (pd.DataFrame(registros).set_index('date').sort_index().fillna(method='ffill'))       # suaviza buracos de preço
-
-        # Elimina linhas onde todas as colunas (exceto o índice) são 0 ou NaN
+        df_patrimonio = (
+            pd.DataFrame(registros)
+            .set_index('date')
+            .sort_index()
+            .fillna(method='ffill')
+        )
+    
         df_patrimonio = df_patrimonio[(df_patrimonio != 0).any(axis=1)]
-
+    
         datas_aportes = df_patrimonio.index.unique().tolist()
-
+    
         return df_patrimonio, datas_aportes
+
 
     # Função para gerir o aporte mensal de todas as empresas do segmento sem estratégia 
     def gerir_carteira_todas_empresas(precos, tickers, datas_aportes, dividendos_dict, aporte_mensal=1000):
