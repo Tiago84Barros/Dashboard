@@ -2101,7 +2101,6 @@ if pagina == "Avançada": #_____________________________________________________
                         
                             # NOVO — fator de preço
                             'Momentum_12m'                 : {'peso': 0.11, 'melhor_alto': True},
-}
                         },
                         "Energia": {
                             'Margem_Liquida_mean'          : {'peso': 0.07, 'melhor_alto': True},
