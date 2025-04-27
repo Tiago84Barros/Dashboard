@@ -1322,6 +1322,43 @@ if pagina == "Avançada": #_____________________________________________________
     
         return pesos_ajustados
 
+     # Função responsável por Reduzir o Score_Ajustado quando a ação está abaixo da mediana setorial
+    def penalizar_plato(df_scores, precos_mensal, meses=18, penal=0.25):
+        """
+        Reduz Score_Ajustado quando a ação está abaixo da mediana setorial
+        no retorno acumulado dos ÚLTIMOS `meses` MESES — sem olhar o futuro.
+    
+        Parâmetros
+        ----------
+        df_scores : DataFrame  # colunas ['Ano', 'ticker', 'Score_Ajustado']
+        precos_mensal : DataFrame  # preços ajustados, index = último dia útil de cada mês
+        meses : int (default 18)
+        penal : float (default 0.25)  # % de penalização (ex.: 0.25 → -25 %)
+        """
+        # 1️⃣ Retorno retrospectivo de 18 meses
+        ret_18m = precos_mensal.pct_change(periods=meses)
+    
+        # 2️⃣ Itera ano a ano, SEM olhar além de 31/12/Y
+        for ano in df_scores['Ano'].unique():
+            data_fim = precos_mensal.index[precos_mensal.index.year == ano].max()
+            if pd.isna(data_fim):               # não há preços esse ano
+                continue
+            # mediana do setor em 31/12/Y
+            ret_setor = ret_18m.loc[data_fim].median(skipna=True)
+    
+            # percorre as ações daquele ano
+            mask_ano = df_scores['Ano'] == ano
+            for idx, row in df_scores[mask_ano].iterrows():
+                tk = row['ticker']
+                if tk not in ret_18m.columns or pd.isna(ret_18m.loc[data_fim, tk]):
+                    continue
+    
+                # 3️⃣ compara retorno vs. mediana
+                if ret_18m.loc[data_fim, tk] < ret_setor:
+                    df_scores.at[idx, 'Score_Ajustado'] *= (1 - penal)
+    
+        return df_scores
+
     # Ajuste do score baseado nos pesos ajustados ______________________________________________________________________________________________________________________________________________
     def calcular_score_ajustado(df, pesos_utilizados):
         """
@@ -1352,7 +1389,7 @@ if pagina == "Avançada": #_____________________________________________________
 
         
     # Calcula o Score para cada empresa de acordo com o segmento que ela está inserido _________________________________________________________________________________________________________
-    def calcular_score_acumulado(lista_empresas, setores_empresa, pesos_utilizados, dados_macro, anos_minimos=4):
+    def calcular_score_acumulado(lista_empresas, setores_empresa, pesos_utilizados, dados_macro, momentum12m_df, anos_minimos=4):
         """
         Calcula o Score Acumulado ao longo dos anos, considerando ajustes macroeconômicos e pesos específicos por segmento ou setor.
     
@@ -2271,12 +2308,15 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # Baixar preços
                     precos = baixar_precos([ticker + ".SA" for ticker in empresas_filtradas['ticker']])
+                    precos_mensal = precos.resample('M').last()     # ⇢ último pregão do mês
 
                     # Momentum dos preços
                     momentum12m_df = calc_momentum_12m(precos) 
                     
                     # Escores das empresas de acordo com segmento e tipo de empresa
-                    df_scores = calcular_score_acumulado(lista_empresas, setor_empresa, pesos_utilizados, dados_macro, anos_minimos=4)
+                    df_scores = calcular_score_acumulado(lista_empresas, setor_empresa, pesos_utilizados, dados_macro, momentum12m_df, anos_minimos=4)
+
+                    df_scores = penalizar_plato(df_scores,  precos_mensal,  meses=18, penal=0.25)        # –25 % no score quando perde da mediana)
                                                                                   
                     # Determinar líderes
                     lideres_por_ano = determinar_lideres(df_scores)             
