@@ -1409,63 +1409,98 @@ if pagina == "Avançada": #_____________________________________________________
         anos_disponiveis = sorted(set(ano for emp in lista_empresas for ano in emp['multiplos']['Ano'].unique()))
         df_resultados = []
     
+        ##### 1) utilidades ########################################################
+        def calc_crowding_penalty(df_setor: pd.DataFrame,
+                                  coluna='P/VP',
+                                  floor=0.80, ceil=1.00) -> float:
+            """
+            Retorna um fator ∈[floor, ceil] que diminui quando o desvio-padrão
+            dos múltiplos do setor é baixo (crowding alto).
+            """
+            if df_setor.empty or coluna not in df_setor:
+                return 1.0                                  # neutro
+        
+            dispersion = df_setor[coluna].std()
+            media      = df_setor[coluna].mean()
+            if not np.isfinite(dispersion) or media == 0:
+                return 1.0
+        
+            crowd_score = 1 - np.tanh(dispersion / media)   # 0-1
+            return floor + (ceil - floor) * crowd_score     # linear entre limites
+        
+        ##### 2) estado que persiste de um ano para outro ##########################
+        anos_lider = collections.defaultdict(int)   # fora do loop anual
+        
+        ##### 3) LOOP ANUAL (trecho que substitui o seu agrupamento existente) #####
         for idx in range(anos_minimos, len(anos_disponiveis)):
             ano = anos_disponiveis[idx]
-                     
             dados_ano = []
-    
+        
+            # === reúno todos os multiplos de cada empresa para este ano ==========
             for emp in lista_empresas:
                 ticker = emp['ticker']
                 df_mult = emp['multiplos'][emp['multiplos']['Ano'] <= ano].copy()
-                df_dre = emp['df_dre'][emp['df_dre']['Ano'] <= ano].copy()
-                  
+                df_dre  = emp['df_dre'   ][emp['df_dre'   ]['Ano'] <= ano].copy()
                 if df_mult.empty or df_dre.empty:
                     continue
-                        
-                # Ajustar com contexto macro
-                pesos_ajustados = ajustar_pesos_macro(pesos_utilizados, dados_macro, ano, setores_empresa)
-                #pesos_ajustados = pesos_utilizados
-    
-                colunas_para_filtrar = [
-                    'Receita_Liquida', 'Lucro_Liquido', 'EBIT', 'ROE', 'ROIC', 'Margem_Liquida',
-                    'Divida_Total', 'Passivo_Circulante', 'Liquidez_Corrente',
-                    'Crescimento_Receita', 'Crescimento_Lucro']
-              
-                
-                #multiplos_corrigido = aplicar_winsorize_multiplas(df_mult, colunas_para_filtrar)
-                #df_dre_corrigido = aplicar_winsorize_multiplas(df_dre, colunas_para_filtrar)
-
-                multiplos_corrigido = remover_outliers_iqr(df_mult, colunas_para_filtrar)
-                df_dre_corrigido = remover_outliers_iqr(df_dre, colunas_para_filtrar)
-    
-                metricas = calcular_metricas_historicas_simplificadas(multiplos_corrigido, df_dre_corrigido)
-                row_dict = {'ticker': ticker, 'Ano': ano}
-                row_dict.update(metricas)
-
-                # --------------------------------------------------
-                #  Momento de 12 m (preço total-return)
-                # --------------------------------------------------
-                try:
-                    col_mom = f"Momentum_{ticker}"
-                    # pego o valor de momentum para a data 31/12 de cada ano
-                    data_referencia = pd.Timestamp(f"{ano}-12-31")
-                    if data_referencia in momentum12m_df.index:
-                        mom_val = momentum12m_df.loc[data_referencia, col_mom]
-                    else:
-                        # fallback: último valor disponível antes de 31/12
-                        mom_val = momentum12m_df.loc[:data_referencia, col_mom].iloc[-1]
-                    row_dict['Momentum_12m'] = mom_val
-                except Exception:
-                    row_dict['Momentum_12m'] = 0.0        # se algo der errado
-    
-                dados_ano.append(row_dict)
-    
+        
+                # setor da empresa
+                setor = setores_empresa.get(ticker, "OUTROS")
+        
+                # ---------------- Crowd penalty (precisa de dados do setor) ------
+                df_setor_ano = pd.concat(
+                    [e['multiplos'][e['multiplos']['Ano'] == ano][['Ticker', 'P/VP']]
+                     for e in lista_empresas
+                     if setores_empresa.get(e['ticker']) == setor],
+                    ignore_index=True
+                )
+                crowd_pen  = calc_crowding_penalty(df_setor_ano, 'P/VP')
+        
+                # ---------------- Métricas “clássicas” que você já calculava ----
+                metricas = calcular_metricas_historicas_simplificadas(
+                               df_mult, df_dre)
+        
+                row = {'ticker': ticker,
+                       'Ano'   : ano,
+                       **metricas,
+                       'Penalty_Crowd': crowd_pen}
+        
+                dados_ano.append(row)
+        
+            # ---------- DataFrame anual com crowd-penalty incluído --------------
             df_ano = pd.DataFrame(dados_ano)
             if df_ano.empty:
                 continue
-    
-            df_ano = calcular_score_ajustado(df_ano, pesos_ajustados)
-            df_resultados.append(df_ano[['Ano', 'ticker', 'Score_Ajustado']])
+        
+            # ------------ normaliza + soma ponderada (sua rotina) ---------------
+            df_ano = calcular_score_ajustado(df_ano, pesos_utilizados)
+        
+            # --------------------------------------------------------------------
+            # 4) determina líder e aplica Penalty_Decay
+            # --------------------------------------------------------------------
+            df_ano = df_ano.sort_values('Score_Ajustado', ascending=False)
+        
+            lider_ano = df_ano.iloc[0]['ticker']        # 1º da lista
+            for ix, row in df_ano.iterrows():
+                tk = row['ticker']
+                # acumulo anos consecutivos de liderança
+                if tk == lider_ano:
+                    anos_lider[tk] += 1
+                else:
+                    anos_lider[tk] = 0
+        
+                # fator de decaimento (trunca em -25 %)
+                decay_factor = 1 - min(0.03 * max(anos_lider[tk]-1, 0), 0.25)
+                df_ano.at[ix, 'Penalty_Decay'] = decay_factor
+        
+                # aplica ambas as penalizações ao score já normalizado
+                df_ano.at[ix, 'Score_Ajustado'] *= \
+                    df_ano.at[ix, 'Penalty_Crowd'] * decay_factor
+        
+            # agora sim, mantenha apenas as colunas que precisa
+            df_resultados.append(
+                df_ano[['Ano', 'ticker', 'Score_Ajustado']]
+            )
     
         if df_resultados:
             df_scores = pd.concat(df_resultados, ignore_index=True)
