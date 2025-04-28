@@ -1508,7 +1508,7 @@ if pagina == "Avançada": #_____________________________________________________
         Fórmula:  (P_t / P_{t-252}) - 1
         """
         # 252 pregões  ~  12 meses
-        mom = precos / precos.shift(126) - 1
+        mom = precos / precos.shift(378) - 1
         mom = mom.dropna(how="all")      # primeira linha útil será após 252 d
         mom.columns = [f"Momentum_{c}" for c in mom.columns]
         return mom
