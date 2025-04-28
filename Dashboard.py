@@ -2207,7 +2207,7 @@ if pagina == "Avançada": #_____________________________________________________
                             'Caixa_Liquido_slope_log'     : {'peso': 0.04, 'melhor_alto': True},
                         
                             # --- Sentimento de mercado -----------------------------------------
-                            'Momentum_12m'                : {'peso': 0.05, 'melhor_alto': True},
+                            'Momentum_12m'                : {'peso': 0.25, 'melhor_alto': True},
                         },
                         "Consumo não Cíclico": {
                             # — Rentabilidade --------------------------------------------------------------------
@@ -2268,7 +2268,7 @@ if pagina == "Avançada": #_____________________________________________________
                             'ROIC_mean'                  : {'peso': 0.18, 'melhor_alto': True},
                             'Liquidez_Corrente_mean'     : {'peso': 0.10, 'melhor_alto': True},
                             'Endividamento_Total_mean'   : {'peso': 0.10, 'melhor_alto': False},
-                            'Momentum_12m'               : {'peso': 0.07, 'melhor_alto': True},   # levemente reduzido
+                            'Momentum_12m'               : {'peso': 0.25, 'melhor_alto': True},   # levemente reduzido
                         },
                         "Saúde": {
                             'Receita_Liquida_slope_log' : {'peso': 0.25, 'melhor_alto': True},
