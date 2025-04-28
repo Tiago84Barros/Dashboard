@@ -2148,7 +2148,7 @@ if pagina == "Avançada": #_____________________________________________________
                         },
                         "Consumo Cíclico": {
                             # --- Rentabilidade -------------------------------------------------
-                            'Margem_Liquida_mean'         : {'peso': 0.08, 'melhor_alto': True},
+                            'Margem_Liquida_mean'         : {'peso': 0.10, 'melhor_alto': True},
                             'Margem_Operacional_mean'     : {'peso': 0.08, 'melhor_alto': True},
                             'ROE_mean'                    : {'peso': 0.08, 'melhor_alto': True},
                             'ROA_mean'                    : {'peso': 0.05, 'melhor_alto': True},
@@ -2156,7 +2156,7 @@ if pagina == "Avançada": #_____________________________________________________
                         
                             # --- Valuation & Dividendos ----------------------------------------
                             'P/VP_mean'                   : {'peso': 0.06, 'melhor_alto': False},
-                            'DY_mean'                     : {'peso': 0.04, 'melhor_alto': True},
+                            'DY_mean'                     : {'peso': 0.05, 'melhor_alto': True},
                         
                             # --- Balanço --------------------------------------------------------
                             'Endividamento_Total_mean'    : {'peso': 0.07, 'melhor_alto': False},
@@ -2164,14 +2164,14 @@ if pagina == "Avançada": #_____________________________________________________
                             'Liquidez_Corrente_mean'      : {'peso': 0.04, 'melhor_alto': True},
                         
                             # --- Crescimento estrutural ----------------------------------------
-                            'Receita_Liquida_slope_log'   : {'peso': 0.09, 'melhor_alto': True},
+                            'Receita_Liquida_slope_log'   : {'peso': 0.15, 'melhor_alto': True},
                             'Lucro_Liquido_slope_log'     : {'peso': 0.09, 'melhor_alto': True},
                             'Patrimonio_Liquido_slope_log': {'peso': 0.04, 'melhor_alto': True},
                             'Divida_Liquida_slope_log'    : {'peso': 0.04, 'melhor_alto': False},
                             'Caixa_Liquido_slope_log'     : {'peso': 0.04, 'melhor_alto': True},
                         
                             # --- Sentimento de mercado -----------------------------------------
-                            'Momentum_12m'                : {'peso': 0.07, 'melhor_alto': True},
+                            'Momentum_12m'                : {'peso': 0.05, 'melhor_alto': True},
                         },
                         "Consumo não Cíclico": {
                             # — Rentabilidade --------------------------------------------------------------------
