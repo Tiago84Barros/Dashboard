@@ -2337,7 +2337,7 @@ if pagina == "Avançada": #_____________________________________________________
                     }
 
                     
-                    #setor_empresa = obter_setor_da_empresa(ticker, empresas_filtradas)
+                    setor_empresa = obter_setor_da_empresa(ticker, empresas_filtradas)
                     setores_empresa = dict(zip(empresas_filtradas['ticker'], empresas_filtradas['SETOR']))
                     
                     pesos_utilizados = pesos_por_setor.get(setor_empresa, indicadores_score)
