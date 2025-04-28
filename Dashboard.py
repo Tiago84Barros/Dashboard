@@ -7,6 +7,7 @@ import yfinance as yf
 from sklearn.linear_model import LinearRegression
 from sklearn.linear_model import TheilSenRegressor
 from collections import defaultdict
+import numpy as np, collections
 import numpy as np
 import sqlite3
 import openai
