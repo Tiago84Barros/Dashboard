@@ -1413,7 +1413,7 @@ if pagina == "Avançada": #_____________________________________________________
         ##### 1) utilidades ########################################################
         def calc_crowding_penalty(df_setor: pd.DataFrame,
                                   coluna='P/VP',
-                                  floor=0.85, ceil=1.00) -> float:
+                                  floor=0.85, ceil=1.50) -> float:
             """
             Retorna um fator ∈[floor, ceil] que diminui quando o desvio-padrão
             dos múltiplos do setor é baixo (crowding alto).
@@ -1544,7 +1544,7 @@ if pagina == "Avançada": #_____________________________________________________
         Fórmula:  (P_t / P_{t-252}) - 1
         """
         # 252 pregões  ~  12 meses
-        mom = precos / precos.shift(252) - 1
+        mom = precos / precos.shift(504) - 1
         mom = mom.dropna(how="all")      # primeira linha útil será após 252 d
         mom.columns = [f"Momentum_{c}" for c in mom.columns]
         return mom
