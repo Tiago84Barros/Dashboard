@@ -2337,7 +2337,8 @@ if pagina == "Avançada": #_____________________________________________________
                     }
 
                     
-                    setor_empresa = obter_setor_da_empresa(ticker, empresas_filtradas)
+                    #setor_empresa = obter_setor_da_empresa(ticker, empresas_filtradas)
+                    setores_empresa = dict(zip(empresas_filtradas['ticker'], empresas_filtradas['SETOR']))
                     
                     pesos_utilizados = pesos_por_setor.get(setor_empresa, indicadores_score)
                     
@@ -2349,7 +2350,7 @@ if pagina == "Avançada": #_____________________________________________________
                     momentum12m_df = calc_momentum_12m(precos) 
                     
                     # Escores das empresas de acordo com segmento e tipo de empresa
-                    df_scores = calcular_score_acumulado(lista_empresas, setor_empresa, pesos_utilizados, dados_macro, momentum12m_df, anos_minimos=4)
+                    df_scores = calcular_score_acumulado(lista_empresas, setores_empresa, pesos_utilizados, dados_macro, momentum12m_df, anos_minimos=4)
 
                     df_scores = penalizar_plato(df_scores,  precos_mensal,  meses=18, penal=0.25)        # –25 % no score quando perde da mediana)
                                                                                   
