@@ -1413,7 +1413,7 @@ if pagina == "Avançada": #_____________________________________________________
         ##### 1) utilidades ########################################################
         def calc_crowding_penalty(df_setor: pd.DataFrame,
                                   coluna='P/VP',
-                                  floor=0.80, ceil=1.00) -> float:
+                                  floor=0.85, ceil=1.00) -> float:
             """
             Retorna um fator ∈[floor, ceil] que diminui quando o desvio-padrão
             dos múltiplos do setor é baixo (crowding alto).
