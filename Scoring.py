@@ -258,7 +258,12 @@ def _calc_crowding_penalty(df_setor: pd.DataFrame,
 # ---------------------------------------------------------------------------
 # 3. Score acumulado ano‑a‑ano ----------------------------------------------
 # ---------------------------------------------------------------------------
-def calcular_score_acumulado(lista_empresas, setores_empresa, pesos_utilizados, dados_macro, momentum12m_df, anos_minimos=4):
+def calcular_score_acumulado(lista_empresas: Sequence[Dict[str, Any]],
+                             setores_empresa: Dict[str, str],
+                             pesos_utilizados: Dict[str, Dict[str, Any]],
+                             dados_macro: pd.DataFrame | None,
+                             momentum12m_df: pd.DataFrame | None,
+                             anos_minimos: int = 4) -> pd.DataFrame:
     """
     Calcula o Score Acumulado ao longo dos anos, considerando ajustes macroeconômicos e pesos específicos por segmento ou setor.
 
