@@ -1,4 +1,4 @@
-"""weights.py
+"""Pesos.py
 ~~~~~~~~~~~~
 Contém dicionários de pesos fundamentalistas por setor e um conjunto genérico
 para fallback, além de helpers para consulta.
