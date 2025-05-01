@@ -8,11 +8,11 @@ Principais funções públicas
 - load_setores_from_db()
 - load_data_from_db(ticker)
 - load_multiplos_from_db(ticker)
+- load_multiplos_limitado_from_db(ticker)
 - load_macro_summary()
 
-Caso **Streamlit** esteja instalado, as funções são _cacheadas_ com
-`st.cache_data`. Fora do Streamlit o módulo continua funcional (decorador
-`noop_cache`).
+As funções usam `st.cache_data` quando Streamlit está disponível; caso
+contrário, entram em cache com `functools.lru_cache`.
 """
 
 from __future__ import annotations
@@ -26,35 +26,29 @@ import pandas as pd
 import requests
 
 # ---------------------------------------------------------------------------
-# Opção de cache: usa st.cache_data se Streamlit estiver disponível ----------
+# Cache decorator (Streamlit se houver, senão lru_cache) ---------------------
 # ---------------------------------------------------------------------------
 try:
     import streamlit as st  # type: ignore
     cache_decorator = st.cache_data  # pragma: no cover
-except ModuleNotFoundError:  # fallback CLI ou notebook
+except ModuleNotFoundError:
     def cache_decorator(func=None, *, ttl=None):  # type: ignore
         if func is None:
-            return lambda f: lru_cache(maxsize=None)(f)  # com parâmetros
+            return lambda f: lru_cache(maxsize=None)(f)
         return lru_cache(maxsize=None)(func)
 
 # ---------------------------------------------------------------------------
-# Configurações gerais -------------------------------------------------------
+# Configurações --------------------------------------------------------------
 # ---------------------------------------------------------------------------
-
-DB_URL: str = (
-    "https://raw.githubusercontent.com/Tiago84Barros/Dashboard/main/metadados.db"
-)
+DB_URL: str = "https://raw.githubusercontent.com/Tiago84Barros/Dashboard/main/metadados.db"
 LOCAL_DB_PATH: str = "metadados.db"
 
 # ---------------------------------------------------------------------------
-# 1. Download do banco de dados ---------------------------------------------
+# 1. Download do banco -------------------------------------------------------
 # ---------------------------------------------------------------------------
 
 @cache_decorator(ttl=3600)
-def download_db_from_github(
-    db_url: str = DB_URL, local_path: str = LOCAL_DB_PATH
-) -> Optional[str]:
-    """Baixa o arquivo SQLite do GitHub e devolve o *path* local."""
+def download_db_from_github(db_url: str = DB_URL, local_path: str = LOCAL_DB_PATH) -> Optional[str]:
     try:
         resp = requests.get(db_url, allow_redirects=True, timeout=30)
         if resp.status_code == 200:
@@ -67,7 +61,7 @@ def download_db_from_github(
         return None
 
 # ---------------------------------------------------------------------------
-# 2. Carrega tabela *setores* -------------------------------------------------
+# 2. Tabela setores ----------------------------------------------------------
 # ---------------------------------------------------------------------------
 
 @cache_decorator
@@ -77,14 +71,13 @@ def load_setores_from_db() -> Optional[pd.DataFrame]:
         return None
     try:
         with sqlite3.connect(db_path) as conn:
-            query = "SELECT * FROM setores"
-            return pd.read_sql_query(query, conn)
+            return pd.read_sql_query("SELECT * FROM setores", conn)
     except Exception as exc:
         print(f"Erro load_setores_from_db: {exc}")
         return None
 
 # ---------------------------------------------------------------------------
-# 3. Carrega demonstrações financeiras ---------------------------------------
+# 3. Demonstrações financeiras ----------------------------------------------
 # ---------------------------------------------------------------------------
 
 @cache_decorator
@@ -92,12 +85,12 @@ def load_data_from_db(ticker: str) -> Optional[pd.DataFrame]:
     db_path = download_db_from_github()
     if db_path is None or not os.path.exists(db_path):
         return None
-    ticker_clean = ticker.replace(".SA", "")
+    tk_clean = ticker.replace(".SA", "")
     try:
         with sqlite3.connect(db_path) as conn:
             query = (
                 "SELECT * FROM Demonstracoes_Financeiras "
-                f"WHERE Ticker = '{ticker}' OR Ticker = '{ticker_clean}'"
+                f"WHERE Ticker = '{ticker}' OR Ticker = '{tk_clean}'"
             )
             return pd.read_sql_query(query, conn)
     except Exception as exc:
@@ -105,7 +98,7 @@ def load_data_from_db(ticker: str) -> Optional[pd.DataFrame]:
         return None
 
 # ---------------------------------------------------------------------------
-# 4. Carrega múltiplos --------------------------------------------------------
+# 4. Múltiplos completos -----------------------------------------------------
 # ---------------------------------------------------------------------------
 
 @cache_decorator
@@ -113,12 +106,12 @@ def load_multiplos_from_db(ticker: str) -> Optional[pd.DataFrame]:
     db_path = download_db_from_github()
     if db_path is None or not os.path.exists(db_path):
         return None
-    ticker_clean = ticker.replace(".SA", "")
+    tk_clean = ticker.replace(".SA", "")
     try:
         with sqlite3.connect(db_path) as conn:
             query = (
                 "SELECT * FROM multiplos "
-                f"WHERE Ticker = '{ticker}' OR Ticker = '{ticker_clean}' "
+                f"WHERE Ticker = '{ticker}' OR Ticker = '{tk_clean}' "
                 "ORDER BY Data ASC"
             )
             return pd.read_sql_query(query, conn)
@@ -127,7 +120,30 @@ def load_multiplos_from_db(ticker: str) -> Optional[pd.DataFrame]:
         return None
 
 # ---------------------------------------------------------------------------
-# 5. Dados macroeconômicos ----------------------------------------------------
+# 5. Múltiplos TRI (último registro) ----------------------------------------
+# ---------------------------------------------------------------------------
+
+@cache_decorator
+def load_multiplos_limitado_from_db(ticker: str) -> Optional[pd.DataFrame]:
+    """Retorna o registro mais recente da tabela *multiplos_TRI* para o ticker."""
+    db_path = download_db_from_github()
+    if db_path is None or not os.path.exists(db_path):
+        return None
+    tk_clean = ticker.replace(".SA", "")
+    try:
+        with sqlite3.connect(db_path) as conn:
+            query = (
+                "SELECT * FROM multiplos_TRI "
+                f"WHERE Ticker = '{ticker}' OR Ticker = '{tk_clean}' "
+                "ORDER BY Data DESC LIMIT 1"
+            )
+            return pd.read_sql_query(query, conn)
+    except Exception as exc:
+        print(f"Erro load_multiplos_limitado_from_db: {exc}")
+        return None
+
+# ---------------------------------------------------------------------------
+# 6. Macro resumo ------------------------------------------------------------
 # ---------------------------------------------------------------------------
 
 @cache_decorator
@@ -137,8 +153,7 @@ def load_macro_summary() -> Optional[pd.DataFrame]:
         return None
     try:
         with sqlite3.connect(db_path) as conn:
-            query = "SELECT * FROM info_economica ORDER BY Data ASC"
-            return pd.read_sql_query(query, conn)
+            return pd.read_sql_query("SELECT * FROM info_economica ORDER BY Data ASC", conn)
     except Exception as exc:
         print(f"Erro load_macro_summary: {exc}")
         return None
@@ -149,5 +164,6 @@ __all__ = [
     "load_setores_from_db",
     "load_data_from_db",
     "load_multiplos_from_db",
+    "load_multiplos_limitado_from_db",
     "load_macro_summary",
 ]
