@@ -22,7 +22,10 @@ import page_advanced as pa
 # Helper local (fallback) ----------------------------------------------------
 # ---------------------------------------------------------------------------
 def get_logo_url(ticker: str) -> str:
-    """Retorna URL PNG do logotipo a partir do repositório public *icones-b3*."""
+    """
+    Retorna a URL do logotipo PNG de um ticker B3
+    baseado no repositório "thefintz/icones-b3".
+    """
     tk = ticker.replace('.SA', '').upper()
     return f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{tk}.png"
 
