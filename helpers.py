@@ -4,6 +4,7 @@ Funções utilitárias simples compartilhadas entre os módulos.
 
 Funções públicas
 ----------------
+- get_logo_url(ticker)
 - obter_setor_da_empresa(ticker, setores_df)
 - determinar_lideres(df_scores)
 - formatar_real(valor)
@@ -12,6 +13,18 @@ Funções públicas
 from __future__ import annotations
 
 import pandas as pd
+
+# ---------------------------------------------------------------------------
+# URL do logotipo ------------------------------------------------------------
+# ---------------------------------------------------------------------------
+
+def get_logo_url(ticker: str) -> str:
+    """
+    Retorna a URL do logotipo PNG de um ticker B3
+    baseado no repositório "thefintz/icones-b3".
+    """
+    tk = ticker.replace('.SA', '').upper()
+    return f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{tk}.png"
 
 # ---------------------------------------------------------------------------
 # Setor da empresa -----------------------------------------------------------
@@ -42,6 +55,7 @@ def formatar_real(valor: float | int | None) -> str:
 
 # ---------------------------------------------------------------------------
 __all__ = [
+    'get_logo_url',
     'obter_setor_da_empresa',
     'determinar_lideres',
     'formatar_real',
