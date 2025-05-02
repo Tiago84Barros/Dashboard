@@ -17,36 +17,19 @@ import pandas as pd
 from db_loader import load_setores_from_db
 import page_basic as pb
 import page_advanced as pa
-
-# ---------------------------------------------------------------------------
-# Helper local (fallback) ----------------------------------------------------
-# ---------------------------------------------------------------------------
-def get_logo_url(ticker: str) -> str:
-    """
-    Retorna a URL do logotipo PNG de um ticker B3
-    baseado no repositório "thefintz/icones-b3".
-    """
-    tk = ticker.replace('.SA', '').upper()
-    return f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{tk}.png"
-
-# Disponibiliza get_logo_url via módulo utils para os outros pages
-import sys, types
-aux = types.ModuleType('utils')
-aux.get_logo_url = get_logo_url
-sys.modules['utils'] = aux
+from helpers import get_logo_url
 
 # ---------------------------------------------------------------------------
 # Configuração inicial da página --------------------------------------------
 # ---------------------------------------------------------------------------
 st.set_page_config(page_title='Dashboard Financeiro', layout='wide')
 
-# CSS global
+# CSS global ----------------------------------------------------------------
 st.markdown(
     """
     <style>
-    .main {background-color: var(--background-color);color: var(--text-color);}
-    .stApp {background-color: var(--background-color);color: var(--text-color);} 
-    /* Métricas */
+    .main {background-color: var(--background-color); color: var(--text-color);}  
+    .stApp {background-color: var(--background-color); color: var(--text-color);}  
     div[data-testid="metric-container"] {
         background: var(--block-background-color);
         border:1px solid var(--block-border-color);
@@ -102,5 +85,3 @@ st.session_state['pagina'] = pagina
 # ---------------------------------------------------------------------------
 pb.render()
 pa.render()
-
-# (Futuro) importar page_trading e chamar page_trading.render()
