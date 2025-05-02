@@ -22,7 +22,7 @@ from db_loader import (
     load_multiplos_limitado_from_db,
 )
 from yf_data import get_company_info
-from utils import get_logo_url  # já disponibilizado pelo dashboard
+from helpers import get_logo_url  # import corrigido para helpers
 
 # ---------------------------------------------------------------------------
 # Helper interno para mapear colunas → nomes amigáveis ----------------------
@@ -269,4 +269,4 @@ def render():
 
     st.divider()
 
-
+# Fim de page_basic.py
