@@ -260,3 +260,205 @@ def render():
             df_hist[ind_col] = (df_hist[ind_col] - rng['min']) / (rng['max'] - rng['min'])
         df_hist['Ano'] = df_hist['Ano'].astype(str)
         fig = px.bar(df
+"""page_advanced.py
+~~~~~~~~~~~~~~~~~~~
+Aba “Avançada” completa da aplicação:
+- Filtros (Setor → Subsetor → Segmento → Tipo por idade)
+- Cálculo de Score integrado
+- Carteiras e benchmarks (estratégia, todas, Selic)
+- Gráficos de evolução e blocos de resultado
+
+Use:
+-----
+import page_advanced as pa
+pa.render()
+"""
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import plotly.express as px
+
+from db_loader import (
+    load_data_from_db,
+    load_multiplos_from_db,
+    load_macro_summary,
+)
+from helpers import (
+    obter_setor_da_empresa,
+    determinar_lideres,
+    formatar_real,
+)
+from yf_data import baixar_precos, coletar_dividendos
+from scoring import calcular_score_acumulado, _penalizar_plato
+from portfolio import (
+    gerir_carteira,
+    gerir_carteira_todas_empresas,
+    calcular_patrimonio_selic_macro,
+)
+from weights import PESOS_POR_SETOR as pesos_por_setor, INDICADORES_SCORE as indicadores_score
+from utils import get_logo_url
+
+# ---------------------------------------------------------------------------
+# Helper interno: Filtra empresas por idade de demonstrações -----------------
+# ---------------------------------------------------------------------------
+
+def _filtrar_por_idade(empresas_df, opcao):
+    selecionadas = []
+    for row in empresas_df.itertuples():
+        ticker = f"{row.ticker}.SA"
+        dre = load_data_from_db(ticker)
+        if dre is None or dre.empty:
+            continue
+        anos = pd.to_datetime(dre['Data'], errors='coerce').dt.year.nunique()
+        if opcao == 'Todas' or (opcao.startswith('Crescimento') and anos < 10) or (opcao.startswith('Estabelecida') and anos >= 10):
+            selecionadas.append(row._asdict())
+    return pd.DataFrame(selecionadas)
+
+# ---------------------------------------------------------------------------
+# Helper interno: Plota evolução do patrimônio --------------------------------
+# ---------------------------------------------------------------------------
+
+def _plot_patrimonio(df):
+    fig, ax = plt.subplots(figsize=(12, 6))
+    for col in df.columns:
+        style = {'linewidth': 2}
+        if col == 'Patrimônio':
+            style['color'] = 'red'
+        elif col == 'Tesouro Selic':
+            style.update(color='blue', linestyle='-.')
+        else:
+            style.update(color='gray', linestyle='--', alpha=0.6, linewidth=1)
+        df[col].plot(ax=ax, label=col, **style)
+    ax.set_title('Evolução do Patrimônio Acumulado')
+    ax.set_xlabel('Data')
+    ax.set_ylabel('Patrimônio (R$)')
+    ax.legend()
+    st.pyplot(fig)
+
+# ---------------------------------------------------------------------------
+# Render da página Avançada -------------------------------------------------
+# ---------------------------------------------------------------------------
+
+def render():
+    if st.session_state.get('pagina') != 'Avançada':
+        return
+
+    st.markdown("""<h1 style='text-align:center;font-size:36px'>Análise Avançada de Ações</h1>""", unsafe_allow_html=True)
+
+    # Carrega setores e macro
+    setores_df = st.session_state.get('setores_df')
+    if setores_df is None or setores_df.empty:
+        st.error('Tabela de setores não carregada.')
+        return
+    dados_macro = load_macro_summary()
+
+    # Filtros hierárquicos
+    set_sel = st.selectbox('Selecione o Setor:', sorted(setores_df['SETOR'].dropna().unique()))
+    if not set_sel:
+        return
+    sub_sel = st.selectbox('Selecione o Subsetor:', sorted(setores_df.loc[setores_df['SETOR']==set_sel,'SUBSETOR'].dropna().unique()))
+    if not sub_sel:
+        return
+    seg_sel = st.selectbox('Selecione o Segmento:', sorted(setores_df.query("SETOR==@set_sel and SUBSETOR==@sub_sel")['SEGMENTO'].dropna().unique()))
+    if not seg_sel:
+        return
+
+    emp_base = setores_df.query("SETOR==@set_sel and SUBSETOR==@sub_sel and SEGMENTO==@seg_sel")
+    if emp_base.empty:
+        st.warning('Não há empresas nesse segmento.')
+        return
+
+    # Filtro por idade
+    tipo = st.selectbox('Tipo de Empresa:', ['Todas','Crescimento (< 10 anos)','Estabelecida (>= 10 anos)'])
+    emp_filtr = _filtrar_por_idade(emp_base, tipo)
+    if emp_filtr.empty:
+        st.warning('Nenhuma empresa atende ao filtro de idade.')
+        return
+    st.success(f'Total de empresas filtradas: {len(emp_filtr)}')
+
+    # Cards de empresas
+    st.markdown('### Empresas Selecionadas')
+    cols = st.columns(3)
+    for idx, row in emp_filtr.iterrows():
+        col = cols[idx % 3]
+        with col:
+            logo = get_logo_url(row['ticker'])
+            st.markdown(f"""
+                <div style='border:2px solid #ddd;border-radius:10px;padding:15px;margin:10px;background:#f9f9f9;text-align:center;'>
+                  <img src='{logo}' width='50'><br>
+                  <strong>{row['nome_empresa']}</strong><br>({row['ticker']})
+                </div>
+            """, unsafe_allow_html=True)
+
+    # Prepara lista de empresas para scoring
+    lista_emp = []
+    for row in emp_filtr.itertuples():
+        tk = row.ticker
+        mult = load_multiplos_from_db(tk+'.SA')
+        dre  = load_data_from_db(tk+'.SA')
+        if mult is None or mult.empty or dre is None or dre.empty:
+            continue
+        mult['Ano'] = pd.to_datetime(mult['Data'], errors='coerce').dt.year
+        dre['Ano']  = pd.to_datetime(dre['Data'], errors='coerce').dt.year
+        lista_emp.append({'ticker':tk,'multiplos':mult,'df_dre':dre})
+    if not lista_emp:
+        st.error('Dados insuficientes para cálculo de score.')
+        return
+
+    # Configura pesos e setores
+    setor_tk = obter_setor_da_empresa(lista_emp[0]['ticker'], setores_df)
+    pesos = pesos_por_setor.get(setor_tk, indicadores_score)
+    setores_emp = dict(zip(emp_filtr['ticker'], emp_filtr['SETOR']))
+
+    # Baixa preços e calcula score
+    precos = baixar_precos([f"{t}.SA" for t in emp_filtr['ticker']])
+    if precos is None or precos.empty:
+        st.error('Falha ao baixar preços.')
+        return
+    precos_m = precos.resample('M').last()
+    df_scores = calcular_score_acumulado(lista_emp, setores_emp, pesos, dados_macro, None, anos_minimos=4)
+    df_scores = _penalizar_plato(df_scores, precos_m)
+    lideres = determinar_lideres(df_scores)
+
+    # Carteiras e benchmarks
+    dividendos = coletar_dividendos(df_scores['ticker'].unique())
+    patrimonio_est, datas = gerir_carteira(precos, df_scores, lideres, dividendos)
+    patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, datas)
+    patrimonio_emp = gerir_carteira_todas_empresas(precos, emp_filtr['ticker'], datas, dividendos)
+    patrimonio_all = pd.concat([patrimonio_est, patrimonio_emp, patrimonio_selic], axis=1)
+
+    # Gráfico de patrimônio
+    st.markdown('---')
+    if patrimonio_all.empty:
+        st.warning('Dados insuficientes para mostrar patrimônio.')
+    else:
+        _plot_patrimonio(patrimonio_all)
+
+    # Blocos de patrimônio final
+    st.markdown('---')
+    st.subheader('📊 Patrimônio Final para R$1.000/Mês')
+    last = patrimonio_all.tail(1).rename_axis('Data').reset_index()
+    df_pf = last.melt(id_vars=['Data'], var_name='Ticker', value_name='Valor').sort_values('Valor', ascending=False)
+    cols_pf = st.columns(3)
+    cont_l = lideres['ticker'].value_counts()
+    for i, r in df_pf.iterrows():
+        tk = r['Ticker']; val = r['Valor']
+        if tk=='Patrimônio': name, icon, borda = 'Estratégia','https://cdn-icons-png.flaticon.com/512/1019/1019709.png','#DAA520'
+        elif tk=='Tesouro Selic': name, icon, borda = 'Tesouro Selic','https://cdn-icons-png.flaticon.com/512/2331/2331949.png','#007bff'
+        else: name, icon, borda = tk, get_logo_url(tk), '#d3d3d3'
+        times = cont_l.get(tk,0)
+        txt = f"🏆 {times}x Líder" if times>0 else ''
+        with cols_pf[i%3]:
+            st.markdown(f"""
+            <div style='background:#fff;border:3px solid {borda};border-radius:10px;padding:15px;margin:10px;text-align:center;'>
+              <img src='{icon}' width='50'><br>
+              <strong>{name}</strong><br>
+              <span style='font-size:18px;color:#2ecc71;'>{formatar_real(val)}</span><br>
+              <span style='color:#FFA500;'>{txt}</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+    st.markdown('---')
+    # Fim da página Avançada
