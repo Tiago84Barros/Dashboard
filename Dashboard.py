@@ -15,14 +15,7 @@ import pandas as pd
 # Módulos internos -----------------------------------------------------------
 # ---------------------------------------------------------------------------
 from db_loader import load_setores_from_db
-
-try:
-    import page_basic as pb
-except Exception:
-    # Erro na importação de page_basic: mostramos no log, mas deixamos o app rodar
-    import traceback
-    print("Erro ao importar page_basic:\n", traceback.format_exc())
-
+import page_basic as pb
 import page_advanced as pa
 
 # ---------------------------------------------------------------------------
