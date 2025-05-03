@@ -360,7 +360,7 @@ def calcular_patrimonio_selic_macro(
 # ---------------------------------------------------------------------------
 # 4. Benchmark Ibovespa (aportes mensais) ------------------------------------
 # ---------------------------------------------------------------------------
-
+'''
 def calcular_patrimonio_ibov(
     precos_ibov: pd.Series | pd.DataFrame,
     datas_aportes: Sequence[pd.Timestamp],
@@ -397,3 +397,4 @@ def calcular_patrimonio_ibov(
         registros.append({'date': data, 'IBOV_Patrimônio': patrimonio})
 
     df_patrimonio = pd.DataFrame
+    '''
