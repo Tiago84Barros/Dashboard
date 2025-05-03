@@ -148,7 +148,7 @@ def render():
     with c3: st.markdown(f"<div class='growth-box'>Patrimônio Líquido: {fmt(growth_rates.get('Patrimonio_Liquido'))}</div>", unsafe_allow_html=True)
 
 
-        # ---------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     # Gráfico de Demonstrações Financeiras selecionáveis _____________________________________________________________________________________________________________________________________
     # ---------------------------------------------------------------------
     col_map = {c: c.replace('_', ' ').title() for c in indicadores.columns if c != 'Data'}
@@ -189,44 +189,155 @@ def render():
 
     st.divider()
 
-    # Múltiplos atuais completos ___________________________________________________________________________________________________________________________________________________________
-    m0 = None
+    # -------------------------------------------------------------
+    # Estilo global para os blocos de múltiplos
+    # -------------------------------------------------------------
+    st.markdown("""
+    <style>
+    .metric-box {
+        background-color: #ffffff;
+        padding: 20px;
+        margin: 10px;
+        border-radius: 10px;
+        box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
+        text-align: center;
+    }
+    .metric-value {
+        font-size: 24px;
+        font-weight: bold;
+    }
+    .metric-label {
+        font-size: 14px;
+        color: #FFA500;
+        font-weight: bold;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # -------------------------------------------------------------
+    # Múltiplos atuais completos
+    # -------------------------------------------------------------
     mdf = load_multiplos_limitado_from_db(ticker)
     if mdf is not None and not mdf.empty:
         m0 = mdf.iloc[0]
-        st.markdown(
-            """
-            <style>
-            .metric-box{background:#fff;padding:20px;margin:10px;border-radius:10px;box-shadow:2px 2px 5px rgba(0,0,0,.1);text-align:center;}
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
-        # Linha 1 ----------------------------------------------------------------------------------------------------------------------
-        r1 = st.columns(4)
-        r1[0].markdown(f"<div class='metric-box'>{m0['Margem_Liquida']:.2f}%<br>Margem Líquida</div>", unsafe_allow_html=True)
-        r1[1].markdown(f"<div class='metric-box'>{m0['Margem_Operacional']:.2f}%<br>Margem Operacional</div>", unsafe_allow_html=True)
-        r1[2].markdown(f"<div class='metric-box'>{m0['ROE']:.2f}%<br>ROE</div>", unsafe_allow_html=True)
-        r1[3].markdown(f"<div class='metric-box'>{m0['ROIC']:.2f}%<br>ROIC</div>", unsafe_allow_html=True)
-        # Linha 2 ----------------------------------------------------------------------------------------------------------------------
-        r2 = st.columns(4)
-        dy = m0.get('DY', np.nan)
-        dyv = '-' if pd.isna(dy) or price == 0 else f"{100*(dy/price):.2f}%"
-        r2[0].markdown(f"<div class='metric-box'>{dyv}<br>Dividend Yield</div>", unsafe_allow_html=True)
-        pvp = m0.get('P/VP', np.nan)
-        pvpv = '-' if pd.isna(pvp) or pvp == 0 else f"{price/pvp:.2f}"
-        r2[1].markdown(f"<div class='metric-box'>{pvpv}<br>P/VP</div>", unsafe_allow_html=True)
-        pout = m0.get('Payout', np.nan)
-        poutv = '-' if pd.isna(pout) else f"{pout*100:.2f}%"
-        r2[2].markdown(f"<div class='metric-box'>{poutv}<br>Payout</div>", unsafe_allow_html=True)
-        pl = m0.get('P/L', np.nan)
-        plv = '-' if pd.isna(pl) or pl == 0 else f"{price/pl:.2f}"
-        r2[3].markdown(f"<div class='metric-box'>{plv}<br>P/L</div>", unsafe_allow_html=True)
-        # Linha 3 -----------------------------------------------------------------------------------------------------------------------------
-        r3 = st.columns(4)
-        r3[0].markdown(f"<div class='metric-box'>{m0['Endividamento_Total']:.2f}<br>Endividamento Total</div>", unsafe_allow_html=True)
-        r3[1].markdown(f"<div class='metric-box'>{m0['Alavancagem_Financeira']:.2f}<br>Alavancagem Financeira</div>", unsafe_allow_html=True)
-        r3[2].markdown(f"<div class='metric-box'>{m0['Liquidez_Corrente']:.2f}<br>Liquidez Corrente</div>", unsafe_allow_html=True)
+
+        # Primeira linha
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.markdown(f"""
+            <div class="metric-box">
+                <div class="metric-value">{m0['Margem_Liquida']:.2f}%</div>
+                <div class="metric-label" title="Eficiência em converter receita em lucro.">
+                    Margem Líquida
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        with c2:
+            st.markdown(f"""
+            <div class="metric-box">
+                <div class="metric-value">{m0['Margem_Operacional']:.2f}%</div>
+                <div class="metric-label" title="Eficiência operacional (EBIT/Receita Líquida).">
+                    Margem Operacional
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        with c3:
+            st.markdown(f"""
+            <div class="metric-box">
+                <div class="metric-value">{m0['ROE']:.2f}%</div>
+                <div class="metric-label" title="Retorno sobre o Patrimônio (Lucro/Patrimônio).">
+                    ROE
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        with c4:
+            st.markdown(f"""
+            <div class="metric-box">
+                <div class="metric-value">{m0['ROIC']:.2f}%</div>
+                <div class="metric-label" title="Retorno sobre Capital Investido (EBIT/(Ativo-Passivo)).">
+                    ROIC
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Segunda linha
+        c5, c6, c7, c8 = st.columns(4)
+        dy = m0.get('DY', 0)
+        dy_pct = '-' if pd.isna(dy) or price == 0 else f"{100*(dy/price):.2f}%"
+        with c5:
+            st.markdown(f"""
+            <div class="metric-box">
+                <div class="metric-value">{dy_pct}</div>
+                <div class="metric-label" title="Dividendos pagos por ação / preço da ação.">
+                    Dividend Yield
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        with c6:
+            pvp = m0.get('P/VP', np.nan)
+            pvp_fmt = '-' if pd.isna(pvp) or pvp == 0 else f"{price/pvp:.2f}"
+            st.markdown(f"""
+            <div class="metric-box">
+                <div class="metric-value">{pvp_fmt}</div>
+                <div class="metric-label" title="Preço / Valor Patrimonial.">
+                    P/VP
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        with c7:
+            payout = m0.get('Payout', np.nan)
+            payout_fmt = '-' if pd.isna(payout) else f"{payout*100:.2f}%"
+            st.markdown(f"""
+            <div class="metric-box">
+                <div class="metric-value">{payout_fmt}</div>
+                <div class="metric-label" title="Percentual do lucro distribuído em dividendos.">
+                    Payout
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        with c8:
+            pl = m0.get('P/L', np.nan)
+            pl_fmt = '-' if pd.isna(pl) or pl == 0 else f"{price/pl:.2f}"
+            st.markdown(f"""
+            <div class="metric-box">
+                <div class="metric-value">{pl_fmt}</div>
+                <div class="metric-label" title="Preço / Lucro (anos para retorno).">
+                    P/L
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Terceira linha (exemplo com 3 métricas; adicione mais se quiser)
+        c9, c10, c11, c12 = st.columns(4)
+        with c9:
+            st.markdown(f"""
+            <div class="metric-box">
+                <div class="metric-value">{m0['Endividamento_Total']:.2f}</div>
+                <div class="metric-label" title="Passivo Total / Ativo Total.">
+                    Endividamento Total
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        with c10:
+            st.markdown(f"""
+            <div class="metric-box">
+                <div class="metric-value">{m0['Alavancagem_Financeira']:.2f}</div>
+                <div class="metric-label" title="Dívida Líquida / Patrimônio Líquido.">
+                    Alavancagem Financeira
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        with c11:
+            st.markdown(f"""
+            <div class="metric-box">
+                <div class="metric-value">{m0['Liquidez_Corrente']:.2f}</div>
+                <div class="metric-label" title="Ativo Circulante / Passivo Circulante.">
+                    Liquidez Corrente
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        # c12 pode ficar vazio ou para outro múltiplo
+
 
     st.divider()
 
