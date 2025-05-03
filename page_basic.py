@@ -118,6 +118,10 @@ def render():
 
     growth_rates = {c: calculate_growth_rate(indicadores, c) if c != 'Data' else np.nan for c in indicadores.columns}
 
+    # Inserindo espaçamento entre os elementos
+    placeholder = st.empty()
+    placeholder.markdown("<div style='height: 46px;'></div>", unsafe_allow_html=True)
+
     # Informações da empresa ___________________________________________________________________________________________________________________________________________________________
     name, site = get_company_info(ticker)
     hist = yf.Ticker(ticker).history(period="1d")
@@ -130,6 +134,10 @@ def render():
             st.image(get_logo_url(ticker), width=80)
     else:
         st.error("Empresa não encontrada.")
+
+    # Inserindo espaçamento entre os elementos
+    placeholder = st.empty()
+    placeholder.markdown("<div style='height: 46px;'></div>", unsafe_allow_html=True)
 
     # Exibe taxas de crescimento ___________________________________________________________________________________________________________________________________________________________
     st.markdown(
@@ -147,7 +155,9 @@ def render():
     with c2: st.markdown(f"<div class='growth-box'>Lucro Líquido: {fmt(growth_rates.get('Lucro_Liquido'))}</div>", unsafe_allow_html=True)
     with c3: st.markdown(f"<div class='growth-box'>Patrimônio Líquido: {fmt(growth_rates.get('Patrimonio_Liquido'))}</div>", unsafe_allow_html=True)
 
-
+    # Inserindo espaçamento entre os elementos
+    placeholder = st.empty()
+    placeholder.markdown("<div style='height: 46px;'></div>", unsafe_allow_html=True)
     # ---------------------------------------------------------------------
     # Gráfico de Demonstrações Financeiras selecionáveis _____________________________________________________________________________________________________________________________________
     # ---------------------------------------------------------------------
