@@ -47,7 +47,7 @@ def render():
         st.cache_data.clear()
         st.experimental_rerun()
 
-    # Seleção de ticker ou setores
+    # Seleção de ticker ou setores ______________________________________________________________________________________________________________________________________________-
     setores = st.session_state.get("setores_df")
     col1, _ = st.columns([4, 1])
     with col1:
@@ -92,14 +92,14 @@ def render():
             st.warning("Nenhuma informação de setores encontrada.")
         return
 
-    # Carrega dados financeiros
+    # Carrega dados financeiros ____________________________________________________________________________________________________________________________________________________
     indicadores = load_data_from_db(ticker)
     if indicadores is None or indicadores.empty:
         st.error("Dados financeiros não encontrados para o ticker.")
         return
     indicadores = indicadores.drop(columns=["Ticker"], errors='ignore')
 
-    # Cálculo de taxas de crescimento
+    # Cálculo de taxas de crescimento _______________________________________________________________________________________________________________________________________________
     def calculate_growth_rate(df: pd.DataFrame, col: str) -> float:
         try:
             df2 = df.copy()
@@ -118,7 +118,7 @@ def render():
 
     growth_rates = {c: calculate_growth_rate(indicadores, c) if c != 'Data' else np.nan for c in indicadores.columns}
 
-    # Informações da empresa
+    # Informações da empresa ___________________________________________________________________________________________________________________________________________________________
     name, site = get_company_info(ticker)
     hist = yf.Ticker(ticker).history(period="1d")
     price = hist['Close'].iloc[0] if not hist.empty else np.nan
@@ -131,7 +131,7 @@ def render():
     else:
         st.error("Empresa não encontrada.")
 
-    # Exibe taxas de crescimento
+    # Exibe taxas de crescimento ___________________________________________________________________________________________________________________________________________________________
     st.markdown(
         """
         <style>
@@ -147,9 +147,49 @@ def render():
     with c2: st.markdown(f"<div class='growth-box'>Lucro Líquido: {fmt(growth_rates.get('Lucro_Liquido'))}</div>", unsafe_allow_html=True)
     with c3: st.markdown(f"<div class='growth-box'>Patrimônio Líquido: {fmt(growth_rates.get('Patrimonio_Liquido'))}</div>", unsafe_allow_html=True)
 
+
+        # ---------------------------------------------------------------------
+    # Gráfico de Demonstrações Financeiras selecionáveis _____________________________________________________________________________________________________________________________________
+    # ---------------------------------------------------------------------
+    col_map = {c: c.replace('_', ' ').title() for c in indicadores.columns if c != 'Data'}
+    correcoes = {
+        'Receita Liquida': 'Receita Líquida',
+        'Lucro Liquido': 'Lucro Líquido',
+        'Divida Liquida': 'Dívida Líquida',
+        'Patrimonio Liquido': 'Patrimônio Líquido',
+        'Caixa Liquido': 'Caixa Líquido'
+    }
+    col_map = {k: correcoes.get(v, v) for k, v in col_map.items()}
+    display_to_col = {v: k for k, v in col_map.items()}
+
+    st.markdown("### Selecione os Balanços para Visualizar no Gráfico")
+    default_cols = ['Receita Líquida', 'Lucro Líquido', 'Dívida Líquida']
+    default = [d for d in default_cols if d in col_map.values()]
+    selec = st.multiselect(
+        "Escolha os Indicadores:",
+        list(col_map.values()),
+        default=default
+    )
+    if selec:
+        sel_cols = [display_to_col[d] for d in selec]
+        df_melt = indicadores.melt(
+            id_vars=['Data'], value_vars=sel_cols,
+            var_name='Indicador', value_name='Valor'
+        )
+        df_melt['Indicador'] = df_melt['Indicador'].map(col_map)
+        fig = px.bar(
+            df_melt,
+            x='Data', y='Valor',
+            color='Indicador',
+            barmode='group',
+            title='Evolução dos Balanços Selecionados'
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+
     st.divider()
 
-    # Múltiplos atuais completos
+    # Múltiplos atuais completos ___________________________________________________________________________________________________________________________________________________________
     m0 = None
     mdf = load_multiplos_limitado_from_db(ticker)
     if mdf is not None and not mdf.empty:
@@ -162,13 +202,13 @@ def render():
             """,
             unsafe_allow_html=True,
         )
-        # Linha 1
+        # Linha 1 ----------------------------------------------------------------------------------------------------------------------
         r1 = st.columns(4)
         r1[0].markdown(f"<div class='metric-box'>{m0['Margem_Liquida']:.2f}%<br>Margem Líquida</div>", unsafe_allow_html=True)
         r1[1].markdown(f"<div class='metric-box'>{m0['Margem_Operacional']:.2f}%<br>Margem Operacional</div>", unsafe_allow_html=True)
         r1[2].markdown(f"<div class='metric-box'>{m0['ROE']:.2f}%<br>ROE</div>", unsafe_allow_html=True)
         r1[3].markdown(f"<div class='metric-box'>{m0['ROIC']:.2f}%<br>ROIC</div>", unsafe_allow_html=True)
-        # Linha 2
+        # Linha 2 ----------------------------------------------------------------------------------------------------------------------
         r2 = st.columns(4)
         dy = m0.get('DY', np.nan)
         dyv = '-' if pd.isna(dy) or price == 0 else f"{100*(dy/price):.2f}%"
@@ -182,7 +222,7 @@ def render():
         pl = m0.get('P/L', np.nan)
         plv = '-' if pd.isna(pl) or pl == 0 else f"{price/pl:.2f}"
         r2[3].markdown(f"<div class='metric-box'>{plv}<br>P/L</div>", unsafe_allow_html=True)
-        # Linha 3
+        # Linha 3 -----------------------------------------------------------------------------------------------------------------------------
         r3 = st.columns(4)
         r3[0].markdown(f"<div class='metric-box'>{m0['Endividamento_Total']:.2f}<br>Endividamento Total</div>", unsafe_allow_html=True)
         r3[1].markdown(f"<div class='metric-box'>{m0['Alavancagem_Financeira']:.2f}<br>Alavancagem Financeira</div>", unsafe_allow_html=True)
@@ -190,7 +230,7 @@ def render():
 
     st.divider()
 
-    # Gráfico histórico de múltiplos
+    # Gráfico histórico de múltiplos _________________________________________________________________________________________________________________________________________________-
     hist_df = load_multiplos_from_db(ticker)
     if hist_df is not None and not hist_df.empty:
         hist_df['Data'] = pd.to_datetime(hist_df['Data'], errors='coerce')
