@@ -1,43 +1,26 @@
 """helpers.py
 ~~~~~~~~~~~~~
-Funções utilitárias simples compartilhadas entre os módulos.
-
-Funções públicas
-----------------
-- get_logo_url(ticker)
-- obter_setor_da_empresa(ticker, setores_df)
-- determinar_lideres(df_scores)
-- formatar_real(valor)
+Funções utilitárias compartilhadas entre módulos do Dashboard Financeiro.
 """
 
+from __future__ import annotations
 import pandas as pd
+import yfinance as yf
 
 # ---------------------------------------------------------------------------
-# URL do logotipo ------------------------------------------------------------
+# Obtenção de setor ----------------------------------------------------------
 # ---------------------------------------------------------------------------
 
-def get_logo_url(ticker):
-    """
-    Retorna a URL do logotipo PNG de um ticker B3
-    baseado no repositório "thefintz/icones-b3".
-    """
-    tk = ticker.replace('.SA', '').upper()
-    return f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{tk}.png"
-
-# ---------------------------------------------------------------------------
-# Setor da empresa -----------------------------------------------------------
-# ---------------------------------------------------------------------------
-
-def obter_setor_da_empresa(ticker, setores_df):
-    """Retorna o setor do ticker ou 'Setor Desconhecido' se não achar."""
+def obter_setor_da_empresa(ticker: str, setores_df: pd.DataFrame) -> str:
+    """Retorna o setor de *ticker* ou 'Setor Desconhecido' se não encontrado."""
     setor = setores_df.loc[setores_df['ticker'] == ticker, 'SETOR']
     return setor.iloc[0] if not setor.empty else 'Setor Desconhecido'
 
 # ---------------------------------------------------------------------------
-# Líder anual ----------------------------------------------------------------
+# Determinação de líderes ---------------------------------------------------
 # ---------------------------------------------------------------------------
 
-def determinar_lideres(df_scores):
+def determinar_lideres(df_scores: pd.DataFrame) -> pd.DataFrame:
     """Seleciona, por ano, a empresa com maior Score_Ajustado."""
     idx = df_scores.groupby('Ano')['Score_Ajustado'].idxmax()
     return df_scores.loc[idx]
@@ -46,18 +29,44 @@ def determinar_lideres(df_scores):
 # Formatação de moeda --------------------------------------------------------
 # ---------------------------------------------------------------------------
 
-def formatar_real(valor):
-    """Formata número como 'R$ 1.234,56' ou indica indisponível."""
-    if valor is None or (isinstance(valor, float) and pd.isna(valor)):
+def formatar_real(valor: float | int | None) -> str:
+    """Formata número como 'R$ 1.234,56' ou avisa se indisponível."""
+    if valor is None or pd.isna(valor):
         return 'Valor indisponível'
+    return f"R$ {valor:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+
+# ---------------------------------------------------------------------------
+# URL do logotipo ------------------------------------------------------------
+# ---------------------------------------------------------------------------
+
+def get_logo_url(ticker: str) -> str:
+    """Retorna URL PNG do logotipo a partir do repositório *icones-b3* no GitHub."""
+    tk = ticker.replace('.SA', '').upper()
+    return f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{tk}.png"
+
+# ---------------------------------------------------------------------------
+# Informações da empresa via yfinance ---------------------------------------
+# ---------------------------------------------------------------------------
+
+def get_company_info(ticker: str) -> tuple[str|None, str|None]:
+    """
+    Retorna (nome longo, website) da empresa via yfinance; adiciona sufixo .SA.
+    """
     try:
-        return f"R$ {valor:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+        if not ticker.endswith('.SA'):
+            ticker = ticker + '.SA'
+        company = yf.Ticker(ticker)
+        info = company.info
+        name = info.get('longName') or info.get('shortName')
+        site = info.get('website')
+        return name, site
     except Exception:
-        return 'Valor indisponível'
+        return None, None
 
 __all__ = [
-    'get_logo_url',
     'obter_setor_da_empresa',
     'determinar_lideres',
     'formatar_real',
+    'get_logo_url',
+    'get_company_info',
 ]
