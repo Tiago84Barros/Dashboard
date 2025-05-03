@@ -4,7 +4,7 @@ scoring.py
 Módulo com funções de scoring:
 - penalizar_plato
 - calcular_score_ajustado
-- calcular_score_acumulado (agora garante colunas 'Ano')
+- calcular_score_acumulado (corrigido para evitar KeyError em 'Ano')
 """
 
 import pandas as pd
@@ -13,9 +13,6 @@ import collections
 
 
 def z_score_normalize(series: pd.Series, melhor_alto: bool) -> pd.Series:
-    """
-    Normaliza em z-score; inverte sinal se melhor_alto=False.
-    """
     mean = series.mean()
     std = series.std()
     if std == 0 or np.isnan(std):
@@ -28,9 +25,6 @@ def penalizar_plato(df_scores: pd.DataFrame,
                     precos_mensal: pd.DataFrame,
                     meses: int = 18,
                     penal: float = 0.25) -> pd.DataFrame:
-    """
-    Reduz Score_Ajustado quando abaixo da mediana setorial no retorno acumulado.
-    """
     ret = precos_mensal.pct_change(periods=meses)
     for ano in df_scores['Ano'].unique():
         data_fim = precos_mensal.index[precos_mensal.index.year == ano].max()
@@ -49,9 +43,6 @@ def penalizar_plato(df_scores: pd.DataFrame,
 
 def calcular_score_ajustado(df: pd.DataFrame,
                              pesos_utilizados: dict) -> pd.DataFrame:
-    """
-    Ajuste de scores: penalidade, bonus, z-score e soma ponderada.
-    """
     for col, cfg in pesos_utilizados.items():
         if col in df.columns:
             vol_col = col.replace('_mean', '_volatility_penalty')
@@ -73,12 +64,6 @@ def calcular_score_acumulado(lista_empresas: list,
                               dados_macro: pd.DataFrame,
                               momentum12m_df: pd.DataFrame,
                               anos_minimos: int = 4) -> pd.DataFrame:
-    """
-    Loop anual: coleta múltiplos, aplica penalidades, normaliza e soma pesos.
-    Garante que cada DataFrame de múltiplos e DRE contenha coluna 'Ano'.
-    Retorna DataFrame com ['Ano','ticker','Score_Ajustado'].
-    """
-    # utilitário de penalidade de crowding
     def calc_crowding_penalty(df_setor: pd.DataFrame,
                               coluna: str = 'P/VP',
                               floor: float = 0.85,
@@ -95,14 +80,13 @@ def calcular_score_acumulado(lista_empresas: list,
     results = []
     anos_lider = collections.defaultdict(int)
 
-    # Extrai anos disponíveis a partir de cada empresa
+    # extrai anos disponíveis
     all_anos = set()
     for emp in lista_empresas:
-        df_mult = emp['multiplos']
+        df_mult = emp['multiplos'].copy()
         if 'Ano' not in df_mult.columns:
-            df_mult = df_mult.copy()
             df_mult['Ano'] = pd.to_datetime(df_mult['Data'], errors='coerce').dt.year
-        all_anos.update(df_mult['Ano'].unique())
+        all_anos.update(df_mult['Ano'].dropna().unique())
     anos = sorted(all_anos)
 
     for idx in range(anos_minimos, len(anos)):
@@ -110,33 +94,44 @@ def calcular_score_acumulado(lista_empresas: list,
         rows = []
         for emp in lista_empresas:
             tk = emp['ticker']
-            df_mult = emp['multiplos']
+            # prepara dfs com coluna Ano
+            df_mult = emp['multiplos'].copy()
             if 'Ano' not in df_mult.columns:
-                df_mult = df_mult.copy()
                 df_mult['Ano'] = pd.to_datetime(df_mult['Data'], errors='coerce').dt.year
-            df_dre = emp['df_dre']
+            df_dre = emp['df_dre'].copy()
             if 'Ano' not in df_dre.columns:
-                df_dre = df_dre.copy()
                 df_dre['Ano'] = pd.to_datetime(df_dre['Data'], errors='coerce').dt.year
+
+            # filtra até ano
             df_mult_ano = df_mult[df_mult['Ano'] <= ano]
             df_dre_ano  = df_dre [df_dre ['Ano'] <= ano]
             if df_mult_ano.empty or df_dre_ano.empty:
                 continue
+
+            # crowding penalty setor
             setor = setores_empresa.get(tk, 'OUTROS')
-            df_set = pd.concat(
-                [e['multiplos'][e['multiplos']['Ano']==ano][['Ticker','P/VP']]
-                 for e in lista_empresas
-                 if setores_empresa.get(e['ticker']) == setor],
-                ignore_index=True
-            )
+            crowd_frames = []
+            for e in lista_empresas:
+                e_mult = e['multiplos'].copy()
+                if 'Ano' not in e_mult.columns:
+                    e_mult['Ano'] = pd.to_datetime(e_mult['Data'], errors='coerce').dt.year
+                if setores_empresa.get(e['ticker']) == setor:
+                    subset = e_mult[e_mult['Ano'] == ano]
+                    if 'P/VP' in subset and 'Ticker' in subset:
+                        crowd_frames.append(subset[['Ticker', 'P/VP']])
+            df_set = pd.concat(crowd_frames, ignore_index=True) if crowd_frames else pd.DataFrame()
             pen_crowd = calc_crowding_penalty(df_set, 'P/VP')
+
+            # métricas históricas (stub)
             try:
                 from metrics import calcular_metricas_historicas_simplificadas
                 metricas = calcular_metricas_historicas_simplificadas(df_mult_ano, df_dre_ano)
             except ImportError:
                 metricas = {}
+
             row = {'ticker': tk, 'Ano': ano, **metricas, 'Penalty_Crowd': pen_crowd}
             rows.append(row)
+
         df_ano = pd.DataFrame(rows)
         if df_ano.empty:
             continue
@@ -147,9 +142,10 @@ def calcular_score_acumulado(lista_empresas: list,
             tk = r['ticker']
             anos_lider[tk] = anos_lider[tk] + 1 if tk == lider else 0
             decay = 1 - min(0.03 * max(anos_lider[tk]-1, 0), 0.25)
-            df_ano.at[i,'Score_Ajustado'] *= decay * r['Penalty_Crowd']
-        results.append(df_ano[['Ano','ticker','Score_Ajustado']])
+            df_ano.at[i, 'Score_Ajustado'] *= decay * r['Penalty_Crowd']
+
+        results.append(df_ano[['Ano', 'ticker', 'Score_Ajustado']])
 
     if results:
         return pd.concat(results, ignore_index=True)
-    return pd.DataFrame(columns=['Ano','ticker','Score_Ajustado'])
+    return pd.DataFrame(columns=['Ano', 'ticker', 'Score_Ajustado'])
