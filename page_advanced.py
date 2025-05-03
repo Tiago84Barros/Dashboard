@@ -25,19 +25,6 @@ from helpers import (
 from scoring import calcular_score_acumulado, penalizar_plato
 
 # -------------------------------------------------------------
-# Função de momentum a partir dos preços ajustados
-# -------------------------------------------------------------
-def calc_momentum_12m(precos: pd.DataFrame) -> pd.DataFrame:
-    """
-    Retorna retorno acumulado de 12 meses (≈252 pregões).
-    Fórmula: (P_t / P_{t-252}) - 1
-    """
-    mom = precos / precos.shift(252) - 1
-    mom = mom.dropna(how="all")
-    mom.columns = [f"Momentum_{c}" for c in mom.columns]
-    return mom
-
-# -------------------------------------------------------------
 # Core da página Avançada
 # -------------------------------------------------------------
 def render():
@@ -129,7 +116,7 @@ def render():
         setores_emp,
         pesos_utilizados,
         dados_macro,
-        momentum12m_df,
+        None,
         anos_minimos=4
     )
     df_scores = penalizar_plato(df_scores, precos_mensal, meses=18, penal=0.25)
