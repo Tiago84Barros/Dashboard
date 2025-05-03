@@ -9,7 +9,7 @@ Script principal que instancia a UI e delega às páginas modularizadas
 from __future__ import annotations
 
 import streamlit as st
-import pandas aspd
+import pandas as pd
 
 # ---------------------------------------------------------------------------
 # Módulos internos -----------------------------------------------------------
