@@ -189,18 +189,16 @@ def render():
         exclude = ['Data','Ticker','N Acoes']
         custom = {'DY':'Dividend Yield','P/L':'P/L','P/VP':'P/VP'}
         # helper inline para mapeamento
-        def create_map(df,exclude,custom_map):
-            cm={},dm={}
-            for c in df.columns:
-                if c in exclude: continue
-                name = custom_map.get(c,c.replace('_',' ').title())
-                cm[c]=name;dm[name]=c
-            return cm,dm,list(cm.values())
-        cm,dm,names = create_map(mult_hist,exclude,custom)
-        sel = st.multiselect("Indicadores:",names,default=names[:2],key='hist_mult')
-        if sel:
-            sel_cols=[dm[n] for n in sel]
-            dfm=mult_hist.melt(id_vars=['Data'],value_vars=sel_cols,var_name='Indicador',value_name='Valor')
-            dfm['Indicador']=dfm['Indicador'].map(cm)
-            fig=px.bar(dfm,x='Data',y='Valor',color='Indicador',barmode='group',title='Histórico de Múltiplos')
-            st.plotly_chart(fig,use_container_width=True)
+            def create_map(df, exclude, custom_map):
+        """
+        Cria mapeamento de nomes de colunas para exibição amigável e inverso.
+        """
+        cm, dm = {}, {}
+        for c in df.columns:
+            if c in exclude:
+                continue
+            friendly = custom_map.get(c, c.replace('_', ' ').title())
+            cm[c] = friendly
+            dm[friendly] = c
+        display_names = list(cm.values())
+        return cm, dm, display_names
