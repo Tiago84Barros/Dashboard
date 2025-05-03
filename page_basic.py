@@ -217,6 +217,10 @@ def render():
     # -------------------------------------------------------------
     # Múltiplos atuais completos
     # -------------------------------------------------------------
+
+    # Exibir múltiplos em "quadrados"
+    st.markdown("### Indicadores Financeiros")
+    
     mdf = load_multiplos_limitado_from_db(ticker)
     if mdf is not None and not mdf.empty:
         m0 = mdf.iloc[0]
