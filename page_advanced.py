@@ -104,7 +104,7 @@ def render():
         st.error('Tabela de setores não carregada.')
         return
 
-    # Filtros hierárquicos
+    # Filtros hierárquicos ______________________________________________________________________________________________________________________________________________________________
     setor_sel = st.selectbox('Selecione o Setor:', sorted(setores_df['SETOR'].dropna().unique()))
     if not setor_sel:
         return
@@ -130,7 +130,7 @@ def render():
 
     st.success(f'Total de empresas filtradas: {len(emp_filtradas)}')
 
-    # Cards de empresas
+    # Cards de empresas _________________________________________________________________________________________________________________________________________________________________________
     cols_cards = st.columns(3)
     for idx, row in emp_filtradas.iterrows():
         with cols_cards[idx % 3]:
@@ -145,7 +145,7 @@ def render():
                 unsafe_allow_html=True,
             )
 
-    # Montagem da lista de empresas para scoring
+    # Montagem da lista de empresas para scoring ________________________________________________________________________________________________________________________________________________
     lista_emp = []
     for row in emp_filtradas.itertuples():
         tk = row.ticker
@@ -187,7 +187,7 @@ def render():
     else:
         _plot_patrimonio(patrimonio_all)
 
-    # Blocos de patrimônio final
+    # Blocos de patrimônio final _______________________________________________________________________________________________________________________________________________________________
     st.markdown('---')
     st.subheader('📊 Patrimônio Final para R$1.000/Mês')
     last_row = patrimonio_all.tail(1).rename_axis('Data').reset_index()
@@ -221,7 +221,7 @@ def render():
     st.markdown('---')
     st.markdown('<div style="margin:30px"></div>', unsafe_allow_html=True)
 
-    # Gráfico comparativo de múltiplos
+    # Gráfico comparativo de múltiplos ________________________________________________________________________________________________________________________________________________________
     st.markdown('### Comparação de Indicadores (Múltiplos)')
     mult_map = {
         'Margem Líquida': 'Margem_Liquida',
@@ -263,4 +263,43 @@ def render():
     else:
         st.warning('Nenhum dado histórico para os indicadores selecionados.')
 
-    st.markdown('---')
+    # Gráfico das demonstrações Financeiras __________________________________________________________________________________________________________________________________________________
+    col_map = {c: c.replace('_', ' ').title() for c in df_dre.columns if c != 'Data'}
+    correcoes = {
+        'Receita Liquida': 'Receita Líquida',
+        'Lucro Liquido'  : 'Lucro Líquido',
+        'Patrimonio Liquido': 'Patrimônio Líquido',
+        'Caixa Liquido'  : 'Caixa Líquido',
+        'Divida Liquida' : 'Dívida Líquida'
+    }
+    col_map = {k: correcoes.get(v, v) for k, v in col_map.items()}
+    display_to_col = {v:k for k,v in col_map.items()}
+    
+    st.markdown("### Evolução das Demonstrações Financeiras")
+    selecionados = st.multiselect(
+        "Selecione os Indicadores de Demonstrações:",
+        list(col_map.values()),
+        default=list(col_map.values())[:3]
+    )
+    
+    if selecionados:
+        sel_cols = [display_to_col[n] for n in selecionados]
+        df_plot = df_dre.melt(
+            id_vars=['Data'],
+            value_vars=sel_cols,
+            var_name='Indicador',
+            value_name='Valor'
+        )
+        df_plot['Indicador'] = df_plot['Indicador'].map(col_map)
+    
+        fig = px.bar(
+            df_plot,
+            x='Data',
+            y='Valor',
+            color='Indicador',
+            barmode='group',
+            title='Evolução das Demonstrações Financeiras'
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+        st.markdown('---')
