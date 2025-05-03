@@ -1,6 +1,7 @@
 """db_loader.py
 ~~~~~~~~~~~~~~
-Funções para baixar e carregar dados do banco de dados SQLite hospedado no GitHub.
+Funções para baixar e carregar dados do banco de dados SQLite hospedado no GitHub,
+com mensagens de depuração para status de download.
 
 Dependências:
 - pandas
@@ -15,7 +16,7 @@ import sqlite3
 import pandas as pd
 import streamlit as st
 
-# URL do banco de dados no GitHub
+# URL do banco de dados no GitHub (verifique se está correto e branch ativo)
 DB_URL = "https://raw.githubusercontent.com/Tiago84Barros/Dashboard/main/metadados.db"
 
 @st.cache_data(ttl=3600)
@@ -23,31 +24,40 @@ def download_db_from_github(local_path: str = 'metadados.db') -> str | None:
     """
     Baixa o arquivo SQLite do GitHub e o salva localmente.
     Retorna o caminho para o arquivo local ou None em caso de falha.
+    Exibe mensagens de status para depuração.
     """
     try:
         response = requests.get(DB_URL, allow_redirects=True)
-        if response.status_code == 200:
-            with open(local_path, 'wb') as f:
-                f.write(response.content)
-            return local_path
-        return None
-    except requests.exceptions.RequestException:
+        if response.status_code != 200:
+            st.error(f"Erro ao baixar banco de dados: status {response.status_code}\nURL: {DB_URL}")
+            return None
+        with open(local_path, 'wb') as f:
+            f.write(response.content)
+        st.success(f"Banco de dados baixado com sucesso: {local_path}")
+        return local_path
+    except Exception as e:
+        st.error(f"Erro ao tentar conectar ao GitHub: {e}")
         return None
 
 @st.cache_data
 def load_setores_from_db() -> pd.DataFrame | None:
     """
     Carrega a tabela 'setores' do banco de dados.
-    Retorna DataFrame ou None se falhar.
+    Retorna DataFrame ou None se falhar, mostrando erros de caminho e existência.
     """
     db_path = download_db_from_github()
-    if not db_path or not os.path.exists(db_path):
+    if not db_path:
+        st.error(f"download_db_from_github retornou None. Verifique a URL: {DB_URL}")
+        return None
+    if not os.path.exists(db_path):
+        st.error(f"Arquivo não encontrado: {db_path}")
         return None
     try:
         conn = sqlite3.connect(db_path)
         df = pd.read_sql_query("SELECT * FROM setores", conn)
         return df
-    except Exception:
+    except Exception as e:
+        st.error(f"Erro ao carregar tabela 'setores': {e}")
         return None
     finally:
         conn.close()
@@ -59,6 +69,7 @@ def load_data_from_db(ticker: str) -> pd.DataFrame | None:
     """
     db_path = download_db_from_github()
     if not db_path or not os.path.exists(db_path):
+        st.error("load_data_from_db: DB não disponível")
         return None
     try:
         conn = sqlite3.connect(db_path)
@@ -68,7 +79,8 @@ def load_data_from_db(ticker: str) -> pd.DataFrame | None:
         )
         df = pd.read_sql_query(query, conn)
         return df
-    except Exception:
+    except Exception as e:
+        st.error(f"Erro ao carregar demonstrações financeiras: {e}")
         return None
     finally:
         conn.close()
@@ -80,6 +92,7 @@ def load_multiplos_from_db(ticker: str) -> pd.DataFrame | None:
     """
     db_path = download_db_from_github()
     if not db_path or not os.path.exists(db_path):
+        st.error("load_multiplos_from_db: DB não disponível")
         return None
     try:
         conn = sqlite3.connect(db_path)
@@ -90,7 +103,8 @@ def load_multiplos_from_db(ticker: str) -> pd.DataFrame | None:
         )
         df = pd.read_sql_query(query, conn)
         return df
-    except Exception:
+    except Exception as e:
+        st.error(f"Erro ao carregar múltiplos históricos: {e}")
         return None
     finally:
         conn.close()
@@ -102,6 +116,7 @@ def load_multiplos_limitado_from_db(ticker: str) -> pd.DataFrame | None:
     """
     db_path = download_db_from_github()
     if not db_path or not os.path.exists(db_path):
+        st.error("load_multiplos_limitado_from_db: DB não disponível")
         return None
     try:
         conn = sqlite3.connect(db_path)
@@ -112,7 +127,8 @@ def load_multiplos_limitado_from_db(ticker: str) -> pd.DataFrame | None:
         )
         df = pd.read_sql_query(query, conn)
         return df
-    except Exception:
+    except Exception as e:
+        st.error(f"Erro ao carregar múltiplos TRI: {e}")
         return None
     finally:
         conn.close()
@@ -124,12 +140,14 @@ def load_macro_summary() -> pd.DataFrame | None:
     """
     db_path = download_db_from_github()
     if not db_path or not os.path.exists(db_path):
+        st.error("load_macro_summary: DB não disponível")
         return None
     try:
         conn = sqlite3.connect(db_path)
         df = pd.read_sql_query("SELECT * FROM info_economica ORDER BY Data ASC", conn)
         return df
-    except Exception:
+    except Exception as e:
+        st.error(f"Erro ao carregar dados macroeconômicos: {e}")
         return None
     finally:
         conn.close()
