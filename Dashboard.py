@@ -16,7 +16,7 @@ import pandas as pd
 # ---------------------------------------------------------------------------
 from db_loader import load_setores_from_db
 import page_basic as pb
-import page_advanced as pa
+#import page_advanced as pa
 from helpers import get_logo_url
 
 # ---------------------------------------------------------------------------
