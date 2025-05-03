@@ -1,11 +1,10 @@
-"""scoring.py
-~~~~~~~~~~~~
-Módulo para cálculo de Score Ajustado das empresas.
-
-Funções públicas
-----------------
-- calcular_score_acumulado(lista_empresas, setores_empresa, pesos_utilizados, dados_macro, momentum_df, anos_minimos)
-- _penalizar_plato(df_scores, precos_mensal, meses=18, penal=0.25)
+"""
+scoring.py
+===========
+Módulo com funções de scoring:
+- penalizar_plato
+- calcular_score_ajustado
+- calcular_score_acumulado
 """
 
 import pandas as pd
@@ -13,143 +12,142 @@ import numpy as np
 import collections
 
 
-def _penalizar_plato(df_scores, precos_mensal, meses=18, penal=0.25):
+def z_score_normalize(series: pd.Series, melhor_alto: bool) -> pd.Series:
     """
-    Reduz Score_Ajustado quando a ação fica abaixo da mediana setorial
-    no retorno acumulado dos últimos `meses` meses.
-
-    Parâmetros:
-    - df_scores: DataFrame com colunas ['Ano', 'ticker', 'Score_Ajustado']
-    - precos_mensal: DataFrame de preços ajustados, index mensal
-    - meses: número de meses para cálculo de retorno (padrão 18)
-    - penal: percentual de penalização (0.25 = 25%)
-
-    Retorna o DataFrame modificado.
+    Normaliza em z-score; inverte se melhor_alto=False.
     """
-    # 1) Retorno acumulado dos últimos `meses` meses
+    mean = series.mean()
+    std = series.std()
+    if std == 0 or np.isnan(std):
+        return pd.Series(0, index=series.index)
+    z = (series - mean) / std
+    return z if melhor_alto else -z
+
+
+def penalizar_plato(df_scores: pd.DataFrame,
+                    precos_mensal: pd.DataFrame,
+                    meses: int = 18,
+                    penal: float = 0.25) -> pd.DataFrame:
+    """
+    Reduz Score_Ajustado quando abaixo da mediana setorial no retorno acumulado.
+    """
+    # retorno retrospectivo
     ret = precos_mensal.pct_change(periods=meses)
-
-    # 2) Iterar por ano
     for ano in df_scores['Ano'].unique():
-        # encontra última data do ano
-        datas_ano = precos_mensal.index[precos_mensal.index.year == ano]
-        if datas_ano.empty:
+        data_fim = precos_mensal.index[precos_mensal.index.year == ano].max()
+        if pd.isna(data_fim):
             continue
-        data_fim = datas_ano.max()
-
-        # 3) mediana setorial
-        med_setor = ret.loc[data_fim].median(skipna=True)
-
-        # 4) aplicar penalização
+        med = ret.loc[data_fim].median(skipna=True)
         mask = df_scores['Ano'] == ano
         for idx, row in df_scores[mask].iterrows():
             tk = row['ticker']
             if tk not in ret.columns or pd.isna(ret.at[data_fim, tk]):
                 continue
-            if ret.at[data_fim, tk] < med_setor:
+            if ret.at[data_fim, tk] < med:
                 df_scores.at[idx, 'Score_Ajustado'] *= (1 - penal)
-
     return df_scores
 
 
-def calcular_score_acumulado(
-    lista_empresas,
-    setores_empresa,
-    pesos_utilizados,
-    dados_macro,
-    momentum_df,
-    anos_minimos=4,
-):
+def calcular_score_ajustado(df: pd.DataFrame,
+                             pesos_utilizados: dict) -> pd.DataFrame:
     """
-    Calcula o Score Ajustado acumulado ao longo dos anos, com:
-    - crowd penalty
-    - decay de liderança
-
-    Parâmetros:
-    - lista_empresas: list de dicts {'ticker', 'multiplos':DF, 'df_dre':DF}
-    - setores_empresa: dict {ticker: setor}
-    - pesos_utilizados: dict de indicadores com {'peso', 'melhor_alto'}
-    - dados_macro: DataFrame com indicadores macro (index anual)
-    - momentum_df: DataFrame com momentum (pode ser None)
-    - anos_minimos: mínimo de anos para iniciar cálculo (default 4)
-
-    Retorna DataFrame com colunas ['Ano', 'ticker', 'Score_Ajustado']
+    Ajuste de scores: winsorize, penalidade, bonus histórico, z-score e soma ponderada.
     """
-    # helper: penalidade por crowding
-    def calc_crowd(df_setor, col='P/VP', floor=0.85, ceil=1.5):
-        if df_setor.empty or col not in df_setor:
+    # Parcial: aplicar penalidade por volatilidade e histórico
+    for col, cfg in pesos_utilizados.items():
+        if col in df.columns:
+            vol_col = col.replace('_mean', '_volatility_penalty')
+            if vol_col in df.columns:
+                df[col] *= (1 - df[vol_col])
+            if 'historico_bonus' in df.columns:
+                df[col] *= df['historico_bonus'] ** 10
+    # Z-score e soma ponderada
+    df['Score_Ajustado'] = 0.0
+    for col, cfg in pesos_utilizados.items():
+        if col in df.columns:
+            df[col + '_norm'] = z_score_normalize(df[col], cfg['melhor_alto'])
+            df['Score_Ajustado'] += df[col + '_norm'] * cfg['peso']
+    return df
+
+
+def calcular_score_acumulado(lista_empresas: list,
+                              setores_empresa: dict,
+                              pesos_utilizados: dict,
+                              dados_macro: pd.DataFrame,
+                              momentum12m_df: pd.DataFrame,
+                              anos_minimos: int = 4) -> pd.DataFrame:
+    """
+    Loop anual: coleta múltiplos, aplica penalidades, normaliza e soma pesos.
+    Retorna DataFrame com ['Ano','ticker','Score_Ajustado'].
+    """
+    # utilitário de penalidade de crowding
+    def calc_crowding_penalty(df_setor: pd.DataFrame,
+                              coluna: str = 'P/VP',
+                              floor: float = 0.85,
+                              ceil: float = 1.50) -> float:
+        if df_setor.empty or coluna not in df_setor:
             return 1.0
-        disp = df_setor[col].std()
-        media = df_setor[col].mean()
+        disp = df_setor[coluna].std()
+        media = df_setor[coluna].mean()
         if not np.isfinite(disp) or media == 0:
             return 1.0
-        crowd_score = 1 - np.tanh(disp / media)
-        return floor + (ceil - floor) * crowd_score
+        score = 1 - np.tanh(disp / media)
+        return floor + (ceil - floor) * score
 
-    # lista de anos disponíveis
-    anos = sorted({ano for emp in lista_empresas for ano in emp['multiplos']['Ano'].unique()})
-    resultados = []
-    anos_consec = collections.defaultdict(int)
-
-    # loop anual
-    for i in range(anos_minimos, len(anos)):
-        ano = anos[i]
+    anos = sorted({
+        ano for emp in lista_empresas
+        for ano in emp['multiplos']['Ano'].unique()
+    })
+    results = []
+    anos_lider = collections.defaultdict(int)
+    for idx in range(anos_minimos, len(anos)):
+        ano = anos[idx]
         rows = []
-
         for emp in lista_empresas:
             tk = emp['ticker']
-            mult = emp['multiplos']
-            dre = emp['df_dre']
-            df_mult = mult[mult['Ano'] == ano]
-            df_dre  = dre[dre['Ano'] == ano]
+            df_mult = emp['multiplos'][emp['multiplos']['Ano'] <= ano]
+            df_dre = emp['df_dre'][emp['df_dre']['Ano'] <= ano]
             if df_mult.empty or df_dre.empty:
                 continue
-
             setor = setores_empresa.get(tk, 'OUTROS')
-            # crowd
-            df_setor_ano = pd.concat([
-                e['multiplos'][e['multiplos']['Ano'] == ano][['Ticker', 'P/VP']]
-                for e in lista_empresas if setores_empresa.get(e['ticker']) == setor
-            ], ignore_index=True)
-            crowd = calc_crowd(df_setor_ano)
-
-            # montar row
-            data = {'ticker': tk, 'Ano': ano, 'Penalty_Crowd': crowd}
-            # merge métricas de múltiplos
-            data.update(df_mult.iloc[0].to_dict())
-            rows.append(data)
-
-        if not rows:
-            continue
+            # crowd penalty
+            df_set = pd.concat(
+                [e['multiplos'][e['multiplos']['Ano']==ano][['Ticker','P/VP']]
+                 for e in lista_empresas
+                 if setores_empresa.get(e['ticker']) == setor],
+                ignore_index=True
+            )
+            pen_crowd = calc_crowding_penalty(df_set, 'P/VP')
+            # métricas históricas (usuário deve implementar essa função)
+            try:
+                from metrics import calcular_metricas_historicas_simplificadas
+                metricas = calcular_metricas_historicas_simplificadas(df_mult, df_dre)
+            except ImportError:
+                metricas = {}
+            row = {
+                'ticker': tk,
+                'Ano': ano,
+                **metricas,
+                'Penalty_Crowd': pen_crowd
+            }
+            rows.append(row)
         df_ano = pd.DataFrame(rows)
-
-        # normalização z-score e soma ponderada
-        df_ano['Score_Ajustado'] = 0.0
-        for col, cfg in pesos_utilizados.items():
-            if col in df_ano:
-                mean = df_ano[col].mean()
-                std  = df_ano[col].std()
-                if std and not np.isnan(std):
-                    norm = (df_ano[col] - mean) / std
-                else:
-                    norm = 0
-                df_ano['Score_Ajustado'] += norm * cfg.get('peso', 0)
-
-        # aplica penalização por plateau
+        if df_ano.empty:
+            continue
+        df_ano = calcular_score_ajustado(df_ano, pesos_utilizados)
         df_ano = df_ano.sort_values('Score_Ajustado', ascending=False)
+        # decay penalty
         lider = df_ano.iloc[0]['ticker']
-        for idx, r in df_ano.iterrows():
+        for i, r in df_ano.iterrows():
             tk = r['ticker']
-            # conta anos de liderança
             if tk == lider:
-                anos_consec[tk] += 1
+                anos_lider[tk] += 1
             else:
-                anos_consec[tk] = 0
-            decay = 1 - min(0.03 * max(anos_consec[tk] - 1, 0), 0.25)
-            df_ano.at[idx, 'Score_Ajustado'] *= decay * r['Penalty_Crowd']
-
-        resultados.append(df_ano[['Ano', 'ticker', 'Score_Ajustado']])
-
-    if resultados:
-        return pd.concat(resultados, ignore_index=True)
-    return pd.DataFrame(columns=['Ano', 'ticker', 'Score_Ajustado'])
+                anos_lider[tk] = 0
+            decay = 1 - min(0.03 * max(anos_lider[tk]-1, 0), 0.25)
+            df_ano.at[i,'Penalty_Decay'] = decay
+            df_ano.at[i,'Score_Ajustado'] *= decay * df_ano.at[i,'Penalty_Crowd']
+        results.append(df_ano[['Ano','ticker','Score_Ajustado']])
+    if results:
+        return pd.concat(results, ignore_index=True)
+    return pd.DataFrame(columns=['Ano','ticker','Score_Ajustado'])
