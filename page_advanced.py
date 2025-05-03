@@ -50,6 +50,18 @@ from yf_data import baixar_precos, coletar_dividendos
 # Helpers internos -----------------------------------------------------------
 # ---------------------------------------------------------------------------
 
+def calc_momentum_12m(precos: pd.DataFrame) -> pd.DataFrame:
+    """
+    Retorna DataFrame com o retorno acumulado de ~12 meses (504 pregões)
+    para cada coluna de preços ajustados em `precos`.
+    Fórmula: (P_t / P_{t-504}) - 1
+    """
+    # 504 pregões ≃ 2 anos; se quiser ~252 pregões, basta ajustar para 252
+    mom = precos / precos.shift(504) - 1
+    mom = mom.dropna(how="all")      # remove as primeiras linhas sem dados
+    mom.columns = [f"Momentum_{c}" for c in mom.columns]
+    return mom
+
 def _filtrar_por_idade(empresas_df, opcao):
     """Filtra empresas conforme <10 ou ≥10 anos de histórico."""
     selecionadas = []
@@ -163,6 +175,7 @@ def render():
 
     setor_base = obter_setor_da_empresa(lista_emp[0]['ticker'], setores_df)
     pesos = pesos_por_setor.get(setor_base, indicadores_score)
+    momentum12m_df = calc_momentum_12m(precos
     setores_emp = dict(zip(emp_filtradas['ticker'], emp_filtradas['SETOR']))
 
     precos = baixar_precos([tk + '.SA' for tk in emp_filtradas['ticker']])
@@ -171,7 +184,7 @@ def render():
         return
     precos_m = precos.resample('M').last()
 
-    df_scores = calcular_score_acumulado(lista_emp, setores_emp, pesos, dados_macro, None, anos_minimos=4)
+    df_scores = calcular_score_acumulado(lista_emp, setores_emp, pesos, dados_macro, momentum12m_df, anos_minimos=4)
     df_scores = _penalizar_plato(df_scores, precos_m)
     lideres_ano = determinar_lideres(df_scores)
 
