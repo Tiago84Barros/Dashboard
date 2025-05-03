@@ -1,59 +1,43 @@
 """db_loader.py
 ~~~~~~~~~~~~~~
-Funções para baixar e carregar dados do banco de dados SQLite hospedado no GitHub,
-com mensagens de depuração para status de download.
+Funções para carregar dados do banco de dados SQLite local (metadados.db) incluso no repositório.
 
 Dependências:
 - pandas
-- requests
 - sqlite3
 - streamlit
 - os
 """
 import os
-import requests
 import sqlite3
 import pandas as pd
 import streamlit as st
 
-# URL do banco de dados no GitHub (verifique se está correto e branch ativo)
-DB_URL = "https://raw.githubusercontent.com/Tiago84Barros/Dashboard/main/metadados.db"
+# Caminho para o arquivo local de banco de dados (incluso no repositório)
+DB_LOCAL = os.path.join(os.path.dirname(__file__), 'metadados.db')
 
-@st.cache_data(ttl=3600)
-def download_db_from_github(local_path: str = 'metadados.db') -> str | None:
+
+def _get_db_path() -> str | None:
     """
-    Baixa o arquivo SQLite do GitHub e o salva localmente.
-    Retorna o caminho para o arquivo local ou None em caso de falha.
-    Exibe mensagens de status para depuração.
+    Retorna o caminho para o banco de dados local se existir.
+    Caso contrário, exibe erro e retorna None.
     """
-    try:
-        response = requests.get(DB_URL, allow_redirects=True)
-        if response.status_code != 200:
-            st.error(f"Erro ao baixar banco de dados: status {response.status_code}\nURL: {DB_URL}")
-            return None
-        with open(local_path, 'wb') as f:
-            f.write(response.content)
-        st.success(f"Banco de dados baixado com sucesso: {local_path}")
-        return local_path
-    except Exception as e:
-        st.error(f"Erro ao tentar conectar ao GitHub: {e}")
-        return None
+    if os.path.exists(DB_LOCAL):
+        return DB_LOCAL
+    st.error(f"Arquivo de banco de dados não encontrado: {DB_LOCAL}")
+    return None
+
 
 @st.cache_data
 def load_setores_from_db() -> pd.DataFrame | None:
     """
-    Carrega a tabela 'setores' do banco de dados.
-    Retorna DataFrame ou None se falhar, mostrando erros de caminho e existência.
+    Carrega a tabela 'setores' do banco de dados local.
     """
-    db_path = download_db_from_github()
-    if not db_path:
-        st.error(f"download_db_from_github retornou None. Verifique a URL: {DB_URL}")
-        return None
-    if not os.path.exists(db_path):
-        st.error(f"Arquivo não encontrado: {db_path}")
+    path = _get_db_path()
+    if path is None:
         return None
     try:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(path)
         df = pd.read_sql_query("SELECT * FROM setores", conn)
         return df
     except Exception as e:
@@ -62,17 +46,17 @@ def load_setores_from_db() -> pd.DataFrame | None:
     finally:
         conn.close()
 
+
 @st.cache_data
 def load_data_from_db(ticker: str) -> pd.DataFrame | None:
     """
     Carrega a tabela 'Demonstracoes_Financeiras' para o ticker.
     """
-    db_path = download_db_from_github()
-    if not db_path or not os.path.exists(db_path):
-        st.error("load_data_from_db: DB não disponível")
+    path = _get_db_path()
+    if path is None:
         return None
     try:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(path)
         query = (
             f"SELECT * FROM Demonstracoes_Financeiras "
             f"WHERE Ticker = '{ticker}' OR Ticker = '{ticker.replace('.SA', '')}'"
@@ -85,17 +69,17 @@ def load_data_from_db(ticker: str) -> pd.DataFrame | None:
     finally:
         conn.close()
 
+
 @st.cache_data
 def load_multiplos_from_db(ticker: str) -> pd.DataFrame | None:
     """
     Carrega todos os registros da tabela 'multiplos' para o ticker.
     """
-    db_path = download_db_from_github()
-    if not db_path or not os.path.exists(db_path):
-        st.error("load_multiplos_from_db: DB não disponível")
+    path = _get_db_path()
+    if path is None:
         return None
     try:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(path)
         query = (
             f"SELECT * FROM multiplos "
             f"WHERE Ticker = '{ticker}' OR Ticker = '{ticker.replace('.SA', '')}' "
@@ -109,17 +93,17 @@ def load_multiplos_from_db(ticker: str) -> pd.DataFrame | None:
     finally:
         conn.close()
 
+
 @st.cache_data
 def load_multiplos_limitado_from_db(ticker: str) -> pd.DataFrame | None:
     """
     Carrega o registro mais recente da tabela 'multiplos_TRI' para o ticker.
     """
-    db_path = download_db_from_github()
-    if not db_path or not os.path.exists(db_path):
-        st.error("load_multiplos_limitado_from_db: DB não disponível")
+    path = _get_db_path()
+    if path is None:
         return None
     try:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(path)
         query = (
             f"SELECT * FROM multiplos_TRI "
             f"WHERE Ticker = '{ticker}' OR Ticker = '{ticker.replace('.SA', '')}' "
@@ -133,17 +117,17 @@ def load_multiplos_limitado_from_db(ticker: str) -> pd.DataFrame | None:
     finally:
         conn.close()
 
+
 @st.cache_data
 def load_macro_summary() -> pd.DataFrame | None:
     """
     Carrega a tabela 'info_economica' do banco de dados.
     """
-    db_path = download_db_from_github()
-    if not db_path or not os.path.exists(db_path):
-        st.error("load_macro_summary: DB não disponível")
+    path = _get_db_path()
+    if path is None:
         return None
     try:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(path)
         df = pd.read_sql_query("SELECT * FROM info_economica ORDER BY Data ASC", conn)
         return df
     except Exception as e:
