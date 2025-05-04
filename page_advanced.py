@@ -179,23 +179,46 @@ def render() -> None:
     )
 
     # ------------------------------------------------------------------- GRÁFICO
-    st.markdown("---")
-    st.subheader("Evolução do Patrimônio – Estratégia vs Concorrentes vs Selic")
-    fig, ax = plt.subplots(figsize=(12, 5))
-    if not patrimonio_total.empty:
-        for col in patrimonio_total:
-            estilo = "--"; lw = 1; cor = "gray"
-            if col == "Patrimônio":
-                estilo, lw, cor = "-", 2, "red"
-            elif col == "Tesouro Selic":
-                estilo, lw, cor = "-.", 2, "blue"
-            patrimonio_total[col].plot(ax=ax, linestyle=estilo, lw=lw, color=cor, label=col)
-        ax.set_xlabel("Data")
-        ax.set_ylabel("R$ acumulados")
-        ax.legend()
-        st.pyplot(fig)
+    # ---------------------------------------------------------------------
+    # 📌 PLOTAGEM DO GRÁFICO DE EVOLUÇÃO DO PATRIMÔNIO
+    # ---------------------------------------------------------------------
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    # Garantir que o índice está em datetime e ordenado
+    df_patrimonio_evolucao = patrimonio_final.copy()
+    df_patrimonio_evolucao.index = pd.to_datetime(df_patrimonio_evolucao.index,
+                                                  errors="coerce")
+    df_patrimonio_evolucao = df_patrimonio_evolucao.sort_index()
+    
+    if df_patrimonio_evolucao.empty:
+        st.warning("⚠️ Dados insuficientes para plotar a evolução do patrimônio.")
     else:
-        st.warning("Dados insuficientes para gráfico.")
+        for col in df_patrimonio_evolucao.columns:
+            if col == "Patrimônio":               # estratégia principal
+                df_patrimonio_evolucao[col].plot(
+                    ax=ax, linewidth=2, color="red", label="Estratégia de Aporte"
+                )
+            elif col == "Tesouro Selic":          # benchmark
+                df_patrimonio_evolucao[col].plot(
+                    ax=ax, linewidth=2, linestyle="-.", color="blue",
+                    label="Tesouro Selic"
+                )
+            else:                                 # restantes
+                df_patrimonio_evolucao[col].plot(
+                    ax=ax, linewidth=1, linestyle="--", alpha=0.6,
+                    color="gray", label=col
+                )
+    
+        ax.set_title("Evolução do Patrimônio Acumulado")
+        ax.set_xlabel("Data")
+        ax.set_ylabel("Patrimônio (R$)")
+        ax.legend()
+    
+        st.pyplot(fig)
+    
+    st.markdown("---")
+    st.markdown("<div style='margin: 30px;'></div>", unsafe_allow_html=True)
+
 
     # ------------------------------------------------------ QUADROS DE RESULTADO
     st.markdown("---")
