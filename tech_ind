@@ -1,0 +1,85 @@
+"""tech_ind.py
+~~~~~~~~~~~~~~
+Ferramentas simples de *data‑feeding* e indicadores técnicos
+(baseadas em `yfinance` + `pandas`).
+
+Funções públicas
+----------------
+- baixar_precos(tickers, start)          → DataFrame preços ajustados
+- calc_momentum_12m(precos)              → DataFrame retornos 12 m
+- coletar_dividendos(tickers)            → dict[ticker] → Série mensal
+"""
+
+from __future__ import annotations
+
+import pandas as pd
+import numpy  as np
+import yfinance as yf
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 1) DOWNLOAD DE PREÇOS AJUSTADOS
+# ═══════════════════════════════════════════════════════════════════════════════
+def baixar_precos(tickers: list[str], start: str = "2010-01-01") -> pd.DataFrame:
+    """
+    Baixa preços ajustados para *tickers* (lista ou tupla).
+
+    • Retorna DataFrame com índice = datas e colunas = tickers (sem “.SA”).
+    • Se algum ticker não existir, a coluna virá toda NaN (não derruba a função).
+    """
+    if not tickers:
+        raise ValueError("Lista de tickers vazia.")
+
+    # duas chamadas porque `yfinance` às vezes falha para *auto_adjust*
+    raw = yf.download(tickers, start=start, auto_adjust=True)["Close"]
+    raw.columns = raw.columns.str.replace(".SA", "", regex=False)
+    return raw.dropna(how="all")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 2) MOMENTUM 12 MESES  (≈ 504 pregões em B3)
+# ═══════════════════════════════════════════════════════════════════════════════
+def calc_momentum_12m(precos: pd.DataFrame) -> pd.DataFrame:
+    """
+    (P_t / P_{t‑504}) ‑ 1   →  ~retorno de 24 meses (Total‑Return).
+    Ajuste o “504” se preferir outra janela.
+    """
+    mom = precos / precos.shift(504) - 1
+    mom = mom.dropna(how="all")
+    mom.columns = [f"Momentum_{c}" for c in mom.columns]
+    return mom
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 3) DIVIDENDOS MENSALIZADOS
+# ═══════════════════════════════════════════════════════════════════════════════
+def coletar_dividendos(tickers: list[str]) -> dict[str, pd.Series]:
+    """
+    Baixa DIVIDENDOS acumulados por mês para cada ticker.
+
+    Retorna um dicionário:
+    ``{'PETR4': Série mensal, 'VALE3': Série …, …}``
+    Se um papel nunca distribuiu dividendos, devolve `pd.Series()` vazio.
+    """
+    resultado: dict[str, pd.Series] = {}
+
+    for tk in tickers:
+        try:
+            div = yf.Ticker(f"{tk}.SA").dividends
+            if div.empty:
+                resultado[tk] = pd.Series(dtype=float)
+            else:
+                resultado[tk] = div.resample("M").sum()
+        except Exception as err:     # noqa: BLE001
+            print(f"[WARN] Dividendos {tk}: {err}")
+            resultado[tk] = pd.Series(dtype=float)
+
+    return resultado
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+__all__ = [
+    "baixar_precos",
+    "calc_momentum_12m",
+    "coletar_dividendos",
+]
