@@ -1,85 +1,52 @@
 """tech_ind.py
 ~~~~~~~~~~~~~~
-Ferramentas simples de *data‑feeding* e indicadores técnicos
-(baseadas em `yfinance` + `pandas`).
+Indicadores técnicos simples usados em *page_advanced*.
 
 Funções públicas
 ----------------
-- baixar_precos(tickers, start)          → DataFrame preços ajustados
-- calc_momentum_12m(precos)              → DataFrame retornos 12 m
-- coletar_dividendos(tickers)            → dict[ticker] → Série mensal
+- ema(series, period=20)
+- rsi(series, period=14)
+- momentum_12m(df_preco)
 """
 
 from __future__ import annotations
-
 import pandas as pd
-import numpy  as np
-import yfinance as yf
+import numpy as np
+
+# ------------------------------------------------------------------ #
+# Média Móvel Exponencial (EMA)                                      #
+# ------------------------------------------------------------------ #
+def ema(series: pd.Series, period: int = 20) -> pd.Series:
+    """Retorna a EMA da *series* com span = *period*."""
+    return series.ewm(span=period, adjust=False).mean()
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 1) DOWNLOAD DE PREÇOS AJUSTADOS
-# ═══════════════════════════════════════════════════════════════════════════════
-def baixar_precos(tickers: list[str], start: str = "2010-01-01") -> pd.DataFrame:
+# ------------------------------------------------------------------ #
+# Relative Strength Index (RSI)                                      #
+# ------------------------------------------------------------------ #
+def rsi(series: pd.Series, period: int = 14) -> pd.Series:
+    """Calcula o RSI clássico (Wilder)."""
+    delta = series.diff()
+
+    gain = delta.clip(lower=0).rolling(window=period, min_periods=1).mean()
+    loss = (-delta.clip(upper=0)).rolling(window=period, min_periods=1).mean()
+
+    rs = gain / loss.replace(0, np.nan)
+    return 100 - (100 / (1 + rs))
+
+
+# ------------------------------------------------------------------ #
+# Momentum 12 meses (Total‑Return se os preços incluírem dividendos) #
+# ------------------------------------------------------------------ #
+def momentum_12m(prices: pd.DataFrame, lookback_days: int = 252) -> pd.DataFrame:
     """
-    Baixa preços ajustados para *tickers* (lista ou tupla).
-
-    • Retorna DataFrame com índice = datas e colunas = tickers (sem “.SA”).
-    • Se algum ticker não existir, a coluna virá toda NaN (não derruba a função).
+    Calcula o retorno acumulado de ~12 meses para cada coluna
+    (prices / prices.shift(lookback_days)  −  1).
     """
-    if not tickers:
-        raise ValueError("Lista de tickers vazia.")
-
-    # duas chamadas porque `yfinance` às vezes falha para *auto_adjust*
-    raw = yf.download(tickers, start=start, auto_adjust=True)["Close"]
-    raw.columns = raw.columns.str.replace(".SA", "", regex=False)
-    return raw.dropna(how="all")
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 2) MOMENTUM 12 MESES  (≈ 504 pregões em B3)
-# ═══════════════════════════════════════════════════════════════════════════════
-def calc_momentum_12m(precos: pd.DataFrame) -> pd.DataFrame:
-    """
-    (P_t / P_{t‑504}) ‑ 1   →  ~retorno de 24 meses (Total‑Return).
-    Ajuste o “504” se preferir outra janela.
-    """
-    mom = precos / precos.shift(504) - 1
+    mom = prices / prices.shift(lookback_days) - 1
     mom = mom.dropna(how="all")
     mom.columns = [f"Momentum_{c}" for c in mom.columns]
     return mom
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 3) DIVIDENDOS MENSALIZADOS
-# ═══════════════════════════════════════════════════════════════════════════════
-def coletar_dividendos(tickers: list[str]) -> dict[str, pd.Series]:
-    """
-    Baixa DIVIDENDOS acumulados por mês para cada ticker.
-
-    Retorna um dicionário:
-    ``{'PETR4': Série mensal, 'VALE3': Série …, …}``
-    Se um papel nunca distribuiu dividendos, devolve `pd.Series()` vazio.
-    """
-    resultado: dict[str, pd.Series] = {}
-
-    for tk in tickers:
-        try:
-            div = yf.Ticker(f"{tk}.SA").dividends
-            if div.empty:
-                resultado[tk] = pd.Series(dtype=float)
-            else:
-                resultado[tk] = div.resample("M").sum()
-        except Exception as err:     # noqa: BLE001
-            print(f"[WARN] Dividendos {tk}: {err}")
-            resultado[tk] = pd.Series(dtype=float)
-
-    return resultado
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-__all__ = [
-    "baixar_precos",
-    "calc_momentum_12m",
-    "coletar_dividendos",
-]
+__all__ = ["ema", "rsi", "momentum_12m"]
