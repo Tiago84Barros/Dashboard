@@ -35,7 +35,6 @@ from db_loader import (
     load_multiplos_limitado_from_db,
     load_macro_summary,
 )
-from weights   import PESOS_POR_SETOR, INDICADORES_SCORE_GENERICO
 from tech_ind  import (
     baixar_precos,
     calc_momentum_12m,
@@ -150,7 +149,8 @@ def render() -> None:
 
     # ---------------------------------------------------------- SCORE / LÍDERES
     setores_map = dict(zip(empresas["ticker"], empresas["SETOR"]))
-    pesos = PESOS_POR_SETOR.get(setor, INDICADORES_SCORE_GENERICO)
+    #pesos = PESOS_POR_SETOR.get(setor, INDICADORES_SCORE_GENERICO)
+    pesos = pesos_por_setor.get(setor_empresa, indicadores_score)
 
     df_scores = calcular_score_acumulado(
         lista_empresas,
