@@ -1,16 +1,33 @@
+"""page_advanced.py
+~~~~~~~~~~~~~~~~~~~
+Aba “Avançada” completamente modularizada.
+
+Uso:
+-----
+import page_advanced as pa
+pa.render()
 """
-page_advanced.py
-~~~~~~~~~~~~~~~~
-Módulo da página “Avançada” no Streamlit.
-"""
+
 from __future__ import annotations
-import pandas as pd
-import numpy as np
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Dependências externas que o DASHBOARD já instala
+# ────────────────────────────────────────────────────────────────────────────────
 import streamlit as st
+import pandas as pd
 import plotly.express as px
 import matplotlib.pyplot as plt
+import numpy  as np
 
-# Carregadores de dados
+# ────────────────────────────────────────────────────────────────────────────────
+# MÓDULOS PRÓPRIOS (todos em arquivos .py do seu repo)
+# ────────────────────────────────────────────────────────────────────────────────
+from helpers   import (
+    get_logo_url,
+    obter_setor_da_empresa,
+    determinar_lideres,
+    formatar_real,
+)
 from db_loader import (
     load_setores_from_db,
     load_data_from_db,
@@ -18,218 +35,289 @@ from db_loader import (
     load_multiplos_limitado_from_db,
     load_macro_summary,
 )
-# Helpers
-from helpers import (
-    obter_setor_da_empresa,
-    determinar_lideres,
-    formatar_real,
-    get_logo_url,
+from weights   import PESOS_POR_SETOR, INDICADORES_SCORE_GENERICO
+from tech_ind  import (
+    baixar_precos,
+    calc_momentum_12m,
+    coletar_dividendos,
 )
-# Scoring
-from scoring import calcular_score_acumulado, penalizar_plato
-# Pesos definidos por setor e genéricos
-from weights import PESOS_POR_SETOR as pesos_por_setor, INDICADORES_SCORE as indicadores_score
-# Funções de dados de mercado
-from yf_data import baixar_precos, coletar_dividendos
-# Portfolio management
+from scoring   import (
+    calcular_metricas_historicas_simplificadas,
+    calcular_score_acumulado,
+    penalizar_plato,
+)
 from portfolio import (
     gerir_carteira,
     gerir_carteira_todas_empresas,
     calcular_patrimonio_selic_macro,
 )
 
-# -------------------------------------------------------------
-# Função de momentum (12 meses)
-# -------------------------------------------------------------
-def calc_momentum_12m(precos: pd.DataFrame) -> pd.DataFrame:
-    """
-    Retorna retorno acumulado de 12 meses (~252 pregões) para cada ticker.
-    """
-    mom = precos / precos.shift(252) - 1
-    mom = mom.dropna(how="all")
-    mom.columns = [f"Momentum_{c}" for c in mom.columns]
-    return mom
+# ☝️  se você usou nomes de ficheiro diferentes, ajuste apenas estes imports
 
-# -------------------------------------------------------------
-# Render da página Avançada
-# -------------------------------------------------------------
-def render():
-    pagina = st.session_state.get("pagina", "Avançada")
-    if pagina != "Avançada":
-        return
 
-    # Cabeçalho
+# ════════════════════════════════════════════════════════════════════════════════
+# Página propriamente dita
+# ════════════════════════════════════════════════════════════════════════════════
+def render() -> None:
+    """Renderiza a aba “Avançada” inteira no Streamlit."""
+    if st.session_state.get("pagina") != "Avançada":
+        return  # ← estamos em outra página, não faz nada
+
+    # --------------------------------------------------------------------- HEADER
     st.markdown(
-        """
-        <h1 style='text-align:center; font-size:36px; color:#333;'>Análise Avançada de Ações</h1>
-        """,
+        "<h1 style='text-align:center;font-size:36px;color:#333'>Análise Avançada de Ações</h1>",
         unsafe_allow_html=True,
     )
 
-    # Carrega setores
-    setores = st.session_state.get("setores_df")
+    # ------------------------------------------------------------------- DADOS DB
+    setores = st.session_state.get("setores_df") or load_setores_from_db()
     if setores is None or setores.empty:
-        st.error("Erro ao carregar setores do banco de dados.")
+        st.error("Tabela de setores não encontrada no banco de dados.")
         return
 
-    # Seleção de Setor, Subsetor e Segmento
-    setor = st.selectbox("Selecione o Setor:", sorted(setores['SETOR'].dropna().unique()))
-    subsetor = st.selectbox(
-        "Selecione o Subsetor:",
-        sorted(setores[setores['SETOR']==setor]['SUBSETOR'].dropna().unique())
-    )
-    segmento = st.selectbox(
-        "Selecione o Segmento:",
-        sorted(
-            setores[
-                (setores['SETOR']==setor)&
-                (setores['SUBSETOR']==subsetor)
-            ]['SEGMENTO'].dropna().unique()
-        )
-    )
+    dados_macro = load_macro_summary()
 
-    # Filtra empresas
-    df_emp = setores[
-        (setores['SETOR']==setor)&
-        (setores['SUBSETOR']==subsetor)&
-        (setores['SEGMENTO']==segmento)
-    ]
-    if df_emp.empty:
+    # --------------------------------------------------------- FILTROS HIERÁRQUICOS
+    setor   = st.selectbox("Setor:",      sorted(setores["SETOR"].dropna().unique()))
+    if not setor:
+        return
+    subsetor = st.selectbox("Subsetor:",  sorted(setores.query("SETOR==@setor")["SUBSETOR"].dropna().unique()))
+    if not subsetor:
+        return
+    segmento = st.selectbox("Segmento:",  sorted(setores.query("SETOR==@setor & SUBSETOR==@subsetor")["SEGMENTO"].dropna().unique()))
+    if not segmento:
+        return
+
+    empresas_raw = setores.query(
+        "SETOR==@setor & SUBSETOR==@subsetor & SEGMENTO==@segmento"
+    ).reset_index(drop=True)
+    if empresas_raw.empty:
         st.warning("Não há empresas nesse segmento.")
         return
 
-    # Filtro de tipo de empresa
-    tipo = st.selectbox("Tipo de Empresa:", ["Todas","Crescimento (<10 anos)","Estabelecida (>=10 anos)"])
-    lista_empresas: list[dict] = []
-    for _, row in df_emp.iterrows():
-        tk = row['ticker']
-        ticker_sa = f"{tk}.SA"
-        df_dre = load_data_from_db(ticker_sa)
-        if df_dre is None or df_dre.empty:
+    # ------------------------------------ Filtro crescimento x estabelecida
+    tipo = st.selectbox("Tipo de Empresa:",
+                        ["Todas", "Crescimento (<10 anos)", "Estabelecida (≥10 anos)"])
+
+    empresas = []
+    for _, row in empresas_raw.iterrows():
+        dre = load_data_from_db(row["ticker"] + ".SA")
+        if dre is None or dre.empty:
             continue
-        anos_dispo = pd.to_datetime(df_dre['Data'], errors='coerce').dt.year.nunique()
+        anos = pd.to_datetime(dre["Data"], errors="coerce").dt.year.nunique()
         if (
-            tipo == "Todas"
-            or (tipo.startswith("Crescimento") and anos_dispo < 10)
-            or (tipo.startswith("Estabelecida") and anos_dispo >= 10)
+            (tipo == "Crescimento (<10 anos)" and anos < 10) or
+            (tipo == "Estabelecida (≥10 anos)" and anos >= 10) or
+            (tipo == "Todas")
         ):
-            lista_empresas.append({
-                'ticker': tk,
-                'multiplos': load_multiplos_from_db(ticker_sa),
-                'df_dre': df_dre,
-            })
+            empresas.append(row)
+
+    if not empresas:
+        st.warning("Nenhuma empresa atende aos filtros escolhidos.")
+        return
+    empresas = pd.DataFrame(empresas)
+
+    # --------------------------------------------- Mostrar logos das escolhidas
+    st.markdown("### Empresas Selecionadas")
+    cols = st.columns(3)
+    for i, r in empresas.iterrows():
+        with cols[i % 3]:
+            st.image(get_logo_url(r["ticker"]), width=60)
+            st.caption(f"{r['nome_empresa']} ({r['ticker']})")
+
+    # ------------------------------------------------------------------- DOWNLOAD
+    lista_empresas   = []
+    tickers_pt_br    = []
+    for _, r in empresas.iterrows():
+        tk = r["ticker"]
+        m  = load_multiplos_from_db(tk + ".SA")
+        dre = load_data_from_db(tk + ".SA")
+        if m is None or dre is None or m.empty or dre.empty:
+            continue
+        m["Ano"]   = pd.to_datetime(m["Data"], errors="coerce").dt.year
+        dre["Ano"] = pd.to_datetime(dre["Data"], errors="coerce").dt.year
+        lista_empresas.append({"ticker": tk, "multiplos": m, "df_dre": dre})
+        tickers_pt_br.append(tk + ".SA")          # para yfinance
+
     if not lista_empresas:
-        st.warning("Nenhuma empresa atende aos critérios do filtro.")
+        st.error("Nenhuma empresa com dados válidos.")
         return
 
-    # Macro e pesos
-    dados_macro = load_macro_summary()
-    setor_empresa = obter_setor_da_empresa(lista_empresas[0]['ticker'], df_emp)
-    pesos_util = pesos_por_setor.get(setor_empresa, indicadores_score)
+    # ------------------------------------------------------------------ PREÇOS
+    precos      = baixar_precos(tickers_pt_br)
+    precos_mens = precos.resample("M").last()
+    momentum    = calc_momentum_12m(precos)
 
-    # Baixa preços e calcula momentum
-    tickers_sa = [f"{e['ticker']}.SA" for e in lista_empresas]
-    precos = baixar_precos(tickers_sa)
-    precos_mensal = precos.resample('M').last()
-    momentum12m_df = calc_momentum_12m(precos)
+    # ---------------------------------------------------------- SCORE / LÍDERES
+    setores_map = dict(zip(empresas["ticker"], empresas["SETOR"]))
+    pesos = PESOS_POR_SETOR.get(setor, INDICADORES_SCORE_GENERICO)
 
-    # Calcula scores e penaliza platô
     df_scores = calcular_score_acumulado(
         lista_empresas,
-        {e['ticker']: setor for e in lista_empresas},
-        pesos_util,
+        setores_map,
+        pesos,
         dados_macro,
-        momentum12m_df,
-        anos_minimos=4
+        momentum,
+        anos_minimos=4,
     )
-    df_scores = penalizar_plato(df_scores, precos_mensal, meses=18, penal=0.25)
+    df_scores = penalizar_plato(df_scores, precos_mens, meses=18, penal=0.25)
+    lideres   = determinar_lideres(df_scores)
 
-    # Determina líderes anuais
-    lideres_por_ano = determinar_lideres(df_scores)
+    # ----------------------------------------------------------------- CARTEIRAS
+    dividendos = coletar_dividendos(empresas["ticker"].tolist())
 
-    # Gráfico de evolução de patrimônio
-    dividendos = coletar_dividendos([e['ticker'] for e in lista_empresas])
-    patr_estrat, datas_aportes = gerir_carteira(precos, df_scores, lideres_por_ano, dividendos)
-    patr_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aportes)
-    patr_emp = gerir_carteira_todas_empresas(precos, [e['ticker'] for e in lista_empresas], datas_aportes, dividendos)
+    patrimonio, datas_ap = gerir_carteira(
+        precos, df_scores, lideres, dividendos
+    )
+    patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, datas_ap)
+    patrimonio_all   = gerir_carteira_todas_empresas(
+        precos, empresas["ticker"], datas_ap, dividendos
+    )
 
-    patrimonio_final = pd.concat([patr_estrat, patr_emp, patr_selic], axis=1)
-    st.markdown("### Evolução do Patrimônio Acumulado")
-    fig, ax = plt.subplots(figsize=(12,6))
-    for col in patrimonio_final.columns:
-        patrimonio_final[col].plot(ax=ax, label=col)
-    ax.set_xlabel("Data"); ax.set_ylabel("Patrimônio (R$)"); ax.legend()
-    st.pyplot(fig)
+    patrimonio_total = pd.concat(
+        [patrimonio, patrimonio_all, patrimonio_selic], axis=1
+    )
 
-    # Blocos de patrimônio final
-    df_pf = pd.concat([
-        patr_estrat.iloc[-1:].melt(value_name='Valor', var_name='Ticker'),
-        patr_emp.iloc[-1:].melt(value_name='Valor', var_name='Ticker'),
-        patr_selic.iloc[-1:].melt(value_name='Valor', var_name='Ticker'),
-    ], ignore_index=True)
-    df_pf = df_pf.groupby('Ticker')['Valor'].last().reset_index().sort_values('Valor', ascending=False)
+    # ------------------------------------------------------------------- GRÁFICO
+    st.markdown("---")
+    st.subheader("Evolução do Patrimônio – Estratégia vs Concorrentes vs Selic")
+    fig, ax = plt.subplots(figsize=(12, 5))
+    if not patrimonio_total.empty:
+        for col in patrimonio_total:
+            estilo = "--"; lw = 1; cor = "gray"
+            if col == "Patrimônio":
+                estilo, lw, cor = "-", 2, "red"
+            elif col == "Tesouro Selic":
+                estilo, lw, cor = "-.", 2, "blue"
+            patrimonio_total[col].plot(ax=ax, linestyle=estilo, lw=lw, color=cor, label=col)
+        ax.set_xlabel("Data")
+        ax.set_ylabel("R$ acumulados")
+        ax.legend()
+        st.pyplot(fig)
+    else:
+        st.warning("Dados insuficientes para gráfico.")
+
+    # ------------------------------------------------------ QUADROS DE RESULTADO
+    st.markdown("---")
+    st.subheader("📊 Patrimônio final (R$ 1 000/mês)")
+
+    final = (
+        patrimonio_total.iloc[-1]
+        .rename_axis("Ticker")
+        .reset_index(name="Valor")
+        .sort_values("Valor", ascending=False)
+    )
+    líderes_contagem = lideres["ticker"].value_counts().to_dict()
 
     cols = st.columns(3)
-    cont_lider = lideres_por_ano['ticker'].value_counts().to_dict()
-    for i, row in df_pf.iterrows():
-        ticker = row['Ticker']
-        val = row['Valor']
-        icone = (
-            "https://cdn-icons-png.flaticon.com/512/1019/1019709.png"
-            if ticker==patr_estrat.columns[-1]
-            else ("https://cdn-icons-png.flaticon.com/512/2331/2331949.png" if ticker=='Tesouro Selic' else get_logo_url(ticker))
-        )
-        border = (
-            "#DAA520" if ticker==patr_estrat.columns[-1]
-            else ("#007bff" if ticker=='Tesouro Selic' else "#d3d3d3")
-        )
-        lider_text = f"🏆 {cont_lider.get(ticker,0)}x Líder" if cont_lider.get(ticker,0)>0 else ""
-        col = cols[i%3]
-        with col:
-            st.markdown(f"""
-                <div style='background:#fff;border:3px solid {border};border-radius:10px;padding:15px;text-align:center;'>
-                    <img src='{icone}' width='50'><h3>{ticker}</h3>
-                    <p style='font-weight:bold;color:#2ecc71;'>{formatar_real(val)}</p>
-                    <p style='color:#FFA500;'>{lider_text}</p>
+    for i, (tk, val) in enumerate(zip(final["Ticker"], final["Valor"])):
+        with cols[i % 3]:
+            if tk == "Patrimônio":
+                icon = "https://cdn-icons-png.flaticon.com/512/1019/1019709.png"
+                borda = "#DAA520"; nome = "Estratégia"
+            elif tk == "Tesouro Selic":
+                icon = "https://cdn-icons-png.flaticon.com/512/2331/2331949.png"
+                borda = "#007bff"; nome = "Tesouro Selic"
+            else:
+                icon = get_logo_url(tk)
+                borda = "#d3d3d3"; nome = tk
+            vezes = líderes_contagem.get(tk, 0)
+            lider_txt = f"🏆 {vezes}× líder" if vezes else ""
+            st.markdown(
+                f"""
+                <div style="background:#fff;border:3px solid {borda};border-radius:10px;
+                            text-align:center;padding:15px;margin:8px">
+                    <img src="{icon}" width="55"><br>
+                    <b>{nome}</b><br>
+                    <span style="color:#2ecc71;font-size:18px">{formatar_real(val)}</span><br>
+                    <span style="color:#FFA500;font-size:14px">{lider_txt}</span>
                 </div>
-            """, unsafe_allow_html=True)
+                """,
+                unsafe_allow_html=True,
+            )
 
+    # ---------------------------------------------------- GRÁFICOS COMPARATIVOS
     st.markdown("---")
+    st.subheader("Comparação de Múltiplos")
 
-    # Gráfico comparativo de múltiplos
-    st.markdown("### Comparação de Múltiplos por Empresa")
-    nomes_map = {col:col.replace('_',' ').title() for col in df_emp.index if False}
-    df_hist = []
-    indicadores_disp = ['Margem_Liquida','Margem_Operacional','ROE','ROIC','DY','P/VP','P/L','Endividamento_Total','Alavancagem_Financeira','Liquidez_Corrente']
-    default = ['Margem_Liquida','ROE']
-    sel_ind_disp = st.multiselect("Indicadores:", indicadores_disp, default=default)
-    if sel_ind_disp:
-        for _,r in df_emp.iterrows():
-            tk = r['ticker']
-            dfm = load_multiplos_from_db(f"{tk}.SA")
-            if dfm is not None:
-                dfm['Ano']=pd.to_datetime(dfm['Data']).dt.year
-                for ind in sel_ind_disp:
-                    if ind in dfm:
-                        tmp = dfm[['Ano',ind]].copy(); tmp['Empresa']=r['nome_empresa']
-                        df_hist.append(tmp.rename(columns={ind:'Valor'}))
-        if df_hist:
-            df_plot = pd.concat(df_hist)
-            fig2 = px.bar(df_plot, x='Ano', y='Valor', color='Empresa', barmode='group', title='Histórico de Múltiplos')
-            st.plotly_chart(fig2, use_container_width=True)
+    indicadores_disp = {
+        "Margem Líquida":          "Margem_Liquida",
+        "Margem Operacional":      "Margem_Operacional",
+        "ROE":                     "ROE",
+        "ROIC":                    "ROIC",
+        "P/L":                     "P/L",
+        "Liquidez Corrente":       "Liquidez_Corrente",
+        "Alavancagem Financeira":  "Alavancagem_Financeira",
+        "Endividamento Total":     "Endividamento_Total",
+    }
 
-    # Gráfico comparativo de demonstrações
-    st.markdown("### Comparação de Demonstrações Financeiras")
-    dre_all=[]
-    for _,r in df_emp.iterrows():
-        tk=r['ticker']; dfdr=load_data_from_db(f"{tk}.SA")
-        if dfdr is not None:
-            dfdr['Ano']=pd.to_datetime(dfdr['Data']).dt.year; dfdr['Empresa']=r['nome_empresa']
-            dre_all.append(dfdr)
-    if dre_all:
-        df_drc = pd.concat(dre_all)
-        cols_dre = ['Receita_Liquida','EBIT','Lucro_Liquido','Patrimonio_Liquido','Divida_Liquida','Caixa_Liquido']
-        sel_dre = st.selectbox("Indicador DRE:",[c for c in cols_dre if c in df_drc.columns])
-        tmp = df_drc[['Ano',sel_dre,'Empresa']].rename(columns={sel_dre:'Valor'})
-        fig3 = px.bar(tmp, x='Ano', y='Valor', color='Empresa', barmode='group', title=f"Comparação de {sel_dre}")
-        st.plotly_chart(fig3, use_container_width=True)
+    empresas_plot = st.multiselect(
+        "Empresas a exibir:",
+        empresas["nome_empresa"].tolist(),
+        default=empresas["nome_empresa"].tolist(),
+    )
+    ind_nome = st.selectbox("Indicador:", list(indicadores_disp.keys()))
+    ind_col  = indicadores_disp[ind_nome]
+    normal   = st.checkbox("Normalizar (0‑1)", value=False)
+
+    df_mult_hist = []
+    for _, r in empresas.iterrows():
+        if r["nome_empresa"] not in empresas_plot:
+            continue
+        m = load_multiplos_from_db(r["ticker"] + ".SA")
+        if m is None or m.empty or ind_col not in m:
+            continue
+        tmp = m[["Data", ind_col]].copy()
+        tmp["Ano"]    = pd.to_datetime(tmp["Data"]).dt.year
+        tmp["Empresa"] = r["nome_empresa"]
+        df_mult_hist.append(tmp)
+    if df_mult_hist:
+        df_hist = pd.concat(df_mult_hist)
+        if normal:
+            vmin, vmax = df_hist[ind_col].min(), df_hist[ind_col].max()
+            df_hist[ind_col] = (df_hist[ind_col] - vmin) / (vmax - vmin)
+        fig = px.bar(
+            df_hist,
+            x="Ano", y=ind_col, color="Empresa",
+            barmode="group",
+            title=f"Evolução histórica – {ind_nome}"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Dados de múltiplos indisponíveis para os filtros escolhidos.")
+
+    # -------------------------------------------------- DEMONSTRAÇÕES FINANCEIRAS
+    st.markdown("---")
+    st.subheader("Comparação de Demonstrações Financeiras")
+
+    map_dre = {
+        "Receita Líquida":     "Receita_Liquida",
+        "EBIT":                "EBIT",
+        "Lucro Líquido":       "Lucro_Liquido",
+        "Patrimônio Líquido":  "Patrimonio_Liquido",
+        "Dívida Líquida":      "Divida_Liquida",
+        "Caixa Líquido":       "Caixa_Liquido",
+    }
+    ind_dre_nome = st.selectbox("Indicador DRE:", list(map_dre.keys()))
+    ind_dre_col  = map_dre[ind_dre_nome]
+
+    dre_hist = []
+    for _, r in empresas.iterrows():
+        if r["nome_empresa"] not in empresas_plot:
+            continue
+        dre = load_data_from_db(r["ticker"] + ".SA")
+        if dre is None or dre.empty or ind_dre_col not in dre:
+            continue
+        tmp = dre[["Data", ind_dre_col]].copy()
+        tmp["Ano"] = pd.to_datetime(tmp["Data"]).dt.year
+        tmp["Empresa"] = r["nome_empresa"]
+        dre_hist.append(tmp)
+    if dre_hist:
+        df_dre_hist = pd.concat(dre_hist)
+        fig = px.bar(
+            df_dre_hist, x="Ano", y=ind_dre_col, color="Empresa",
+            barmode="group", title=f"Evolução – {ind_dre_nome}"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Indicador não disponível para as empresas escolhidas.")
