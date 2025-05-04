@@ -120,7 +120,6 @@ st.markdown("""
 
 # URL do banco de dados no GitHub
 db_url = "https://raw.githubusercontent.com/Tiago84Barros/Dashboard/main/metadados.db"
-TOKEN   = os.getenv("GITHUB_PAT")          # Lê do secrets ou do ambiente
 
 # Função para baixar o banco de dados do GitHub
 @st.cache_data(ttl=3600)  # Atualiza o cache a cada 1 hora
