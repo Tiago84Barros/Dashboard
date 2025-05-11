@@ -2351,6 +2351,7 @@ if pagina == "Avançada": #_____________________________________________________
                     
                     # Escores das empresas de acordo com segmento e tipo de empresa
                     df_scores = calcular_score_acumulado(lista_empresas, setores_empresa, pesos_utilizados, dados_macro, momentum12m_df, anos_minimos=4)
+                    st.dataframe(df_scores)
 
                     df_scores = penalizar_plato(df_scores,  precos_mensal,  meses=18, penal=0.25)        # –25 % no score quando perde da mediana)
                                                                                   
