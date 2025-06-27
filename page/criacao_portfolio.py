@@ -5,9 +5,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
-import core.portfolio as portfolio
-from core.yf_data import baixar_precos, coletar_dividendos, baixar_precos_ano_corrente
-from core.weights import get_pesos
 
 from core.db_loader import (
     load_setores_from_db,
@@ -25,7 +22,10 @@ from core.scoring import (
     calcular_score_acumulado,
     penalizar_plato,
 )
-
+from core.portfolio import calcular_patrimonio_selic_macro, gerir_carteira, encontrar_proxima_data_valida, gerir_carteira_simples
+from core.yf_data import baixar_precos, coletar_dividendos, baixar_precos_ano_corrente
+from core.rede_neural_hibrida import melhor_dia_compra_no_mes
+from core.weights import get_pesos
 
 def render():
     st.markdown("<h1 style='text-align: center;'>Criação de Portfólio</h1>", unsafe_allow_html=True)
@@ -87,7 +87,6 @@ def render():
 
         empresas_validas = pd.DataFrame(empresas_validas)
 
-        # Novo filtro: ignora segmentos com apenas uma empresa
         if len(empresas_validas) <= 1:
             continue
 
@@ -200,49 +199,49 @@ def render():
                 </div>
             """, unsafe_allow_html=True)
 
-        st.markdown("## \U0001F4CA Distribuição setorial do portfólio sugerido")
-        setores_portfolio = pd.Series([e['setor'] for e in empresas_lideres_finais]).value_counts()
-        fig, ax = plt.subplots()
-        ax.pie(setores_portfolio.values, labels=setores_portfolio.index, autopct='%1.1f%%', startangle=90, textprops={'fontsize': 10})
-        ax.axis('equal')
-        st.pyplot(fig)
-
-    # Etapa 4 - Desempenho parcial no ano corrente
     if empresas_lideres_finais:
         st.markdown("## \U0001F4CA Desempenho parcial das líderes (ano atual)")
-    
+
         ano_corrente = datetime.now().year
-    
         tickers_corrente = [e['ticker'] for e in empresas_lideres_finais if e['ano_compra'] == ano_corrente]
-     
+
         if tickers_corrente:
             tickers_corrente_yf = [tk + ".SA" for tk in tickers_corrente]
             precos = baixar_precos_ano_corrente(tickers_corrente_yf)
             precos.index = pd.to_datetime(precos.index, errors='coerce')
             precos = precos.resample('B').last().ffill()
-    
+
             if precos.empty:
                 st.warning("⚠️ Dados de preço indisponíveis para as ações escolhidas no ano atual.")
                 st.stop()
-    
-            carteira = {tk.replace(".SA", ""): 0 for tk in tickers_corrente_yf}
-            datas_aporte = []
 
-            start_date = precos.index.min().replace(day=1)
-            datas_potenciais = pd.date_range(start=start_date, end=precos.index.max(), freq='MS')
-            for data in datas_potenciais:
-                data_valida = encontrar_proxima_data_valida(data, precos)
-                if data_valida is not None and data_valida in precos.index:
-                    datas_aporte.append(data_valida)
-    
-            tickers_limpos = [tk.replace(".SA", "") for tk in tickers_corrente_yf]
-            dividendos_dict = coletar_dividendos(tickers_corrente_yf)
-    
-            #patrimonio_aporte, datas_aporte = gerir_carteira_simples_com_ia(precos, tickers_limpos, dividendos_dict=dividendos_dict)
+            carteira = {tk.replace(".SA", ""): 0 for tk in tickers_corrente_yf}
+            tickers_limpos = [tk for tk in tickers_corrente if tk in precos.columns]
+            dividendos_dict = coletar_dividendos(tickers_corrente)
+
+            datas_aporte = []
+            if not tickers_limpos:
+                st.warning("⚠️ Nenhum ticker disponível para prever data de compra.")
+            else:
+                datas_potenciais = pd.date_range(start=f"{ano_corrente}-01-01", end=f"{ano_corrente}-12-31", freq='MS')
+
+                for ticker in tickers_limpos:
+                    for data in datas_potenciais:
+                        ano = data.year
+                        mes = data.month
+                        melhor_data = melhor_dia_compra_no_mes(precos, ticker, ano, mes)
+                        if melhor_data and melhor_data in precos.index and melhor_data not in datas_aporte:
+                            datas_aporte.append(melhor_data)
+
+                if not datas_aporte:
+                    st.warning("⚠️ Nenhuma data de compra encontrada com IA.")
+
+            if not datas_aporte:
+                st.warning("⚠️ Não há datas de aporte válidas para simular o portfólio.")
+                st.stop()
+
             patrimonio_aporte = gerir_carteira_simples(precos, tickers_limpos, datas_aporte, dividendos_dict=dividendos_dict)
-            st.write("O valor de patrimonio_aporte com as datas é :", patrimonio_aporte, datas_aporte)
-          
-            # Selic benchmark
+
             valor_selic = 0
             patrimonio_selic = []
             dados_macro.index = pd.to_datetime(dados_macro.index, errors='coerce')
@@ -253,21 +252,22 @@ def render():
                 except IndexError:
                     st.warning(f"[DEBUG] Taxa Selic não encontrada para o ano: {ano_ref}")
                     continue
-    
                 taxa_mensal = (1 + taxa_anual) ** (1 / 12) - 1
                 valor_selic = (valor_selic + 1000) * (1 + taxa_mensal)
                 patrimonio_selic.append((data, valor_selic))
-    
+
             df_selic = pd.DataFrame(patrimonio_selic, columns=["Data", "Tesouro Selic"]).set_index("Data")
             df_selic = df_selic.reindex(patrimonio_aporte.index).ffill()
-    
+
             df_final = pd.concat([
                 patrimonio_aporte.rename("Estratégia de Aporte"),
                 df_selic
             ], axis=1).dropna()
-    
-    #        st.write("DataFrame final consolidado:", df_final.head())
-                          
+
+            if df_final.empty or df_final["Tesouro Selic"].isna().all():
+                st.warning("⚠️ Não foi possível construir gráfico com os dados disponíveis.")
+                st.stop()
+
             st.markdown(f"### Comparativo de desempenho parcial em {ano_corrente}")
             fig, ax = plt.subplots(figsize=(10, 5))
             df_final["Estratégia de Aporte"].plot(ax=ax, label="Estratégia de Aporte", color='red')
@@ -277,21 +277,20 @@ def render():
             ax.legend()
             ax.grid(True, linestyle="--", alpha=0.5)
             st.pyplot(fig)
-    
-            # Bloco final com resumo do desempenho
+
             valor_estrategia_final = df_final["Estratégia de Aporte"].iloc[-1]
             valor_selic_final = df_final["Tesouro Selic"].iloc[-1]
             desempenho = ((valor_estrategia_final / valor_selic_final) - 1) * 100
             patrimonio_total_aplicado = 1000 * len(datas_aporte)
             retorno_estrategia = ((valor_estrategia_final / patrimonio_total_aplicado) - 1) * 100
-    
+
             if desempenho > 0:
                 cor = "green"
                 mensagem = f"A estratégia de aportes nas empresas líderes superou o Tesouro Selic em {desempenho:.2f}% no ano de {ano_corrente}."
             else:
                 cor = "red"
                 mensagem = f"A estratégia de aportes nas empresas líderes ficou {abs(desempenho):.2f}% abaixo do Tesouro Selic no ano de {ano_corrente}."
-    
+
             st.markdown(f"""
             <div style="margin-top: 20px; padding: 15px; border-radius: 8px; background-color: #f9f9f9; border-left: 5px solid {cor};">
                 <h4 style="margin: 0;">📊 Resultado Comparativo</h4>
@@ -300,5 +299,5 @@ def render():
                 <p style="font-size: 14px; color: #999;">Baseado nas empresas líderes selecionadas com score fundamentalista ajustado.</p>
             </div>
             """, unsafe_allow_html=True)
-    
+
     st.markdown("<hr>", unsafe_allow_html=True)
