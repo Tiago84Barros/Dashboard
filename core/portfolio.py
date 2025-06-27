@@ -4,8 +4,6 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 
-from core.rede_neural_hibrida import melhor_dia_compra_no_mes
-
 # ──────────────────────────────────────────────────────
 
 # Função para encontrar a próxima data disponível para aporte sem cair em datas onde o mercado está fechado ____________________________________________________________________________________ 
@@ -79,78 +77,6 @@ def gerir_carteira_simples(precos, tickers, datas_aportes, dividendos_dict=None,
             )
             
     return patrimonio_aporte.ffill()
-
-
-# Realiza a compra de ações baseados na determinação encontrada pelas redes neurais _________________________________
-def gerir_carteira_simples_com_ia(precos, tickers, dividendos_dict=None, aporte_mensal=1000):
-    patrimonio = pd.Series(dtype='float64')
-    carteira = {ticker: 0 for ticker in tickers}
-    valor_total = 0
-    datas_aporte = []
-
-    datas_disponiveis = precos.index
-    st.dataframe(datas_disponiveis)
-    datas_mensais = pd.date_range(start=datas_disponiveis.min(), end=datas_disponiveis.max(), freq='MS')
-    
-
-    # Debug geral da função
-    st.write("DEBUG - Tickes recebidos:")
-    st.write(tickers)
- 
-    for data in datas_mensais:
-        ano, mes = data.year, data.month
-        st.write(f"DEBUG - Mês de análise: {ano}-{mes:02d}")
-
-        for ticker in tickers:
-            try:
-                preco_ticker = precos[ticker]
-
-                st.write(f"DEBUG - Processando Ticker: {ticker} | Ano: {ano}, Mês: {mes}")
-                st.write(f"DEBUG - Index de preços disponíveis para {ticker}:")
-                st.write(preco_ticker.index)
-
-                data_compra = melhor_dia_compra_no_mes(preco_ticker, ticker, ano, mes)
-
-                st.write(f"DEBUG - Resultado de melhor_dia_compra_no_mes para {ticker} em {ano}-{mes:02d}: {data_compra}")
-
-                if data_compra and data_compra in preco_ticker.index:
-                    preco_acao = preco_ticker.loc[data_compra]
-
-                    if pd.notna(preco_acao) and preco_acao > 0:
-                        qtde = aporte_mensal / preco_acao
-                        carteira[ticker] += qtde
-                        valor_total += aporte_mensal
-
-                        if dividendos_dict and ticker in dividendos_dict:
-                            dividendos_mes = dividendos_dict[ticker].get((ano, mes), 0)
-                            valor_total += qtde * dividendos_mes
-
-                        datas_aporte.append(data_compra)
-                        patrimonio.loc[data_compra] = valor_total
-
-                        st.write(f"DEBUG - Compra realizada: {qtde:.4f} ações de {ticker} a R$ {preco_acao:.2f} em {data_compra}")
-                    else:
-                        st.write(f"DEBUG - Preço inválido ou zero para {ticker} na data {data_compra}")
-                else:
-                    st.write(f"DEBUG - Nenhuma compra realizada para {ticker} no mês {mes}/{ano}")
-
-            except Exception as e:
-                st.write(f"DEBUG - Erro ao processar {ticker} no mês {mes}/{ano}: {e}")
-                continue
-
-    if patrimonio.empty:
-        st.write("DEBUG - Nenhum patrimônio acumulado. Criando série inicial zerada.")
-        patrimonio = pd.Series([0], index=[datas_disponiveis.min()])
-
-    patrimonio = patrimonio.sort_index().ffill()
-
-    st.write("DEBUG - Patrimônio final acumulado:")
-    st.write(patrimonio.head())
-
-    st.write("DEBUG - Datas de aporte realizadas:")
-    st.write(datas_aporte)
-
-    return patrimonio, datas_aporte
 
 
 
