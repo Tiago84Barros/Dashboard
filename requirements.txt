@@ -1,0 +1,10 @@
+streamlit
+streamlit-lottie
+yfinance
+requests
+pandas
+plotly
+scikit-learn
+datetime
+openai
+matplotlib
