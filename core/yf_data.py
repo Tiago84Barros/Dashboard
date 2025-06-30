@@ -73,23 +73,27 @@ def _download_prices(
     return df.sort_index()
 
 # ────────────────────────── baixar_precos ───────────────────
-def baixar_precos(tickers, start="2010-01-01", end=None, fill_missing=True):
-    df = yf.download(
-        tickers,
-        start=start,
-        end=end,
-        auto_adjust=True,
-        progress=False
-    )["Close"]
-    df.columns = df.columns.str.replace(".SA", "", regex=False)
-    df.dropna(how="all", inplace=True)
-    df.index = pd.to_datetime(df.index)
-    full_range = pd.date_range(start=df.index.min(), end=df.index.max(), freq='D')
-    df_full = df.reindex(full_range)
-    if fill_missing:
-        df_full.ffill(inplace=True)
-    df_full.index.name = 'Date'
-    return df_full
+def baixar_precos(tickers, start="2012-02-02"):
+    """
+    Baixa os preços das ações a partir de uma data fixa.
+    
+    tickers: lista de tickers das empresas.
+    start: data inicial padrão (exemplo: 2010-01-01).
+    
+    Retorna: DataFrame com preços ajustados.
+    """
+    try:
+        precos = yf.download(tickers, start=start)['Close']
+        precos.columns = precos.columns.str.replace(".SA", "", regex=False)  # Ajustar tickers
+        
+        # Remover linhas onde todos os preços são NaN (empresas sem dados nesse período)
+        precos = precos.dropna(how="all")
+
+        return precos
+
+    except Exception as e:
+        st.error(f"Erro ao baixar preços: {e}")
+        return None
 
 
 # Usado no módulo criar_portfolio --------------------------------------------------------------------
