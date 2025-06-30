@@ -73,7 +73,7 @@ def _download_prices(
     return df.sort_index()
 
 # ────────────────────────── baixar_precos ───────────────────
-def baixar_precos_full_calendar(tickers, start="2010-01-01", end=None, fill_missing=True):
+def baixar_precos(tickers, start="2010-01-01", end=None, fill_missing=True):
     """
     Download adjusted daily close prices and reindex to every calendar day.
     """
