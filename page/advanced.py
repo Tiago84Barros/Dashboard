@@ -142,6 +142,8 @@ def render() -> None:
 
     #precos = baixar_precos([e['ticker'] for e in lista_empresas])
     precos = baixar_precos([e['ticker'] + ".SA" for e in lista_empresas])
+    st.markdown("Precos")
+    st.dataframe(precos)
     #precos.index = pd.to_datetime(precos.index)
     precos_mensal = precos.resample('M').last()     # ⇢ último pregão do mês
     st.markdown("precos mensais")
