@@ -73,30 +73,35 @@ def _download_prices(
     return df.sort_index()
 
 # ────────────────────────── baixar_precos ───────────────────
-def baixar_precos(tickers, start="2010-01-01", end=None):
+def baixar_precos_full_calendar(tickers, start="2010-01-01", end=None, fill_missing=True):
     """
-    Download adjusted daily close prices for a list of Brazilian tickers.
+    Download adjusted daily close prices and reindex to every calendar day.
     """
-    try:
-        df = yf.download(
-            tickers,
-            start=start,
-            end=end,
-            auto_adjust=True,
-            progress=False
-        )["Close"]
+    # 1) Fetch data once
+    df = yf.download(
+        tickers,
+        start=start,
+        end=end,
+        auto_adjust=True,
+        progress=False
+    )["Close"]
 
-        # Rename columns without the “.SA” suffix
-        df.columns = df.columns.str.replace(".SA", "", regex=False)
+    # 2) Clean up
+    df.columns = df.columns.str.replace(".SA", "", regex=False)
+    df.dropna(how="all", inplace=True)
+    df.index = pd.to_datetime(df.index)
 
-        # Drop dates where no ticker has a price
-        df.dropna(how="all", inplace=True)
+    # 3) Create full daily calendar
+    full_range = pd.date_range(start=df.index.min(), end=df.index.max(), freq='D')
+    df_full = df.reindex(full_range)
 
-        return df
+    # 4) Forward-fill if desired
+    if fill_missing:
+        df_full.ffill(inplace=True)
 
-    except Exception as e:
-        st.error(f"Error downloading prices: {e}")
-        return None
+    df_full.index.name = 'Date'
+    return df_full
+
 
 
 # Usado no módulo criar_portfolio --------------------------------------------------------------------
