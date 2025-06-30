@@ -1,23 +1,4 @@
-from __future__ import annotations
 
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-import numpy as np
-import matplotlib.pyplot as plt
-
-from core.helpers import (
-    get_logo_url,
-    obter_setor_da_empresa,
-    determinar_lideres,
-    formatar_real,
-)
-from core.db_loader import (
-    load_setores_from_db,
-    load_data_from_db,
-    load_multiplos_from_db,
-    load_macro_summary,
-)
 from core.yf_data import baixar_precos, coletar_dividendos
 
 from core.scoring import (
