@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import streamlit asst
+import streamlit as st
 import pandas as pd
 import plotly.express as px
 import numpy as np
