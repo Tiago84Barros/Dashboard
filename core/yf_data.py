@@ -73,28 +73,31 @@ def _download_prices(
     return df.sort_index()
 
 # ────────────────────────── baixar_precos ───────────────────
-def baixar_precos(tickers, start="2010-01-01"):
+def baixar_precos(tickers, start="2010-01-01", end=None):
     """
-    Baixa os preços das ações a partir de uma data fixa.
-    
-    tickers: lista de tickers das empresas.
-    start: data inicial padrão (exemplo: 2010-01-01).
-    
-    Retorna: DataFrame com preços ajustados.
+    Download adjusted daily close prices for a list of Brazilian tickers.
     """
     try:
-        precos = yf.download(tickers, start=start)['Close']
-        precos = yf.download(tickers, start=start, auto_adjust=True)['Close']
-        precos.columns = precos.columns.str.replace(".SA", "", regex=False)  # Ajustar tickers
-        
-        # Remover linhas onde todos os preços são NaN (empresas sem dados nesse período)
-        precos = precos.dropna(how="all")
+        df = yf.download(
+            tickers,
+            start=start,
+            end=end,
+            auto_adjust=True,
+            progress=False
+        )["Close"]
 
-        return precos
+        # Rename columns without the “.SA” suffix
+        df.columns = df.columns.str.replace(".SA", "", regex=False)
+
+        # Drop dates where no ticker has a price
+        df.dropna(how="all", inplace=True)
+
+        return df
 
     except Exception as e:
-        st.error(f"Erro ao baixar preços: {e}")
+        st.error(f"Error downloading prices: {e}")
         return None
+
 
 # Usado no módulo criar_portfolio --------------------------------------------------------------------
 def baixar_precos_ano_corrente(tickers):
