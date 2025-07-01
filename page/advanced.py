@@ -137,34 +137,24 @@ def render() -> None:
 
     # SCORE das empresas -------------------------------------------------------------------------------------------------
     score = calcular_score_acumulado(lista_empresas, setores_empresa, pesos_utilizados, dados_macro, anos_minimos=4)
-    st.markdown("Score")
-    st.dataframe(score)
 
     #precos = baixar_precos([e['ticker'] for e in lista_empresas])
     precos = baixar_precos([e['ticker'] + ".SA" for e in lista_empresas])
-    st.markdown("Precos")
-    st.dataframe(precos)
+
     #precos.index = pd.to_datetime(precos.index)
     precos_mensal = precos.resample('M').last()     # ⇢ último pregão do mês
-    st.markdown("precos mensais")
-    st.dataframe(precos_mensal)
-    
 
     # Penalização do platô de preços -----------------------------------------------------------------------------------------
     score = penalizar_plato(score,  precos_mensal,  meses= 12, penal=0.30)        # 18 meses e –25 % no score quando perde da mediana)
 
     # Determina as líderes dependendo do score encontrado ----------------------------------------------------------------------
     lideres = determinar_lideres(score)
-    st.markdown("Líderes")
-    st.dataframe(lideres)
-
+  
     # 🔹 Lista de tickers das empresas que estamos analisando ------------------------------------------------------------------
     tickers_filtrados = score['ticker'].unique()
     
     # 🔹 Baixar todos os dividendos de uma vez só ------------------------------------------------------------------------------
     dividendos = coletar_dividendos(tickers_filtrados)  
-    st.markdown("Dividendos")
-    st.dataframe(dividendos)
 
     # Gerenciamento da carteira ------------------------------------------------------------------------------------------------
     patrimonio_estrategia, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
