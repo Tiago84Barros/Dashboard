@@ -82,7 +82,6 @@ def baixar_precos(tickers, start="2010-01-01"):
     
     Retorna: DataFrame com preços ajustados.
     """
-    st.write("Ticker", tickers)
     try:
         precos = yf.download(tickers, start=start, end="2025-12-31", auto_adjust=True, progress=False)["Close"]
         precos.columns = precos.columns.str.replace(".SA", "", regex=False)  # Ajustar tickers
