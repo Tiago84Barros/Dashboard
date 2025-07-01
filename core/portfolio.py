@@ -156,7 +156,7 @@ def calcular_patrimonio_selic_macro(dados_macro, datas_aportes, aporte_mensal=10
         dados_macro = dados_macro.reset_index()
     # Garantir que a coluna "Data" seja datetime e definir como índice
     dados_macro["Data"] = pd.to_datetime(dados_macro["Data"], errors='coerce')
-    dados_macro.set_index("Data", inplace=True
+    dados_macro.set_index("Data", inplace=True)
     st.markdown("Dados Macro")
     st.dataframe(dados_macro)
 
