@@ -73,7 +73,7 @@ def _download_prices(
     return df.sort_index()
 
 # ────────────────────────── baixar_precos ───────────────────
-def baixar_precos(tickers, start="2010-01-01", fill_missing=True):
+def baixar_precos(tickers, start="2010-01-01"):
     """
     Baixa os preços das ações a partir de uma data fixa.
     
@@ -83,7 +83,7 @@ def baixar_precos(tickers, start="2010-01-01", fill_missing=True):
     Retorna: DataFrame com preços ajustados.
     """
     try:
-        df = yf.download(tickers, start=start, auto_adjust=True, progress=False)["Close"]
+        df = yf.download(tickers, start="2010-01-01", end="2025-12-31", interval="1d", group_by='ticker')
         precos.columns = precos.columns.str.replace(".SA", "", regex=False)  # Ajustar tickers
         
         # Remover linhas onde todos os preços são NaN (empresas sem dados nesse período)
