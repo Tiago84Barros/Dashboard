@@ -5,7 +5,7 @@ from typing import Dict, List, Sequence, Tuple
 
 import pandas as pd
 import yfinance as yf
-from datetime import datetime
+from datetime import datetime, timedelta
 import streamlit as st
 
 # ────────────────────────── Util ────────────────────────────
