@@ -156,20 +156,26 @@ def calcular_patrimonio_selic_macro(dados_macro, datas_aportes, aporte_mensal=10
         dados_macro = dados_macro.reset_index()
     # Garantir que a coluna "Data" seja datetime e definir como índice
     dados_macro["Data"] = pd.to_datetime(dados_macro["Data"], errors='coerce')
-    dados_macro.set_index("Data", inplace=True)
+    dados_macro.set_index("Data", inplace=True
+    st.markdown("Dados Macro")
+    st.dataframe(dados_macro)
 
          
     # Criar DataFrame para armazenar os valores acumulados
     df_patrimonio = pd.DataFrame(index=datas_aportes, columns=["Tesouro Selic"])
+    st.markdown("Criação de df_patrimonio")
+    st.dataframe(df_patrimonio)
     
     # Armazena o saldo total acumulado
     saldo = 0  
 
     for data in datas_aportes:
         ano_ref = pd.to_datetime(data).year  # Obter o ano do aporte
+        st.write("Ano de referência",ano_ref)
         
         # Obter taxa Selic anual
         taxa_anual = dados_macro.loc[dados_macro.index.year == ano_ref, "Selic"]
+        st.write("Taxa anual", taxa_anual)
         if taxa_anual.empty:
             continue
         
