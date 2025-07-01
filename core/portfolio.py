@@ -78,8 +78,6 @@ def gerir_carteira_simples(precos, tickers, datas_aportes, dividendos_dict=None,
             
     return patrimonio_aporte.ffill()
 
-
-
  # Função para gerir o aporte mensal de todas as empresas do segmento sem estratégia 
 def gerir_carteira_todas_empresas(precos, tickers, datas_aportes, dividendos_dict, aporte_mensal=1000):
     """
@@ -177,6 +175,9 @@ def calcular_patrimonio_selic_macro(dados_macro, datas_aportes, aporte_mensal=10
         
         taxa_anual = taxa_anual.iloc[0] / 100  # Converter para decimal
         taxa_mensal = (1 + taxa_anual) ** (1/12) - 1  # Transformar em taxa mensal
+        st.write("Taxa mensal Selic", taxa_mensal)
+        
+        
         
         # Aplicação do aporte
         saldo = (saldo + aporte_mensal) * (1 + taxa_mensal)  # Crescimento correto
@@ -186,6 +187,8 @@ def calcular_patrimonio_selic_macro(dados_macro, datas_aportes, aporte_mensal=10
 
     # Ordenar o DataFrame corretamente
     df_patrimonio.sort_index(inplace=True)
+    st.markdown("Patrimônio Selic")
+    st.dataframe(df_patrimonio)
 
     return df_patrimonio
 
