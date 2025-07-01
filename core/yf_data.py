@@ -84,7 +84,7 @@ def baixar_precos(tickers, start="2010-01-01"):
     """
     st.write("Ticker", tickers)
     try:
-        df = yf.download(tickers, start=start, end="2025-12-31", interval="1d", group_by='ticker')
+        precos = yf.download(tickers, start=start, end="2025-12-31", interval="1d", group_by='ticker')
         precos.columns = precos.columns.str.replace(".SA", "", regex=False)  # Ajustar tickers
         
         # Remover linhas onde todos os preços são NaN (empresas sem dados nesse período)
