@@ -57,9 +57,11 @@ def gerir_carteira_simples(precos, tickers, datas_aportes, dividendos_dict=None,
                     aporte_total += dividendos_recebidos
 
                 carteira[ticker] += aporte_total / preco_acao
+        
 
         # snapshot da carteira após esse aporte
         carteira_hist[data_aporte] = carteira.copy()
+        st.write("O Valor da carteira após o loop de uma ação é", carteria_hist)
 
     # Calcular o valor diário da carteira usando apenas os aportes até o dia
     for data in precos.index:
