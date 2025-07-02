@@ -229,7 +229,7 @@ def render():
                     for data in datas_potenciais:
                         ano = data.year
                         mes = data.month
-                        melhor_data = melhor_dia_compra_no_mes(precos, ticker, ano, mes)
+                        melhor_data = melhor_dia_compra_no_mes(precos, ticker, ano, mes) # Uso de Redes Neurais 
                         if melhor_data and melhor_data in precos.index and melhor_data not in datas_aporte:
                             datas_aporte.append(melhor_data)
 
