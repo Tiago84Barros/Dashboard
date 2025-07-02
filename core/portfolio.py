@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import pandas as pd
+import pandas aspd
 import numpy as np
 import streamlit as st
 
