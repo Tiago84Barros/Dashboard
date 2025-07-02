@@ -225,17 +225,20 @@ def render():
                 st.stop()
     
             carteira = {tk.replace(".SA", ""): 0 for tk in tickers_corrente_yf}
+            tickers_limpos = [tk.replace(".SA", "") for tk in tickers_corrente_yf]
+            dividendos_dict = coletar_dividendos(tickers_corrente_yf)
+            
             datas_aporte = []
-
-            start_date = precos.index.min().replace(day=1)
-            datas_potenciais = pd.date_range(start=start_date, end=precos.index.max(), freq='MS')
+            if not tickers_limpos:
+                st.warning("⚠️ Nenhum ticker disponível para prever data de compra.")
+            else:
+                datas_potenciais = pd.date_range(start=f"{ano_corrente}-01-01", end=f"{ano_corrente}-12-31", freq='MS')
+                
             for data in datas_potenciais:
                 data_valida = encontrar_proxima_data_valida(data, precos)
                 if data_valida is not None and data_valida in precos.index:
                     datas_aporte.append(data_valida)
-    
-            tickers_limpos = [tk.replace(".SA", "") for tk in tickers_corrente_yf]
-            dividendos_dict = coletar_dividendos(tickers_corrente_yf)
+               
     
             patrimonio_aporte = gerir_carteira_simples(precos, tickers_limpos, datas_aporte, dividendos_dict=dividendos_dict)
           
@@ -251,9 +254,11 @@ def render():
                     st.warning(f"[DEBUG] Taxa Selic não encontrada para o ano: {ano_ref}")
                     continue
     
-                taxa_mensal = (1 + taxa_anual) ** (1 / 12) - 1
-                valor_selic = (valor_selic + 1000) * (1 + taxa_mensal)
-                patrimonio_selic.append((data, valor_selic))
+                valor_estrategia_final = df_final["Estratégia de Aporte"].iloc[-1]
+                valor_selic_final = df_final["Tesouro Selic"].iloc[-1]
+                desempenho = ((valor_estrategia_final / valor_selic_final) - 1) * 100
+                patrimonio_total_aplicado = 1000 * len(datas_aporte)
+                retorno_estrategia = ((valor_estrategia_final / patrimonio_total_aplicado) - 1) * 100)
     
             df_selic = pd.DataFrame(patrimonio_selic, columns=["Data", "Tesouro Selic"]).set_index("Data")
             df_selic = df_selic.reindex(patrimonio_aporte.index).ffill()
