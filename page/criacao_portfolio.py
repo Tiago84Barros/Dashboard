@@ -241,9 +241,7 @@ def render():
                
     
             patrimonio_aporte = gerir_carteira_simples(precos, tickers_limpos, datas_aporte, dividendos_dict=dividendos_dict)
-            st.write("📊 Debug patrimônio_aporte (início):")
-            st.line_chart(patrimonio_aporte.head(20))
-          
+                     
             # Selic benchmark
             valor_selic = 0
             patrimonio_selic = []
