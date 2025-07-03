@@ -105,16 +105,12 @@ def baixar_precos_ano_corrente(tickers):
 
     ano_corrente = datetime.now().year
     start = f"{ano_corrente}-01-01"
+    end = f"{ano_corrente}-12-31"
 
     try:
         # Baixa preços ajustados diretamente
-        precos = yf.download(
-            tickers,
-            start=start,
-            auto_adjust=True,
-            progress=False
-        )['Close']
-
+        precos = yf.download(tickers, start=start, end=end, auto_adjust=True, progress=False)["Close"]
+    
         # Se for Series (1 ativo), transforma em DataFrame
         if isinstance(precos, pd.Series):
             precos = precos.to_frame()
