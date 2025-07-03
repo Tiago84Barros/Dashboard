@@ -228,19 +228,25 @@ def render():
             tickers_limpos = [tk.replace(".SA", "") for tk in tickers_corrente_yf]
             dividendos_dict = coletar_dividendos(tickers_corrente_yf)
             
+            datas_potenciais = pd.date_range(start=f"{ano_corrente}-01-01", end=f"{ano_corrente}-12-31", freq='MS')
+            st.markdown("Datas Potenciais")
+            st.dataframe(datas_potenciais)
             datas_aporte = []
+            
             if not tickers_limpos:
                 st.warning("⚠️ Nenhum ticker disponível para prever data de compra.")
             else:
-                datas_potenciais = pd.date_range(start=f"{ano_corrente}-01-01", end=f"{ano_corrente}-12-31", freq='MS')
-                
-            for data in datas_potenciais:
-                data_valida = encontrar_proxima_data_valida(data, precos)
-                if data_valida is not None and data_valida in precos.index:
-                    datas_aporte.append(data_valida)
+                for data in datas_potenciais:
+                    data_valida = encontrar_proxima_data_valida(data, precos)
+                    if data_valida is not None and data_valida in precos.index:
+                        datas_aporte.append(data_valida)
+            st.markdown("Datas de Aporte")
+            st.datframe(datas_aporte)
                
     
             patrimonio_aporte = gerir_carteira_simples(precos, tickers_limpos, datas_aporte, dividendos_dict=dividendos_dict)
+            st.write("📊 Debug patrimônio_aporte (início):")
+            st.line_chart(patrimonio_aporte.head(20))
           
             # Selic benchmark
             valor_selic = 0
