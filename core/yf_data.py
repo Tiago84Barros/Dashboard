@@ -110,6 +110,8 @@ def baixar_precos_ano_corrente(tickers):
     try:
         # Baixa preços ajustados diretamente
         precos = yf.download(tickers, start=start, end=end, auto_adjust=True, progress=False)["Close"]
+        st.markdown("Preços direto do yf_data")
+        st.dataframe(precos)
     
         # Se for Series (1 ativo), transforma em DataFrame
         if isinstance(precos, pd.Series):
