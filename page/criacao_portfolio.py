@@ -241,7 +241,7 @@ def render():
                     if data_valida is not None and data_valida in precos.index:
                         datas_aporte.append(data_valida)
             st.markdown("Datas de Aporte")
-            st.datframe(datas_aporte)
+            st.dataframe(datas_aporte)
                
     
             patrimonio_aporte = gerir_carteira_simples(precos, tickers_limpos, datas_aporte, dividendos_dict=dividendos_dict)
