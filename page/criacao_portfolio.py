@@ -217,8 +217,6 @@ def render():
         if tickers_corrente:
             tickers_corrente_yf = [tk + ".SA" for tk in tickers_corrente]
             precos = baixar_precos_ano_corrente(tickers_corrente_yf)
-            st.markdown("Preços")
-            st.dataframe(precos)
             precos.index = pd.to_datetime(precos.index, errors='coerce')
             precos = precos.resample('B').last().ffill()
     
@@ -231,8 +229,6 @@ def render():
             dividendos_dict = coletar_dividendos(tickers_corrente_yf)
             
             datas_potenciais = pd.date_range(start=f"{ano_corrente}-01-01", end=f"{ano_corrente}-12-31", freq='MS')
-            st.markdown("Datas Potenciais")
-            st.dataframe(datas_potenciais)
             datas_aporte = []
             
             if not tickers_limpos:
@@ -242,8 +238,6 @@ def render():
                     data_valida = encontrar_proxima_data_valida(data, precos)
                     if data_valida is not None and data_valida in precos.index:
                         datas_aporte.append(data_valida)
-            st.markdown("Datas de Aporte")
-            st.dataframe(datas_aporte)
                
     
             patrimonio_aporte = gerir_carteira_simples(precos, tickers_limpos, datas_aporte, dividendos_dict=dividendos_dict)
