@@ -217,6 +217,8 @@ def render():
         if tickers_corrente:
             tickers_corrente_yf = [tk + ".SA" for tk in tickers_corrente]
             precos = baixar_precos_ano_corrente(tickers_corrente_yf)
+            st.markdown("Preços")
+            st.dataframe(precos)
             precos.index = pd.to_datetime(precos.index, errors='coerce')
             precos = precos.resample('B').last().ffill()
     
