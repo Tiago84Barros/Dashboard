@@ -151,41 +151,31 @@ def calc_crowding_penalty(df_setor: pd.DataFrame,
                               
 
 # Função responsável por Reduzir o Score_Ajustado quando a ação está abaixo da mediana setorial ______________________________________________________________________________________________________
-def penalizar_plato(df_scores: pd.DataFrame, price_series: pd.Series, meses: int = 18, penal: float = 0.25) -> pd.DataFrame:
+def penalizar_plato(
+    df_scores: pd.DataFrame,
+    price_series: pd.Series,
+    meses: int = 18,
+    penal: float = 0.25
+) -> pd.DataFrame:
     """
-    Aplica penalização de platô ao Score_Ajustado.
-    Usa o retorno de price_series nos últimos 'meses' meses comparado
-    à mediana histórica (ou setor) e aplica 'penal' se estiver abaixo.
+    Aplica penalização de platô simples ao Score_Ajustado baseado no retorno
+    do price_series nos últimos `meses` meses.
+
+    Se o retorno no período for negativo, reduz o Score_Ajustado em `penal`.
+    Caso contrário, mantém o score.
     """
-    df = df_scores.copy().set_index('Ano')
-    # define janela
-    ano_max = df.index.max()
-    ano_min = ano_max - pd.DateOffset(months=meses)
-
-    # prepara série de preços
-    s = price_series.sort_index()
-    # encontra fim da janela (última data <= ano_max)
-    pos_end = s.index.searchsorted(ano_max)
-    idx_end = s.index[pos_end-1] if pos_end > 0 else s.index[0]
-    # encontra início da janela (primeira data >= ano_min)
-    pos_start = s.index.searchsorted(ano_min)
-    idx_start = s.index[pos_start] if pos_start < len(s.index) else s.index[-1]
-
-    # calcula retorno
-    try:
-        ret = s.loc[idx_end] / s.loc[idx_start] - 1
-    except Exception:
-        ret = (s.pct_change(periods=meses).dropna().mean())
-
-    # compara com a mediana (aqui usamos ret diretamente)
-    med = ret if not isinstance(ret, pd.Series) else ret.median(skipna=True)
-
-    # aplica penal se abaixo
-    if ret < med:
-        df['Score_Ajustado'] = df['Score_Ajustado'] * (1 - penal)
-    # else mantém igual
-
-    return df.reset_index()
+    df = df_scores.copy()
+    # Pega o score original (última linha)
+    orig_score = df['Score_Ajustado'].iloc[-1]
+    # Calcula retorno percentual no período de `meses`
+    rets = price_series.pct_change(periods=meses).dropna()
+    if rets.empty:
+        return df
+    ultimo_ret = rets.iloc[-1]
+    # Se retorno for negativo, aplica penalização
+    if ultimo_ret < 0:
+        df.at[df.index[-1], 'Score_Ajustado'] = orig_score * (1 - penal)
+    return df
 
     
  # Ajuste do score baseado nos pesos ajustados ______________________________________________________________________________________________________________________________________________
