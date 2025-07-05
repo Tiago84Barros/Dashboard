@@ -151,41 +151,42 @@ def calc_crowding_penalty(df_setor: pd.DataFrame,
                               
 
 # Função responsável por Reduzir o Score_Ajustado quando a ação está abaixo da mediana setorial ______________________________________________________________________________________________________
-def penalizar_plato(df_scores, precos_mensal, meses=18, penal=0.25):
+def penalizar_plato(df_scores: pd.DataFrame, price_series: pd.Series, meses: int = 18, penal: float = 0.25) -> pd.DataFrame:
     """
-    Reduz Score_Ajustado quando a ação está abaixo da mediana setorial
-    no retorno acumulado dos ÚLTIMOS `meses` MESES — sem olhar o futuro.
-
-    Parâmetros
-    ----------
-    df_scores : DataFrame  # colunas ['Ano', 'ticker', 'Score_Ajustado']
-    precos_mensal : DataFrame  # preços ajustados, index = último dia útil de cada mês
-    meses : int (default 18)
-    penal : float (default 0.25)  # % de penalização (ex.: 0.25 → -25 %)
+    Aplica penalização de platô ao Score_Ajustado.
+    Usa o retorno de price_series nos últimos 'meses' meses comparado
+    à mediana histórica (ou setor) e aplica 'penal' se estiver abaixo.
     """
-    # 1️⃣ Retorno retrospectivo de 18 meses
-    ret_18m = precos_mensal.pct_change(periods=meses)
+    df = df_scores.copy().set_index('Ano')
+    # define janela
+    ano_max = df.index.max()
+    ano_min = ano_max - pd.DateOffset(months=meses)
 
-    # 2️⃣ Itera ano a ano, SEM olhar além de 31/12/Y
-    for ano in df_scores['Ano'].unique():
-        data_fim = precos_mensal.index[precos_mensal.index.year == ano].max()
-        if pd.isna(data_fim):               # não há preços esse ano
-            continue
-        # mediana do setor em 31/12/Y
-        ret_setor = ret_18m.loc[data_fim].median(skipna=True)
+    # prepara série de preços
+    s = price_series.sort_index()
+    # encontra fim da janela (última data <= ano_max)
+    pos_end = s.index.searchsorted(ano_max)
+    idx_end = s.index[pos_end-1] if pos_end > 0 else s.index[0]
+    # encontra início da janela (primeira data >= ano_min)
+    pos_start = s.index.searchsorted(ano_min)
+    idx_start = s.index[pos_start] if pos_start < len(s.index) else s.index[-1]
 
-        # percorre as ações daquele ano
-        mask_ano = df_scores['Ano'] == ano
-        for idx, row in df_scores[mask_ano].iterrows():
-            tk = row['ticker']
-            if tk not in ret_18m.columns or pd.isna(ret_18m.loc[data_fim, tk]):
-                continue
+    # calcula retorno
+    try:
+        ret = s.loc[idx_end] / s.loc[idx_start] - 1
+    except Exception:
+        ret = (s.pct_change(periods=meses).dropna().mean())
 
-            # 3️⃣ compara retorno vs. mediana
-            if ret_18m.loc[data_fim, tk] < ret_setor:
-                df_scores.at[idx, 'Score_Ajustado'] *= (1 - penal)
+    # compara com a mediana (aqui usamos ret diretamente)
+    med = ret if not isinstance(ret, pd.Series) else ret.median(skipna=True)
 
-    return df_scores
+    # aplica penal se abaixo
+    if ret < med:
+        df['Score_Ajustado'] = df['Score_Ajustado'] * (1 - penal)
+    # else mantém igual
+
+    return df.reset_index()
+
     
  # Ajuste do score baseado nos pesos ajustados ______________________________________________________________________________________________________________________________________________
 def calcular_score_ajustado(df, pesos_utilizados):
