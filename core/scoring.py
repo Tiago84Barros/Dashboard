@@ -216,10 +216,6 @@ def calcular_score_ajustado(df, pesos_utilizados):
 
 
   # Calcula o Score para cada empresa de acordo com o segmento que ela está inserido _________________________________________________________________________________________________________
-import collections
-import pandas as pd
-from scoring import penalizar_plato
-
 def calcular_score_acumulado(
     lista_empresas,
     setores_empresa,
