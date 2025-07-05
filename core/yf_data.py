@@ -54,7 +54,7 @@ def _download_prices(
     if raw.empty:
         return pd.DataFrame()
 
-    frames = {}
+    frames: dict[str, pd.Series] = {}
     for t in tickers:
         try:
             if raw.columns.nlevels == 1:
@@ -73,6 +73,7 @@ def _download_prices(
     return df.sort_index()
 
 # ────────────────────────── baixar_precos ───────────────────
+
 def baixar_precos(tickers, start="2010-01-01"):
     """
     Baixa os preços das ações a partir de uma data fixa.
@@ -85,60 +86,32 @@ def baixar_precos(tickers, start="2010-01-01"):
     try:
         precos = yf.download(tickers, start=start, end="2025-12-31", auto_adjust=True, progress=False)["Close"]
         precos.columns = precos.columns.str.replace(".SA", "", regex=False)  # Ajustar tickers
-        
         # Remover linhas onde todos os preços são NaN (empresas sem dados nesse período)
         precos = precos.dropna(how="all")
-
         return precos
 
     except Exception as e:
         st.error(f"Erro ao baixar preços: {e}")
         return None
 
-
 # Usado no módulo criar_portfolio --------------------------------------------------------------------
-def baixar_precos_ano_corrente(tickers):
-    from datetime import datetime
-    import yfinance as yf
-    import pandas as pd
-    import streamlit as st
 
+def baixar_precos_ano_corrente(tickers):
     ano_corrente = datetime.now().year
     start = f"{ano_corrente}-01-01"
     end = f"{ano_corrente}-12-31"
 
     try:
-        # Baixa preços ajustados diretamente
         precos = yf.download(tickers, start=start, end=end, auto_adjust=True, progress=False)["Close"]
-    
-        # Se for Series (1 ativo), transforma em DataFrame
         if isinstance(precos, pd.Series):
             precos = precos.to_frame()
-
         precos.columns = precos.columns.str.replace(".SA", "", regex=False)
         precos = precos.dropna(how="all")
-        
         return precos
 
     except Exception as e:
         st.error(f"Erro ao baixar preços do ano atual: {e}")
         return pd.DataFrame()
-
-
-# ────────────────────────── coletar_dividendos ──────────────
-@_cache
-def coletar_dividendos(tickers: Sequence[str]) -> Dict[str, pd.Series]:
-    result = {}
-    for t in tickers:
-        tk = _norm(t)
-        try:
-            div = yf.Ticker(tk).dividends
-            div.index = pd.to_datetime(div.index)
-            result[tk] = div
-        except Exception:
-            result[tk] = pd.Series(dtype="float64")
-    return result
-
 
 # ────────────────────────── coletar_dividendos ──────────────
 @_cache
@@ -166,7 +139,7 @@ def get_price(ticker: str) -> float | None:
         pass
     return None
 
-# _____________________ indicadores ____________________________________
+# ────────────────────────── indicadores ───────────────────────
 @_cache
 def get_fundamentals_yf(ticker: str) -> pd.DataFrame:
     """
@@ -201,14 +174,39 @@ def get_fundamentals_yf(ticker: str) -> pd.DataFrame:
     df = pd.DataFrame([data])
     df["Ticker"] = ticker
     df["Data"] = pd.Timestamp.today().normalize()
+
     return df
+
+# ────────────────────────── NOVA FUNÇÃO get_precos_ajustados ─────────────
+
+def get_precos_ajustados(
+    ticker: str,
+    start: str = "2010-01-01",
+    freq: str = "M"
+) -> pd.Series:
+    """
+    Wrapper que retorna uma série de preços ajustados para um único ticker,
+    reamostrada na frequência desejada ("M" para mensal, "D" para diário).
+    """
+    # Baixa o DataFrame de preços ajustados
+    df = baixar_precos([_norm(ticker)], start=start)
+    if df is None or df.empty:
+        return pd.Series(dtype="float64")
+
+    # Seleciona a coluna sem sufixo .SA
+    col = ticker if ticker in df.columns else ticker.replace(".SA", "")
+    s = df[col]
+
+    # Reamostra e pega último valor em cada período
+    return s.resample(freq).last()
 
 # ────────────────────────── __all__ ─────────────────────────
 __all__: List[str] = [
-    "get_company_info", 
-    "baixar_precos", 
+    "get_company_info",
+    "baixar_precos",
     "baixar_precos_ano_corrente",
     "coletar_dividendos",
     "get_price",
     "get_fundamentals_yf",
+    "get_precos_ajustados",
 ]
