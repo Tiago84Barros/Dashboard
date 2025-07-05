@@ -6,7 +6,7 @@ from typing import Dict, List
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import TheilSenRegressor
-from yf_data import get_precos_ajustados  # função que retorna pd.Series de preços ajustados
+from core.yf_data import get_precos_ajustados
 
 
 # Função para normalizar os dados __________________________________________________________________________________________________________________________________________________________
