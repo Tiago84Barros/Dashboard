@@ -306,7 +306,7 @@ def calcular_score_acumulado(
             # filtra apenas as linhas deste ticker (neste ano)
             df_tk = df_ano[df_ano['ticker'] == tk].copy()
             # aplica platô (penal de 25% em janela de 18 meses)
-            novo = penalizar_plato(df_tk, series_preco, meses=18, penal=0.25)['Score_Adj'].iloc[-1]
+            novo = penalizar_plato(df_tk, series_preco, meses=18, penal=0.25)['Score_Ajustado'].iloc[-1]
             df_ano.at[ix, 'Score_Ajustado'] = novo
 
         # 2.5) Armazena resultados deste ano
