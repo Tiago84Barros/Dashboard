@@ -305,6 +305,17 @@ def calcular_score_acumulado(lista_empresas, setores_empresa, pesos_utilizados, 
             # aplica ambas as penalizações ao score já normalizado
             df_ano.at[ix, 'Score_Ajustado'] *= \
                 df_ano.at[ix, 'Penalty_Crowd'] * decay_factor
+
+        # ─── AQUI INSERIMOS A PENALIZAÇÃO PLATÔ ─────────────────────────────
+        # reduz Score_Ajustado se em platô nos últimos 18 meses (–25%)
+        df_ano['Score_Ajustado'] = penalizar_plato(
+            df_ano,
+            # entrega apenas a série de preços desta empresa
+            {r['ticker']: emp_precos for emp_precos, r in zip(...)},  # substitua pelo acesso correto a precos_mensal[ticker]
+            meses=18,
+            penal=0.25
+        )['Score_Ajustado']
+        # ─────────────────────────────────────────────────────────────────────
     
         # agora sim, mantenha apenas as colunas que precisa
         df_resultados.append(
