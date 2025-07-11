@@ -136,7 +136,7 @@ def render() -> None:
     pesos_utilizados = get_pesos(setor)
 
     # SCORE das empresas -------------------------------------------------------------------------------------------------
-    score = calcular_score_acumulado(lista_empresas, setores_empresa, pesos_utilizados, dados_macro, anos_minimos=4)
+    score = calcular_score_acumulado(lista_empresas, setores_empresa, pesos_utilizados, dados_macro, anos_minimos=5)
 
     #precos = baixar_precos([e['ticker'] for e in lista_empresas])
     precos = baixar_precos([e['ticker'] + ".SA" for e in lista_empresas])
