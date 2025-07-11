@@ -145,7 +145,7 @@ def render() -> None:
     precos_mensal = precos.resample('M').last()     # ⇢ último pregão do mês
 
     # Penalização do platô de preços -----------------------------------------------------------------------------------------
-    score = penalizar_plato(score,  precos_mensal,  meses= 12, penal=0.5)        # 18 meses e –25 % no score quando perde da mediana)
+    score = penalizar_plato(score,  precos_mensal,  meses= 12, penal=0.8)        # 18 meses e –25 % no score quando perde da mediana)
 
     # Determina as líderes dependendo do score encontrado ----------------------------------------------------------------------
     lideres = determinar_lideres(score)
