@@ -236,7 +236,7 @@ pesos_por_setor = {
 # PESOS POR SEGMENTO (sobreposição)
 # ================================================
 pesos_por_segmento: Dict[str, Dict[str, Dict[str, float | bool]]] = {
-    "Bancos": {
+    "Intermediários Financeiros": {
         'ROE_mean'                    : {'peso': 0.30, 'melhor_alto': True},
         'P/VP_mean'                   : {'peso': 0.10, 'melhor_alto': False},
         'DY_mean'                     : {'peso': 0.20, 'melhor_alto': True},
