@@ -133,9 +133,8 @@ def render() -> None:
     setores_empresa = {e["ticker"]: obter_setor_da_empresa(e["ticker"], setores) for e in lista_empresas}
    
     # Pesos por setor ----------------------------------------------------------------------------------------------------
-    st.write('O setor escolhido é: ', setor)
-    st.write('O segmento escolhido é: ',segmento)
     pesos_utilizados = get_pesos(setor, segmento)
+    st.write('Os pesos utilizados são: ', pesos_utilizados)
 
     # SCORE das empresas -------------------------------------------------------------------------------------------------
     score = calcular_score_acumulado(lista_empresas, setores_empresa, pesos_utilizados, dados_macro, anos_minimos=5)
