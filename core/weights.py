@@ -237,13 +237,13 @@ pesos_por_setor = {
 # ================================================
 pesos_por_segmento: Dict[str, Dict[str, Dict[str, float | bool]]] = {
     "Intermediários Financeiros": {
-        'ROE_mean'                    : {'peso': 0.30, 'melhor_alto': True},
-        'P/VP_mean'                   : {'peso': 0.10, 'melhor_alto': False},
-        'DY_mean'                     : {'peso': 0.20, 'melhor_alto': True},
-        'Endividamento_Total_mean'    : {'peso': 0.10, 'melhor_alto': False},
-        'Liquidez_Corrente_mean'      : {'peso': 0.10, 'melhor_alto': True},
-        'Margem_Liquida_mean'         : {'peso': 0.10, 'melhor_alto': True},
-        'Lucro_Liquido_slope_log'     : {'peso': 0.10, 'melhor_alto': True},
+        'ROE_mean'                 : {'peso': 0.25, 'melhor_alto': True},   # Retorno sobre patrimônio é crítico
+        'P/VP_mean'                : {'peso': 0.12, 'melhor_alto': False},  # Valuation ajustado ao valor patrimonial
+        'DY_mean'                  : {'peso': 0.22, 'melhor_alto': True},   # Dividend Yield relevante para bancos
+        'Endividamento_Total_mean' : {'peso': 0.00, 'melhor_alto': False},  # Dívida total deve ser controlada
+        'Liquidez_Corrente_mean'   : {'peso': 0.16, 'melhor_alto': True},   # Liquidez curta é importante para risco
+        'Margem_Liquida_mean'      : {'peso': 0.10, 'melhor_alto': True},   # Eficiência operacional
+        'Lucro_Liquido_slope_log'  : {'peso': 0.10, 'melhor_alto': True},   # Crescimento de lucro líquido
     },
     # adicionar outros segmentos conforme necessário
 }
