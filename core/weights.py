@@ -233,6 +233,22 @@ pesos_por_setor = {
 }
 
 # ================================================
+# PESOS POR SEGMENTO (sobreposição)
+# ================================================
+pesos_por_segmento: Dict[str, Dict[str, Dict[str, float | bool]]] = {
+    "Bancos": {
+        'ROE_mean'                    : {'peso': 0.30, 'melhor_alto': True},
+        'P/VP_mean'                   : {'peso': 0.10, 'melhor_alto': False},
+        'DY_mean'                     : {'peso': 0.20, 'melhor_alto': True},
+        'Endividamento_Total_mean'    : {'peso': 0.10, 'melhor_alto': False},
+        'Liquidez_Corrente_mean'      : {'peso': 0.10, 'melhor_alto': True},
+        'Margem_Liquida_mean'         : {'peso': 0.10, 'melhor_alto': True},
+        'Lucro_Liquido_slope_log'     : {'peso': 0.10, 'melhor_alto': True},
+    },
+    # adicionar outros segmentos conforme necessário
+}
+
+# ================================================
 # DEFINIÇÃO DE INDICADORES E PESOS PARA SCORE GENÉRICO
 # ================================================
 
@@ -249,19 +265,30 @@ indicadores_score = {
 # ================================================
 # FUNÇÃO PARA OBTER PESOS COM BASE NO SETOR
 # ================================================
-def get_pesos(setor: str) -> Dict[str, Dict[str, float | bool]]:
+def get_pesos(setor: str, segmento: str = None) -> Dict[str, Dict[str, float | bool]]:
     """
-    Recupera os pesos para o setor especificado.
-    Se o setor não estiver definido, retorna uma média genérica.
+    Recupera os pesos para o segmento especificado.
+    1) Se houver definição em pesos_por_segmento, retorna esses pesos.
+    2) Senão, tenta pelo setor em pesos_por_setor.
+    3) Senão, retorna genérico.
     """
-    return pesos_por_setor.get(setor, {
+    # 1) Checa sobreposição por segmento
+    if segmento and segmento in pesos_por_segmento:
+        return pesos_por_segmento[segmento]
+
+    # 2) Checa pelo setor
+    if setor in pesos_por_setor:
+        return pesos_por_setor[setor]
+
+    # 3) Genérico
+    return {
         indicador: {'peso': peso, 'melhor_alto': True}
         for indicador, peso in indicadores_score.items()
-    })
+    }
 
 __all__ = [
     "pesos_por_setor",
+    "pesos_por_segmento",
     "indicadores_score",
     "get_pesos",
 ]
-
