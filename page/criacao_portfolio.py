@@ -99,7 +99,6 @@ def render():
                     return None
                 mult['Ano'] = pd.to_datetime(mult['Data'], errors='coerce').dt.year
                 dre['Ano'] = pd.to_datetime(dre['Data'], errors='coerce').dt.year
-                st.write("Múltiplos", mult)
                 return {
                     "ticker": row_dict["ticker"],
                     "nome": row_dict["nome_empresa"],
@@ -117,6 +116,7 @@ def render():
         if not lista_empresas:
             continue
 
+        st.write("Lista de Empresas", lista_empresas)
         setores_empresa = {e["ticker"]: obter_setor_da_empresa(e["ticker"], setores_df) for e in lista_empresas}
         pesos = get_pesos(setor)
         score = calcular_score_acumulado(lista_empresas, setores_empresa, pesos, dados_macro, anos_minimos=4)
