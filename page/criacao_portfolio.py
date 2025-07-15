@@ -99,6 +99,7 @@ def render():
                     return None
                 mult['Ano'] = pd.to_datetime(mult['Data'], errors='coerce').dt.year
                 dre['Ano'] = pd.to_datetime(dre['Data'], errors='coerce').dt.year
+                st.write("Múltiplos", mult)
                 return {
                     "ticker": row_dict["ticker"],
                     "nome": row_dict["nome_empresa"],
