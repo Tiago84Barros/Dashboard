@@ -116,7 +116,6 @@ def render():
         if not lista_empresas:
             continue
 
-        st.write("Lista de Empresas", lista_empresas)
         setores_empresa = {e["ticker"]: obter_setor_da_empresa(e["ticker"], setores_df) for e in lista_empresas}
         pesos = get_pesos(setor)
         score = calcular_score_acumulado(lista_empresas, setores_empresa, pesos, dados_macro, anos_minimos=4)
