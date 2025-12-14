@@ -1,3 +1,4 @@
+
 """helpers.py
 ~~~~~~~~~~~~~
 Funções utilitárias compartilhadas entre módulos do Dashboard Financeiro.
@@ -72,10 +73,10 @@ def determinar_lideres(
 
 
 def formatar_real(valor: float | int | None) -> str:
-    """Formata número como 'R$ 1.234,56' ou avisa se indisponível."""
+    """Formata número como 'R$ 1.234,56' ou avisa se indisponível."""
     if valor is None or (isinstance(valor, float) and pd.isna(valor)):
         return "Valor indisponível"
-    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 # ---------------------------------------------------------------------------
