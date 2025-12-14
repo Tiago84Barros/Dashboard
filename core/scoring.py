@@ -1,322 +1,364 @@
 from __future__ import annotations
 
+"""Core de scoring fundamentalista (engine).
+
+- Sem dependência de Streamlit.
+- Tratamento robusto de NaN/Inf e colunas ausentes.
+- Funções puras e testáveis.
+
+Compatibilidade: mantém `calcular_score_acumulado(...)`.
+"""
+
 import collections
-from typing import Dict, List
+import logging
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import TheilSenRegressor
-from core.yf_data import get_precos_ajustados
+
+logger = logging.getLogger(__name__)
 
 
-# Função para normalizar os dados __________________________________________________________________________________________________________________________________________________________
+def _to_numeric_series(s: pd.Series) -> pd.Series:
+    """Converte para numérico e troca inf por NaN, preservando índice."""
+    out = pd.to_numeric(s, errors="coerce")
+    return out.replace([np.inf, -np.inf], np.nan)
+
+
 def z_score_normalize(series: pd.Series, melhor_alto: bool) -> pd.Series:
-    mean = series.mean()
-    std = series.std()
-    if std == 0 or np.isnan(std):
-        return pd.Series(0, index=series.index)
-    z = (series - mean) / std
+    """Normaliza via z-score com guardrails (std==0 -> zeros)."""
+    s = _to_numeric_series(series)
+    mean = s.mean(skipna=True)
+    std = s.std(skipna=True)
+    if not np.isfinite(std) or std == 0:
+        return pd.Series(0.0, index=series.index)
+    z = (s - mean) / std
+    z = z.fillna(0.0)
     return z if melhor_alto else -z
-    
 
-# Função responsável por realizar a regressão TheilSen para determinar a taxa de crescimento das variáveis das demonstrações financeiras ____________________________________________________
-def slope_regressao_log(df, col):
-        """
-        Faz regressão linear robusta de ln(col) vs Ano utilizando o TheilSenRegressor,
-        retornando o slope (beta). Filtra valores <= 0, pois ln(<=0) não é definido.
-        Retorna 0.0 se não houver dados suficientes.
-        """
-        # Filtra dados válidos: não-nulos para 'Ano' e a coluna, e valores positivos para a coluna
-        df_valid = df.dropna(subset=['Ano', col]).copy()
-        df_valid = df_valid[df_valid[col] > 0]
-        if len(df_valid) < 2:
-            return 0.0
-    
-        # Calcula o logaritmo natural da coluna
-        df_valid['ln_col'] = np.log(df_valid[col])
-    
-        # Cria a variável preditora X (Ano) e a variável alvo y (ln da coluna)
-        X = df_valid[['Ano']].values
-        y = df_valid['ln_col'].values
-    
-        # Ajusta o modelo robusto de regressão Theil-Sen
-        model = TheilSenRegressor(random_state=42)
+
+def slope_regressao_log(df: pd.DataFrame, col: str, year_col: str = "Ano") -> float:
+    """Regressão robusta de ln(col) vs Ano usando TheilSen.
+
+    Filtra valores <= 0 (ln indefinido). Retorna 0.0 se dados insuficientes.
+    """
+    if df is None or df.empty:
+        return 0.0
+    if year_col not in df.columns or col not in df.columns:
+        return 0.0
+
+    tmp = df[[year_col, col]].copy()
+    tmp[year_col] = pd.to_numeric(tmp[year_col], errors="coerce")
+    tmp[col] = pd.to_numeric(tmp[col], errors="coerce")
+    tmp = tmp.dropna(subset=[year_col, col])
+    tmp = tmp[tmp[col] > 0]
+    if len(tmp) < 2:
+        return 0.0
+
+    X = tmp[[year_col]].astype(float).values
+    y = np.log(tmp[col].astype(float).values)
+
+    model = TheilSenRegressor(random_state=42)
+    try:
         model.fit(X, y)
-        slope = model.coef_[0]
-        
-        return slope
+        slope = float(model.coef_[0])
+        return slope if np.isfinite(slope) else 0.0
+    except Exception as e:
+        logger.exception("Falha no TheilSenRegressor para col=%s: %s", col, e)
+        return 0.0
 
 
-# Função que transforma o valor absoluto do valor encontrado na regressão de Theil-Sen para porcentagem ____________________________________________________________________________________
-def slope_to_growth_percent(slope): 
-    """
-    Converte slope da regressão log em taxa de crescimento aproximada (%).
-    Ex.: se slope=0.07, growth ~ e^0.07 - 1 ~ 7.25%
-    """
-    return np.exp(slope) - 1
+def slope_to_growth_percent(slope: float) -> float:
+    """Converte slope log em crescimento aproximado (fração)."""
+    if not np.isfinite(slope):
+        return 0.0
+    return float(np.exp(slope) - 1.0)
 
 
- # Função auxiliar para calcular média e desvio-padrão das variáveis dos múltiplos __________________________________________________________________________________________________________
-def calcular_media_e_std(df, col):
-    """
-    Retorna a média e o desvio padrão da coluna `col` do DataFrame `df`.
-    Remove valores nulos e infinitos antes do cálculo e exibe informações
-    de depuração via Streamlit.
-    """   
-    
-    # 1️⃣ Verificando se a coluna existe
-    if col not in df.columns:
-        st.error(f"⚠️ A coluna `{col}` não existe no DataFrame!")
-        return (0.0, 0.0)
-
-    # 5️⃣ Removendo valores NaN
-    df_valid = df.dropna(subset=[col])
-  
-    # 6️⃣ Convertendo a coluna para numérico, tratando erros
-    df_valid[col] = pd.to_numeric(df_valid[col], errors='coerce')
-
-    # 7️⃣ Verificando quantos valores se tornaram NaN após conversão
-    nan_count = df_valid[col].isna().sum()
-
-    # 8️⃣ Removendo valores NaN novamente
-    df_valid = df_valid.dropna(subset=[col])
-
-    # 9️⃣ Removendo valores infinitos
-    df_valid = df_valid[np.isfinite(df_valid[col])]
-
-    # 🔟 Caso o DataFrame fique vazio após os tratamentos
-    if df_valid.empty:
-        return (0.0, 0.0)
-
-    # 🔥 11️⃣ Calcular e exibir estatísticas finais
-    media = df_valid[col].mean()
-    std = df_valid[col].std()
-      
-    return (media, std)
+def calcular_media_e_std(df: pd.DataFrame, col: str) -> Tuple[float, float]:
+    """Média e desvio padrão de uma coluna, saneando NaN/Inf."""
+    if df is None or df.empty or col not in df.columns:
+        return 0.0, 0.0
+    s = _to_numeric_series(df[col]).dropna()
+    if s.empty:
+        return 0.0, 0.0
+    mean = float(s.mean())
+    std = float(s.std())
+    if not np.isfinite(mean):
+        mean = 0.0
+    if not np.isfinite(std):
+        std = 0.0
+    return mean, std
 
 
-# Calcular Métricas Históricas _______________________________________________________________________________________________________________________________________________________________    
-def calcular_metricas_historicas_simplificadas(df_mult, df_dre): 
-    """
-    Calcula métricas essenciais para um conjunto pequeno de variáveis.
-    - Múltiplos: Margem_Liquida, Margem_Operacional, ROE, ROIC, P/VP, Endividamento_Total, Alavancagem_Financeira, Liquidez_Corrente
-    - DRE: Receita Líquida, Lucro Líquido, Patrimônio Líquido, Dívida Líquida, Caixa Líquido (com slope log)
-    
-    Retorna um dicionário que representa a 'linha' de métricas da empresa.
-    """
-    # Converter Data -> Ano
-    df_mult['Ano'] = pd.to_datetime(df_mult['Data'], errors='coerce').dt.year
-    df_dre['Ano']  = pd.to_datetime(df_dre['Data'], errors='coerce').dt.year
-            
-    # Ordenar por Ano
-    df_mult.sort_values('Ano', inplace=True)
-    df_dre.sort_values('Ano', inplace=True)
-    
-    # Dicionário final
-    metrics = {}
-    # PASSO 4
-    # =============== MÚLTIPLOS ===============
-    for col in ['Margem_Liquida', 'Margem_Operacional', 'ROE', 'ROA', 'ROIC', 'P/VP', 'Endividamento_Total', 'Alavancagem_Financeira', 'Liquidez_Corrente', 'DY']:
-        mean, std = calcular_media_e_std(df_mult, col)
-        metrics[f'{col}_mean'] = mean
-        metrics[f'{col}_std'] = std
-    
-    # =============== DEMONSTRAÇÕES ===============
-    for col in ['Receita_Liquida', 'Lucro_Liquido', 'Patrimonio_Liquido', 'Divida_Liquida', 'Caixa_Liquido']:
-        slope = slope_regressao_log(df_dre, col)
-        metrics[f'{col}_slope_log'] = slope
-        metrics[f'{col}_growth_approx'] = slope_to_growth_percent(slope)
-    
+def _ensure_year(df: pd.DataFrame, date_col: str = "Data", year_col: str = "Ano") -> pd.DataFrame:
+    """Garante coluna Ano (year_col) a partir de date_col, retornando cópia."""
+    out = df.copy()
+    if year_col not in out.columns:
+        if date_col in out.columns:
+            out[year_col] = pd.to_datetime(out[date_col], errors="coerce").dt.year
+        else:
+            out[year_col] = np.nan
+    return out
+
+
+def calcular_metricas_historicas_simplificadas(df_mult: pd.DataFrame, df_dre: pd.DataFrame) -> Dict[str, float]:
+    """Calcula métricas de múltiplos (média/std) e DRE (slope/growth)."""
+    df_mult2 = _ensure_year(df_mult, date_col="Data", year_col="Ano")
+    df_dre2 = _ensure_year(df_dre, date_col="Data", year_col="Ano")
+
+    df_mult2 = df_mult2.dropna(subset=["Ano"]).sort_values("Ano")
+    df_dre2 = df_dre2.dropna(subset=["Ano"]).sort_values("Ano")
+
+    metrics: Dict[str, float] = {}
+
+    mult_cols = [
+        "Margem_Liquida",
+        "Margem_Operacional",
+        "ROE",
+        "ROA",
+        "ROIC",
+        "P/VP",
+        "Endividamento_Total",
+        "Alavancagem_Financeira",
+        "Liquidez_Corrente",
+        "DY",
+    ]
+    for col in mult_cols:
+        mean, std = calcular_media_e_std(df_mult2, col)
+        metrics[f"{col}_mean"] = mean
+        metrics[f"{col}_std"] = std
+
+    dre_cols = ["Receita_Liquida", "Lucro_Liquido", "Patrimonio_Liquido", "Divida_Liquida", "Caixa_Liquido"]
+    for col in dre_cols:
+        slope = slope_regressao_log(df_dre2, col, year_col="Ano")
+        metrics[f"{col}_slope_log"] = slope
+        metrics[f"{col}_growth_approx"] = slope_to_growth_percent(slope)
+
     return metrics
 
 
-# Função que realiza penalização por baixo desvio-padrão ____________________________________________________________________________________________________________________________________
-def calc_crowding_penalty(df_setor: pd.DataFrame,
-                          coluna='P/VP',
-                          floor=0.85, ceil=1.50) -> float:
-    """
-    Retorna um fator ∈[floor, ceil] que diminui quando o desvio-padrão
-    dos múltiplos do setor é baixo (crowding alto).
-    """
-    if df_setor.empty or coluna not in df_setor:
-        return 1.0                                  # neutro
-
-    dispersion = df_setor[coluna].std()
-    media      = df_setor[coluna].mean()
-    if not np.isfinite(dispersion) or media == 0:
+def calc_crowding_penalty(
+    df_setor: pd.DataFrame,
+    coluna: str = "P/VP",
+    floor: float = 0.85,
+    ceil: float = 1.50,
+) -> float:
+    """Fator ∈ [floor, ceil] que aumenta quando dispersão relativa é baixa (crowding alto)."""
+    if df_setor is None or df_setor.empty or coluna not in df_setor.columns:
         return 1.0
+    s = _to_numeric_series(df_setor[coluna]).dropna()
+    if len(s) < 2:
+        return 1.0
+    dispersion = float(s.std())
+    media = float(s.mean())
+    if not np.isfinite(dispersion) or not np.isfinite(media) or media == 0:
+        return 1.0
+    crowd_score = 1.0 - float(np.tanh(abs(dispersion / media)))
+    crowd_score = min(max(crowd_score, 0.0), 1.0)
+    return float(floor + (ceil - floor) * crowd_score)
 
-    crowd_score = 1 - np.tanh(dispersion / media)   # 0-1
-    return floor + (ceil - floor) * crowd_score     # linear entre limites
-                              
 
-# Função responsável por Reduzir o Score_Ajustado quando a ação está abaixo da mediana setorial ______________________________________________________________________________________________________
-def penalizar_plato(df_scores, precos_mensal, meses=18, penal=0.25):
+def penalizar_plato(
+    df_scores: pd.DataFrame,
+    precos_mensal: pd.DataFrame,
+    meses: int = 18,
+    penal: float = 0.25,
+) -> pd.DataFrame:
+    """Penaliza Score_Ajustado quando retorno retrospectivo (meses) < mediana do universo.
+
+    - Usa o último mês disponível de cada ano (sem olhar o futuro).
+    - Não segmenta por setor; para setorial, crie uma versão que receba grupos.
     """
-    Reduz Score_Ajustado quando a ação está abaixo da mediana setorial
-    no retorno acumulado dos ÚLTIMOS `meses` MESES — sem olhar o futuro.
+    if df_scores is None or df_scores.empty:
+        return df_scores
+    if precos_mensal is None or precos_mensal.empty:
+        return df_scores
+    required = {"Ano", "ticker", "Score_Ajustado"}
+    if not required.issubset(df_scores.columns):
+        return df_scores
 
-    Parâmetros
-    ----------
-    df_scores : DataFrame  # colunas ['Ano', 'ticker', 'Score_Ajustado']
-    precos_mensal : DataFrame  # preços ajustados, index = último dia útil de cada mês
-    meses : int (default 18)
-    penal : float (default 0.25)  # % de penalização (ex.: 0.25 → -25 %)
-    """
-    # 1️⃣ Retorno retrospectivo de 18 meses
-    ret_18m = precos_mensal.pct_change(periods=meses)
+    penal = float(min(max(penal, 0.0), 0.95))
+    ret_m = precos_mensal.pct_change(periods=int(meses))
+    out = df_scores.copy()
 
-    # 2️⃣ Itera ano a ano, SEM olhar além de 31/12/Y
-    for ano in df_scores['Ano'].unique():
-        data_fim = precos_mensal.index[precos_mensal.index.year == ano].max()
-        if pd.isna(data_fim):               # não há preços esse ano
+    for ano in sorted(out["Ano"].dropna().unique()):
+        ano_int = int(ano)
+        mask_year = precos_mensal.index.year == ano_int
+        if not mask_year.any():
             continue
-        # mediana do setor em 31/12/Y
-        ret_setor = ret_18m.loc[data_fim].median(skipna=True)
+        data_fim = precos_mensal.index[mask_year].max()
+        if pd.isna(data_fim):
+            continue
 
-        # percorre as ações daquele ano
-        mask_ano = df_scores['Ano'] == ano
-        for idx, row in df_scores[mask_ano].iterrows():
-            tk = row['ticker']
-            if tk not in ret_18m.columns or pd.isna(ret_18m.loc[data_fim, tk]):
+        linha = ret_m.loc[data_fim]
+        ret_mediana = float(pd.to_numeric(linha, errors="coerce").median(skipna=True))
+        if not np.isfinite(ret_mediana):
+            continue
+
+        mask = out["Ano"] == ano
+        for idx, row in out.loc[mask, ["ticker", "Score_Ajustado"]].iterrows():
+            tk = row["ticker"]
+            if tk not in ret_m.columns:
                 continue
+            r = ret_m.loc[data_fim, tk]
+            if pd.notna(r) and np.isfinite(r) and float(r) < ret_mediana:
+                out.at[idx, "Score_Ajustado"] = float(out.at[idx, "Score_Ajustado"]) * (1.0 - penal)
 
-            # 3️⃣ compara retorno vs. mediana
-            if ret_18m.loc[data_fim, tk] < ret_setor:
-                df_scores.at[idx, 'Score_Ajustado'] *= (1 - penal)
+    return out
 
-    return df_scores
-    
- # Ajuste do score baseado nos pesos ajustados ______________________________________________________________________________________________________________________________________________
-def calcular_score_ajustado(df, pesos_utilizados):
-    """
-    Calcula o Score_Ajustado com tratamento completo:
-    - Winsorize
-    - Penalização por volatilidade
-    - Bônus histórico
-    - Normalização z-score
-    - Soma ponderada com pesos ajustados
-    """
+
+def calcular_score_ajustado(df: pd.DataFrame, pesos_utilizados: Mapping[str, Mapping[str, Any]]) -> pd.DataFrame:
+    """Calcula Score_Ajustado com z-score e soma ponderada."""
+    if df is None or df.empty:
+        return df
+
+    out = df.copy()
+
+    # Mantém compatibilidade com campos opcionais já existentes no projeto
     for col, cfg in pesos_utilizados.items():
-        if col in df.columns:
-            #df[col] = winsorize(df[col])
-            vol_col = col.replace("_mean", "_volatility_penalty")
-            if vol_col in df.columns:
-                df[col] *= (1 - df[vol_col])
-            if 'historico_bonus' in df.columns:
-                df[col] *= (df['historico_bonus'] ** 10)
-    
-    df['Score_Ajustado'] = 0.0
+        if col not in out.columns:
+            continue
 
+        vol_col = col.replace("_mean", "_volatility_penalty")
+        if vol_col in out.columns:
+            out[col] = _to_numeric_series(out[col]).fillna(0.0) * (1.0 - _to_numeric_series(out[vol_col]).fillna(0.0))
+
+        if "historico_bonus" in out.columns:
+            hb = _to_numeric_series(out["historico_bonus"]).fillna(1.0).clip(lower=0.0)
+            out[col] = _to_numeric_series(out[col]).fillna(0.0) * (hb**10)
+
+    out["Score_Ajustado"] = 0.0
     for col, cfg in pesos_utilizados.items():
-        if col in df.columns:
-            df[col + '_norm'] = z_score_normalize(df[col], cfg['melhor_alto'])
-            df['Score_Ajustado'] += df[col + '_norm'] * cfg['peso']
+        if col not in out.columns:
+            continue
+        peso = float(cfg.get("peso", 0.0))
+        melhor_alto = bool(cfg.get("melhor_alto", True))
+        norm_col = f"{col}_norm"
+        out[norm_col] = z_score_normalize(out[col], melhor_alto=melhor_alto)
+        out["Score_Ajustado"] += out[norm_col] * peso
 
-    return df
+    return out
 
 
-  # Calcula o Score para cada empresa de acordo com o segmento que ela está inserido _________________________________________________________________________________________________________
-def calcular_score_acumulado(lista_empresas, setores_empresa, pesos_utilizados, dados_macro, anos_minimos=4):
+def calcular_score_acumulado(
+    lista_empresas: Sequence[Mapping[str, Any]],
+    setores_empresa: Mapping[str, str],
+    pesos_utilizados: Mapping[str, Mapping[str, Any]],
+    dados_macro: Optional[pd.DataFrame] = None,
+    anos_minimos: int = 4,
+) -> pd.DataFrame:
+    """Calcula Score_Ajustado ao longo dos anos.
+
+    `dados_macro` é mantido por compatibilidade, mas não é aplicado aqui.
     """
-    Calcula o Score Acumulado ao longo dos anos, considerando ajustes macroeconômicos e pesos específicos por segmento ou setor.
+    if not lista_empresas:
+        return pd.DataFrame(columns=["Ano", "ticker", "Score_Ajustado"])
 
-    Parâmetros:
-    - lista_empresas: Lista contendo dados financeiros de cada empresa.
-    - setores_df: DataFrame com colunas ['ticker', 'SETOR', 'SEGMENTO'].
-    - pesos_por_segmento: Dicionário com pesos ajustados por segmento.
-    - pesos_por_setor: Dicionário com pesos ajustados por setor.
-    - indicadores_score_ajustados: Dicionário de fallback com pesos genéricos.
-    - dados_macro: DataFrame com os indicadores macroeconômicos ao longo dos anos.
-    - anos_minimos: Número mínimo de anos para iniciar o cálculo do score.
+    # anos disponíveis a partir de multiplos
+    anos: List[int] = []
+    for emp in lista_empresas:
+        dfm = emp.get("multiplos")
+        if isinstance(dfm, pd.DataFrame) and not dfm.empty:
+            dfm2 = _ensure_year(dfm, date_col="Data", year_col="Ano")
+            anos.extend([int(a) for a in dfm2["Ano"].dropna().unique() if np.isfinite(a)])
 
-    Retorna:
-    - DataFrame com Score ajustado ao longo dos anos.
-    """
+    anos_disponiveis = sorted(set(anos))
+    if len(anos_disponiveis) <= anos_minimos:
+        return pd.DataFrame(columns=["Ano", "ticker", "Score_Ajustado"])
 
-    anos_disponiveis = sorted(set(ano for emp in lista_empresas for ano in emp['multiplos']['Ano'].unique()))
-    df_resultados = []
+    resultados: List[pd.DataFrame] = []
+    anos_lider = collections.defaultdict(int)
 
-       
-    ##### 2) estado que persiste de um ano para outro ##########################
-    anos_lider = collections.defaultdict(int)   # fora do loop anual
-    
-    ##### 3) LOOP ANUAL (trecho que substitui o seu agrupamento existente) #####
     for idx in range(anos_minimos, len(anos_disponiveis)):
-        ano = anos_disponiveis[idx]
-        dados_ano = []
-    
-        # === reúno todos os multiplos de cada empresa para este ano ==========
+        ano = int(anos_disponiveis[idx])
+
+        # Pré-coleta P/VP por setor no ano (evita concat repetitiva)
+        setor_to_pvp: Dict[str, List[float]] = collections.defaultdict(list)
         for emp in lista_empresas:
-            ticker = emp['ticker']
-            df_mult = emp['multiplos'][emp['multiplos']['Ano'] <= ano].copy()
-            df_dre  = emp['dre'   ][emp['dre'   ]['Ano'] <= ano].copy()
-            if df_mult.empty or df_dre.empty:
+            tk = str(emp.get("ticker", "")).strip()
+            dfm = emp.get("multiplos")
+            if not tk or not isinstance(dfm, pd.DataFrame) or dfm.empty:
                 continue
-    
-            # setor da empresa
+            dfm2 = _ensure_year(dfm, date_col="Data", year_col="Ano")
+            dfm_ano = dfm2[dfm2["Ano"] == ano]
+            if dfm_ano.empty or "P/VP" not in dfm_ano.columns:
+                continue
+            setor = setores_empresa.get(tk, "OUTROS")
+            vals = _to_numeric_series(dfm_ano["P/VP"]).dropna().tolist()
+            setor_to_pvp[setor].extend([float(v) for v in vals if np.isfinite(v)])
+
+        dados_ano: List[Dict[str, Any]] = []
+        for emp in lista_empresas:
+            ticker = str(emp.get("ticker", "")).strip()
+            if not ticker:
+                continue
+            df_mult = emp.get("multiplos")
+            df_dre = emp.get("dre")
+            if not isinstance(df_mult, pd.DataFrame) or not isinstance(df_dre, pd.DataFrame):
+                continue
+
+            df_mult2 = _ensure_year(df_mult, date_col="Data", year_col="Ano")
+            df_dre2 = _ensure_year(df_dre, date_col="Data", year_col="Ano")
+
+            df_mult_hist = df_mult2[df_mult2["Ano"] <= ano].copy()
+            df_dre_hist = df_dre2[df_dre2["Ano"] <= ano].copy()
+            if df_mult_hist.empty or df_dre_hist.empty:
+                continue
+
             setor = setores_empresa.get(ticker, "OUTROS")
-    
-            # ---------------- Crowd penalty (precisa de dados do setor) ------
-            df_setor_ano = pd.concat(
-                [e['multiplos'][e['multiplos']['Ano'] == ano][['Ticker', 'P/VP']]
-                 for e in lista_empresas
-                 if setores_empresa.get(e['ticker']) == setor],
-                ignore_index=True
-            )
-            crowd_pen  = calc_crowding_penalty(df_setor_ano, 'P/VP')
-    
-            # ---------------- Métricas “clássicas” que você já calculava ----
-            metricas = calcular_metricas_historicas_simplificadas(
-                           df_mult, df_dre)
-    
-            row = {'ticker': ticker,
-                   'Ano'   : ano,
-                   **metricas,
-                   'Penalty_Crowd': crowd_pen}
-    
-            dados_ano.append(row)
-    
-        # ---------- DataFrame anual com crowd-penalty incluído --------------
+            df_setor_ano = pd.DataFrame({"P/VP": setor_to_pvp.get(setor, [])})
+            crowd_pen = calc_crowding_penalty(df_setor_ano, coluna="P/VP")
+
+            metricas = calcular_metricas_historicas_simplificadas(df_mult_hist, df_dre_hist)
+            dados_ano.append({"ticker": ticker, "Ano": ano, **metricas, "Penalty_Crowd": crowd_pen})
+
         df_ano = pd.DataFrame(dados_ano)
         if df_ano.empty:
             continue
-    
-        # ------------ normaliza + soma ponderada (sua rotina) ---------------
+
         df_ano = calcular_score_ajustado(df_ano, pesos_utilizados)
-    
-        # --------------------------------------------------------------------
-        # 4) determina líder e aplica Penalty_Decay
-        # --------------------------------------------------------------------
-        df_ano = df_ano.sort_values('Score_Ajustado', ascending=False)
-    
-        lider_ano = df_ano.iloc[0]['ticker']        # 1º da lista
-        for ix, row in df_ano.iterrows():
-            tk = row['ticker']
-            # acumulo anos consecutivos de liderança
+
+        # Aplica crowding + decay
+        df_ano = df_ano.sort_values("Score_Ajustado", ascending=False).reset_index(drop=True)
+        lider_ano = str(df_ano.loc[0, "ticker"])
+
+        final_scores: List[float] = []
+        decay_list: List[float] = []
+        for _, row in df_ano.iterrows():
+            tk = str(row["ticker"])
             if tk == lider_ano:
                 anos_lider[tk] += 1
             else:
                 anos_lider[tk] = 0
-    
-            # fator de decaimento (trunca em -25 %)
-            decay_factor = 1 - min(0.03 * max(anos_lider[tk]-1, 0), 0.25)
-            df_ano.at[ix, 'Penalty_Decay'] = decay_factor
-    
-            # aplica ambas as penalizações ao score já normalizado
-            df_ano.at[ix, 'Score_Ajustado'] *= \
-                df_ano.at[ix, 'Penalty_Crowd'] * decay_factor
-    
-        # agora sim, mantenha apenas as colunas que precisa
-        df_resultados.append(
-            df_ano[['Ano', 'ticker', 'Score_Ajustado']]
-        )
 
-    if df_resultados:
-        df_scores = pd.concat(df_resultados, ignore_index=True)
-    else:
-        df_scores = pd.DataFrame(columns=['Ano', 'ticker', 'Score_Ajustado'])
-                
-    return df_scores
+            decay_factor = 1.0 - min(0.03 * max(anos_lider[tk] - 1, 0), 0.25)
+            crowd = float(row.get("Penalty_Crowd", 1.0))
+            base = float(row.get("Score_Ajustado", 0.0))
 
-__all__ = ["calcular_score_acumulado"]
+            decay_list.append(decay_factor)
+            final_scores.append(base * crowd * decay_factor)
+
+        df_ano["Penalty_Decay"] = decay_list
+        df_ano["Score_Ajustado"] = final_scores
+
+        resultados.append(df_ano[["Ano", "ticker", "Score_Ajustado"]])
+
+    if resultados:
+        return pd.concat(resultados, ignore_index=True)
+
+    return pd.DataFrame(columns=["Ano", "ticker", "Score_Ajustado"])
+
+
+__all__ = [
+    "z_score_normalize",
+    "slope_regressao_log",
+    "slope_to_growth_percent",
+    "calcular_media_e_std",
+    "calcular_metricas_historicas_simplificadas",
+    "calc_crowding_penalty",
+    "penalizar_plato",
+    "calcular_score_ajustado",
+    "calcular_score_acumulado",
+]
