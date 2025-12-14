@@ -1,48 +1,85 @@
 from __future__ import annotations
 
+"""
+Camada de mercado via yfinance (B3).
+
+Objetivos desta versão:
+- Não depender de Streamlit (mas usar st.cache_data se disponível).
+- Remover duplicidades e padronizar retornos.
+- Evitar "end" fixo que compromete reprodutibilidade e alinhamento temporal.
+- Robustez para 1 ticker vs múltiplos tickers.
+"""
+
 from functools import lru_cache
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Sequence, Tuple, Optional, Union
+import logging
+from datetime import datetime, timedelta
 
 import pandas as pd
+import numpy as np
 import yfinance as yf
-from datetime import datetime, timedelta
-import streamlit as st
+
+logger = logging.getLogger(__name__)
+
 
 # ────────────────────────── Util ────────────────────────────
 def _norm(ticker: str) -> str:
-    t = ticker.upper()
-    return t if t.endswith(".SA") else t + ".SA"
+    """Normaliza ticker para padrão B3 no Yahoo Finance (.SA)."""
+    t = (ticker or "").strip().upper()
+    if not t:
+        return t
+    return t if t.endswith(".SA") else f"{t}.SA"
+
+
+def _strip_sa(col: str) -> str:
+    """Remove sufixo .SA do nome da coluna."""
+    return col.replace(".SA", "")
+
 
 # ────────────────────────── Cache abstrato ──────────────────
 try:
-    import streamlit as st
+    import streamlit as st  # type: ignore
 
     def _cache(func):
-        return st.cache_data(func)
+        return st.cache_data(func)  # pragma: no cover
 
-except ModuleNotFoundError:
+except Exception:  # sem streamlit
     def _cache(func):
         return lru_cache(maxsize=128)(func)
 
+
 # ────────────────────────── get_company_info ────────────────
 @_cache
-def get_company_info(ticker: str) -> Tuple[str | None, str | None]:
+def get_company_info(ticker: str) -> Tuple[Optional[str], Optional[str]]:
+    """Retorna (nome, website) quando disponíveis."""
     try:
         info = yf.Ticker(_norm(ticker)).info
-        return info.get("longName") or info.get("shortName"), info.get("website")
-    except Exception:
+        nome = info.get("longName") or info.get("shortName")
+        website = info.get("website")
+        return nome, website
+    except Exception as e:
+        logger.debug("get_company_info falhou para %s: %s", ticker, e)
         return None, None
 
-# ────────────────────────── _download_prices ────────────────
+
+# ────────────────────────── Core downloader ─────────────────
 def _download_prices(
     tickers: Sequence[str],
-    start: str | pd.Timestamp = "2010-01-01",
-    end: str | pd.Timestamp | None = None,
+    start: Union[str, pd.Timestamp] = "2010-01-01",
+    end: Optional[Union[str, pd.Timestamp]] = None,
     auto_adjust: bool = True,
+    price_field: str = "Close",
 ) -> pd.DataFrame:
-    joined = " ".join(tickers)
+    """Baixa preços via yfinance, retornando DataFrame (index: datas; cols: tickers sem .SA)."""
+    tks = [t for t in (tickers or []) if (t or "").strip()]
+    if not tks:
+        return pd.DataFrame()
+
+    # Normaliza para o Yahoo
+    tks_yf = [_norm(t) for t in tks]
+
     raw = yf.download(
-        joined,
+        tickers=" ".join(tks_yf),
         start=start,
         end=end,
         progress=False,
@@ -51,100 +88,182 @@ def _download_prices(
         threads=True,
     )
 
-    if raw.empty:
+    if raw is None or raw.empty:
         return pd.DataFrame()
 
-    frames: dict[str, pd.Series] = {}
-    for t in tickers:
-        try:
-            if raw.columns.nlevels == 1:
-                col = "Adj Close" if "Adj Close" in raw else "Close"
-                frames[t] = raw[col]
-                break
+    # Caso comum: MultiIndex quando múltiplos tickers
+    # Ex.: raw.columns = (('Close','ABEV3.SA'), ('Close','VALE3.SA'), ...)
+    # ou (('ABEV3.SA','Close'), ...)
+    # O yfinance varia; tratamos os dois.
+    df_out: Optional[pd.DataFrame] = None
+
+    if isinstance(raw.columns, pd.MultiIndex):
+        # tenta padrão: primeiro nível = atributo (Close/Adj Close/...)
+        if raw.columns.nlevels == 2:
+            lvl0 = raw.columns.get_level_values(0)
+            lvl1 = raw.columns.get_level_values(1)
+
+            if price_field in set(lvl0):
+                # colunas como (Close, TICKER)
+                df_out = raw[price_field].copy()
+            elif price_field in set(lvl1):
+                # colunas como (TICKER, Close)
+                df_out = raw.xs(price_field, axis=1, level=1).copy()
             else:
-                frames[t] = raw[t]["Adj Close"]
-        except (KeyError, TypeError):
-            continue
+                # fallback: tenta "Adj Close" ou "Close"
+                for alt in ("Adj Close", "Close"):
+                    if alt in set(lvl0):
+                        df_out = raw[alt].copy()
+                        break
+                    if alt in set(lvl1):
+                        df_out = raw.xs(alt, axis=1, level=1).copy()
+                        break
 
-    if not frames:
+    else:
+        # Caso de 1 ticker: colunas simples (Open/High/Low/Close/...)
+        if price_field in raw.columns:
+            df_out = raw[[price_field]].copy()
+            # nome da coluna vira o ticker original (sem .SA) para consistência
+            df_out.columns = [_strip_sa(tks_yf[0])]
+        else:
+            # fallback
+            col = "Adj Close" if "Adj Close" in raw.columns else ("Close" if "Close" in raw.columns else None)
+            if col is None:
+                return pd.DataFrame()
+            df_out = raw[[col]].copy()
+            df_out.columns = [_strip_sa(tks_yf[0])]
+
+    if df_out is None or df_out.empty:
         return pd.DataFrame()
 
-    df = pd.concat(frames, axis=1)
-    return df.sort_index()
+    # Normaliza nomes de colunas removendo .SA
+    df_out = df_out.copy()
+    df_out.columns = [_strip_sa(str(c)) for c in df_out.columns]
+
+    # Limpeza: remove linhas onde todos os preços são NaN
+    df_out = df_out.dropna(how="all")
+
+    # Ordena índice
+    df_out = df_out.sort_index()
+
+    return df_out
+
 
 # ────────────────────────── baixar_precos ───────────────────
-
-def baixar_precos(tickers, start="2010-01-01"):
+def baixar_precos(
+    tickers: Union[str, Sequence[str]],
+    start: str = "2010-01-01",
+) -> pd.DataFrame:
     """
-    Baixa os preços das ações a partir de uma data fixa.
-    
-    tickers: lista de tickers das empresas.
-    start: data inicial padrão (exemplo: 2010-01-01).
-    
-    Retorna: DataFrame com preços ajustados.
+    Baixa preços ajustados (auto_adjust=True) a partir de `start` até hoje (padrão).
+
+    Retorna:
+      DataFrame com colunas sem ".SA".
+      Se não houver dados, retorna DataFrame vazio.
     """
-    try:
-        precos = yf.download(tickers, start=start, end="2025-12-31", auto_adjust=True, progress=False)["Close"]
-        precos.columns = precos.columns.str.replace(".SA", "", regex=False)  # Ajustar tickers
-        # Remover linhas onde todos os preços são NaN (empresas sem dados nesse período)
-        precos = precos.dropna(how="all")
-        return precos
+    if isinstance(tickers, str):
+        tickers_list = [tickers]
+    else:
+        tickers_list = list(tickers)
 
-    except Exception as e:
-        st.error(f"Erro ao baixar preços: {e}")
-        return None
-
-# Usado no módulo criar_portfolio --------------------------------------------------------------------
-
-def baixar_precos_ano_corrente(tickers):
-    ano_corrente = datetime.now().year
-    start = f"{ano_corrente}-01-01"
-    end = f"{ano_corrente}-12-31"
+    # Para evitar inconsistência temporal: por padrão, end = "amanhã" (inclui pregão de hoje se disponível),
+    # sem travar em um ano futuro fixo.
+    end = (pd.Timestamp.today().normalize() + pd.Timedelta(days=1)).date().isoformat()
 
     try:
-        precos = yf.download(tickers, start=start, end=end, auto_adjust=True, progress=False)["Close"]
-        if isinstance(precos, pd.Series):
-            precos = precos.to_frame()
-        precos.columns = precos.columns.str.replace(".SA", "", regex=False)
-        precos = precos.dropna(how="all")
-        return precos
-
+        df = _download_prices(
+            tickers_list,
+            start=start,
+            end=end,
+            auto_adjust=True,
+            price_field="Close",
+        )
+        return df
     except Exception as e:
-        st.error(f"Erro ao baixar preços do ano atual: {e}")
+        logger.exception("Erro ao baixar preços: %s", e)
         return pd.DataFrame()
+
+
+# ────────────────────────── baixar_precos_ano_corrente ──────
+def baixar_precos_ano_corrente(tickers: Union[str, Sequence[str]]) -> pd.DataFrame:
+    """
+    Baixa preços ajustados (auto_adjust=True) do ano corrente.
+
+    Retorna:
+      DataFrame com colunas sem ".SA" (ou vazio).
+    """
+    if isinstance(tickers, str):
+        tickers_list = [tickers]
+    else:
+        tickers_list = list(tickers)
+
+    ano = datetime.now().year
+    start = f"{ano}-01-01"
+    end = f"{ano + 1}-01-01"  # exclusivo (melhor do que 12-31, evita timezone/fechamentos)
+
+    try:
+        df = _download_prices(
+            tickers_list,
+            start=start,
+            end=end,
+            auto_adjust=True,
+            price_field="Close",
+        )
+        return df
+    except Exception as e:
+        logger.exception("Erro ao baixar preços do ano atual: %s", e)
+        return pd.DataFrame()
+
 
 # ────────────────────────── coletar_dividendos ──────────────
 @_cache
 def coletar_dividendos(tickers: Sequence[str]) -> Dict[str, pd.Series]:
-    result = {}
+    """
+    Retorna dict {TICKER_SEM_SA: Series(dividendos)}, com índice datetime.
+    """
+    result: Dict[str, pd.Series] = {}
     for t in tickers:
-        tk = _norm(t)
+        tk_yf = _norm(t)
+        tk = _strip_sa(tk_yf)
         try:
-            div = yf.Ticker(tk).dividends
-            div.index = pd.to_datetime(div.index)
-            result[tk] = div
-        except Exception:
+            div = yf.Ticker(tk_yf).dividends
+            if div is None or len(div) == 0:
+                result[tk] = pd.Series(dtype="float64")
+                continue
+            div = div.copy()
+            div.index = pd.to_datetime(div.index, errors="coerce")
+            div = div.dropna()
+            result[tk] = div.astype(float)
+        except Exception as e:
+            logger.debug("coletar_dividendos falhou para %s: %s", tk, e)
             result[tk] = pd.Series(dtype="float64")
     return result
 
-# ────────────────────────── get_price ─────────────────────────
+
+# ────────────────────────── get_price ───────────────────────
 @_cache
-def get_price(ticker: str) -> float | None:
+def get_price(ticker: str) -> Optional[float]:
+    """
+    Retorna último preço disponível (Close) para o ticker.
+    """
     try:
         stock = yf.Ticker(_norm(ticker))
-        stock_info = stock.history(period="1d")
-        if not stock_info.empty:
-            return stock_info["Close"].iloc[-1]
-    except Exception:
-        pass
-    return None
+        hist = stock.history(period="5d", auto_adjust=True)
+        if hist is None or hist.empty or "Close" not in hist.columns:
+            return None
+        val = float(hist["Close"].dropna().iloc[-1])
+        return val if np.isfinite(val) else None
+    except Exception as e:
+        logger.debug("get_price falhou para %s: %s", ticker, e)
+        return None
 
-# ────────────────────────── indicadores ───────────────────────
+
+# ────────────────────────── indicadores via info ────────────
 @_cache
 def get_fundamentals_yf(ticker: str) -> pd.DataFrame:
     """
-    Extrai indicadores fundamentalistas diretamente do yfinance.info,
-    retorna como DataFrame para ser usado na seção de blocos.
+    Extrai indicadores do yfinance.info e retorna como DataFrame (1 linha).
+    Observação: esses dados variam por ativo e podem vir incompletos.
     """
     try:
         info = yf.Ticker(_norm(ticker)).info
@@ -153,7 +272,14 @@ def get_fundamentals_yf(ticker: str) -> pd.DataFrame:
 
     def percent(val):
         try:
-            return round(float(val) * 100, 2)
+            return round(float(val) * 100.0, 2)
+        except (TypeError, ValueError):
+            return None
+
+    def as_float(val):
+        try:
+            v = float(val)
+            return v if np.isfinite(v) else None
         except (TypeError, ValueError):
             return None
 
@@ -162,43 +288,21 @@ def get_fundamentals_yf(ticker: str) -> pd.DataFrame:
         "Margem_Operacional": percent(info.get("operatingMargins")),
         "ROE": percent(info.get("returnOnEquity")),
         "ROIC": percent(info.get("returnOnCapitalEmployed")),
-        "DY": round(info.get("dividendYield"), 2) if isinstance(info.get("dividendYield"), (int, float)) else None,
-        "P/VP": info.get("priceToBook"),
+        "DY": as_float(info.get("dividendYield")),
+        "P/VP": as_float(info.get("priceToBook")),
         "Payout": percent(info.get("payoutRatio")),
-        "P/L": info.get("trailingPE"),
+        "P/L": as_float(info.get("trailingPE")),
+        # Campos que o Yahoo pode não ter no mesmo conceito do seu DB:
         "Endividamento_Total": None,
-        "Alavancagem_Financeira": info.get("leveredFreeCashFlow"),
-        "Liquidez_Corrente": info.get("currentRatio"),
+        "Alavancagem_Financeira": as_float(info.get("leveredFreeCashFlow")),
+        "Liquidez_Corrente": as_float(info.get("currentRatio")),
     }
 
     df = pd.DataFrame([data])
-    df["Ticker"] = ticker
+    df["Ticker"] = str(ticker).strip().upper()
     df["Data"] = pd.Timestamp.today().normalize()
-
     return df
 
-# ────────────────────────── NOVA FUNÇÃO get_precos_ajustados ─────────────
-
-def get_precos_ajustados(
-    ticker: str,
-    start: str = "2010-01-01",
-    freq: str = "M"
-) -> pd.Series:
-    """
-    Wrapper que retorna uma série de preços ajustados para um único ticker,
-    reamostrada na frequência desejada ("M" para mensal, "D" para diário).
-    """
-    # Baixa o DataFrame de preços ajustados
-    df = baixar_precos([_norm(ticker)], start=start)
-    if df is None or df.empty:
-        return pd.Series(dtype="float64")
-
-    # Seleciona a coluna sem sufixo .SA
-    col = ticker if ticker in df.columns else ticker.replace(".SA", "")
-    s = df[col]
-
-    # Reamostra e pega último valor em cada período
-    return s.resample(freq).last()
 
 # ────────────────────────── __all__ ─────────────────────────
 __all__: List[str] = [
@@ -208,5 +312,4 @@ __all__: List[str] = [
     "coletar_dividendos",
     "get_price",
     "get_fundamentals_yf",
-    "get_precos_ajustados",
 ]
