@@ -330,6 +330,109 @@ def render() -> None:
 
     st.markdown("---")
 
+    st.markdown("""
+    <style>
+    /* Container dos cards */
+    .pf-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(260px, 1fr));
+      gap: 18px;
+      align-items: stretch;
+      margin-top: 12px;
+    }
+    
+    /* Card */
+    .pf-card {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 16px;
+      padding: 18px 18px 16px 18px;
+      min-height: 160px;
+      box-shadow: 0 6px 22px rgba(0,0,0,0.22);
+    }
+    
+    /* Cabeçalho: logo + título */
+    .pf-head {
+      display: grid;
+      grid-template-columns: 48px 1fr;
+      gap: 12px;
+      align-items: center;
+    }
+    
+    /* Logo (imagem sempre quadrada e contida) */
+    .pf-logo {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.10);
+      border: 1px solid rgba(255,255,255,0.12);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .pf-logo img {
+      width: 38px;
+      height: 38px;
+      object-fit: contain;
+      display: block;
+    }
+    
+    /* Título e subtítulo */
+    .pf-title {
+      font-size: 18px;
+      font-weight: 800;
+      line-height: 1.15;
+      color: rgba(255,255,255,0.92);
+      margin: 0;
+      word-break: break-word;
+    }
+    .pf-sub {
+      margin-top: 2px;
+      font-size: 12px;
+      color: rgba(255,255,255,0.55);
+    }
+    
+    /* Valor */
+    .pf-value {
+      margin-top: 14px;
+      font-size: 22px;
+      font-weight: 900;
+      color: #35d07f; /* verde semelhante ao modelo */
+      letter-spacing: 0.2px;
+    }
+    
+    /* Rodapé */
+    .pf-foot {
+      margin-top: 8px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      font-size: 12px;
+      color: rgba(255,255,255,0.60);
+    }
+    .pf-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.10);
+    }
+    .pf-trophy { font-size: 13px; }
+    
+    /* Responsivo */
+    @media (max-width: 1100px){
+      .pf-grid { grid-template-columns: repeat(2, minmax(260px, 1fr)); }
+    }
+    @media (max-width: 700px){
+      .pf-grid { grid-template-columns: 1fr; }
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+
     # ─────────────────────────────────────────────────────────
     # 5) Cards de patrimônio final por ticker (inclui Selic)
     # ─────────────────────────────────────────────────────────
@@ -352,38 +455,61 @@ def render() -> None:
     lider_counts = score.groupby("ticker")["Ano"].nunique().to_dict()
 
     cols_cards = st.columns(3)
-    for i, r in enumerate(df_final.itertuples(index=False, name=None)):
-        c = cols_cards[i % 3]
+    # Grid responsivo para os cards
+    st.markdown("<div class='pf-grid'>", unsafe_allow_html=True)
     
-        # name=None faz o tuple ser "puro": (Ticker, Valor Final)
-        tk = str(r[0])
-        val = float(r[1])
+    for _, row in df_final.iterrows():
+        tk = str(row["Ticker"])
+    
+        try:
+            val = float(row["Valor Final"])
+        except Exception:
+            continue
     
         if tk in ("Patrimônio", "index"):
             continue
     
-        logo_url = get_logo_url(tk) if tk not in ("Tesouro Selic",) else get_logo_url("B3")
-        qtd_lider = int(lider_counts.get(tk, 0)) if tk not in ("Tesouro Selic",) else 0
-        extra = f"{qtd_lider}x líder" if qtd_lider > 0 else ""
+        # Logo seguro (evita quebra visual)
+        if tk.strip().lower() == "tesouro selic":
+            logo_url = "https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/1f4b0.png"
+        else:
+            logo_url = get_logo_url(tk)
     
-        c.markdown(
+        qtd_lider = int(lider_counts.get(tk, 0)) if tk != "Tesouro Selic" else 0
+    
+        badge_html = ""
+        if qtd_lider > 0:
+            badge_html = f"""
+            <span class="pf-badge">
+                <span class="pf-trophy">🏆</span>
+                <span>{qtd_lider}x Líder</span>
+            </span>
+            """
+    
+        st.markdown(
             f"""
-            <div style="border:1px solid #ddd;border-radius:10px;padding:12px;margin:8px;background:#ffffff;">
-                <div style="display:flex;gap:10px;align-items:center;">
-                    <img src="{logo_url}" style="width:40px;height:40px;">
+            <div class="pf-card">
+                <div class="pf-head">
+                    <div class="pf-logo">
+                        <img src="{logo_url}" onerror="this.style.display='none';" />
+                    </div>
                     <div>
-                        <div style="font-weight:700;">{tk}</div>
-                        <div style="font-size:12px;color:#666;">{extra}</div>
+                        <p class="pf-title">{tk}</p>
+                        <div class="pf-sub">{badge_html}</div>
                     </div>
                 </div>
-                <div style="margin-top:10px;font-size:14px;">
-                    <span style="color:#666;">Valor final:</span>
-                    <span style="font-weight:800;">{formatar_real(val)}</span>
+    
+                <div class="pf-value">{formatar_real(val)}</div>
+    
+                <div class="pf-foot">
+                    <span>Valor final</span>
                 </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
+    
+    st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("---")
 
