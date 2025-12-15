@@ -354,13 +354,15 @@ def render() -> None:
     cols_cards = st.columns(3)
     for i, r in enumerate(df_final.itertuples(index=False)):
         c = cols_cards[i % 3]
-        tk = str(r.Ticker)
-        val = float(r._2)
+
+        # Colunas: ["Ticker", "Valor Final"]
+        tk = str(getattr(r, "Ticker"))
+        val = float(getattr(r, "Valor_Final"))  # <- CORRIGIDO (antes era r._2)
 
         if tk in ("Patrimônio", "index"):
             continue
 
-        logo_url = get_logo_url(tk) if tk not in ("Tesouro Selic",) else get_logo_url("B3")  # fallback visual
+        logo_url = get_logo_url(tk) if tk not in ("Tesouro Selic",) else get_logo_url("B3")
         qtd_lider = int(lider_counts.get(tk, 0)) if tk not in ("Tesouro Selic",) else 0
         extra = f"{qtd_lider}x líder" if qtd_lider > 0 else ""
 
@@ -382,6 +384,7 @@ def render() -> None:
             """,
             unsafe_allow_html=True,
         )
+
 
     st.markdown("---")
 
