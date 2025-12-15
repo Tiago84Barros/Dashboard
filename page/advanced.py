@@ -99,32 +99,49 @@ def render() -> None:
     # ──────────────────────────────────────────────────────────────────────────
     st.subheader("Empresas Selecionadas")
 
-    ncols_empresas = 1 if is_mobile else 3
-    colunas_layout = st.columns(ncols_empresas)
-
-    for idx, row in enumerate(empresas.itertuples()):
-        col = colunas_layout[idx % len(colunas_layout)]
-        with col:
-            logo_url = get_logo_url(row.ticker)
-
-            # Mantive seu visual original (claro), apenas responsivo.
-            st.markdown(
-                f"""
-                <div style="
-                    border: 2px solid #ddd;
-                    border-radius: 10px;
-                    padding: 15px;
-                    margin: 10px;
-                    background-color: #f9f9f9;
-                    box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
-                    text-align: center;
-                ">
-                    <img src="{logo_url}" style="width: 50px; height: 50px; margin-bottom: 10px;">
-                    <h4 style="color: #333; margin: 0;">{row.nome_empresa} ({row.ticker})</h4>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+    st.markdown("""
+    <style>
+    .emp-grid{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 14px;
+    }
+    .emp-card{
+      border: 2px solid #1f2a44;
+      border-radius: 14px;
+      padding: 14px;
+      background: #0f1a2b;
+      box-shadow: 2px 2px 6px rgba(0,0,0,0.25);
+      text-align: center;
+    }
+    .emp-card img{
+      width: 48px; height: 48px;
+      border-radius: 10px;
+      background: #fff;
+      object-fit: contain;
+      margin-bottom: 10px;
+    }
+    .emp-card .title{
+      color: #e8eefc;
+      font-weight: 800;
+      font-size: 16px;
+      line-height: 1.2;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    cards_html = ['<div class="emp-grid">']
+    for _, r in empresas.iterrows():
+        logo_url = get_logo_url(r["ticker"])
+        cards_html.append(f"""
+          <div class="emp-card">
+            <img src="{logo_url}">
+            <div class="title">{r["nome_empresa"]} ({r["ticker"]})</div>
+          </div>
+        """)
+    cards_html.append("</div>")
+    
+    st.markdown("".join(cards_html), unsafe_allow_html=True)
 
     # ──────────────────────────────────────────────────────────────────────────
     # Carrega variáveis das empresas selecionadas
