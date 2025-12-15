@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
+import textwrap
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import streamlit as st
 import pandas as pd
@@ -111,12 +112,17 @@ def _safe_macro() -> Optional[pd.DataFrame]:
     return dm
 
 
+def _md(html: str) -> None:
+    """Renderiza HTML/CSS com dedent para evitar code-block do Markdown."""
+    st.markdown(textwrap.dedent(html).strip(), unsafe_allow_html=True)
+
+
 # ─────────────────────────────────────────────────────────────
 # Render
 # ─────────────────────────────────────────────────────────────
 
 def render() -> None:
-    st.markdown("<h1 style='text-align:center'>Análise Avançada de Ações</h1>", unsafe_allow_html=True)
+    _md("<h1 style='text-align:center'>Análise Avançada de Ações</h1>")
 
     # ── setores em sessão
     setores = st.session_state.get("setores_df")
@@ -213,13 +219,13 @@ def render() -> None:
         logo_url = get_logo_url(tk)
         anos_hist = years_map.get(tk, 0)
         c.markdown(
-            f"""
+            textwrap.dedent(f"""
             <div style="border:2px solid #ddd;border-radius:10px;padding:12px;margin:8px;background:#f9f9f9;text-align:center;">
                 <img src="{logo_url}" style="width:45px;height:45px;margin-bottom:8px;">
                 <div style="font-weight:700;color:#333;">{nm} ({tk})</div>
                 <div style="font-size:12px;color:#666;">Histórico DRE: {anos_hist} ano(s)</div>
             </div>
-            """,
+            """).strip(),
             unsafe_allow_html=True,
         )
 
@@ -315,8 +321,7 @@ def render() -> None:
     if "Tesouro Selic" in patrimonio_final.columns:
         ax.plot(patrimonio_final.index, patrimonio_final["Tesouro Selic"], label="Tesouro Selic")
 
-    # opcional: não poluir com todas as linhas; mas manter comparativo agregado
-    # mostra a média das empresas (para leitura)
+    # média das empresas (para leitura)
     cols_emp = [c for c in patrimonio_empresas.columns if c in patrimonio_final.columns]
     if cols_emp:
         media_emp = patrimonio_final[cols_emp].mean(axis=1, skipna=True)
@@ -330,9 +335,9 @@ def render() -> None:
 
     st.markdown("---")
 
-    st.markdown("""
+    # CSS dos cards (dedent obrigatório para não virar code block)
+    _md("""
     <style>
-    /* Container dos cards */
     .pf-grid {
       display: grid;
       grid-template-columns: repeat(3, minmax(260px, 1fr));
@@ -340,8 +345,6 @@ def render() -> None:
       align-items: stretch;
       margin-top: 12px;
     }
-    
-    /* Card */
     .pf-card {
       background: rgba(255,255,255,0.04);
       border: 1px solid rgba(255,255,255,0.10);
@@ -350,16 +353,12 @@ def render() -> None:
       min-height: 160px;
       box-shadow: 0 6px 22px rgba(0,0,0,0.22);
     }
-    
-    /* Cabeçalho: logo + título */
     .pf-head {
       display: grid;
       grid-template-columns: 48px 1fr;
       gap: 12px;
       align-items: center;
     }
-    
-    /* Logo (imagem sempre quadrada e contida) */
     .pf-logo {
       width: 48px;
       height: 48px;
@@ -377,8 +376,6 @@ def render() -> None:
       object-fit: contain;
       display: block;
     }
-    
-    /* Título e subtítulo */
     .pf-title {
       font-size: 18px;
       font-weight: 800;
@@ -392,17 +389,13 @@ def render() -> None:
       font-size: 12px;
       color: rgba(255,255,255,0.55);
     }
-    
-    /* Valor */
     .pf-value {
       margin-top: 14px;
       font-size: 22px;
       font-weight: 900;
-      color: #35d07f; /* verde semelhante ao modelo */
+      color: #35d07f;
       letter-spacing: 0.2px;
     }
-    
-    /* Rodapé */
     .pf-foot {
       margin-top: 8px;
       display: flex;
@@ -421,8 +414,6 @@ def render() -> None:
       border: 1px solid rgba(255,255,255,0.10);
     }
     .pf-trophy { font-size: 13px; }
-    
-    /* Responsivo */
     @media (max-width: 1100px){
       .pf-grid { grid-template-columns: repeat(2, minmax(260px, 1fr)); }
     }
@@ -430,8 +421,7 @@ def render() -> None:
       .pf-grid { grid-template-columns: 1fr; }
     }
     </style>
-    """, unsafe_allow_html=True)
-
+    """)
 
     # ─────────────────────────────────────────────────────────
     # 5) Cards de patrimônio final por ticker (inclui Selic)
@@ -443,7 +433,6 @@ def render() -> None:
         st.warning("Dados insuficientes para exibir patrimônio final.")
         return
 
-    # tabela “Ticker → Valor”
     series_final = last.copy()
     series_final.index = series_final.index.astype(str)
 
@@ -451,65 +440,58 @@ def render() -> None:
     df_final.columns = ["Ticker", "Valor Final"]
     df_final = df_final.sort_values("Valor Final", ascending=False)
 
-    # contagem de lideranças
     lider_counts = score.groupby("ticker")["Ano"].nunique().to_dict()
 
-    cols_cards = st.columns(3)
-    # Grid responsivo para os cards
-    st.markdown("<div class='pf-grid'>", unsafe_allow_html=True)
-    
+    _md("<div class='pf-grid'>")
+
     for _, row in df_final.iterrows():
         tk = str(row["Ticker"])
-    
+
         try:
             val = float(row["Valor Final"])
         except Exception:
             continue
-    
+
         if tk in ("Patrimônio", "index"):
             continue
-    
-        # Logo seguro (evita quebra visual)
+
         if tk.strip().lower() == "tesouro selic":
             logo_url = "https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/1f4b0.png"
         else:
             logo_url = get_logo_url(tk)
-    
+
         qtd_lider = int(lider_counts.get(tk, 0)) if tk != "Tesouro Selic" else 0
-    
+
         badge_html = ""
         if qtd_lider > 0:
-            badge_html = f"""
+            badge_html = textwrap.dedent(f"""
             <span class="pf-badge">
-                <span class="pf-trophy">🏆</span>
-                <span>{qtd_lider}x Líder</span>
+              <span class="pf-trophy">🏆</span>
+              <span>{qtd_lider}x Líder</span>
             </span>
-            """
-    
-        st.markdown(
-            f"""
-            <div class="pf-card">
-                <div class="pf-head">
-                    <div class="pf-logo">
-                        <img src="{logo_url}" onerror="this.style.display='none';" />
-                    </div>
-                    <div>
-                        <p class="pf-title">{tk}</p>
-                        <div class="pf-sub">{badge_html}</div>
-                    </div>
-                </div>
-    
-                <div class="pf-value">{formatar_real(val)}</div>
-    
-                <div class="pf-foot">
-                    <span>Valor final</span>
-                </div>
+            """).strip()
+
+        _md(f"""
+        <div class="pf-card">
+          <div class="pf-head">
+            <div class="pf-logo">
+              <img src="{logo_url}" onerror="this.style.display='none';" />
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    
-    st.markdown("</div>", unsafe_allow_html=True)
+            <div>
+              <p class="pf-title">{tk}</p>
+              <div class="pf-sub">{badge_html}</div>
+            </div>
+          </div>
+
+          <div class="pf-value">{formatar_real(val)}</div>
+
+          <div class="pf-foot">
+            <span>Valor final</span>
+          </div>
+        </div>
+        """)
+
+    _md("</div>")
 
     st.markdown("---")
 
@@ -554,7 +536,6 @@ def render() -> None:
     indicador = st.selectbox("Selecione o indicador:", indicadores_disponiveis, index=0)
     col_db = nomes_to_col[indicador]
 
-    # monta DF longo para plot
     long_rows: List[dict] = []
     for e in empresas:
         if e.nome not in empresas_selecionadas:
@@ -575,7 +556,6 @@ def render() -> None:
         if tmp.empty:
             continue
 
-        # consolida por ano (média)
         tmp = tmp.groupby("Ano", as_index=False)[col_db].mean()
         for _, rr in tmp.iterrows():
             long_rows.append({"Ano": int(rr["Ano"]), "Empresa": e.nome, "Valor": float(rr[col_db])})
