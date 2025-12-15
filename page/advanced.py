@@ -352,20 +352,20 @@ def render() -> None:
     lider_counts = score.groupby("ticker")["Ano"].nunique().to_dict()
 
     cols_cards = st.columns(3)
-    for i, r in enumerate(df_final.itertuples(index=False)):
+    for i, r in enumerate(df_final.itertuples(index=False, name=None)):
         c = cols_cards[i % 3]
-
-        # Colunas: ["Ticker", "Valor Final"]
-        tk = str(getattr(r, "Ticker"))
-        val = float(getattr(r, "Valor_Final"))  # <- CORRIGIDO (antes era r._2)
-
+    
+        # name=None faz o tuple ser "puro": (Ticker, Valor Final)
+        tk = str(r[0])
+        val = float(r[1])
+    
         if tk in ("Patrimônio", "index"):
             continue
-
+    
         logo_url = get_logo_url(tk) if tk not in ("Tesouro Selic",) else get_logo_url("B3")
         qtd_lider = int(lider_counts.get(tk, 0)) if tk not in ("Tesouro Selic",) else 0
         extra = f"{qtd_lider}x líder" if qtd_lider > 0 else ""
-
+    
         c.markdown(
             f"""
             <div style="border:1px solid #ddd;border-radius:10px;padding:12px;margin:8px;background:#ffffff;">
@@ -384,7 +384,6 @@ def render() -> None:
             """,
             unsafe_allow_html=True,
         )
-
 
     st.markdown("---")
 
