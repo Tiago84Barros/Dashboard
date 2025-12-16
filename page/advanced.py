@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import streamlit as st
 import pandas as pd
@@ -205,7 +205,7 @@ def render() -> None:
 
     # ── exibição cards empresas
     st.markdown("### Empresas no filtro")
-    cols = st.columns(3)
+    cols = st.columns(3, gap="large")
     for i, row in enumerate(seg_df.itertuples(index=False)):
         c = cols[i % 3]
         tk = str(row.ticker)
@@ -214,7 +214,7 @@ def render() -> None:
         anos_hist = years_map.get(tk, 0)
         c.markdown(
             f"""
-            <div style="border:2px solid #ddd;border-radius:10px;padding:12px;margin:8px;background:#f9f9f9;text-align:center;">
+            <div style="border:2px solid #ddd;border-radius:10px;padding:12px;margin:8px;background:#f9f9f9;text-align:center;box-sizing:border-box;width:100%;">
                 <img src="{logo_url}" style="width:45px;height:45px;margin-bottom:8px;">
                 <div style="font-weight:700;color:#333;">{nm} ({tk})</div>
                 <div style="font-size:12px;color:#666;">Histórico DRE: {anos_hist} ano(s)</div>
@@ -315,8 +315,6 @@ def render() -> None:
     if "Tesouro Selic" in patrimonio_final.columns:
         ax.plot(patrimonio_final.index, patrimonio_final["Tesouro Selic"], label="Tesouro Selic")
 
-    # opcional: não poluir com todas as linhas; mas manter comparativo agregado
-    # mostra a média das empresas (para leitura)
     cols_emp = [c for c in patrimonio_empresas.columns if c in patrimonio_final.columns]
     if cols_emp:
         media_emp = patrimonio_final[cols_emp].mean(axis=1, skipna=True)
@@ -331,7 +329,7 @@ def render() -> None:
     st.markdown("---")
 
     # ─────────────────────────────────────────────────────────
-    # 5) Cards de patrimônio final por ticker (inclui Selic)
+    # 5) Cards de patrimônio final por ativo (inclui Estratégia e Selic)
     # ─────────────────────────────────────────────────────────
     st.markdown("## Patrimônio final por ativo")
 
@@ -340,48 +338,71 @@ def render() -> None:
         st.warning("Dados insuficientes para exibir patrimônio final.")
         return
 
-    # tabela “Ticker → Valor”
-    series_final = last.copy()
-    series_final.index = series_final.index.astype(str)
-
-    df_final = series_final.reset_index()
+    df_final = last.reset_index()
     df_final.columns = ["Ticker", "Valor Final"]
-    df_final = df_final.sort_values("Valor Final", ascending=False)
+    df_final["Ticker"] = df_final["Ticker"].astype(str)
+    df_final["Valor Final"] = pd.to_numeric(df_final["Valor Final"], errors="coerce")
+    df_final = df_final.dropna(subset=["Valor Final"]).sort_values("Valor Final", ascending=False)
 
-    # contagem de lideranças
-    lider_counts = score.groupby("ticker")["Ano"].nunique().to_dict()
+    # contagem de lideranças (mais coerente com “quantas vezes liderou”)
+    contagem_lideres = lideres["ticker"].value_counts().to_dict()
 
-    cols_cards = st.columns(3)
-    for i, r in enumerate(df_final.itertuples(index=False)):
-        c = cols_cards[i % 3]
-        tk = str(r.Ticker)
-        val = float(r._2)
+    num_columns = 3
+    cols_cards = st.columns(num_columns, gap="large")
 
-        if tk in ("Patrimônio", "index"):
+    # itertuples(name=None) => tuplas puras: (Ticker, Valor Final)
+    for i, (tk, val) in enumerate(df_final.itertuples(index=False, name=None)):
+        tk = str(tk)
+        try:
+            val = float(val)
+        except Exception:
             continue
 
-        logo_url = get_logo_url(tk) if tk not in ("Tesouro Selic",) else get_logo_url("B3")  # fallback visual
-        qtd_lider = int(lider_counts.get(tk, 0)) if tk not in ("Tesouro Selic",) else 0
-        extra = f"{qtd_lider}x líder" if qtd_lider > 0 else ""
+        # ícones + bordas especiais
+        if tk == "Patrimônio":
+            icone_url = "https://cdn-icons-png.flaticon.com/512/1019/1019709.png"
+            border_color = "#DAA520"  # dourado
+            nome_exibicao = "Estratégia de Aporte"
+            lider_texto = ""
+        elif tk == "Tesouro Selic":
+            icone_url = "https://cdn-icons-png.flaticon.com/512/2331/2331949.png"
+            border_color = "#007bff"  # azul
+            nome_exibicao = "Tesouro Selic"
+            lider_texto = ""
+        else:
+            icone_url = get_logo_url(tk)
+            border_color = "#d3d3d3"
+            nome_exibicao = tk
+            vezes_lider = int(contagem_lideres.get(tk, 0))
+            lider_texto = f"🏆 {vezes_lider}x Líder" if vezes_lider > 0 else ""
 
-        c.markdown(
-            f"""
-            <div style="border:1px solid #ddd;border-radius:10px;padding:12px;margin:8px;background:#ffffff;">
-                <div style="display:flex;gap:10px;align-items:center;">
-                    <img src="{logo_url}" style="width:40px;height:40px;">
-                    <div>
-                        <div style="font-weight:700;">{tk}</div>
-                        <div style="font-size:12px;color:#666;">{extra}</div>
+        patrimonio_formatado = formatar_real(val)
+
+        col = cols_cards[i % num_columns]
+        with col:
+            st.markdown(
+                f"""
+                <div style="
+                    background-color:#ffffff;
+                    border:3px solid {border_color};
+                    border-radius:10px;
+                    padding:15px;
+                    margin:10px 0;
+                    text-align:center;
+                    box-shadow:2px 2px 5px rgba(0,0,0,0.10);
+                    box-sizing:border-box;
+                    width:100%;
+                ">
+                    <img src="{icone_url}" alt="{nome_exibicao}" style="width:50px;height:auto;margin-bottom:6px;">
+                    <div style="margin:0;color:#4a4a4a;font-weight:800;font-size:18px;">{nome_exibicao}</div>
+                    <div style="font-size:18px;margin:6px 0;font-weight:900;color:#2ecc71;">
+                        {patrimonio_formatado}
                     </div>
+                    <div style="font-size:14px;color:#FFA500;">{lider_texto}</div>
                 </div>
-                <div style="margin-top:10px;font-size:14px;">
-                    <span style="color:#666;">Valor final:</span>
-                    <span style="font-weight:800;">{formatar_real(val)}</span>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+                """,
+                unsafe_allow_html=True,
+            )
 
     st.markdown("---")
 
@@ -426,7 +447,6 @@ def render() -> None:
     indicador = st.selectbox("Selecione o indicador:", indicadores_disponiveis, index=0)
     col_db = nomes_to_col[indicador]
 
-    # monta DF longo para plot
     long_rows: List[dict] = []
     for e in empresas:
         if e.nome not in empresas_selecionadas:
@@ -434,9 +454,8 @@ def render() -> None:
         dfm = e.mult.copy()
         if dfm is None or dfm.empty:
             continue
-        if "Ano" not in dfm.columns:
-            if "Data" in dfm.columns:
-                dfm["Ano"] = pd.to_datetime(dfm["Data"], errors="coerce").dt.year
+        if "Ano" not in dfm.columns and "Data" in dfm.columns:
+            dfm["Ano"] = pd.to_datetime(dfm["Data"], errors="coerce").dt.year
         if "Ano" not in dfm.columns or col_db not in dfm.columns:
             continue
 
@@ -447,7 +466,6 @@ def render() -> None:
         if tmp.empty:
             continue
 
-        # consolida por ano (média)
         tmp = tmp.groupby("Ano", as_index=False)[col_db].mean()
         for _, rr in tmp.iterrows():
             long_rows.append({"Ano": int(rr["Ano"]), "Empresa": e.nome, "Valor": float(rr[col_db])})
@@ -493,9 +511,8 @@ def render() -> None:
         dfd = e.dre.copy()
         if dfd is None or dfd.empty:
             continue
-        if "Ano" not in dfd.columns:
-            if "Data" in dfd.columns:
-                dfd["Ano"] = pd.to_datetime(dfd["Data"], errors="coerce").dt.year
+        if "Ano" not in dfd.columns and "Data" in dfd.columns:
+            dfd["Ano"] = pd.to_datetime(dfd["Data"], errors="coerce").dt.year
         if "Ano" not in dfd.columns or col_dre not in dfd.columns:
             continue
 
