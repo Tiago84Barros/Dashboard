@@ -13,10 +13,14 @@ import importlib
 import logging
 import pathlib
 import sys
-from typing import Callable, Optional
+from typing import Callable
 
 import streamlit as st
 
+from core.db_supabase import get_engine
+from core.cvm_sync import get_sync_status, apply_update
+
+engine = get_engine()
 logger = logging.getLogger(__name__)
 
 
@@ -145,6 +149,43 @@ with st.sidebar:
     )
 
     st.markdown("---")
+
+    # ───────────────────── Atualização CVM (Supabase) ─────────────────────
+    st.markdown("## Atualização CVM")
+
+    try:
+        status = get_sync_status(engine)
+        last_run = status.get("last_run")
+
+        if last_run:
+            st.success(f"Última atualização (UTC): {last_run}")
+        else:
+            st.warning("Nenhuma atualização executada ainda.")
+
+        if st.button("Atualizar agora", use_container_width=True):
+            placeholder = st.empty()
+
+            def _progress(msg: str):
+                placeholder.info(msg)
+
+            try:
+                apply_update(engine, progress_cb=_progress)
+
+                # Garante que o app reflita os dados novos
+                st.session_state.pop("setores_df", None)
+
+                st.success("Atualização finalizada com sucesso.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Falha ao atualizar CVM: {e}")
+                logger.exception("Falha ao executar apply_update()", exc_info=e)
+
+    except Exception as e:
+        st.error(f"Não foi possível consultar status da CVM: {e}")
+        logger.exception("Falha ao consultar get_sync_status()", exc_info=e)
+
+    st.markdown("---")
+
     col_a, col_b = st.columns(2)
     with col_a:
         if st.button("Recarregar cache", use_container_width=True):
@@ -154,6 +195,7 @@ with st.sidebar:
     with col_b:
         if st.button("Diagnóstico", use_container_width=True):
             st.session_state["__show_diag__"] = True
+
 
 # ───────────────────────── Diagnóstico leve ─────────────────────────
 if st.session_state.get("__show_diag__"):
