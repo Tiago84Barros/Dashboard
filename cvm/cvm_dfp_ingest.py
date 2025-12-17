@@ -1,3 +1,5 @@
+# ANTIGO ALGORITMO_1
+
 from __future__ import annotations
 
 import io
