@@ -1,6 +1,6 @@
 import importlib
 
-PRIORITY = ["cvm.cvm_dfp_ingest", "cvm.cvm_itr_ingest", "finance_metrics_builder", "macro_bcb_ingest", "fundamental_scoring", "portfolio_backtest"]
+PRIORITY = ["cvm.cvm_dfp_ingest", "cvm.cvm_itr_ingest", "core.finance_metrics_builder", "core.macro_bcb_ingest", "core.fundamental_scoring", "core.portfolio_backtest"]
 
 def _call_module(module_name: str, engine):
     """
