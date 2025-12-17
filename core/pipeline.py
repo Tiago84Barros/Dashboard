@@ -1,6 +1,6 @@
 import importlib
 
-PRIORITY = ["cvm.cvm_dfp_ingest", "algoritmo5", "algoritmo2", "algoritmo3", "algoritmo4", "algoritmo6"]
+PRIORITY = ["cvm.cvm_dfp_ingest", "cvm.cvm_itr_ingest", "algoritmo2", "algoritmo3", "algoritmo4", "algoritmo6"]
 
 def _call_module(module_name: str, engine):
     """
