@@ -6,7 +6,7 @@ import streamlit as st
 import plotly.express as px
 
 from core.helpers import get_company_info, get_logo_url
-from core.db_loader import (
+from core.data_access import (
     load_data_from_db,
     load_multiplos_from_db,
     load_multiplos_limitado_from_db,
