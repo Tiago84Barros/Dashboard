@@ -67,8 +67,7 @@ def _ensure_table(engine: Engine):
     ddl = """
     create schema if not exists cvm;
 
-    drop table if exists cvm.Demonstracoes_Financeiras;
-
+   
     create table if not exists cvm.Demonstracoes_Financeiras (
         Ticker text not null,
         Data date not null,
