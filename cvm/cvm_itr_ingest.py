@@ -1,11 +1,11 @@
-# Antigo Algoritmo_5
-
+# Antigo Algoritmo 5
 from __future__ import annotations
 
 import io
 import os
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pandas as pd
 import requests
@@ -14,7 +14,7 @@ from sqlalchemy.engine import Engine
 
 
 # ============================================================
-# Configurações (mantidas do notebook)
+# Configurações
 # ============================================================
 URL_BASE_ITR = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/ITR/DADOS/"
 ANO_INICIAL = 2010
@@ -71,38 +71,76 @@ def _processar_ano_itr(ano: int):
 
 
 # ============================================================
-# Infra banco (Supabase)
+# Infra banco (Supabase/Postgres) — SAFE (sem DROP)
 # ============================================================
-def _ensure_table(engine: Engine):
+def _ensure_schema_and_table(engine: Engine):
+    """
+    Cria schema/tabela apenas se não existirem.
+    - Sem DROP
+    - Tabela/colunas em lowercase para evitar aspas no Postgres
+    """
     ddl = """
     create schema if not exists cvm;
 
-    create table if not exists cvm.Demonstracoes_Financeiras_TRI (
-        Ticker text not null,
-        Data date not null,
+    create table if not exists cvm.demonstracoes_financeiras_tri (
+        ticker text not null,
+        data date not null,
 
-        Receita_Liquida double precision,
-        EBIT double precision,
-        Lucro_Liquido double precision,
-        LPA double precision,
+        receita_liquida double precision,
+        ebit double precision,
+        lucro_liquido double precision,
+        lpa double precision,
 
-        Ativo_Total double precision,
-        Ativo_Circulante double precision,
-        Passivo_Circulante double precision,
-        Passivo_Total double precision,
+        ativo_total double precision,
+        ativo_circulante double precision,
+        passivo_circulante double precision,
+        passivo_total double precision,
 
-        Divida_Total double precision,
-        Patrimonio_Liquido double precision,
+        divida_total double precision,
+        patrimonio_liquido double precision,
 
-        Dividendos double precision,
-        Caixa_Liquido double precision,
-        Divida_Liquida double precision,
+        dividendos double precision,
+        caixa_liquido double precision,
+        divida_liquida double precision,
 
-        primary key (Ticker, Data)
+        primary key (ticker, data)
     );
     """
     with engine.begin() as conn:
         conn.execute(text(ddl))
+
+
+def _resolve_ticker_map_path(explicit: str | None) -> str:
+    """
+    Resolve o caminho do cvm_to_ticker.csv de forma robusta.
+    Prioridade:
+    1) parâmetro explícito
+    2) env TICKER_MAP_PATH (Streamlit Secrets)
+    3) cvm/cvm_to_ticker.csv (mesma pasta do módulo)
+    4) data/cvm_to_ticker.csv (fallback legado)
+    """
+    candidates: list[Path] = []
+
+    if explicit:
+        candidates.append(Path(explicit))
+
+    env = os.getenv("TICKER_MAP_PATH")
+    if env:
+        candidates.append(Path(env))
+
+    here = Path(__file__).resolve().parent
+    candidates.append(here / "cvm_to_ticker.csv")                 # cvm/cvm_to_ticker.csv
+    candidates.append(here.parent / "data" / "cvm_to_ticker.csv") # data/cvm_to_ticker.csv
+
+    for p in candidates:
+        if p.exists():
+            return str(p)
+
+    raise FileNotFoundError(
+        "Não encontrei o arquivo cvm_to_ticker.csv. "
+        "Defina TICKER_MAP_PATH nos Secrets do Streamlit "
+        "ou garanta que exista cvm/cvm_to_ticker.csv no repositório."
+    )
 
 
 def _load_cvm_to_ticker(path: str) -> pd.DataFrame:
@@ -121,17 +159,17 @@ def run(
     ticker_map_path: str | None = None,
 ) -> pd.DataFrame:
     """
-    Algoritmo 5 — ITR trimestral (conversão fiel do notebook)
+    ITR trimestral (consolidadas _con_)
 
-    - Download ITR consolidado (_con_)
+    - Download ITR consolidado
     - Extração por contas (DRE, BPA, BPP, DFC)
     - Consolidação por empresa e data
     - Merge CVM → Ticker
     - Filtro de continuidade
-    - Persistência em Supabase (UPSERT)
+    - Persistência em Supabase (UPSERT em lote)
     """
 
-    _ensure_table(engine)
+    _ensure_schema_and_table(engine)
 
     # --------------------------------------------------------
     # 1) Coleta paralela
@@ -152,7 +190,7 @@ def run(
         return pd.DataFrame()
 
     # --------------------------------------------------------
-    # 2) Consolidação (mesma lógica do notebook)
+    # 2) Consolidação
     # --------------------------------------------------------
     empresas = dados["DRE"][["DENOM_CIA", "CD_CVM"]].drop_duplicates().set_index("CD_CVM")
     df_final = pd.DataFrame()
@@ -198,28 +236,29 @@ def run(
         patrimonio = serie_cd(bpp, "2.02")
 
         dividendos = serie_cd(dfc, "6.01")
-        caixa = serie_cd(dfc, "6.01")
+        caixa = serie_cd(dfc, "6.01")  # mantendo a mesma lógica do seu arquivo
 
         divida_total = passivo_total
         divida_liquida = divida_total - caixa
 
+        idx = receita.index
         df_emp = pd.DataFrame(
             {
                 "CD_CVM": cd_cvm,
-                "Data": receita.index,
+                "Data": idx,
                 "Receita Líquida": receita.values,
-                "Ebit": ebit.reindex(receita.index).values,
-                "Lucro Líquido": lucro.reindex(receita.index).values,
-                "Lucro por Ação": lpa.reindex(receita.index).values,
-                "Ativo Total": ativo_total.reindex(receita.index).values,
-                "Ativo Circulante": ativo_circ.reindex(receita.index).values,
-                "Passivo Circulante": passivo_circ.reindex(receita.index).values,
-                "Passivo Total": passivo_total.reindex(receita.index).values,
-                "Divida Total": divida_total.reindex(receita.index).values,
-                "Patrimônio Líquido": patrimonio.reindex(receita.index).values,
-                "Dividendos": dividendos.reindex(receita.index).values,
-                "Caixa Líquido": caixa.reindex(receita.index).values,
-                "Dívida Líquida": divida_liquida.reindex(receita.index).values,
+                "Ebit": ebit.reindex(idx).values,
+                "Lucro Líquido": lucro.reindex(idx).values,
+                "Lucro por Ação": lpa.reindex(idx).values,
+                "Ativo Total": ativo_total.reindex(idx).values,
+                "Ativo Circulante": ativo_circ.reindex(idx).values,
+                "Passivo Circulante": passivo_circ.reindex(idx).values,
+                "Passivo Total": passivo_total.reindex(idx).values,
+                "Divida Total": divida_total.reindex(idx).values,
+                "Patrimônio Líquido": patrimonio.reindex(idx).values,
+                "Dividendos": dividendos.reindex(idx).values,
+                "Caixa Líquido": caixa.reindex(idx).values,
+                "Dívida Líquida": divida_liquida.reindex(idx).values,
             }
         )
 
@@ -228,59 +267,58 @@ def run(
     # --------------------------------------------------------
     # 3) Merge CVM → Ticker
     # --------------------------------------------------------
-    if ticker_map_path is None:
-        ticker_map_path = os.getenv("TICKER_MAP_PATH", "data/cvm_to_ticker.csv")
+    map_path = _resolve_ticker_map_path(ticker_map_path)
+    mapa = _load_cvm_to_ticker(map_path)
 
-    mapa = _load_cvm_to_ticker(ticker_map_path)
     df_final = pd.merge(df_final, mapa, left_on="CD_CVM", right_on="CVM")
     df_final = df_final.drop(columns=["CD_CVM", "CVM"])
     df_final["Data"] = pd.to_datetime(df_final["Data"]).dt.date
 
     # --------------------------------------------------------
-    # 4) Filtro de continuidade (igual notebook)
+    # 4) Filtro de continuidade
     # --------------------------------------------------------
     tickers_ok = []
 
     for ticker in df_final["Ticker"].unique():
         df_t = df_final[df_final["Ticker"] == ticker]
         anos = sorted(pd.to_datetime(df_t["Data"]).dt.year.unique())
-        if anos == list(range(min(anos), max(anos) + 1)) and max(anos) >= ultimo_ano_disponivel:
+        if anos and anos == list(range(min(anos), max(anos) + 1)) and max(anos) >= ultimo_ano_disponivel:
             tickers_ok.append(ticker)
 
     df_final = df_final[df_final["Ticker"].isin(tickers_ok)]
 
     # --------------------------------------------------------
-    # 5) Persistência (UPSERT)
+    # 5) Persistência (UPSERT em lote)
     # --------------------------------------------------------
     upsert = """
-    insert into cvm.Demonstracoes_Financeiras_TRI (
-        Ticker, Data,
-        Receita_Liquida, EBIT, Lucro_Liquido, LPA,
-        Ativo_Total, Ativo_Circulante, Passivo_Circulante, Passivo_Total,
-        Divida_Total, Patrimonio_Liquido,
-        Dividendos, Caixa_Liquido, Divida_Liquida
+    insert into cvm.demonstracoes_financeiras_tri (
+        ticker, data,
+        receita_liquida, ebit, lucro_liquido, lpa,
+        ativo_total, ativo_circulante, passivo_circulante, passivo_total,
+        divida_total, patrimonio_liquido,
+        dividendos, caixa_liquido, divida_liquida
     )
     values (
-        :Ticker, :Data,
-        :Receita_Liquida, :EBIT, :Lucro_Liquido, :LPA,
-        :Ativo_Total, :Ativo_Circulante, :Passivo_Circulante, :Passivo_Total,
-        :Divida_Total, :Patrimonio_Liquido,
-        :Dividendos, :Caixa_Liquido, :Divida_Liquida
+        :ticker, :data,
+        :receita_liquida, :ebit, :lucro_liquido, :lpa,
+        :ativo_total, :ativo_circulante, :passivo_circulante, :passivo_total,
+        :divida_total, :patrimonio_liquido,
+        :dividendos, :caixa_liquido, :divida_liquida
     )
-    on conflict (Ticker, Data) do update set
-        Receita_Liquida = excluded.Receita_Liquida,
-        EBIT = excluded.EBIT,
-        Lucro_Liquido = excluded.Lucro_Liquido,
-        LPA = excluded.LPA,
-        Ativo_Total = excluded.Ativo_Total,
-        Ativo_Circulante = excluded.Ativo_Circulante,
-        Passivo_Circulante = excluded.Passivo_Circulante,
-        Passivo_Total = excluded.Passivo_Total,
-        Divida_Total = excluded.Divida_Total,
-        Patrimonio_Liquido = excluded.Patrimonio_Liquido,
-        Dividendos = excluded.Dividendos,
-        Caixa_Liquido = excluded.Caixa_Liquido,
-        Divida_Liquida = excluded.Divida_Liquida;
+    on conflict (ticker, data) do update set
+        receita_liquida = excluded.receita_liquida,
+        ebit = excluded.ebit,
+        lucro_liquido = excluded.lucro_liquido,
+        lpa = excluded.lpa,
+        ativo_total = excluded.ativo_total,
+        ativo_circulante = excluded.ativo_circulante,
+        passivo_circulante = excluded.passivo_circulante,
+        passivo_total = excluded.passivo_total,
+        divida_total = excluded.divida_total,
+        patrimonio_liquido = excluded.patrimonio_liquido,
+        dividendos = excluded.dividendos,
+        caixa_liquido = excluded.caixa_liquido,
+        divida_liquida = excluded.divida_liquida;
     """
 
     df_final = df_final.where(pd.notnull(df_final), None)
@@ -289,26 +327,27 @@ def run(
     for _, r in df_final.iterrows():
         payload.append(
             {
-                "Ticker": r["Ticker"],
-                "Data": r["Data"],
-                "Receita_Liquida": r["Receita Líquida"],
-                "EBIT": r["Ebit"],
-                "Lucro_Liquido": r["Lucro Líquido"],
-                "LPA": r["Lucro por Ação"],
-                "Ativo_Total": r["Ativo Total"],
-                "Ativo_Circulante": r["Ativo Circulante"],
-                "Passivo_Circulante": r["Passivo Circulante"],
-                "Passivo_Total": r["Passivo Total"],
-                "Divida_Total": r["Divida Total"],
-                "Patrimonio_Liquido": r["Patrimônio Líquido"],
-                "Dividendos": r["Dividendos"],
-                "Caixa_Liquido": r["Caixa Líquido"],
-                "Divida_Liquida": r["Dívida Líquida"],
+                "ticker": r["Ticker"],
+                "data": r["Data"],
+                "receita_liquida": r["Receita Líquida"],
+                "ebit": r["Ebit"],
+                "lucro_liquido": r["Lucro Líquido"],
+                "lpa": r["Lucro por Ação"],
+                "ativo_total": r["Ativo Total"],
+                "ativo_circulante": r["Ativo Circulante"],
+                "passivo_circulante": r["Passivo Circulante"],
+                "passivo_total": r["Passivo Total"],
+                "divida_total": r["Divida Total"],
+                "patrimonio_liquido": r["Patrimônio Líquido"],
+                "dividendos": r["Dividendos"],
+                "caixa_liquido": r["Caixa Líquido"],
+                "divida_liquida": r["Dívida Líquida"],
             }
         )
 
+    BATCH = 3000
     with engine.begin() as conn:
-        if payload:
-            conn.execute(text(upsert), payload)
+        for i in range(0, len(payload), BATCH):
+            conn.execute(text(upsert), payload[i : i + BATCH])
 
     return df_final
