@@ -350,11 +350,15 @@ def render_configuracoes() -> None:
 # ───────────────────────── Sidebar navegação ───────────────────────
 with st.sidebar:
     st.markdown("## Análises")
-    pagina_analises = st.radio(
+    pagina_escolhida = st.radio(
         "Escolha a seção:",
-        ["Básica", "Avançada", "Criação de Portfólio"],
+        ["Básica", "Avançada", "Criação de Portfólio", "⚙️ Configurações"],
         index=0,
     )
+
+# normaliza label
+if pagina_escolhida == "⚙️ Configurações":
+    pagina_escolhida = "Configurações"
 
     st.markdown("---")
     st.markdown("## ⚙️ Configuração")
@@ -406,3 +410,4 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
