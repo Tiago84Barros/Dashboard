@@ -1,127 +1,103 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 from core.sync_state import ensure_sync_table, get_state, set_state
 from core.pipeline import run_all
 
+# Chaves persistidas no banco (cvm.sync_state)
 KEY_LAST_RUN = "cvm:last_run_utc"
-
-# Chaves de progresso (persistidas no banco)
-KEY_RUN_ID = "cvm:run_id"
+KEY_LAST_SUCCESS = "cvm:last_success_utc"
+KEY_LAST_ERROR = "cvm:last_error"
 KEY_STARTED_AT = "cvm:started_at_utc"
-KEY_STATUS = "cvm:status"              # idle | running | success | failed
-KEY_STEP = "cvm:step"                  # texto da etapa atual
-KEY_PROGRESS = "cvm:progress"          # 0..100 (int)
-KEY_ERROR = "cvm:error"                # mensagem resumida (se falhar)
+KEY_PROGRESS_PCT = "cvm:progress_pct"
+KEY_STAGE = "cvm:stage"
+KEY_MESSAGE = "cvm:message"
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
-def get_sync_status(engine):
+
+def get_sync_status(engine) -> dict:
     """
-    Retorna o status de sincronização + progresso (para a UI fazer polling).
+    Retorna um snapshot do estado de sincronização persistido no banco.
     """
     ensure_sync_table(engine)
 
-    last = get_state(engine, KEY_LAST_RUN)
-    status = get_state(engine, KEY_STATUS)
-    step = get_state(engine, KEY_STEP)
-    prog = get_state(engine, KEY_PROGRESS)
-    started = get_state(engine, KEY_STARTED_AT)
-    run_id = get_state(engine, KEY_RUN_ID)
-    err = get_state(engine, KEY_ERROR)
+    def _val(key: str):
+        row = get_state(engine, key)
+        return None if not row else row.get("value")
 
     return {
-        "last_run": None if not last else last["updated_at"],
-        "last_value": None if not last else last["value"],
-
-        "status": None if not status else status["value"],
-        "step": None if not step else step["value"],
-        "progress": None if not prog else prog["value"],
-        "started_at": None if not started else started["value"],
-        "run_id": None if not run_id else run_id["value"],
-        "error": None if not err else err["value"],
+        "started_at": _val(KEY_STARTED_AT),
+        "progress_pct": _val(KEY_PROGRESS_PCT),
+        "stage": _val(KEY_STAGE),
+        "message": _val(KEY_MESSAGE),
+        "last_run": _val(KEY_LAST_RUN),
+        "last_success": _val(KEY_LAST_SUCCESS),
+        "last_error": _val(KEY_LAST_ERROR),
     }
 
-def apply_update(engine, progress_cb: Optional[Callable[[str], None]] = None):
+
+def apply_update(engine, progress_cb: Optional[Callable[[str], None]] = None) -> None:
     """
-    Executa o pipeline de atualização (algoritmos 1,5,2,3,4,6),
-    persistindo progresso no banco para permitir UI em "tempo real".
+    Executa o pipeline e grava progresso no banco (cvm.sync_state) para o dashboard
+    conseguir mostrar atualização "em tempo real".
     """
     ensure_sync_table(engine)
 
-    run_id = _utc_now_iso()
-    set_state(engine, KEY_RUN_ID, run_id)
-    set_state(engine, KEY_STARTED_AT, run_id)
-    set_state(engine, KEY_STATUS, "running")
-    set_state(engine, KEY_ERROR, "")
-    set_state(engine, KEY_PROGRESS, 1)
-    set_state(engine, KEY_STEP, "Iniciando atualização CVM...")
+    # inicializa estado
+    set_state(engine, KEY_STARTED_AT, _utc_now_iso())
+    set_state(engine, KEY_PROGRESS_PCT, "0")
+    set_state(engine, KEY_STAGE, "Inicializando")
+    set_state(engine, KEY_MESSAGE, "Iniciando atualização CVM...")
+    set_state(engine, KEY_LAST_ERROR, "")  # limpa erro anterior
+    set_state(engine, KEY_LAST_RUN, _utc_now_iso())
 
-    # Ajuste simples: percentuais por etapa (melhor que travar em 8%)
-    # Você pode refinar depois se o pipeline fornecer eventos mais ricos.
-    step_map = {
-        "cvm.cvm_dfp_ingest": 15,
-        "cvm.cvm_itr_ingest": 55,
-        "cvm.macro_bcb_ingest": 75,
-        "finance_metrics_builder": 85,
-        "fundamental_scoring": 92,
-        "portfolio_backtest": 98,
-    }
-
-    def _persist(msg: str):
-        # 1) callback para UI (se estiver usando)
+    def _emit(msg: str) -> None:
+        # callback opcional (UI local)
         if progress_cb:
             progress_cb(msg)
 
-        # 2) persistência no banco (para polling)
-        # Normaliza msg e tenta detectar etapa
-        msg_norm = (msg or "").strip()
+        # Persiste mensagens e tenta inferir progresso por etapa (STEP i/n)
+        set_state(engine, KEY_MESSAGE, msg)
 
-        # Etapa: se vier "Executando X..." extrai X
-        step_detected = None
-        if "Executando" in msg_norm:
-            # exemplos: "Executando cvm.cvm_dfp_ingest..."
-            parts = msg_norm.replace("...", "").split()
-            # tenta achar algo como cvm.cvm_dfp_ingest
-            for p in parts:
-                if "." in p and ("cvm_" in p or "cvm." in p or "builder" in p or "scoring" in p or "backtest" in p):
-                    step_detected = p.strip()
-                    break
+        if msg.startswith("STEP "):
+            # formato: STEP i/n :: module.name
+            try:
+                head, rest = msg.split("::", 1)
+                frac = head.replace("STEP", "").strip()  # "i/n"
+                i_s, n_s = frac.split("/", 1)
+                i = int(i_s.strip())
+                n = int(n_s.strip())
+                pct = int(round((i / max(n, 1)) * 100))
+                set_state(engine, KEY_PROGRESS_PCT, str(pct))
+                set_state(engine, KEY_STAGE, rest.strip())
+            except Exception:
+                # se der ruim no parse, pelo menos atualiza stage
+                set_state(engine, KEY_STAGE, msg)
 
-        # Atualiza step
-        if step_detected:
-            set_state(engine, KEY_STEP, step_detected)
-            # Atualiza % (estimado)
-            for k, v in step_map.items():
-                if k in step_detected:
-                    set_state(engine, KEY_PROGRESS, v)
-                    break
-        else:
-            # mantém uma mensagem humana, sem derrubar a etapa técnica
-            set_state(engine, KEY_STEP, msg_norm[:200])
+        elif msg == "DONE":
+            set_state(engine, KEY_PROGRESS_PCT, "100")
+            set_state(engine, KEY_STAGE, "Concluído")
 
     try:
-        _persist("Iniciando atualização CVM...")
-        # IMPORTANTÍSSIMO: o run_all deve chamar progress_cb várias vezes.
-        run_all(engine, progress_cb=_persist)
+        _emit("Iniciando atualização CVM...")
+        run_all(engine, progress_cb=_emit)
 
-        # Finaliza
-        set_state(engine, KEY_PROGRESS, 100)
-        set_state(engine, KEY_STATUS, "success")
-        set_state(engine, KEY_STEP, "Atualização concluída.")
-        set_state(engine, KEY_LAST_RUN, _utc_now_iso())
-
-        if progress_cb:
-            progress_cb("Atualização concluída.")
+        now = _utc_now_iso()
+        set_state(engine, KEY_LAST_RUN, now)
+        set_state(engine, KEY_LAST_SUCCESS, now)
+        set_state(engine, KEY_STAGE, "Concluído")
+        set_state(engine, KEY_PROGRESS_PCT, "100")
+        set_state(engine, KEY_MESSAGE, "Atualização concluída.")
+        _emit("DONE")
 
     except Exception as e:
-        set_state(engine, KEY_STATUS, "failed")
-        set_state(engine, KEY_ERROR, str(e)[:500])
-        set_state(engine, KEY_STEP, "Falha na atualização (ver erro).")
-        # não força 100, deixa como estava
-        if progress_cb:
-            progress_cb(f"Falha na atualização: {e}")
+        # registra erro para o dashboard exibir
+        set_state(engine, KEY_LAST_ERROR, f"{type(e).__name__}: {e}")
+        set_state(engine, KEY_STAGE, "Erro")
+        set_state(engine, KEY_MESSAGE, "Falha na atualização.")
         raise
