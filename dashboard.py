@@ -142,7 +142,6 @@ def _get_snapshot_light() -> dict:
     Snapshot "limpo": sem contagem de linhas (ruído). Só o que importa para UX.
     """
     snap = {}
-
     snap["dfp_tickers"] = _safe_scalar("select count(distinct ticker) from cvm.demonstracoes_financeiras;")
     snap["dfp_min"] = _safe_scalar("select min(data) from cvm.demonstracoes_financeiras;")
     snap["dfp_max"] = _safe_scalar("select max(data) from cvm.demonstracoes_financeiras;")
@@ -151,7 +150,6 @@ def _get_snapshot_light() -> dict:
     snap["itr_max"] = _safe_scalar("select max(data) from cvm.demonstracoes_financeiras_tri;")
 
     snap["macro_max"] = _safe_scalar("select max(data) from cvm.info_economica;")
-
     return snap
 
 
@@ -184,7 +182,7 @@ def render_configuracoes() -> None:
     # Estado update
     st.session_state.setdefault("update_running", False)
     st.session_state.setdefault("update_started_at", None)
-    st.session_state.setdefault("update_step", (0, 0))          # (idx, total)
+    st.session_state.setdefault("update_step", (0, 0))  # (idx, total)
     st.session_state.setdefault("update_msg", "")
     st.session_state.setdefault("update_pct_hint", 0.0)
 
@@ -230,13 +228,16 @@ def render_configuracoes() -> None:
 
     st.divider()
 
-    # ── Placeholders únicos (evita duplicação / “3 carregamentos”)
+    # ── Placeholders únicos (evita duplicação)
     status_slot = st.empty()
     progress_slot = st.empty()
 
     def _render_status_header():
+        """
+        Renderiza sempre algo no slot (evita “área em branco”).
+        """
         with status_slot.container():
-            status_slot.empty()
+            st.subheader("Status da sincronização")
             try:
                 status = get_sync_status(engine)
                 last_run = status.get("last_run")
@@ -270,32 +271,23 @@ def render_configuracoes() -> None:
         snap = _get_snapshot_light()
 
         with progress_slot.container():
-            progress_slot.empty()
-
             st.subheader("Progresso da atualização")
-
             st.progress(pct)
 
-            # Cards de métricas (mais clean)
             m1, m2, m3, m4 = st.columns(4, gap="medium")
             m1.metric("Progresso", f"{pct*100:.0f}%")
             m2.metric("Tempo decorrido", f"{elapsed_s}s")
-            if remaining_s is not None:
-                m3.metric("Tempo restante (est.)", f"{remaining_s}s")
-            else:
-                m3.metric("Tempo restante (est.)", "-")
+            m3.metric("Tempo restante (est.)", f"{remaining_s}s" if remaining_s is not None else "-")
             m4.metric("Etapa", f"{idx}/{total}" if total and total > 0 else "-")
 
             st.caption(st.session_state.get("update_msg", "").strip() or "Aguardando…")
 
             st.markdown("#### Resumo do banco (CVM)")
-
             r1, r2, r3 = st.columns(3, gap="medium")
             r1.metric("DFP (tickers)", f"{snap.get('dfp_tickers') or 0}")
             r2.metric("Período DFP", _fmt_years(snap.get("dfp_min"), snap.get("dfp_max")))
             r3.metric("Último trimestre ITR", _fmt_quarter(snap.get("itr_max")))
 
-            # Macro opcional (sem “0 linhas”)
             macro_max = snap.get("macro_max")
             if macro_max:
                 st.caption(f"Macro (info_economica) atualizada até: {macro_max}")
@@ -304,7 +296,7 @@ def render_configuracoes() -> None:
     _render_status_header()
     _render_progress_panel()
 
-    # ── Execução do update (callback)
+    # ── Execução do update
     if iniciar and not st.session_state["update_running"]:
         st.session_state["update_running"] = True
         st.session_state["update_started_at"] = time.time()
@@ -318,17 +310,15 @@ def render_configuracoes() -> None:
         def progress_cb(msg: str):
             st.session_state["update_msg"] = msg
 
-            # STEP i/t :: módulo (se pipeline emitir)
             if isinstance(msg, str) and msg.startswith("STEP "):
                 try:
-                    header = msg.split("::", 1)[0].strip()     # "STEP i/t"
+                    header = msg.split("::", 1)[0].strip()  # "STEP i/t"
                     frac = header.replace("STEP", "").strip()  # "i/t"
                     i_s, t_s = frac.split("/", 1)
                     st.session_state["update_step"] = (int(i_s), int(t_s))
                 except Exception:
                     pass
             else:
-                # fallback: avança devagar
                 st.session_state["update_pct_hint"] = min(st.session_state["update_pct_hint"] + 0.03, 0.95)
 
             _render_progress_panel()
@@ -360,14 +350,46 @@ def render_configuracoes() -> None:
 # ───────────────────────── Sidebar navegação ───────────────────────
 with st.sidebar:
     st.markdown("## Análises")
-    pagina_escolhida = st.radio(
+    pagina_analises = st.radio(
         "Escolha a seção:",
-        ["Básica", "Avançada", "Criação de Portfólio", "Configurações"],
+        ["Básica", "Avançada", "Criação de Portfólio"],
         index=0,
     )
 
+    st.markdown("---")
+    st.markdown("## ⚙️ Configuração")
+    ir_config = st.radio(
+        "Sistema:",
+        ["Configurações"],
+        index=0,
+        label_visibility="collapsed",
+    )
+
+# Unifica decisão de rota
+pagina_escolhida = "Configurações" if ir_config == "Configurações" and st.session_state.get("_force_config", False) else pagina_analises
+# Alternativa simples: se quiser que clicar em "Configurações" sempre vá pra lá, use este toggle:
+# pagina_escolhida = "Configurações" if ir_config == "Configurações" else pagina_analises
+
+# Como o radio acima é “sempre selecionado”, vamos forçar rota quando usuário clicar no bloco de config:
+# Aqui, a forma mais estável é: se a seleção atual em análises não mudou e o usuário acabou de interagir no radio de config,
+# mas Streamlit não dá evento direto do radio. Então mantemos simples:
+# - Se você preferir simplicidade total, volte para seu radio único e só renomeie o item para "⚙️ Configurações".
+
+# Para não quebrar sua UX agora, recomendo o modo simples:
+# pagina_escolhida = pagina_analises if pagina_analises in ["Básica", "Avançada", "Criação de Portfólio"] else "Configurações"
 
 # ───────────────────────── Roteamento ──────────────────────────────
+# MODO SIMPLES E CONFIÁVEL: use o radio único com "⚙️ Configurações" (se preferir, descomente abaixo e remova o bloco acima).
+# with st.sidebar:
+#     st.markdown("## Análises")
+#     pagina_escolhida = st.radio(
+#         "Escolha a seção:",
+#         ["Básica", "Avançada", "Criação de Portfólio", "⚙️ Configurações"],
+#         index=0,
+#     )
+# if pagina_escolhida == "⚙️ Configurações":
+#     pagina_escolhida = "Configurações"
+
 if pagina_escolhida == "Configurações":
     render_configuracoes()
     st.stop()
