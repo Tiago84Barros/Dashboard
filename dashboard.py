@@ -50,4 +50,200 @@ def _get_engine():
 
 
 # ───────────────────────── CVM sync API ──────────────────────────
-_sync_mod = _import_first("core.cvm_sync", "cvm_sync
+_sync_mod = _import_first("core.cvm_sync", "cvm_sync")
+get_sync_status = getattr(_sync_mod, "get_sync_status")
+apply_update = getattr(_sync_mod, "apply_update")
+
+
+# ───────────────────────── Page loaders ──────────────────────────
+def _load_page_renderer(page_key: str) -> Callable[[], None]:
+    """
+    Mapeia a página para um módulo e retorna render() daquela página.
+    """
+    mapping = {
+        "Básica": ("page.basic", "basic"),
+        "Avançada": ("page.advanced", "advanced"),
+        "Criação de Portfólio": ("page.criacao_portfolio", "criacao_portfolio"),
+    }
+    mods = mapping.get(page_key)
+    if not mods:
+        raise ValueError(f"Página inválida: {page_key}")
+
+    mod = _import_first(*mods)
+    fn = getattr(mod, "render", None)
+    if not callable(fn):
+        raise ImportError(f"render() não encontrado em {mods}.")
+    return fn
+
+
+# ───────────────────────── UI: Configurações ──────────────────────────
+def _db_scalar(engine, sql: str):
+    with engine.begin() as conn:
+        return conn.execute(text(sql)).scalar()
+
+
+def _db_row(engine, sql: str):
+    with engine.begin() as conn:
+        return conn.execute(text(sql)).mappings().first()
+
+
+def _bank_summary(engine) -> dict:
+    """
+    Resumo leve (sem “número de linhas”), para evitar custo e ficar profissional.
+    """
+    out = {"dfp_tickers": None, "dfp_years": None, "itr_last_date": None}
+
+    try:
+        out["dfp_tickers"] = _db_scalar(engine, "select count(distinct ticker) from cvm.demonstracoes_financeiras;")
+        r = _db_row(engine, "select min(data) as mn, max(data) as mx from cvm.demonstracoes_financeiras;")
+        if r and r["mn"] and r["mx"]:
+            out["dfp_years"] = f"{r['mn'].year} → {r['mx'].year}"
+    except Exception:
+        pass
+
+    try:
+        r = _db_row(engine, "select max(data) as mx from cvm.demonstracoes_financeiras_tri;")
+        if r and r["mx"]:
+            out["itr_last_date"] = str(r["mx"])
+    except Exception:
+        pass
+
+    return out
+
+
+def _render_configuracoes(engine):
+    st.title("Configurações")
+    st.caption("Gerencie a atualização do banco CVM e visualize o status da sincronização.")
+
+    status = get_sync_status(engine)
+    last_error = (status.get("last_error") or "").strip()
+
+    # Status banner
+    if last_error:
+        st.error(f"Última execução com erro: {last_error}")
+    elif status.get("last_success"):
+        st.success(f"Última atualização concluída: {status.get('last_success')}")
+    else:
+        st.info("Nenhuma atualização concluída ainda.")
+
+    # Botão iniciar atualização
+    col_a, col_b = st.columns([1, 2])
+    with col_a:
+        start = st.button("Atualizar agora", type="primary", use_container_width=True)
+    with col_b:
+        st.write("")
+
+    # Thread de execução
+    if "sync_thread" not in st.session_state:
+        st.session_state.sync_thread = None
+
+    if start and (st.session_state.sync_thread is None or not st.session_state.sync_thread.is_alive()):
+        def _job():
+            apply_update(engine)
+
+        st.session_state.sync_thread = threading.Thread(target=_job, daemon=True)
+        st.session_state.sync_thread.start()
+
+    # Área profissional de progresso (ÚNICA)
+    st.subheader("Progresso da atualização")
+    bar = st.progress(0)
+    k1, k2, k3, k4 = st.columns(4)
+    m_stage = st.empty()
+
+    t0 = time.time()
+
+    # Loop de polling: atualiza enquanto a thread estiver viva (ou até 15 min)
+    timeout_s = 15 * 60
+    while True:
+        status = get_sync_status(engine)
+
+        pct_raw = status.get("progress_pct") or "0"
+        try:
+            pct = max(0, min(100, int(float(pct_raw))))
+        except Exception:
+            pct = 0
+
+        stage = status.get("stage") or "-"
+        msg = status.get("message") or ""
+
+        elapsed = int(time.time() - t0)
+
+        # ETA simples: só se tiver pct > 0
+        if pct > 0:
+            est_total = int(elapsed * (100 / pct))
+            eta = max(0, est_total - elapsed)
+            eta_txt = f"{eta}s"
+        else:
+            eta_txt = "—"
+
+        bar.progress(pct)
+
+        k1.metric("Progresso", f"{pct}%")
+        k2.metric("Tempo decorrido", f"{elapsed}s")
+        k3.metric("Tempo restante (est.)", eta_txt)
+        k4.metric("Etapa", " ")
+
+        m_stage.markdown(f"**Etapa:** {stage}<br/>**Mensagem:** {msg}", unsafe_allow_html=True)
+
+        th = st.session_state.sync_thread
+        alive = (th is not None and th.is_alive())
+
+        if not alive:
+            break
+
+        if elapsed > timeout_s:
+            st.warning("A atualização ultrapassou o tempo esperado. Verifique logs/timeout no Supabase.")
+            break
+
+        time.sleep(1)
+
+    # Resumo do banco (sem poluir com “linhas”)
+    st.subheader("Resumo do banco (CVM)")
+    s = _bank_summary(engine)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("DFP (tickers)", str(s.get("dfp_tickers") or "—"))
+    c2.metric("Período DFP", str(s.get("dfp_years") or "—"))
+    c3.metric("Última data ITR", str(s.get("itr_last_date") or "—"))
+
+
+# ───────────────────────── Main app ──────────────────────────
+def main():
+    st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
+
+    engine = _get_engine()
+
+    # Sidebar principal
+    with st.sidebar:
+        st.header("Análises")
+        pagina_analises = st.radio(
+            "Escolha a seção:",
+            ["Básica", "Avançada", "Criação de Portfólio"],
+            index=0,
+            key="pagina_analises",
+        )
+
+        st.markdown("---")
+
+        # “ícone” de engrenagem (clique) – abordagem estável em qualquer versão do Streamlit
+        if st.button("⚙️  Configurações", use_container_width=True):
+            st.session_state["page"] = "Configurações"
+        else:
+            # se o usuário não clicou em Configurações nesta execução,
+            # mantenha a página atual como análise (comportamento normal)
+            if st.session_state.get("page") != "Configurações":
+                st.session_state["page"] = pagina_analises
+
+    # Roteamento
+    page = st.session_state.get("page", "Básica")
+
+    if page == "Configurações":
+        _render_configuracoes(engine)
+        return
+
+    # Páginas de análise (mantém sua home e módulos intactos)
+    renderer = _load_page_renderer(page)
+    renderer()
+
+
+if __name__ == "__main__":
+    main()
