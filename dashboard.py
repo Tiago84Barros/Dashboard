@@ -362,7 +362,6 @@ if pagina_escolhida == "⚙️ Configurações":
 
 
 # Unifica decisão de rota
-pagina_escolhida = "Configurações" if ir_config == "Configurações" and st.session_state.get("_force_config", False) else pagina_analises
 # Alternativa simples: se quiser que clicar em "Configurações" sempre vá pra lá, use este toggle:
 # pagina_escolhida = "Configurações" if ir_config == "Configurações" else pagina_analises
 
@@ -402,5 +401,6 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
 
 
