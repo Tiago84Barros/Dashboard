@@ -14,7 +14,7 @@ import logging
 import pathlib
 import sys
 import time
-from typing import Callable, Optional, Tuple
+from typing import Callable
 
 import streamlit as st
 from sqlalchemy import text
@@ -22,8 +22,8 @@ from sqlalchemy import text
 from core.db_supabase import get_engine
 from core.cvm_sync import apply_update, get_sync_status
 
-engine = get_engine()
 logger = logging.getLogger(__name__)
+engine = get_engine()
 
 # ───────────────────────── Ajuste de path ──────────────────────────
 ROOT_DIR = pathlib.Path(__file__).resolve().parent
@@ -33,10 +33,6 @@ if str(ROOT_DIR) not in sys.path:
 
 # ───────────────────────── Imports com fallback ─────────────────────
 def _import_first(*module_paths: str):
-    """
-    Tenta importar o primeiro módulo disponível na lista.
-    Retorna o módulo importado ou levanta ImportError com detalhes.
-    """
     errors = []
     for p in module_paths:
         try:
@@ -50,9 +46,9 @@ def _import_first(*module_paths: str):
 def _get_layout_funcs() -> tuple[Callable[[], None], Callable[[], None]]:
     """
     Busca configurar_pagina() e aplicar_estilos_css() em:
-    - design.layout (estrutura modular)
-    - layout (arquivo solto)
-    Se não existir, usa fallback minimalista.
+    - design.layout
+    - layout
+    Se não existir, usa fallback.
     """
     try:
         mod = _import_first("design.layout", "layout")
@@ -63,7 +59,6 @@ def _get_layout_funcs() -> tuple[Callable[[], None], Callable[[], None]]:
     except Exception:
         pass
 
-    # fallback seguro
     def _fallback_config():
         try:
             st.set_page_config(
@@ -72,7 +67,6 @@ def _get_layout_funcs() -> tuple[Callable[[], None], Callable[[], None]]:
                 initial_sidebar_state="expanded",
             )
         except Exception:
-            # set_page_config só pode ser chamado uma vez; ignora se já foi chamado.
             pass
 
     def _fallback_css():
@@ -91,11 +85,10 @@ def _get_layout_funcs() -> tuple[Callable[[], None], Callable[[], None]]:
 
 def _get_db_loader():
     """
-    Obtém load_setores_from_db preferencialmente via facade (Opção A):
-    - core.data_access (decide SQLite/Supabase via DATA_SOURCE)
+    Facade preferencial:
+    - core.data_access / data_access
     fallback:
-    - data_access
-    - core.db_loader / db_loader (legado)
+    - core.db_loader / db_loader
     """
     mod = _import_first("core.data_access", "data_access", "core.db_loader", "db_loader")
     fn = getattr(mod, "load_setores_from_db", None)
@@ -105,12 +98,6 @@ def _get_db_loader():
 
 
 def _load_page_renderer(page_key: str) -> Callable[[], None]:
-    """
-    Carrega a função render() da página escolhida, com fallback de caminhos:
-    - page.basic / basic
-    - page.advanced / advanced
-    - page.criacao_portfolio / criacao_portfolio
-    """
     mapping = {
         "Básica": ("page.basic", "basic"),
         "Avançada": ("page.advanced", "advanced"),
@@ -138,11 +125,10 @@ def _ensure_setores_df() -> None:
     if "setores_df" in st.session_state and st.session_state["setores_df"] is not None:
         return
     load_setores_from_db = _get_db_loader()
-    setores_df = load_setores_from_db()
-    st.session_state["setores_df"] = setores_df
+    st.session_state["setores_df"] = load_setores_from_db()
 
 
-# ───────────────────────── Helpers (DB Snapshot) ───────────────────
+# ───────────────────────── Helpers DB snapshot ─────────────────────
 def _safe_scalar(sql: str):
     try:
         with engine.begin() as conn:
@@ -151,46 +137,35 @@ def _safe_scalar(sql: str):
         return None
 
 
-def _get_db_snapshot() -> dict:
+def _get_snapshot_light() -> dict:
     """
-    Coleta métricas rápidas para exibir no painel de atualização.
-    Deve ser leve e tolerante a tabelas ainda inexistentes.
+    Snapshot "limpo": sem contagem de linhas (ruído). Só o que importa para UX.
     """
     snap = {}
 
-    # DFP (anual)
-    snap["dfp_rows"] = _safe_scalar("select count(*) from cvm.demonstracoes_financeiras;")
     snap["dfp_tickers"] = _safe_scalar("select count(distinct ticker) from cvm.demonstracoes_financeiras;")
-    snap["dfp_min_date"] = _safe_scalar("select min(data) from cvm.demonstracoes_financeiras;")
-    snap["dfp_max_date"] = _safe_scalar("select max(data) from cvm.demonstracoes_financeiras;")
+    snap["dfp_min"] = _safe_scalar("select min(data) from cvm.demonstracoes_financeiras;")
+    snap["dfp_max"] = _safe_scalar("select max(data) from cvm.demonstracoes_financeiras;")
 
-    # ITR (trimestral)
-    snap["itr_rows"] = _safe_scalar("select count(*) from cvm.demonstracoes_financeiras_tri;")
     snap["itr_tickers"] = _safe_scalar("select count(distinct ticker) from cvm.demonstracoes_financeiras_tri;")
-    snap["itr_min_date"] = _safe_scalar("select min(data) from cvm.demonstracoes_financeiras_tri;")
-    snap["itr_max_date"] = _safe_scalar("select max(data) from cvm.demonstracoes_financeiras_tri;")
+    snap["itr_max"] = _safe_scalar("select max(data) from cvm.demonstracoes_financeiras_tri;")
 
-    # Macro
-    snap["macro_rows"] = _safe_scalar("select count(*) from cvm.info_economica;")
-    snap["macro_min_date"] = _safe_scalar("select min(data) from cvm.info_economica;")
-    snap["macro_max_date"] = _safe_scalar("select max(data) from cvm.info_economica;")
+    snap["macro_max"] = _safe_scalar("select max(data) from cvm.info_economica;")
 
     return snap
 
 
-def _format_quarter(d) -> str:
+def _fmt_quarter(d) -> str:
     if not d:
         return "-"
     try:
-        month = d.month
-        year = d.year
+        q = (d.month - 1) // 3 + 1
+        return f"{d.year}T{q}"
     except Exception:
         return "-"
-    q = (month - 1) // 3 + 1
-    return f"{year}T{q}"
 
 
-def _format_year_range(min_d, max_d) -> str:
+def _fmt_years(min_d, max_d) -> str:
     if not min_d or not max_d:
         return "-"
     try:
@@ -199,47 +174,26 @@ def _format_year_range(min_d, max_d) -> str:
         return "-"
 
 
-# ───────────────────────── Página: Configurações ───────────────────
+# ───────────────────────── Página Configurações ────────────────────
 def render_configuracoes() -> None:
     st.title("Configurações")
 
-    # Estado da UI
-    if "cfg_show_diag" not in st.session_state:
-        st.session_state["cfg_show_diag"] = False
+    # Estado UI
+    st.session_state.setdefault("cfg_show_diag", False)
 
-    # Estado do update/progresso
-    if "update_running" not in st.session_state:
-        st.session_state["update_running"] = False
-    if "update_started_at" not in st.session_state:
-        st.session_state["update_started_at"] = None
-    if "update_step" not in st.session_state:
-        st.session_state["update_step"] = (0, 0)  # idx, total (quando disponível)
-    if "update_msg" not in st.session_state:
-        st.session_state["update_msg"] = ""
-    if "update_pct_hint" not in st.session_state:
-        st.session_state["update_pct_hint"] = 0.0  # fallback quando não há STEP i/t
+    # Estado update
+    st.session_state.setdefault("update_running", False)
+    st.session_state.setdefault("update_started_at", None)
+    st.session_state.setdefault("update_step", (0, 0))          # (idx, total)
+    st.session_state.setdefault("update_msg", "")
+    st.session_state.setdefault("update_pct_hint", 0.0)
 
-    # Header de status do sync
-    st.subheader("Status de atualização (CVM)")
-    try:
-        status = get_sync_status(engine)
-        last_run = status.get("last_run")
-        if last_run:
-            st.success(f"Última atualização (UTC): {last_run}")
-        else:
-            st.warning("Nenhuma atualização executada ainda.")
-    except Exception as e:
-        st.error(f"Não foi possível consultar status da CVM: {e}")
-
-    st.divider()
-
-    # Ações
+    # ── Top bar: ações
     c1, c2, c3 = st.columns([1, 1, 2], gap="medium")
 
     with c1:
         if st.button("Recarregar cache", use_container_width=True):
             st.session_state.pop("setores_df", None)
-            # cache_data.clear() existe nas versões recentes; protege em try
             try:
                 st.cache_data.clear()
             except Exception:
@@ -249,134 +203,149 @@ def render_configuracoes() -> None:
 
     with c2:
         if st.button("Diagnóstico", use_container_width=True):
-            st.session_state["cfg_show_diag"] = not st.session_state.get("cfg_show_diag", False)
+            st.session_state["cfg_show_diag"] = not st.session_state["cfg_show_diag"]
 
     with c3:
-        iniciar = st.button("Atualizar tabelas (CVM)", use_container_width=True, disabled=st.session_state["update_running"])
+        iniciar = st.button(
+            "Atualizar tabelas (CVM)",
+            use_container_width=True,
+            disabled=st.session_state["update_running"],
+        )
 
-    # Diagnóstico (no corpo da página, não mais no sidebar)
-    if st.session_state.get("cfg_show_diag"):
-        with st.expander("Diagnóstico do App", expanded=True):
-            st.write("Root dir:", str(ROOT_DIR))
-            st.write("Python path contém root:", str(ROOT_DIR) in sys.path)
+    # ── Diagnóstico (opcional)
+    if st.session_state["cfg_show_diag"]:
+        with st.expander("Diagnóstico", expanded=True):
+            try:
+                status = get_sync_status(engine)
+                st.write("sync_status:", status)
+            except Exception as e:
+                st.error(f"Falha ao obter status: {e}")
+
             try:
                 _ensure_setores_df()
-                s = st.session_state.get("setores_df")
-                st.write("setores_df carregado:", (s is not None) and (getattr(s, "empty", True) is False))
-                if s is not None and not getattr(s, "empty", True):
-                    st.write("Linhas/Colunas:", s.shape)
-                    st.write("Colunas:", list(s.columns))
+                df = st.session_state.get("setores_df")
+                st.write("setores_df carregado:", df is not None and not getattr(df, "empty", True))
             except Exception as e:
                 st.error(f"Falha ao carregar setores_df: {e}")
 
     st.divider()
 
-    # Área de progresso (aparece aqui, na região principal)
-    progress_container = st.container()
+    # ── Placeholders únicos (evita duplicação / “3 carregamentos”)
+    status_slot = st.empty()
+    progress_slot = st.empty()
 
-    def _render_progress_panel() -> None:
-        with progress_container:
-            progress_container.empty()
-            st.subheader("Progresso da atualização")
-
-            idx, total = st.session_state.get("update_step", (0, 0))
-            if total and total > 0:
-                pct = min(max(idx / total, 0.0), 1.0)
-            else:
-                # fallback “sensação de progresso” quando não há step definido
-                pct = min(max(st.session_state.get("update_pct_hint", 0.0), 0.0), 0.97)
-
-            st.progress(pct)
-            st.write(f"**Carregado:** {pct * 100:.1f}%")
-            if total and total > 0:
-                st.write(f"**Etapa:** {idx}/{total}")
-            st.write(f"**Status:** {st.session_state.get('update_msg', '')}")
-
-            started = st.session_state.get("update_started_at")
-            if started:
-                elapsed = time.time() - started
-                st.write(f"**Tempo decorrido:** {int(elapsed)}s")
-
-                if total and total > 0 and idx > 0:
-                    per_step = elapsed / idx
-                    remaining = per_step * (total - idx)
-                    st.write(f"**Tempo restante (estimado):** {int(remaining)}s")
-
-            snap = _get_db_snapshot()
-
-            st.markdown("### Dados já no banco")
-
-            st.write(
-                f"**DFP (anual)**: {snap.get('dfp_rows') or 0} linhas | {snap.get('dfp_tickers') or 0} tickers"
-            )
-            if snap.get("dfp_min_date") and snap.get("dfp_max_date"):
-                st.write(
-                    f"**Anos inseridos (DFP):** {_format_year_range(snap['dfp_min_date'], snap['dfp_max_date'])} "
-                    f"(até {snap['dfp_max_date']})"
-                )
-
-            st.write(
-                f"**ITR (trimestral)**: {snap.get('itr_rows') or 0} linhas | {snap.get('itr_tickers') or 0} tickers"
-            )
-            if snap.get("itr_max_date"):
-                st.write(
-                    f"**Último trimestre (ITR):** {_format_quarter(snap['itr_max_date'])} "
-                    f"(data máx: {snap['itr_max_date']})"
-                )
-
-            st.write(f"**Macro (info_economica)**: {snap.get('macro_rows') or 0} linhas")
-            if snap.get("macro_max_date"):
-                st.write(f"**Macro até:** {snap['macro_max_date']}")
-
-            # Última atualização
+    def _render_status_header():
+        with status_slot.container():
+            status_slot.empty()
             try:
                 status = get_sync_status(engine)
                 last_run = status.get("last_run")
                 if last_run:
-                    st.markdown("### Última atualização registrada")
-                    st.write(f"**Data (UTC):** {last_run}")
-            except Exception:
-                pass
+                    st.info(f"Última atualização registrada (UTC): {last_run}")
+                else:
+                    st.warning("Nenhuma atualização executada ainda.")
+            except Exception as e:
+                st.warning(f"Não foi possível consultar status da CVM agora: {e}")
 
-    # Execução do update com callback (mostra no corpo do app)
+    def _render_progress_panel():
+        """
+        Painel limpo e “profissional”, sem ruído de contagem de linhas.
+        """
+        idx, total = st.session_state.get("update_step", (0, 0))
+
+        if total and total > 0:
+            pct = min(max(idx / total, 0.0), 1.0)
+        else:
+            # progresso “sensação” quando não há STEP i/t
+            pct = min(max(st.session_state.get("update_pct_hint", 0.0), 0.0), 0.95)
+
+        started = st.session_state.get("update_started_at")
+        elapsed_s = int(time.time() - started) if started else 0
+
+        remaining_s = None
+        if started and total and total > 0 and idx > 0:
+            per_step = (time.time() - started) / idx
+            remaining_s = int(per_step * (total - idx))
+
+        snap = _get_snapshot_light()
+
+        with progress_slot.container():
+            progress_slot.empty()
+
+            st.subheader("Progresso da atualização")
+
+            st.progress(pct)
+
+            # Cards de métricas (mais clean)
+            m1, m2, m3, m4 = st.columns(4, gap="medium")
+            m1.metric("Progresso", f"{pct*100:.0f}%")
+            m2.metric("Tempo decorrido", f"{elapsed_s}s")
+            if remaining_s is not None:
+                m3.metric("Tempo restante (est.)", f"{remaining_s}s")
+            else:
+                m3.metric("Tempo restante (est.)", "-")
+            m4.metric("Etapa", f"{idx}/{total}" if total and total > 0 else "-")
+
+            st.caption(st.session_state.get("update_msg", "").strip() or "Aguardando…")
+
+            st.markdown("#### Resumo do banco (CVM)")
+
+            r1, r2, r3 = st.columns(3, gap="medium")
+            r1.metric("DFP (tickers)", f"{snap.get('dfp_tickers') or 0}")
+            r2.metric("Período DFP", _fmt_years(snap.get("dfp_min"), snap.get("dfp_max")))
+            r3.metric("Último trimestre ITR", _fmt_quarter(snap.get("itr_max")))
+
+            # Macro opcional (sem “0 linhas”)
+            macro_max = snap.get("macro_max")
+            if macro_max:
+                st.caption(f"Macro (info_economica) atualizada até: {macro_max}")
+
+    # Render inicial (parado)
+    _render_status_header()
+    _render_progress_panel()
+
+    # ── Execução do update (callback)
     if iniciar and not st.session_state["update_running"]:
         st.session_state["update_running"] = True
         st.session_state["update_started_at"] = time.time()
-        st.session_state["update_msg"] = "Iniciando..."
+        st.session_state["update_msg"] = "Iniciando atualização…"
         st.session_state["update_step"] = (0, 0)
         st.session_state["update_pct_hint"] = 0.02
+
+        _render_status_header()
         _render_progress_panel()
 
         def progress_cb(msg: str):
-            # Atualiza mensagem
             st.session_state["update_msg"] = msg
 
-            # Progresso por etapas (se o pipeline emitir STEP i/t)
+            # STEP i/t :: módulo (se pipeline emitir)
             if isinstance(msg, str) and msg.startswith("STEP "):
-                # Ex.: "STEP 2/6 :: cvm.cvm_dfp_ingest"
                 try:
-                    header = msg.split("::", 1)[0].strip()  # "STEP 2/6"
-                    frac = header.replace("STEP", "").strip()  # "2/6"
+                    header = msg.split("::", 1)[0].strip()     # "STEP i/t"
+                    frac = header.replace("STEP", "").strip()  # "i/t"
                     i_s, t_s = frac.split("/", 1)
                     st.session_state["update_step"] = (int(i_s), int(t_s))
                 except Exception:
                     pass
             else:
-                # fallback: avança lentamente para “sensação de execução”
-                st.session_state["update_pct_hint"] = min(st.session_state.get("update_pct_hint", 0.0) + 0.03, 0.95)
+                # fallback: avança devagar
+                st.session_state["update_pct_hint"] = min(st.session_state["update_pct_hint"] + 0.03, 0.95)
 
             _render_progress_panel()
 
         try:
             apply_update(engine, progress_cb=progress_cb)
 
-            # força recarregar base e páginas após update
+            # recarrega setores após update
             st.session_state.pop("setores_df", None)
 
-            st.session_state["update_msg"] = "Concluído com sucesso."
+            st.session_state["update_msg"] = "Concluído."
             st.session_state["update_step"] = (1, 1)
             st.session_state["update_pct_hint"] = 1.0
+
+            _render_status_header()
             _render_progress_panel()
+            st.success("Atualização finalizada com sucesso.")
 
         except Exception as e:
             st.session_state["update_msg"] = f"Falha: {e}"
@@ -386,10 +355,6 @@ def render_configuracoes() -> None:
 
         finally:
             st.session_state["update_running"] = False
-
-    else:
-        # Render “parado” (mostra snapshot e última atualização sem rodar nada)
-        _render_progress_panel()
 
 
 # ───────────────────────── Sidebar navegação ───────────────────────
@@ -402,7 +367,7 @@ with st.sidebar:
     )
 
 
-# ───────────────────────── Execução / Roteamento ────────────────────
+# ───────────────────────── Roteamento ──────────────────────────────
 if pagina_escolhida == "Configurações":
     render_configuracoes()
     st.stop()
