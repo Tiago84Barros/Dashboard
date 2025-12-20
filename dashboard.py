@@ -360,14 +360,6 @@ with st.sidebar:
 if pagina_escolhida == "⚙️ Configurações":
     pagina_escolhida = "Configurações"
 
-    st.markdown("---")
-    st.markdown("## ⚙️ Configuração")
-    ir_config = st.radio(
-        "Sistema:",
-        ["Configurações"],
-        index=0,
-        label_visibility="collapsed",
-    )
 
 # Unifica decisão de rota
 pagina_escolhida = "Configurações" if ir_config == "Configurações" and st.session_state.get("_force_config", False) else pagina_analises
@@ -410,4 +402,5 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
 
