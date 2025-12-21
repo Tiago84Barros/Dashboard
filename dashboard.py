@@ -267,17 +267,23 @@ def _render_configuracoes(engine):
 st.markdown(
     """
     <style>
-      /* Sidebar como coluna com rodapé fixo (flex) */
-      [data-testid="stSidebar"] > div:first-child {
-        height: 100%;
-      }
-      [data-testid="stSidebar"] > div:first-child > div:first-child {
+      /* Sidebar content como coluna */
+      [data-testid="stSidebarContent"]{
         display: flex;
         flex-direction: column;
-        height: 100vh;
+        height: 100%;
       }
-      .sb-main { flex: 0 0 auto; }
-      .sb-footer { margin-top: auto; padding-top: 12px; padding-bottom: 8px; }
+
+      /* Espaçador para empurrar apenas o rodapé */
+      .sb-spacer{
+        flex: 1 1 auto;
+      }
+
+      /* Rodapé: mantém no final sem empurrar o resto */
+      .sb-footer{
+        padding-top: 12px;
+        padding-bottom: 8px;
+      }
     </style>
     """,
     unsafe_allow_html=True,
@@ -286,14 +292,7 @@ st.markdown(
 
 # ───────────────────────── Sidebar navegação ───────────────────────
 with st.sidebar:
-    # Diagnóstico de origem (remova depois se quiser)
-    # st.caption(f"Fonte do sidebar: {__file__}")
-
-    st.markdown('<div class="sb-main">', unsafe_allow_html=True)
-
     st.markdown("## Análises")
-
-    # 1) Remove item "Busca" abaixo de Análises -> não renderizamos nada aqui.
 
     pagina_escolhida = st.radio(
         "Escolha a seção:",
@@ -302,12 +301,11 @@ with st.sidebar:
         key="pagina_escolhida",
     )
 
-    # 4) Subir "buscar ticker" para baixo de "Criação de Portfólio"
+    # Busca fica logo abaixo do rádio
     st.text_input("Buscar ticker (ex.: PETR4)", key="buscar_ticker")
 
-    # 3) Retirar botão/área "Atualizar dados" do sidebar -> removemos todo o bloco "Atualização CVM"
-    # Mantemos os utilitários que você já tinha:
     st.markdown("---")
+
     col_a, col_b = st.columns(2)
     with col_a:
         if st.button("Recarregar cache", use_container_width=True):
@@ -317,9 +315,11 @@ with st.sidebar:
         if st.button("Diagnóstico", use_container_width=True):
             st.session_state["__show_diag__"] = True
 
-    st.markdown("</div>", unsafe_allow_html=True)
+    # Espaçador: tudo acima permanece na posição normal,
+    # e somente o rodapé é empurrado para baixo
+    st.markdown('<div class="sb-spacer"></div>', unsafe_allow_html=True)
 
-    # 2) Botão Configurações no rodapé
+    # Rodapé com Configurações
     st.markdown('<div class="sb-footer">', unsafe_allow_html=True)
     if st.button("⚙️ Configurações", use_container_width=True, key="btn_config"):
         st.session_state["page"] = "Configurações"
@@ -329,41 +329,3 @@ with st.sidebar:
     # roteamento padrão
     if st.session_state.get("page") != "Configurações":
         st.session_state["page"] = pagina_escolhida
-
-
-# ───────────────────────── Diagnóstico leve ─────────────────────────
-if st.session_state.get("__show_diag__"):
-    st.session_state["__show_diag__"] = False
-    with st.expander("Diagnóstico do App", expanded=True):
-        st.write("Root dir:", str(ROOT_DIR))
-        st.write("Python path contém root:", str(ROOT_DIR) in sys.path)
-        st.write("Arquivo em execução:", __file__)
-        try:
-            _ensure_setores_df()
-            s = st.session_state.get("setores_df")
-            st.write("setores_df carregado:", (s is not None) and (getattr(s, "empty", True) is False))
-            if s is not None and not getattr(s, "empty", True):
-                st.write("Linhas/Colunas:", s.shape)
-                st.write("Colunas:", list(s.columns))
-        except Exception as e:
-            st.error(f"Falha ao carregar setores_df: {e}")
-
-
-# ───────────────────────── Execução / Roteamento ────────────────────
-try:
-    _ensure_setores_df()
-except Exception as e:
-    st.error(f"Falha ao inicializar dados base (setores_df): {e}")
-    st.stop()
-
-page = st.session_state.get("page", "Básica")
-
-if page == "Configurações":
-    _render_configuracoes(engine)
-else:
-    try:
-        render_page = _load_page_renderer(page)
-        render_page()
-    except Exception as e:
-        st.error("Falha ao carregar a página selecionada.")
-        st.exception(e)
