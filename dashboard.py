@@ -243,6 +243,10 @@ with st.sidebar:
     st.text_input("Buscar ticker", key="buscar_ticker")
     st.divider()
     st.markdown('<div class="sb-footer">', unsafe_allow_html=True)
+    if st.button("⚙️ Configurações", use_container_width=True, key="btn_config"):
+        st.session_state["page"] = "Configurações"
+        st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 if page == "Configurações":
@@ -250,6 +254,7 @@ if page == "Configurações":
 else:
     renderer = _load_page_renderer(page)
     renderer()
+
 
 
 
