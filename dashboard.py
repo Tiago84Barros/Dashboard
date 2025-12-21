@@ -320,14 +320,15 @@ with st.sidebar:
 
 page = st.session_state.get("page", "Básica")
 
-    if page == "Configurações":
-        _render_configuracoes(engine)
-        return
+if page == "Configurações":
+    _render_configuracoes(engine)
+    return
 
-    renderer = _load_page_renderer(page)
-    renderer()
+renderer = _load_page_renderer(page)
+renderer()
 
 
 if _name_ == "_main_":
-    main()
+main()
+
 
