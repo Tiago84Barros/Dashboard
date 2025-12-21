@@ -239,27 +239,10 @@ with st.sidebar:
         key="pagina_escolhida",
     )
 
-    st.divider()
-
-    st.text_input("Buscar ticker (ex.: PETR4)", key="buscar_ticker")
-
-    st.divider()
-
-    st.markdown('<div class="sb-footer">', unsafe_allow_html=True)
-    if st.button("⚙️ Configurações", use_container_width=True, key="btn_config"):
-        st.session_state["page"] = "Configurações"
-        st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    if st.session_state.get("page") != "Configurações":
-        st.session_state["page"] = pagina_escolhida
-
-
-# ───────────────────────── Execução / Roteamento ───────────────────────
-page = st.session_state.get("page", "Básica")
 
 if page == "Configurações":
     _render_configuracoes(engine)
 else:
     renderer = _load_page_renderer(page)
     renderer()
+
