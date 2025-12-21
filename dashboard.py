@@ -301,21 +301,19 @@ with st.sidebar:
     st.divider()
 
     # Busca
-    st.text_input("Buscar ticker", key="buscar_ticker")
+    st.text_input("Buscar ticker (ex.: PETR4)", key="buscar_ticker")
 
-    # Espaçador flexível: empurra SOMENTE o rodapé
-    st.markdown('<div class="sb-spacer"></div>', unsafe_allow_html=True)
+    # Spacer NATIVO (não quebra cliques)
+    spacer = st.empty()
+    spacer.write("")  # ocupa espaço sem bloquear interação
 
     st.divider()
 
     # Rodapé – Configurações
-    st.markdown('<div class="sb-footer">', unsafe_allow_html=True)
     if st.button("⚙️ Configurações", use_container_width=True, key="btn_config"):
         st.session_state["page"] = "Configurações"
         st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
 
     # Roteamento padrão
     if st.session_state.get("page") != "Configurações":
         st.session_state["page"] = pagina_escolhida
-
