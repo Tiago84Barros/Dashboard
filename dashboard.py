@@ -301,7 +301,7 @@ with st.sidebar:
     st.divider()
 
     # Busca
-    st.text_input("Buscar ticker (ex.: PETR4)", key="buscar_ticker")
+    st.text_input("Buscar ticker", key="buscar_ticker")
 
     # Espaçador flexível: empurra SOMENTE o rodapé
     st.markdown('<div class="sb-spacer"></div>', unsafe_allow_html=True)
@@ -318,3 +318,4 @@ with st.sidebar:
     # Roteamento padrão
     if st.session_state.get("page") != "Configurações":
         st.session_state["page"] = pagina_escolhida
+
