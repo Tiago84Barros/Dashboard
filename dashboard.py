@@ -286,8 +286,11 @@ st.markdown(
 
 # ───────────────────────── Sidebar navegação ───────────────────────
 with st.sidebar:
+    # Título
     st.markdown("## Análises")
+    st.divider()
 
+    # Escolha da seção
     pagina_escolhida = st.radio(
         "Escolha a seção:",
         ["Básica", "Avançada", "Criação de Portfólio"],
@@ -295,19 +298,23 @@ with st.sidebar:
         key="pagina_escolhida",
     )
 
-    # Busca logo abaixo da escolha de seção
+    st.divider()
+
+    # Busca
     st.text_input("Buscar ticker (ex.: PETR4)", key="buscar_ticker")
 
     # Espaçador flexível: empurra SOMENTE o rodapé
     st.markdown('<div class="sb-spacer"></div>', unsafe_allow_html=True)
 
-    # Rodapé fixo com Configurações
+    st.divider()
+
+    # Rodapé – Configurações
     st.markdown('<div class="sb-footer">', unsafe_allow_html=True)
     if st.button("⚙️ Configurações", use_container_width=True, key="btn_config"):
         st.session_state["page"] = "Configurações"
         st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # roteamento padrão
+    # Roteamento padrão
     if st.session_state.get("page") != "Configurações":
         st.session_state["page"] = pagina_escolhida
