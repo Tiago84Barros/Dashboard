@@ -1,9 +1,9 @@
 """
 dashboard.py
 ~~~~~~~~~~~~
-Script principal Streamlit.
+Script principal da aplicação Streamlit.
 
-Execute:
+Execute com:
     streamlit run dashboard.py
 """
 
@@ -20,7 +20,11 @@ from typing import Callable
 import streamlit as st
 from sqlalchemy import text
 
+from core.db_supabase import get_engine
+from core.cvm_sync import get_sync_status, apply_update
+
 logger = logging.getLogger(__name__)
+engine = get_engine()
 
 # ───────────────────────── Path / Imports helpers ──────────────────────────
 ROOT_DIR = pathlib.Path(__file__).resolve().parent
@@ -36,21 +40,6 @@ def _import_first(*module_names: str):
         except Exception as e:
             last_err = e
     raise ImportError(f"Falha ao importar módulos {module_names}. Último erro: {last_err}")
-
-
-def _get_engine():
-    mod = _import_first("core.db_supabase", "db_supabase")
-    if hasattr(mod, "get_engine"):
-        return mod.get_engine()
-    if hasattr(mod, "engine"):
-        return mod.engine
-    raise ImportError("Não encontrei get_engine() em core.db_supabase/db_supabase.")
-
-
-# ───────────────────────── CVM sync API ──────────────────────────
-_sync_mod = _import_first("core.cvm_sync", "cvm_sync")
-get_sync_status = getattr(_sync_mod, "get_sync_status")
-apply_update = getattr(_sync_mod, "apply_update")
 
 
 # ───────────────────────── Page loaders ──────────────────────────
@@ -93,15 +82,24 @@ def _bank_summary(engine) -> dict:
     out = {"dfp_tickers": None, "dfp_years": None, "itr_last_date": None}
 
     try:
-        out["dfp_tickers"] = _db_scalar(engine, "select count(distinct ticker) from cvm.demonstracoes_financeiras;")
-        r = _db_row(engine, "select min(data) as mn, max(data) as mx from cvm.demonstracoes_financeiras;")
+        out["dfp_tickers"] = _db_scalar(
+            engine,
+            "select count(distinct ticker) from cvm.demonstracoes_financeiras;"
+        )
+        r = _db_row(
+            engine,
+            "select min(data) as mn, max(data) as mx from cvm.demonstracoes_financeiras;"
+        )
         if r and r["mn"] and r["mx"]:
             out["dfp_years"] = f"{r['mn'].year} → {r['mx'].year}"
     except Exception:
         pass
 
     try:
-        r = _db_row(engine, "select max(data) as mx from cvm.demonstracoes_financeiras_tri;")
+        r = _db_row(
+            engine,
+            "select max(data) as mx from cvm.demonstracoes_financeiras_tri;"
+        )
         if r and r["mx"]:
             out["itr_last_date"] = str(r["mx"])
     except Exception:
@@ -134,12 +132,16 @@ def _render_configuracoes(engine):
     if "sync_thread" not in st.session_state:
         st.session_state.sync_thread = None
 
-    if start and (st.session_state.sync_thread is None or not st.session_state.sync_thread.is_alive()):
-
+    if start and (
+        st.session_state.sync_thread is None
+        or not st.session_state.sync_thread.is_alive()
+    ):
         def _job():
             apply_update(engine)
 
-        st.session_state.sync_thread = threading.Thread(target=_job, daemon=True)
+        st.session_state.sync_thread = threading.Thread(
+            target=_job, daemon=True
+        )
         st.session_state.sync_thread.start()
 
     panel_slot = st.empty()
@@ -170,11 +172,10 @@ def _render_configuracoes(engine):
 
         with panel_slot.container():
             panel_slot.empty()
-
             st.subheader("Progresso da atualização")
             st.progress(pct)
 
-            c1, c2, c3 = st.columns(3, gap="medium")
+            c1, c2, c3 = st.columns(3)
             c1.metric("Progresso", f"{pct}%")
             c2.metric("Tempo decorrido", _fmt_mmss(elapsed))
             c3.metric("Tempo restante (est.)", eta_txt)
@@ -186,14 +187,14 @@ def _render_configuracoes(engine):
                 st.error(last_error)
 
         th = st.session_state.sync_thread
-        alive = (th is not None and th.is_alive())
-
-        if not alive:
+        if th is None or not th.is_alive():
             break
 
         if elapsed > timeout_s:
-            with panel_slot.container():
-                st.warning("A atualização ultrapassou o tempo esperado. Verifique logs/timeout no Supabase.")
+            st.warning(
+                "A atualização ultrapassou o tempo esperado. "
+                "Verifique logs/timeout no Supabase."
+            )
             break
 
         time.sleep(1)
@@ -206,78 +207,59 @@ def _render_configuracoes(engine):
     c3.metric("Última data ITR", str(s.get("itr_last_date") or "—"))
 
 
-# ───────────────────────── Main app ──────────────────────────
-def main():
-    st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
-    engine = _get_engine()
+# ───────────────────────── Sidebar layout (robusto e responsivo) ───────────────────────
+st.markdown(
+    """
+    <style>
+      [data-testid="stSidebarContent"]{
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+      }
+      .sb-footer{
+        margin-top: auto;
+        padding-top: 12px;
+        padding-bottom: 8px;
+      }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-    # Sidebar em "flex column" para fixar o rodapé de forma robusta
-    st.markdown(
-        """
-        <style>
-          /* transforma o container interno do sidebar em coluna com altura total */
-          [data-testid="stSidebar"] > div:first-child {
-            height: 100%;
-          }
-          [data-testid="stSidebar"] > div:first-child > div:first-child {
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-          }
 
-          /* bloco principal do sidebar */
-          .sidebar-main {
-            flex: 0 0 auto;
-          }
+# ───────────────────────── Sidebar navegação ───────────────────────
+with st.sidebar:
+    st.markdown("## Análises")
+    st.divider()
 
-          /* rodapé: empurra para o fundo */
-          .sidebar-footer {
-            margin-top: auto;
-            padding: 12px 0 8px 0;
-          }
-        </style>
-        """,
-        unsafe_allow_html=True,
+    pagina_escolhida = st.radio(
+        "Escolha a seção:",
+        ["Básica", "Avançada", "Criação de Portfólio"],
+        index=0,
+        key="pagina_escolhida",
     )
 
-    with st.sidebar:
-        st.header("Análises")
+    st.divider()
 
-        # ── Bloco principal (conteúdo normal)
-        st.markdown('<div class="sidebar-main">', unsafe_allow_html=True)
+    st.text_input("Buscar ticker (ex.: PETR4)", key="buscar_ticker")
 
-        pagina_analises = st.radio(
-            "Escolha a seção:",
-            ["Básica", "Avançada", "Criação de Portfólio"],
-            index=0,
-            key="pagina_analises",
-        )
+    st.divider()
 
-        # Buscar ticker: agora fica logo abaixo de "Criação de Portfólio"
-        st.text_input("Buscar ticker (ex.: PETR4)", key="buscar_ticker")
+    st.markdown('<div class="sb-footer">', unsafe_allow_html=True)
+    if st.button("⚙️ Configurações", use_container_width=True, key="btn_config"):
+        st.session_state["page"] = "Configurações"
+        st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
 
-        st.markdown("</div>", unsafe_allow_html=True)
+    if st.session_state.get("page") != "Configurações":
+        st.session_state["page"] = pagina_escolhida
 
-        # ── Rodapé (somente Configurações)
-        st.markdown('<div class="sidebar-footer">', unsafe_allow_html=True)
-        if st.button("⚙️ Configurações", use_container_width=True, key="btn_config"):
-            st.session_state["page"] = "Configurações"
-            st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
 
-        # Roteamento (evita sobrescrever Configurações quando já selecionado)
-        if st.session_state.get("page") != "Configurações":
-            st.session_state["page"] = pagina_analises
+# ───────────────────────── Execução / Roteamento ───────────────────────
+page = st.session_state.get("page", "Básica")
 
-    page = st.session_state.get("page", "Básica")
-
-    if page == "Configurações":
-        _render_configuracoes(engine)
-        return
-
+if page == "Configurações":
+    _render_configuracoes(engine)
+else:
     renderer = _load_page_renderer(page)
     renderer()
-
-
-if __name__ == "__main__":
-    main()
