@@ -1,9 +1,9 @@
 """
 dashboard.py
 ~~~~~~~~~~~~
-Script principal da aplicação Streamlit.
+Script principal Streamlit.
 
-Execute com:
+Execute:
     streamlit run dashboard.py
 """
 
@@ -20,112 +20,55 @@ from typing import Callable
 import streamlit as st
 from sqlalchemy import text
 
-from core.db_supabase import get_engine
-from core.cvm_sync import get_sync_status, apply_update
-
-engine = get_engine()
 logger = logging.getLogger(__name__)
 
-# ───────────────────────── Ajuste de path ──────────────────────────
+# ───────────────────────── Path / Imports helpers ──────────────────────────
 ROOT_DIR = pathlib.Path(__file__).resolve().parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.append(str(ROOT_DIR))
 
 
-# ───────────────────────── Imports com fallback ─────────────────────
-def _import_first(*module_paths: str):
-    """
-    Tenta importar o primeiro módulo disponível na lista.
-    Retorna o módulo importado ou levanta ImportError com detalhes.
-    """
-    errors = []
-    for p in module_paths:
+def _import_first(*module_names: str):
+    last_err = None
+    for name in module_names:
         try:
-            return importlib.import_module(p)
+            return importlib.import_module(name)
         except Exception as e:
-            errors.append((p, e))
-    msg = "Falha ao importar módulos. Tentativas:\n" + "\n".join([f"- {p}: {repr(e)}" for p, e in errors])
-    raise ImportError(msg)
+            last_err = e
+    raise ImportError(f"Falha ao importar módulos {module_names}. Último erro: {last_err}")
 
 
-def _get_layout_funcs() -> tuple[Callable[[], None], Callable[[], None]]:
-    """
-    Busca configurar_pagina() e aplicar_estilos_css() em:
-    - design.layout (estrutura modular)
-    - layout (arquivo solto)
-    Se não existir, usa fallback minimalista.
-    """
-    try:
-        mod = _import_first("design.layout", "layout")
-        configurar_pagina = getattr(mod, "configurar_pagina", None)
-        aplicar_estilos_css = getattr(mod, "aplicar_estilos_css", None)
-        if callable(configurar_pagina) and callable(aplicar_estilos_css):
-            return configurar_pagina, aplicar_estilos_css
-    except Exception:
-        pass
-
-    def _fallback_config():
-        try:
-            st.set_page_config(
-                page_title="Dashboard Fundamentalista",
-                layout="wide",
-                initial_sidebar_state="expanded",
-            )
-        except Exception:
-            pass
-
-    def _fallback_css():
-        st.markdown(
-            """
-            <style>
-              .block-container { padding-top: 1.2rem; padding-bottom: 2rem; }
-              [data-testid="stSidebar"] { padding-top: 1rem; }
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    return _fallback_config, _fallback_css
+def _get_engine():
+    mod = _import_first("core.db_supabase", "db_supabase")
+    if hasattr(mod, "get_engine"):
+        return mod.get_engine()
+    if hasattr(mod, "engine"):
+        return mod.engine
+    raise ImportError("Não encontrei get_engine() em core.db_supabase/db_supabase.")
 
 
-def _get_db_loader():
-    mod = _import_first("core.db_loader", "db_loader")
-    fn = getattr(mod, "load_setores_from_db", None)
-    if not callable(fn):
-        raise ImportError("load_setores_from_db não encontrado em core.db_loader/db_loader.")
-    return fn
+# ───────────────────────── CVM sync API ──────────────────────────
+_sync_mod = _import_first("core.cvm_sync", "cvm_sync")
+get_sync_status = getattr(_sync_mod, "get_sync_status")
+apply_update = getattr(_sync_mod, "apply_update")
 
 
+# ───────────────────────── Page loaders ──────────────────────────
 def _load_page_renderer(page_key: str) -> Callable[[], None]:
     mapping = {
         "Básica": ("page.basic", "basic"),
         "Avançada": ("page.advanced", "advanced"),
         "Criação de Portfólio": ("page.criacao_portfolio", "criacao_portfolio"),
     }
-    paths = mapping.get(page_key)
-    if not paths:
-        raise ValueError(f"Página desconhecida: {page_key}")
+    mods = mapping.get(page_key)
+    if not mods:
+        raise ValueError(f"Página inválida: {page_key}")
 
-    mod = _import_first(*paths)
-    render = getattr(mod, "render", None)
-    if not callable(render):
-        raise ImportError(f"Função render() não encontrada no módulo da página: {paths}")
-    return render
-
-
-# ───────────────────────── Layout Global ───────────────────────────
-configurar_pagina, aplicar_estilos_css = _get_layout_funcs()
-configurar_pagina()
-aplicar_estilos_css()
-
-
-# ───────────────────────── Cache inicial ───────────────────────────
-def _ensure_setores_df() -> None:
-    if "setores_df" in st.session_state and st.session_state["setores_df"] is not None:
-        return
-    load_setores_from_db = _get_db_loader()
-    setores_df = load_setores_from_db()
-    st.session_state["setores_df"] = setores_df
+    mod = _import_first(*mods)
+    fn = getattr(mod, "render", None)
+    if not callable(fn):
+        raise ImportError(f"render() não encontrado em {mods}.")
+    return fn
 
 
 # ───────────────────────── UI Helpers ──────────────────────────
@@ -263,107 +206,78 @@ def _render_configuracoes(engine):
     c3.metric("Última data ITR", str(s.get("itr_last_date") or "—"))
 
 
-# ───────────────────────── Sidebar (layout robusto) ───────────────────────
-st.markdown(
-    """
-    <style>
-      /* Sidebar como coluna com rodapé fixo (flex) */
-      [data-testid="stSidebar"] > div:first-child {
-        height: 100%;
-      }
-      [data-testid="stSidebar"] > div:first-child > div:first-child {
-        display: flex;
-        flex-direction: column;
-        height: 100vh;
-      }
-      .sb-main { flex: 0 0 auto; }
-      .sb-footer { margin-top: auto; padding-top: 12px; padding-bottom: 8px; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+# ───────────────────────── Main app ──────────────────────────
+def main():
+    st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
+    engine = _get_engine()
 
+    # Sidebar em "flex column" para fixar o rodapé de forma robusta
+    st.markdown(
+        """
+        <style>
+          /* transforma o container interno do sidebar em coluna com altura total */
+          [data-testid="stSidebar"] > div:first-child {
+            height: 100%;
+          }
+          [data-testid="stSidebar"] > div:first-child > div:first-child {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+          }
 
-# ───────────────────────── Sidebar navegação ───────────────────────
-with st.sidebar:
-    # Diagnóstico de origem (remova depois se quiser)
-    # st.caption(f"Fonte do sidebar: {__file__}")
+          /* bloco principal do sidebar */
+          .sidebar-main {
+            flex: 0 0 auto;
+          }
 
-    st.markdown('<div class="sb-main">', unsafe_allow_html=True)
-
-    st.markdown("## Análises")
-
-    # 1) Remove item "Busca" abaixo de Análises -> não renderizamos nada aqui.
-
-    pagina_escolhida = st.radio(
-        "Escolha a seção:",
-        ["Básica", "Avançada", "Criação de Portfólio"],
-        index=0,
-        key="pagina_escolhida",
+          /* rodapé: empurra para o fundo */
+          .sidebar-footer {
+            margin-top: auto;
+            padding: 12px 0 8px 0;
+          }
+        </style>
+        """,
+        unsafe_allow_html=True,
     )
 
-    # 4) Subir "buscar ticker" para baixo de "Criação de Portfólio"
-    st.text_input("Buscar ticker (ex.: PETR4)", key="buscar_ticker")
+    with st.sidebar:
+        st.header("Análises")
 
-    # 3) Retirar botão/área "Atualizar dados" do sidebar -> removemos todo o bloco "Atualização CVM"
-    # Mantemos os utilitários que você já tinha:
-    st.markdown("---")
-    col_a, col_b = st.columns(2)
-    with col_a:
-        if st.button("Recarregar cache", use_container_width=True):
-            st.session_state.pop("setores_df", None)
+        # ── Bloco principal (conteúdo normal)
+        st.markdown('<div class="sidebar-main">', unsafe_allow_html=True)
+
+        pagina_analises = st.radio(
+            "Escolha a seção:",
+            ["Básica", "Avançada", "Criação de Portfólio"],
+            index=0,
+            key="pagina_analises",
+        )
+
+        # Buscar ticker: agora fica logo abaixo de "Criação de Portfólio"
+        st.text_input("Buscar ticker (ex.: PETR4)", key="buscar_ticker")
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # ── Rodapé (somente Configurações)
+        st.markdown('<div class="sidebar-footer">', unsafe_allow_html=True)
+        if st.button("⚙️ Configurações", use_container_width=True, key="btn_config"):
+            st.session_state["page"] = "Configurações"
             st.rerun()
-    with col_b:
-        if st.button("Diagnóstico", use_container_width=True):
-            st.session_state["__show_diag__"] = True
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("</div>", unsafe_allow_html=True)
+        # Roteamento (evita sobrescrever Configurações quando já selecionado)
+        if st.session_state.get("page") != "Configurações":
+            st.session_state["page"] = pagina_analises
 
-    # 2) Botão Configurações no rodapé
-    st.markdown('<div class="sb-footer">', unsafe_allow_html=True)
-    if st.button("⚙️ Configurações", use_container_width=True, key="btn_config"):
-        st.session_state["page"] = "Configurações"
-        st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
+    page = st.session_state.get("page", "Básica")
 
-    # roteamento padrão
-    if st.session_state.get("page") != "Configurações":
-        st.session_state["page"] = pagina_escolhida
+    if page == "Configurações":
+        _render_configuracoes(engine)
+        return
+
+    renderer = _load_page_renderer(page)
+    renderer()
 
 
-# ───────────────────────── Diagnóstico leve ─────────────────────────
-if st.session_state.get("__show_diag__"):
-    st.session_state["__show_diag__"] = False
-    with st.expander("Diagnóstico do App", expanded=True):
-        st.write("Root dir:", str(ROOT_DIR))
-        st.write("Python path contém root:", str(ROOT_DIR) in sys.path)
-        st.write("Arquivo em execução:", __file__)
-        try:
-            _ensure_setores_df()
-            s = st.session_state.get("setores_df")
-            st.write("setores_df carregado:", (s is not None) and (getattr(s, "empty", True) is False))
-            if s is not None and not getattr(s, "empty", True):
-                st.write("Linhas/Colunas:", s.shape)
-                st.write("Colunas:", list(s.columns))
-        except Exception as e:
-            st.error(f"Falha ao carregar setores_df: {e}")
-
-
-# ───────────────────────── Execução / Roteamento ────────────────────
-try:
-    _ensure_setores_df()
-except Exception as e:
-    st.error(f"Falha ao inicializar dados base (setores_df): {e}")
-    st.stop()
-
-page = st.session_state.get("page", "Básica")
-
-if page == "Configurações":
-    _render_configuracoes(engine)
-else:
-    try:
-        render_page = _load_page_renderer(page)
-        render_page()
-    except Exception as e:
-        st.error("Falha ao carregar a página selecionada.")
-        st.exception(e)
+if __name__ == "__main__":
+    main()
