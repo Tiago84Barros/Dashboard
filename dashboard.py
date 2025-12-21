@@ -267,19 +267,14 @@ def _render_configuracoes(engine):
 st.markdown(
     """
     <style>
-      /* Sidebar content como coluna */
       [data-testid="stSidebarContent"]{
         display: flex;
         flex-direction: column;
         height: 100%;
       }
-
-      /* Espaçador para empurrar apenas o rodapé */
       .sb-spacer{
         flex: 1 1 auto;
       }
-
-      /* Rodapé: mantém no final sem empurrar o resto */
       .sb-footer{
         padding-top: 12px;
         padding-bottom: 8px;
@@ -288,7 +283,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
 
 # ───────────────────────── Sidebar navegação ───────────────────────
 with st.sidebar:
@@ -301,25 +295,13 @@ with st.sidebar:
         key="pagina_escolhida",
     )
 
-    # Busca fica logo abaixo do rádio
+    # Busca logo abaixo da escolha de seção
     st.text_input("Buscar ticker (ex.: PETR4)", key="buscar_ticker")
 
-    st.markdown("---")
-
-    col_a, col_b = st.columns(2)
-    with col_a:
-        if st.button("Recarregar cache", use_container_width=True):
-            st.session_state.pop("setores_df", None)
-            st.rerun()
-    with col_b:
-        if st.button("Diagnóstico", use_container_width=True):
-            st.session_state["__show_diag__"] = True
-
-    # Espaçador: tudo acima permanece na posição normal,
-    # e somente o rodapé é empurrado para baixo
+    # Espaçador flexível: empurra SOMENTE o rodapé
     st.markdown('<div class="sb-spacer"></div>', unsafe_allow_html=True)
 
-    # Rodapé com Configurações
+    # Rodapé fixo com Configurações
     st.markdown('<div class="sb-footer">', unsafe_allow_html=True)
     if st.button("⚙️ Configurações", use_container_width=True, key="btn_config"):
         st.session_state["page"] = "Configurações"
