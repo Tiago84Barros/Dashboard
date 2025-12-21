@@ -113,7 +113,7 @@ def _bank_summary(engine) -> dict:
 # ───────────────────────── UI: Configurações ──────────────────────────
 def _render_configuracoes(engine):
     st.title("Configurações")
-    st.caption("Gerencie a atualização do banco CVM e visualize o status da sincronização.")
+    st.caption("Atualização do banco CVM e status da sincronização.")
 
     status0 = get_sync_status(engine)
     last_error0 = (status0.get("last_error") or "").strip()
@@ -125,14 +125,12 @@ def _render_configuracoes(engine):
     else:
         st.info("Nenhuma atualização concluída ainda.")
 
-    # Botão iniciar atualização
     col_a, col_b = st.columns([1, 2])
     with col_a:
         start = st.button("Atualizar agora", type="primary", use_container_width=True)
     with col_b:
         st.write("")
 
-    # Thread de execução
     if "sync_thread" not in st.session_state:
         st.session_state.sync_thread = None
 
@@ -144,9 +142,8 @@ def _render_configuracoes(engine):
         st.session_state.sync_thread = threading.Thread(target=_job, daemon=True)
         st.session_state.sync_thread.start()
 
-    # Painel de progresso: usa UM placeholder para evitar “poluição visual”
+    # Painel único (sem duplicação)
     panel_slot = st.empty()
-
     t0 = time.time()
     timeout_s = 15 * 60
 
@@ -165,7 +162,6 @@ def _render_configuracoes(engine):
 
         elapsed = int(time.time() - t0)
 
-        # ETA simples
         if pct > 0:
             est_total = int(elapsed * (100 / pct))
             eta = max(0, est_total - elapsed)
@@ -187,7 +183,6 @@ def _render_configuracoes(engine):
             st.markdown(f"**Etapa:** {stage}")
             if msg:
                 st.caption(msg)
-
             if last_error:
                 st.error(last_error)
 
@@ -204,7 +199,6 @@ def _render_configuracoes(engine):
 
         time.sleep(1)
 
-    # Resumo do banco (sem poluir com “linhas”)
     st.subheader("Resumo do banco (CVM)")
     s = _bank_summary(engine)
     c1, c2, c3 = st.columns(3)
@@ -216,10 +210,28 @@ def _render_configuracoes(engine):
 # ───────────────────────── Main app ──────────────────────────
 def main():
     st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
-
     engine = _get_engine()
 
-    # Sidebar principal
+    # CSS: fixa o botão de configurações no rodapé do sidebar sem empurrar os outros controles
+    st.markdown(
+        """
+        <style>
+        /* garante altura total do sidebar */
+        [data-testid="stSidebar"] > div:first-child { height: 100vh; }
+        /* container do botão no fundo */
+        .cfg-bottom {
+            position: absolute;
+            bottom: 14px;
+            left: 16px;
+            right: 16px;
+            z-index: 1000;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Sidebar principal (SEM "Atualizar dados" aqui)
     with st.sidebar:
         st.header("Análises")
 
@@ -230,15 +242,12 @@ def main():
             key="pagina_analises",
         )
 
-        st.markdown("---")
-
-        # Spacer para empurrar o botão ao final do sidebar
-        st.markdown("<div style='height: 45vh;'></div>", unsafe_allow_html=True)
-
-        # Botão no rodapé
+        # Botão de configurações fixo no rodapé
+        st.markdown('<div class="cfg-bottom">', unsafe_allow_html=True)
         if st.button("⚙️ Configurações", use_container_width=True, key="btn_config"):
             st.session_state["page"] = "Configurações"
             st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
 
         # mantém comportamento normal quando não está em Configurações
         if st.session_state.get("page") != "Configurações":
