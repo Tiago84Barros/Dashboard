@@ -142,7 +142,6 @@ def _render_configuracoes(engine):
         st.session_state.sync_thread = threading.Thread(target=_job, daemon=True)
         st.session_state.sync_thread.start()
 
-    # Painel único (sem duplicação)
     panel_slot = st.empty()
     t0 = time.time()
     timeout_s = 15 * 60
@@ -212,28 +211,35 @@ def main():
     st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
     engine = _get_engine()
 
-    # CSS: fixa o botão de configurações no rodapé do sidebar sem empurrar os outros controles
+    # CSS: fixa apenas o botão de Configurações no rodapé do sidebar,
+    # sem empurrar/alterar a posição dos outros elementos (ex.: busca).
     st.markdown(
         """
         <style>
-        /* garante altura total do sidebar */
-        [data-testid="stSidebar"] > div:first-child { height: 100vh; }
-        /* container do botão no fundo */
-        .cfg-bottom {
+          [data-testid="stSidebar"] { position: relative; }
+          .cfg-footer {
             position: absolute;
-            bottom: 14px;
-            left: 16px;
-            right: 16px;
-            z-index: 1000;
-        }
+            left: 12px;
+            right: 12px;
+            bottom: 12px;
+            z-index: 9999;
+          }
+          /* dá espaço visual no final para o botão não cobrir o último item */
+          .sidebar-bottom-space {
+            height: 64px;
+          }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    # Sidebar principal (SEM "Atualizar dados" aqui)
     with st.sidebar:
         st.header("Análises")
+
+        # Textbar de busca: fica na mesma posição (topo) e NÃO é empurrada
+        # Se sua busca já existe em outro lugar, você pode remover este bloco
+        # e manter apenas o botão fixo no rodapé.
+        st.text_input("Busca", key="sidebar_search")
 
         pagina_analises = st.radio(
             "Escolha a seção:",
@@ -242,18 +248,21 @@ def main():
             key="pagina_analises",
         )
 
-        # Botão de configurações fixo no rodapé
-        st.markdown('<div class="cfg-bottom">', unsafe_allow_html=True)
+        # (Importante) Não existe mais botão/entrada "Atualizar dados" no sidebar.
+
+        # espaço apenas para evitar sobreposição do botão no último componente
+        st.markdown('<div class="sidebar-bottom-space"></div>', unsafe_allow_html=True)
+
+        # Botão ÚNICO no rodapé
+        st.markdown('<div class="cfg-footer">', unsafe_allow_html=True)
         if st.button("⚙️ Configurações", use_container_width=True, key="btn_config"):
             st.session_state["page"] = "Configurações"
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # mantém comportamento normal quando não está em Configurações
         if st.session_state.get("page") != "Configurações":
             st.session_state["page"] = pagina_analises
 
-    # Roteamento
     page = st.session_state.get("page", "Básica")
 
     if page == "Configurações":
