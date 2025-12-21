@@ -317,3 +317,17 @@ with st.sidebar:
     # Roteamento padrão
     if st.session_state.get("page") != "Configurações":
         st.session_state["page"] = pagina_escolhida
+
+page = st.session_state.get("page", "Básica")
+
+    if page == "Configurações":
+        _render_configuracoes(engine)
+        return
+
+    renderer = _load_page_renderer(page)
+    renderer()
+
+
+if _name_ == "_main_":
+    main()
+
