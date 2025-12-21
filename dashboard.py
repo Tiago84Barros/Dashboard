@@ -239,10 +239,14 @@ with st.sidebar:
         key="pagina_escolhida",
     )
 
+    st.divider()
+    st.text_input("Buscar ticker", key="buscar_ticker")
+
 
 if page == "Configurações":
     _render_configuracoes(engine)
 else:
     renderer = _load_page_renderer(page)
     renderer()
+
 
