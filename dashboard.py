@@ -318,7 +318,7 @@ with st.sidebar:
     if st.session_state.get("page") != "Configurações":
         st.session_state["page"] = pagina_escolhida
 
-page = st.session_state.get("page", "Básica")
+ page = st.session_state.get("page", "Básica")
 
 if page == "Configurações":
     _render_configuracoes(engine)
@@ -330,6 +330,7 @@ renderer()
 
 if _name_ == "_main_":
     main()
+
 
 
 
