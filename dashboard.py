@@ -247,6 +247,8 @@ with st.sidebar:
         st.session_state["page"] = "Configurações"
         st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
+    if st.session_state.get("page") != "Configurações":
+        st.session_state["page"] = pagina_escolhida
 
 
 if page == "Configurações":
@@ -254,6 +256,7 @@ if page == "Configurações":
 else:
     renderer = _load_page_renderer(page)
     renderer()
+
 
 
 
