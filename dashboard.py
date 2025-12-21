@@ -250,7 +250,7 @@ with st.sidebar:
     if st.session_state.get("page") != "Configurações":
         st.session_state["page"] = pagina_escolhida
     # ───────────────────────── Execução / Roteamento ───────────────────────
-    page = st.session_state.get("page", "Básica")
+    #page = st.session_state.get("page", "Básica")
 
 
 if page == "Configurações":
@@ -258,6 +258,7 @@ if page == "Configurações":
 else:
     renderer = _load_page_renderer(page)
     renderer()
+
 
 
 
