@@ -15,13 +15,12 @@ import pathlib
 import sys
 import threading
 import time
-from typing import Callable, Optional, Tuple
+from typing import Callable
 
 import streamlit as st
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
-
 
 # ───────────────────────── Path / Imports helpers ──────────────────────────
 ROOT_DIR = pathlib.Path(__file__).resolve().parent
@@ -40,7 +39,6 @@ def _import_first(*module_names: str):
 
 
 def _get_engine():
-    # tenta pegar o engine supabase do core
     mod = _import_first("core.db_supabase", "db_supabase")
     if hasattr(mod, "get_engine"):
         return mod.get_engine()
@@ -57,9 +55,6 @@ apply_update = getattr(_sync_mod, "apply_update")
 
 # ───────────────────────── Page loaders ──────────────────────────
 def _load_page_renderer(page_key: str) -> Callable[[], None]:
-    """
-    Mapeia a página para um módulo e retorna render() daquela página.
-    """
     mapping = {
         "Básica": ("page.basic", "basic"),
         "Avançada": ("page.advanced", "advanced"),
@@ -76,7 +71,14 @@ def _load_page_renderer(page_key: str) -> Callable[[], None]:
     return fn
 
 
-# ───────────────────────── UI: Configurações ──────────────────────────
+# ───────────────────────── UI Helpers ──────────────────────────
+def _fmt_mmss(seconds: int) -> str:
+    seconds = max(0, int(seconds))
+    m = seconds // 60
+    s = seconds % 60
+    return f"{m:02d}:{s:02d}"
+
+
 def _db_scalar(engine, sql: str):
     with engine.begin() as conn:
         return conn.execute(text(sql)).scalar()
@@ -88,9 +90,6 @@ def _db_row(engine, sql: str):
 
 
 def _bank_summary(engine) -> dict:
-    """
-    Resumo leve (sem “número de linhas”), para evitar custo e ficar profissional.
-    """
     out = {"dfp_tickers": None, "dfp_years": None, "itr_last_date": None}
 
     try:
@@ -111,18 +110,18 @@ def _bank_summary(engine) -> dict:
     return out
 
 
+# ───────────────────────── UI: Configurações ──────────────────────────
 def _render_configuracoes(engine):
     st.title("Configurações")
     st.caption("Gerencie a atualização do banco CVM e visualize o status da sincronização.")
 
-    status = get_sync_status(engine)
-    last_error = (status.get("last_error") or "").strip()
+    status0 = get_sync_status(engine)
+    last_error0 = (status0.get("last_error") or "").strip()
 
-    # Status banner
-    if last_error:
-        st.error(f"Última execução com erro: {last_error}")
-    elif status.get("last_success"):
-        st.success(f"Última atualização concluída: {status.get('last_success')}")
+    if last_error0:
+        st.error(f"Última execução com erro: {last_error0}")
+    elif status0.get("last_success"):
+        st.success(f"Última atualização concluída: {status0.get('last_success')}")
     else:
         st.info("Nenhuma atualização concluída ainda.")
 
@@ -138,22 +137,19 @@ def _render_configuracoes(engine):
         st.session_state.sync_thread = None
 
     if start and (st.session_state.sync_thread is None or not st.session_state.sync_thread.is_alive()):
+
         def _job():
             apply_update(engine)
 
         st.session_state.sync_thread = threading.Thread(target=_job, daemon=True)
         st.session_state.sync_thread.start()
 
-    # Área profissional de progresso (ÚNICA)
-    st.subheader("Progresso da atualização")
-    bar = st.progress(0)
-    k1, k2, k3, k4 = st.columns(4)
-    m_stage = st.empty()
+    # Painel de progresso: usa UM placeholder para evitar “poluição visual”
+    panel_slot = st.empty()
 
     t0 = time.time()
-
-    # Loop de polling: atualiza enquanto a thread estiver viva (ou até 15 min)
     timeout_s = 15 * 60
+
     while True:
         status = get_sync_status(engine)
 
@@ -165,25 +161,35 @@ def _render_configuracoes(engine):
 
         stage = status.get("stage") or "-"
         msg = status.get("message") or ""
+        last_error = (status.get("last_error") or "").strip()
 
         elapsed = int(time.time() - t0)
 
-        # ETA simples: só se tiver pct > 0
+        # ETA simples
         if pct > 0:
             est_total = int(elapsed * (100 / pct))
             eta = max(0, est_total - elapsed)
-            eta_txt = f"{eta}s"
+            eta_txt = _fmt_mmss(eta)
         else:
             eta_txt = "—"
 
-        bar.progress(pct)
+        with panel_slot.container():
+            panel_slot.empty()
 
-        k1.metric("Progresso", f"{pct}%")
-        k2.metric("Tempo decorrido", f"{elapsed}s")
-        k3.metric("Tempo restante (est.)", eta_txt)
-        k4.metric("Etapa", " ")
+            st.subheader("Progresso da atualização")
+            st.progress(pct)
 
-        m_stage.markdown(f"**Etapa:** {stage}<br/>**Mensagem:** {msg}", unsafe_allow_html=True)
+            c1, c2, c3 = st.columns(3, gap="medium")
+            c1.metric("Progresso", f"{pct}%")
+            c2.metric("Tempo decorrido", _fmt_mmss(elapsed))
+            c3.metric("Tempo restante (est.)", eta_txt)
+
+            st.markdown(f"**Etapa:** {stage}")
+            if msg:
+                st.caption(msg)
+
+            if last_error:
+                st.error(last_error)
 
         th = st.session_state.sync_thread
         alive = (th is not None and th.is_alive())
@@ -192,7 +198,8 @@ def _render_configuracoes(engine):
             break
 
         if elapsed > timeout_s:
-            st.warning("A atualização ultrapassou o tempo esperado. Verifique logs/timeout no Supabase.")
+            with panel_slot.container():
+                st.warning("A atualização ultrapassou o tempo esperado. Verifique logs/timeout no Supabase.")
             break
 
         time.sleep(1)
@@ -215,6 +222,7 @@ def main():
     # Sidebar principal
     with st.sidebar:
         st.header("Análises")
+
         pagina_analises = st.radio(
             "Escolha a seção:",
             ["Básica", "Avançada", "Criação de Portfólio"],
@@ -224,14 +232,17 @@ def main():
 
         st.markdown("---")
 
-        # “ícone” de engrenagem (clique) – abordagem estável em qualquer versão do Streamlit
-        if st.button("⚙️  Configurações", use_container_width=True):
+        # Spacer para empurrar o botão ao final do sidebar
+        st.markdown("<div style='height: 45vh;'></div>", unsafe_allow_html=True)
+
+        # Botão no rodapé
+        if st.button("⚙️ Configurações", use_container_width=True, key="btn_config"):
             st.session_state["page"] = "Configurações"
-        else:
-            # se o usuário não clicou em Configurações nesta execução,
-            # mantenha a página atual como análise (comportamento normal)
-            if st.session_state.get("page") != "Configurações":
-                st.session_state["page"] = pagina_analises
+            st.rerun()
+
+        # mantém comportamento normal quando não está em Configurações
+        if st.session_state.get("page") != "Configurações":
+            st.session_state["page"] = pagina_analises
 
     # Roteamento
     page = st.session_state.get("page", "Básica")
@@ -240,7 +251,6 @@ def main():
         _render_configuracoes(engine)
         return
 
-    # Páginas de análise (mantém sua home e módulos intactos)
     renderer = _load_page_renderer(page)
     renderer()
 
