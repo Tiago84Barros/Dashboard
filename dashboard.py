@@ -22,7 +22,6 @@ from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
-
 # ───────────────────────── Path / Imports helpers ──────────────────────────
 ROOT_DIR = pathlib.Path(__file__).resolve().parent
 if str(ROOT_DIR) not in sys.path:
@@ -56,11 +55,6 @@ apply_update = getattr(_sync_mod, "apply_update")
 
 # ───────────────────────── Page loaders ──────────────────────────
 def _load_page_renderer(page_key: str) -> Callable[[], None]:
-    """
-    Mapeia a página para um módulo e retorna render() daquela página.
-
-    Importante: tentamos primeiro em "page.<x>" e depois "<x>" para manter compatibilidade.
-    """
     mapping = {
         "Básica": ("page.basic", "basic"),
         "Avançada": ("page.advanced", "advanced"),
@@ -77,7 +71,7 @@ def _load_page_renderer(page_key: str) -> Callable[[], None]:
     return fn
 
 
-# ───────────────────────── Helpers DB / UI ──────────────────────────
+# ───────────────────────── DB helpers ──────────────────────────
 def _db_scalar(engine, sql: str):
     with engine.begin() as conn:
         return conn.execute(text(sql)).scalar()
@@ -88,64 +82,41 @@ def _db_row(engine, sql: str):
         return conn.execute(text(sql)).mappings().first()
 
 
-def _fmt_mmss(seconds: int) -> str:
-    m = seconds // 60
-    s = seconds % 60
-    return f"{m:02d}:{s:02d}"
-
-
 def _bank_summary(engine) -> dict:
-    """
-    Resumo leve (sem número de linhas) para evitar custo.
-    """
-    out = {
-        "dfp_tickers": None,
-        "dfp_years": None,
-        "itr_last_quarter": None,
-        "macro_rows": None,
-    }
-
-    # DFP
+    out = {"dfp_tickers": None, "dfp_years": None, "itr_last": None}
     try:
         out["dfp_tickers"] = _db_scalar(engine, "select count(distinct ticker) from cvm.demonstracoes_financeiras;")
         r = _db_row(engine, "select min(data) as mn, max(data) as mx from cvm.demonstracoes_financeiras;")
-        if r and r.get("mn") and r.get("mx"):
+        if r and r["mn"] and r["mx"]:
             out["dfp_years"] = f"{r['mn'].year} → {r['mx'].year}"
     except Exception:
         pass
 
-    # ITR (último trimestre pelo max(data))
     try:
         r = _db_row(engine, "select max(data) as mx from cvm.demonstracoes_financeiras_tri;")
-        if r and r.get("mx"):
-            out["itr_last_quarter"] = str(r["mx"])
+        if r and r["mx"]:
+            # exibe como trimestre aproximado se quiser, aqui fica data mesmo
+            out["itr_last"] = str(r["mx"])
     except Exception:
         pass
-
-    # Macro (se existir tabela)
-    try:
-        out["macro_rows"] = _db_scalar(engine, "select count(*) from cvm.info_economica;")
-    except Exception:
-        out["macro_rows"] = None
 
     return out
 
 
-# ───────────────────────── UI: Configurações ──────────────────────────
+def _fmt_mmss(seconds: int) -> str:
+    m = seconds // 60
+    s = seconds % 60
+    return f"{m}m {s:02d}s"
+
+
+# ───────────────────────── UI: Configurações (sem poluir visual) ──────────────────────────
 def _render_configuracoes(engine):
     st.title("Configurações")
     st.caption("Atualização do banco CVM e status de sincronização.")
 
-    # Estado do job (thread local)
-    if "sync_thread" not in st.session_state:
-        st.session_state.sync_thread = None
-    if "sync_started_at" not in st.session_state:
-        st.session_state.sync_started_at = None
-
-    # Banner de status
     status = get_sync_status(engine) or {}
     last_error = (status.get("last_error") or "").strip()
-    last_success = (status.get("last_success") or "").strip()
+    last_success = status.get("last_success") or None
 
     if last_error:
         st.error(f"Última execução com erro: {last_error}")
@@ -154,87 +125,87 @@ def _render_configuracoes(engine):
     else:
         st.info("Nenhuma atualização concluída ainda.")
 
-    # Ação: iniciar atualização (só aqui, NÃO no sidebar)
-    col_a, col_b = st.columns([1, 3])
-    with col_a:
+    st.divider()
+
+    # Controle de execução
+    if "sync_thread" not in st.session_state:
+        st.session_state.sync_thread = None
+
+    col1, col2 = st.columns([1, 3])
+    with col1:
         start = st.button("Atualizar agora", type="primary", use_container_width=True)
-    with col_b:
+    with col2:
         st.write("")
 
-    th = st.session_state.sync_thread
-    running = (th is not None and th.is_alive())
-
-    if start and not running:
+    if start and (st.session_state.sync_thread is None or not st.session_state.sync_thread.is_alive()):
         def _job():
-            # roda pipeline; o progresso é gravado no banco via cvm_sync/pipeline
+            # apply_update deve atualizar sync_state via pipeline progress_cb internamente
             apply_update(engine)
 
         st.session_state.sync_thread = threading.Thread(target=_job, daemon=True)
-        st.session_state.sync_started_at = time.time()
         st.session_state.sync_thread.start()
-        running = True
 
-    # Progresso (ÚNICO bloco)
-    st.subheader("Progresso da atualização")
-
-    # placeholders fixos (não cria “3 progressos”)
+    # Progresso único (não duplicar)
+    st.subheader("Progresso")
     bar = st.progress(0)
-    k1, k2, k3, k4 = st.columns(4)
+    c1, c2, c3, c4 = st.columns(4)
     stage_box = st.empty()
 
-    # lê status do banco (progress_pct/stage/message etc)
-    status = get_sync_status(engine) or {}
-    pct_raw = status.get("progress_pct") or 0
-    try:
-        pct = int(float(pct_raw))
-    except Exception:
-        pct = 0
-    pct = max(0, min(100, pct))
+    t0 = time.time()
+    timeout_s = 30 * 60  # 30 min
 
-    stage = status.get("stage") or "—"
-    msg = status.get("message") or ""
+    # Polling leve enquanto thread viva
+    while True:
+        status = get_sync_status(engine) or {}
 
-    # tempo decorrido (mm:ss)
-    if st.session_state.sync_started_at:
-        elapsed = int(time.time() - float(st.session_state.sync_started_at))
-    else:
-        elapsed = 0
+        pct_raw = status.get("progress_pct") or 0
+        try:
+            pct = max(0, min(100, int(float(pct_raw))))
+        except Exception:
+            pct = 0
 
-    # ETA simples (se progresso > 0)
-    if pct > 0 and elapsed > 0 and pct < 100:
-        est_total = int(elapsed * (100 / pct))
-        eta = max(0, est_total - elapsed)
-        eta_txt = _fmt_mmss(eta)
-    else:
-        eta_txt = "—"
+        stage = status.get("stage") or "-"
+        msg = status.get("message") or ""
 
-    bar.progress(pct)
-    k1.metric("Progresso", f"{pct}%")
-    k2.metric("Tempo decorrido", _fmt_mmss(elapsed))
-    k3.metric("Tempo restante (est.)", eta_txt)
-    k4.metric("Etapa", stage)
+        elapsed = int(time.time() - t0)
+        if pct > 0:
+            est_total = int(elapsed * (100 / pct))
+            eta = max(0, est_total - elapsed)
+            eta_txt = _fmt_mmss(eta)
+        else:
+            eta_txt = "—"
 
-    if msg:
-        stage_box.info(msg)
-    else:
-        stage_box.write("")
+        bar.progress(pct)
+        c1.metric("Progresso", f"{pct}%")
+        c2.metric("Tempo decorrido", _fmt_mmss(elapsed))
+        c3.metric("Tempo restante (est.)", eta_txt)
+        c4.metric("Etapa", stage)
 
-    # Auto-atualização visual enquanto estiver rodando
-    # (streamlit não tem “background UI”, então fazemos um refresh leve)
-    th = st.session_state.sync_thread
-    running = (th is not None and th.is_alive())
+        if msg:
+            stage_box.caption(msg)
+        else:
+            stage_box.caption("")
 
-    if running:
+        th = st.session_state.sync_thread
+        alive = (th is not None and th.is_alive())
+
+        if not alive:
+            break
+
+        if elapsed > timeout_s:
+            st.warning("A atualização ultrapassou o tempo esperado. Verifique timeout/logs no Supabase.")
+            break
+
         time.sleep(1)
-        st.experimental_rerun()
 
-    # Resumo do banco (enxuto)
+    st.divider()
+
     st.subheader("Resumo do banco (CVM)")
     s = _bank_summary(engine)
-    c1, c2, c3 = st.columns(3)
-    c1.metric("DFP (tickers)", str(s.get("dfp_tickers") or "—"))
-    c2.metric("Período DFP", str(s.get("dfp_years") or "—"))
-    c3.metric("Última data ITR", str(s.get("itr_last_quarter") or "—"))
+    r1, r2, r3 = st.columns(3)
+    r1.metric("DFP (tickers)", str(s.get("dfp_tickers") or "—"))
+    r2.metric("Período DFP", str(s.get("dfp_years") or "—"))
+    r3.metric("Última data ITR", str(s.get("itr_last") or "—"))
 
 
 # ───────────────────────── Main app ──────────────────────────
@@ -243,61 +214,61 @@ def main():
 
     engine = _get_engine()
 
-    # Estado inicial (página)
-    if "page" not in st.session_state:
-        st.session_state["page"] = "Básica"
+    # CSS: fixa o botão de Configurações no rodapé do sidebar
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stSidebar"] { position: relative; }
+        div[data-testid="stSidebar"] .config-bottom {
+            position: fixed;
+            bottom: 18px;
+            left: 18px;
+            width: 300px; /* ajuste fino */
+            z-index: 9999;
+        }
+        @media (max-width: 1100px) {
+            div[data-testid="stSidebar"] .config-bottom { width: 260px; }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    # Sidebar: manter BUSCA na posição atual e Configurações no rodapé
+    # Sidebar único e consistente
     with st.sidebar:
         st.header("Análises")
 
-        # BUSCA (mantida no topo, como você pediu)
+        # Busca por ticker (mantém no topo, como você pediu)
         ticker_input = st.text_input("Buscar ticker (ex.: PETR4)", key="ticker_box")
         if ticker_input.strip():
-            t = ticker_input.upper().strip()
+            t = ticker_input.strip().upper()
             if not t.endswith(".SA"):
                 t += ".SA"
             st.session_state["ticker"] = t
         else:
-            # se usuário limpou a busca, remove ticker para voltar à lista
+            # IMPORTANTÍSSIMO: se está vazio, remove do session_state,
+            # senão a Avançada pode “sumir” filtros por achar que há ticker ativo.
             st.session_state.pop("ticker", None)
 
-        st.write("")  # espaçamento
+        st.markdown("")
 
         pagina_analises = st.radio(
             "Escolha a seção:",
             ["Básica", "Avançada", "Criação de Portfólio"],
-            index=["Básica", "Avançada", "Criação de Portfólio"].index(
-                st.session_state.get("page", "Básica") if st.session_state.get("page") in ["Básica", "Avançada", "Criação de Portfólio"] else "Básica"
-            ),
+            index=0,
             key="pagina_analises",
         )
 
-        # Se mudou a rádio, atualiza a page (exceto se estiver em Configurações)
+        # define page default quando não estiver em configurações
         if st.session_state.get("page") != "Configurações":
             st.session_state["page"] = pagina_analises
 
-        # Empurra o botão para o rodapé
-        st.markdown(
-            """
-            <style>
-              [data-testid="stSidebar"] > div:first-child {
-                display: flex;
-                flex-direction: column;
-                height: 100vh;
-              }
-              .sidebar-bottom {
-                margin-top: auto;
-                padding-top: 12px;
-              }
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
+        # espaço (para não colar no botão fixo)
+        st.markdown("<div style='height:80px'></div>", unsafe_allow_html=True)
 
-        st.markdown('<div class="sidebar-bottom">', unsafe_allow_html=True)
-        # ÚNICO botão no “rodapé” do sidebar
-        if st.button("⚙  Configurações", use_container_width=True):
+        # botão fixo no rodapé
+        st.markdown("<div class='config-bottom'>", unsafe_allow_html=True)
+        if st.button("⚙️  Configurações", key="btn_config", use_container_width=True):
             st.session_state["page"] = "Configurações"
         st.markdown("</div>", unsafe_allow_html=True)
 
