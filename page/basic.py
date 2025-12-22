@@ -1,4 +1,4 @@
-Me envie o """
+"""
 basic.py
 ~~~~~~~~
 Página de Análise Básica – Streamlit
