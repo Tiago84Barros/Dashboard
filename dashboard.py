@@ -145,16 +145,7 @@ with st.sidebar:
     )
 
     st.markdown("---")
-    col_a, col_b = st.columns(2)
-    with col_a:
-        if st.button("Recarregar cache", use_container_width=True):
-            # limpa apenas o que é crítico aqui
-            st.session_state.pop("setores_df", None)
-            st.rerun()
-    with col_b:
-        if st.button("Diagnóstico", use_container_width=True):
-            st.session_state["__show_diag__"] = True
-
+    
 # ───────────────────────── Diagnóstico leve ─────────────────────────
 if st.session_state.get("__show_diag__"):
     st.session_state["__show_diag__"] = False
@@ -185,3 +176,4 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
