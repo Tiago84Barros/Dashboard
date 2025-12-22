@@ -1,129 +1,119 @@
 from __future__ import annotations
 
-import pandas as pd
 import streamlit as st
+import pandas as pd
+import matplotlib.pyplot as plt
+import plotly.express as px
 
-from core.data_access import (
-    load_data_from_db,
-    load_multiplos_limitado_from_db,
-)
-from page.empresa_view import render_empresa_view as exibir_detalhes_empresa
+from core.db_loader import load_setores_from_db, load_data_from_db, load_multiplos_from_db
+from core.helpers import obter_setor_da_empresa
+from core.yf_data import baixar_precos, coletar_dividendos
+from core.scoring import calcular_score_acumulado
+from core.portfolio import gerir_carteira, calcular_patrimonio_selic_macro
+from core.weights import get_pesos
+from core.macro import load_macro_summary
 
-pd.set_option("display.float_format", "{:.2f}".format)
 
+def render():
+    st.title("Análise Avançada")
 
-def render() -> None:
-    """
-    Página de Análise Avançada.
-
-    Regras:
-    - NÃO usa sidebar (sidebar é responsabilidade exclusiva do dashboard.py)
-    - Se houver ticker em session_state -> abre página da empresa
-    - Caso contrário -> mostra filtros por setor/segmento/subsetor + ranking
-    """
-
-    st.header("Análise Avançada de Ações")
-
-    # ─────────────────────────────────────────────────────────────
-    # 1) Se existir ticker selecionado no sidebar global, prioriza empresa
-    # ─────────────────────────────────────────────────────────────
-    ticker = st.session_state.get("ticker")
-    if ticker:
-        exibir_detalhes_empresa(ticker)
-        return
-
-    # ─────────────────────────────────────────────────────────────
-    # 2) Carrega base de setores (cache em session_state)
-    # ─────────────────────────────────────────────────────────────
-    setores_df = st.session_state.get("setores_df")
-
-    if setores_df is None:
-        try:
-            setores_df = load_data_from_db("setores")
-            st.session_state["setores_df"] = setores_df
-        except Exception:
-            setores_df = None
-
+    setores_df = load_setores_from_db()
     if setores_df is None or setores_df.empty:
-        st.info("Base de setores não carregada.")
+        st.error("Não foi possível carregar os setores.")
         return
 
-    # Garantia de colunas esperadas
-    df = setores_df.copy()
-    for col in ["SETOR", "SEGMENTO", "SUBSETOR", "ticker"]:
-        if col not in df.columns:
-            df[col] = None
-
-    # ─────────────────────────────────────────────────────────────
-    # 3) Filtros (sempre visíveis na tela)
-    # ─────────────────────────────────────────────────────────────
-    st.subheader("Filtros avançados")
-
-    f1, f2, f3 = st.columns(3)
-
-    setores = ["Todos"] + sorted(
-        [x for x in df["SETOR"].dropna().unique() if str(x).strip()]
+    setor = st.selectbox("Setor", sorted(setores_df["SETOR"].unique()))
+    subsetor = st.selectbox(
+        "Subsetor",
+        sorted(setores_df[setores_df["SETOR"] == setor]["SUBSETOR"].unique()),
     )
-    with f1:
-        setor_sel = st.selectbox("Setor", setores, index=0)
-
-    df_setor = df if setor_sel == "Todos" else df[df["SETOR"] == setor_sel]
-
-    segmentos = ["Todos"] + sorted(
-        [x for x in df_setor["SEGMENTO"].dropna().unique() if str(x).strip()]
-    )
-    with f2:
-        segmento_sel = st.selectbox("Segmento", segmentos, index=0)
-
-    df_segmento = (
-        df_setor if segmento_sel == "Todos" else df_setor[df_setor["SEGMENTO"] == segmento_sel]
+    segmento = st.selectbox(
+        "Segmento",
+        sorted(
+            setores_df[
+                (setores_df["SETOR"] == setor)
+                & (setores_df["SUBSETOR"] == subsetor)
+            ]["SEGMENTO"].unique()
+        ),
     )
 
-    subsetores = ["Todos"] + sorted(
-        [x for x in df_segmento["SUBSETOR"].dropna().unique() if str(x).strip()]
-    )
-    with f3:
-        subsetor_sel = st.selectbox("Subsetor", subsetores, index=0)
+    empresas_df = setores_df[
+        (setores_df["SETOR"] == setor)
+        & (setores_df["SUBSETOR"] == subsetor)
+        & (setores_df["SEGMENTO"] == segmento)
+    ]
 
-    df_final = (
-        df_segmento
-        if subsetor_sel == "Todos"
-        else df_segmento[df_segmento["SUBSETOR"] == subsetor_sel]
-    )
-
-    tickers = sorted(df_final["ticker"].dropna().unique().tolist())
-
-    if not tickers:
-        st.warning("Nenhuma empresa encontrada com os filtros selecionados.")
+    if empresas_df.empty:
+        st.warning("Nenhuma empresa encontrada para o filtro selecionado.")
         return
 
-    st.caption(f"{len(tickers)} empresas encontradas.")
+    dados_empresas = []
+    for _, row in empresas_df.iterrows():
+        ticker = f"{row['ticker']}.SA"
 
-    # ─────────────────────────────────────────────────────────────
-    # 4) Ranking por múltiplos / indicadores
-    # ─────────────────────────────────────────────────────────────
-    st.subheader("Ranking por múltiplos e indicadores")
+        dre = load_data_from_db(ticker)
+        mult = load_multiplos_from_db(ticker)
 
-    try:
-        multiplos_df = load_multiplos_limitado_from_db(tickers)
-    except Exception as e:
-        st.error(f"Erro ao carregar múltiplos: {e}")
+        if dre is None or mult is None:
+            continue
+
+        dados_empresas.append(
+            {
+                "ticker": row["ticker"],
+                "nome": row.get("nome_empresa", row["ticker"]),
+                "dre": dre,
+                "multiplos": mult,
+            }
+        )
+
+    if not dados_empresas:
+        st.warning("Dados insuficientes para análise.")
         return
 
-    if multiplos_df is None or multiplos_df.empty:
-        st.info("Nenhum dado fundamental disponível para os filtros selecionados.")
+    setores_empresa = {
+        e["ticker"]: obter_setor_da_empresa(e["ticker"], setores_df)
+        for e in dados_empresas
+    }
+
+    pesos = get_pesos(setor)
+    macro = load_macro_summary()
+
+    score = calcular_score_acumulado(
+        dados_empresas,
+        setores_empresa,
+        pesos,
+        macro,
+        anos_minimos=4,
+    )
+
+    if score is None or score.empty:
+        st.warning("Score vazio.")
         return
 
-    # Ordenação padrão (ajuste fácil depois)
-    if "ROE" in multiplos_df.columns:
-        multiplos_df = multiplos_df.sort_values("ROE", ascending=False)
+    tickers = [f"{t}.SA" for t in score["ticker"].unique()]
+    precos = baixar_precos(tickers)
+    dividendos = coletar_dividendos(tickers)
 
-    st.dataframe(
-        multiplos_df,
-        use_container_width=True,
-        hide_index=True,
-    )
+    patrimonio = gerir_carteira(precos, score, dividendos)
 
-    st.caption(
-        "💡 Dica: digite um ticker no campo de busca do sidebar para abrir a página detalhada da empresa."
+    patrimonio_selic = calcular_patrimonio_selic_macro(macro, patrimonio.index)
+
+    fig, ax = plt.subplots()
+    patrimonio.plot(ax=ax, label="Estratégia")
+    patrimonio_selic.plot(ax=ax, label="Tesouro Selic")
+    ax.legend()
+    ax.set_title("Evolução do Patrimônio")
+    ax.grid(True)
+
+    st.pyplot(fig)
+
+    st.subheader("Score por Empresa")
+    st.dataframe(score)
+
+    fig2 = px.bar(
+        score,
+        x="ticker",
+        y="score_final",
+        title="Score Final por Empresa",
     )
+    st.plotly_chart(fig2, use_container_width=True)
