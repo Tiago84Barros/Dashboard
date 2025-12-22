@@ -75,4 +75,201 @@ def _load_page_renderer(page_key: str) -> Callable[[], None]:
 def _fmt_mmss(seconds: int) -> str:
     seconds = max(0, int(seconds))
     m = seconds // 60
-    s = seconds %
+    s = seconds % 60
+    return f"{m:02d}:{s:02d}"
+
+
+def _db_scalar(engine, sql: str):
+    with engine.begin() as conn:
+        return conn.execute(text(sql)).scalar()
+
+
+def _db_row(engine, sql: str):
+    with engine.begin() as conn:
+        return conn.execute(text(sql)).mappings().first()
+
+
+def _bank_summary(engine) -> dict:
+    out = {"dfp_tickers": None, "dfp_years": None, "itr_last_date": None}
+
+    try:
+        out["dfp_tickers"] = _db_scalar(
+            engine,
+            "select count(distinct ticker) from cvm.demonstracoes_financeiras;"
+        )
+        r = _db_row(
+            engine,
+            "select min(data) as mn, max(data) as mx from cvm.demonstracoes_financeiras;"
+        )
+        if r and r["mn"] and r["mx"]:
+            out["dfp_years"] = f"{r['mn'].year} → {r['mx'].year}"
+    except Exception:
+        pass
+
+    try:
+        r = _db_row(
+            engine,
+            "select max(data) as mx from cvm.demonstracoes_financeiras_tri;"
+        )
+        if r and r["mx"]:
+            out["itr_last_date"] = str(r["mx"])
+    except Exception:
+        pass
+
+    return out
+
+
+# ───────────────────────── UI: Configurações ──────────────────────────
+def _render_configuracoes(engine):
+    st.title("Configurações")
+    st.caption("Atualização do banco CVM e status da sincronização.")
+
+    status0 = get_sync_status(engine)
+    last_error0 = (status0.get("last_error") or "").strip()
+
+    if last_error0:
+        st.error(f"Última execução com erro: {last_error0}")
+    elif status0.get("last_success"):
+        st.success(f"Última atualização concluída: {status0.get('last_success')}")
+    else:
+        st.info("Nenhuma atualização concluída ainda.")
+
+    col_a, col_b = st.columns([1, 2])
+    with col_a:
+        start = st.button("Atualizar agora", type="primary", use_container_width=True)
+    with col_b:
+        st.write("")
+
+    if "sync_thread" not in st.session_state:
+        st.session_state.sync_thread = None
+
+    if start and (
+        st.session_state.sync_thread is None
+        or not st.session_state.sync_thread.is_alive()
+    ):
+        def _job():
+            apply_update(engine)
+
+        st.session_state.sync_thread = threading.Thread(
+            target=_job, daemon=True
+        )
+        st.session_state.sync_thread.start()
+
+    panel_slot = st.empty()
+    t0 = time.time()
+    timeout_s = 15 * 60
+
+    while True:
+        status = get_sync_status(engine)
+
+        pct_raw = status.get("progress_pct") or "0"
+        try:
+            pct = max(0, min(100, int(float(pct_raw))))
+        except Exception:
+            pct = 0
+
+        stage = status.get("stage") or "-"
+        msg = status.get("message") or ""
+        last_error = (status.get("last_error") or "").strip()
+
+        elapsed = int(time.time() - t0)
+
+        if pct > 0:
+            est_total = int(elapsed * (100 / pct))
+            eta = max(0, est_total - elapsed)
+            eta_txt = _fmt_mmss(eta)
+        else:
+            eta_txt = "—"
+
+        with panel_slot.container():
+            panel_slot.empty()
+            st.subheader("Progresso da atualização")
+            st.progress(pct)
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Progresso", f"{pct}%")
+            c2.metric("Tempo decorrido", _fmt_mmss(elapsed))
+            c3.metric("Tempo restante (est.)", eta_txt)
+
+            st.markdown(f"**Etapa:** {stage}")
+            if msg:
+                st.caption(msg)
+            if last_error:
+                st.error(last_error)
+
+        th = st.session_state.sync_thread
+        if th is None or not th.is_alive():
+            break
+
+        if elapsed > timeout_s:
+            st.warning(
+                "A atualização ultrapassou o tempo esperado. "
+                "Verifique logs/timeout no Supabase."
+            )
+            break
+
+        time.sleep(1)
+
+    st.subheader("Resumo do banco (CVM)")
+    s = _bank_summary(engine)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("DFP (tickers)", str(s.get("dfp_tickers") or "—"))
+    c2.metric("Período DFP", str(s.get("dfp_years") or "—"))
+    c3.metric("Última data ITR", str(s.get("itr_last_date") or "—"))
+
+
+# ───────────────────────── Main app ──────────────────────────
+def main():
+    st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
+    engine = _get_engine()
+
+    with st.sidebar:
+        st.header("Análises")
+
+        st.text_input("Busca", key="sidebar_search")
+
+        pagina_analises = st.radio(
+            "Escolha a seção:",
+            ["Básica", "Avançada", "Criação de Portfólio"],
+            index=0,
+            key="pagina_analises",
+        )
+
+        st.markdown("---")
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("Recarregar cache", use_container_width=True):
+                st.session_state.clear()
+                st.rerun()
+        with col_b:
+            if st.button("Diagnóstico", use_container_width=True):
+                st.session_state["__show_diag__"] = True
+
+        st.markdown("---")
+
+        if st.button("⚙️ Configurações", use_container_width=True):
+            st.session_state["page"] = "Configurações"
+            st.rerun()
+
+        st.markdown("---")
+
+        if st.button("Atualizar dados", use_container_width=True):
+            st.session_state["page"] = "Configurações"
+            st.rerun()
+
+        if st.session_state.get("page") != "Configurações":
+            st.session_state["page"] = pagina_analises
+
+    page = st.session_state.get("page", "Básica")
+
+    if page == "Configurações":
+        _render_configuracoes(engine)
+        return
+
+    renderer = _load_page_renderer(page)
+    renderer()
+
+
+if __name__ == "__main__":
+    main()
