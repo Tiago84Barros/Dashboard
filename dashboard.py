@@ -1,9 +1,9 @@
 """
 dashboard.py
 ~~~~~~~~~~~~
-Script principal Streamlit.
+Script principal da aplicação Streamlit.
 
-Execute:
+Execute com:
     streamlit run dashboard.py
 """
 
@@ -13,263 +13,232 @@ import importlib
 import logging
 import pathlib
 import sys
-import threading
-import time
 from typing import Callable
 
 import streamlit as st
-from sqlalchemy import text
 
+from core.db_supabase import get_engine
+from core.cvm_sync import get_sync_status, apply_update
+
+# ───────────────────────── Logger e Engine ─────────────────────────
+engine = get_engine()
 logger = logging.getLogger(__name__)
 
-# ───────────────────────── Path / Imports helpers ──────────────────────────
+# ───────────────────────── Ajuste de path ──────────────────────────
 ROOT_DIR = pathlib.Path(__file__).resolve().parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.append(str(ROOT_DIR))
 
 
-def _import_first(*module_names: str):
-    last_err = None
-    for name in module_names:
+# ───────────────────────── Imports com fallback ─────────────────────
+def _import_first(*module_paths: str):
+    """
+    Tenta importar o primeiro módulo disponível na lista.
+    Retorna o módulo importado ou levanta ImportError com detalhes.
+    """
+    errors = []
+    for p in module_paths:
         try:
-            return importlib.import_module(name)
+            return importlib.import_module(p)
         except Exception as e:
-            last_err = e
-    raise ImportError(f"Falha ao importar módulos {module_names}. Último erro: {last_err}")
+            errors.append((p, e))
+
+    msg = "Falha ao importar módulos. Tentativas:\n" + "\n".join(
+        [f"- {p}: {repr(e)}" for p, e in errors]
+    )
+    raise ImportError(msg)
 
 
-def _get_engine():
-    mod = _import_first("core.db_supabase", "db_supabase")
-    if hasattr(mod, "get_engine"):
-        return mod.get_engine()
-    if hasattr(mod, "engine"):
-        return mod.engine
-    raise ImportError("Não encontrei get_engine() em core.db_supabase/db_supabase.")
+def _get_layout_funcs() -> tuple[Callable[[], None], Callable[[], None]]:
+    """
+    Busca configurar_pagina() e aplicar_estilos_css() em:
+    - design.layout (estrutura modular)
+    - layout (arquivo solto)
+    Se não existir, usa fallback minimalista.
+    """
+    try:
+        mod = _import_first("design.layout", "layout")
+        configurar_pagina = getattr(mod, "configurar_pagina", None)
+        aplicar_estilos_css = getattr(mod, "aplicar_estilos_css", None)
+        if callable(configurar_pagina) and callable(aplicar_estilos_css):
+            return configurar_pagina, aplicar_estilos_css
+    except Exception:
+        pass
+
+    # ───────────── fallback seguro ─────────────
+    def _fallback_config():
+        try:
+            st.set_page_config(
+                page_title="Dashboard Fundamentalista",
+                layout="wide",
+                initial_sidebar_state="expanded",
+            )
+        except Exception:
+            pass
+
+    def _fallback_css():
+        st.markdown(
+            """
+            <style>
+              .block-container {
+                  padding-top: 1.2rem;
+                  padding-bottom: 2rem;
+              }
+              [data-testid="stSidebar"] {
+                  padding-top: 1rem;
+              }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    return _fallback_config, _fallback_css
 
 
-# ───────────────────────── CVM sync API ──────────────────────────
-_sync_mod = _import_first("core.cvm_sync", "cvm_sync")
-get_sync_status = getattr(_sync_mod, "get_sync_status")
-apply_update = getattr(_sync_mod, "apply_update")
+def _get_db_loader():
+    """
+    Obtém load_setores_from_db em:
+    - core.db_loader
+    - db_loader
+    """
+    mod = _import_first("core.db_loader", "db_loader")
+    fn = getattr(mod, "load_setores_from_db", None)
+    if not callable(fn):
+        raise ImportError(
+            "load_setores_from_db não encontrado em core.db_loader/db_loader."
+        )
+    return fn
 
 
-# ───────────────────────── Page loaders ──────────────────────────
 def _load_page_renderer(page_key: str) -> Callable[[], None]:
+    """
+    Carrega a função render() da página escolhida, com fallback de caminhos:
+    - page.basic / basic
+    - page.advanced / advanced
+    - page.criacao_portfolio / criacao_portfolio
+    """
     mapping = {
         "Básica": ("page.basic", "basic"),
         "Avançada": ("page.advanced", "advanced"),
         "Criação de Portfólio": ("page.criacao_portfolio", "criacao_portfolio"),
     }
-    mods = mapping.get(page_key)
-    if not mods:
-        raise ValueError(f"Página inválida: {page_key}")
 
-    mod = _import_first(*mods)
-    fn = getattr(mod, "render", None)
-    if not callable(fn):
-        raise ImportError(f"render() não encontrado em {mods}.")
-    return fn
+    paths = mapping.get(page_key)
+    if not paths:
+        raise ValueError(f"Página desconhecida: {page_key}")
 
-
-# ───────────────────────── UI Helpers ──────────────────────────
-def _fmt_mmss(seconds: int) -> str:
-    seconds = max(0, int(seconds))
-    m = seconds // 60
-    s = seconds % 60
-    return f"{m:02d}:{s:02d}"
-
-
-def _db_scalar(engine, sql: str):
-    with engine.begin() as conn:
-        return conn.execute(text(sql)).scalar()
-
-
-def _db_row(engine, sql: str):
-    with engine.begin() as conn:
-        return conn.execute(text(sql)).mappings().first()
-
-
-def _bank_summary(engine) -> dict:
-    out = {"dfp_tickers": None, "dfp_years": None, "itr_last_date": None}
-
-    try:
-        out["dfp_tickers"] = _db_scalar(
-            engine,
-            "select count(distinct ticker) from cvm.demonstracoes_financeiras;"
-        )
-        r = _db_row(
-            engine,
-            "select min(data) as mn, max(data) as mx from cvm.demonstracoes_financeiras;"
-        )
-        if r and r["mn"] and r["mx"]:
-            out["dfp_years"] = f"{r['mn'].year} → {r['mx'].year}"
-    except Exception:
-        pass
-
-    try:
-        r = _db_row(
-            engine,
-            "select max(data) as mx from cvm.demonstracoes_financeiras_tri;"
-        )
-        if r and r["mx"]:
-            out["itr_last_date"] = str(r["mx"])
-    except Exception:
-        pass
-
-    return out
-
-
-# ───────────────────────── UI: Configurações ──────────────────────────
-def _render_configuracoes(engine):
-    st.title("Configurações")
-    st.caption("Atualização do banco CVM e status da sincronização.")
-
-    status0 = get_sync_status(engine)
-    last_error0 = (status0.get("last_error") or "").strip()
-
-    if last_error0:
-        st.error(f"Última execução com erro: {last_error0}")
-    elif status0.get("last_success"):
-        st.success(f"Última atualização concluída: {status0.get('last_success')}")
-    else:
-        st.info("Nenhuma atualização concluída ainda.")
-
-    col_a, col_b = st.columns([1, 2])
-    with col_a:
-        start = st.button("Atualizar agora", type="primary", use_container_width=True)
-    with col_b:
-        st.write("")
-
-    if "sync_thread" not in st.session_state:
-        st.session_state.sync_thread = None
-
-    if start and (
-        st.session_state.sync_thread is None
-        or not st.session_state.sync_thread.is_alive()
-    ):
-        def _job():
-            apply_update(engine)
-
-        st.session_state.sync_thread = threading.Thread(
-            target=_job, daemon=True
-        )
-        st.session_state.sync_thread.start()
-
-    panel_slot = st.empty()
-    t0 = time.time()
-    timeout_s = 15 * 60
-
-    while True:
-        status = get_sync_status(engine)
-
-        pct_raw = status.get("progress_pct") or "0"
-        try:
-            pct = max(0, min(100, int(float(pct_raw))))
-        except Exception:
-            pct = 0
-
-        stage = status.get("stage") or "-"
-        msg = status.get("message") or ""
-        last_error = (status.get("last_error") or "").strip()
-
-        elapsed = int(time.time() - t0)
-
-        if pct > 0:
-            est_total = int(elapsed * (100 / pct))
-            eta = max(0, est_total - elapsed)
-            eta_txt = _fmt_mmss(eta)
-        else:
-            eta_txt = "—"
-
-        with panel_slot.container():
-            panel_slot.empty()
-            st.subheader("Progresso da atualização")
-            st.progress(pct)
-
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Progresso", f"{pct}%")
-            c2.metric("Tempo decorrido", _fmt_mmss(elapsed))
-            c3.metric("Tempo restante (est.)", eta_txt)
-
-            st.markdown(f"**Etapa:** {stage}")
-            if msg:
-                st.caption(msg)
-            if last_error:
-                st.error(last_error)
-
-        th = st.session_state.sync_thread
-        if th is None or not th.is_alive():
-            break
-
-        if elapsed > timeout_s:
-            st.warning(
-                "A atualização ultrapassou o tempo esperado. "
-                "Verifique logs/timeout no Supabase."
-            )
-            break
-
-        time.sleep(1)
-
-    st.subheader("Resumo do banco (CVM)")
-    s = _bank_summary(engine)
-    c1, c2, c3 = st.columns(3)
-    c1.metric("DFP (tickers)", str(s.get("dfp_tickers") or "—"))
-    c2.metric("Período DFP", str(s.get("dfp_years") or "—"))
-    c3.metric("Última data ITR", str(s.get("itr_last_date") or "—"))
-
-
-# ───────────────────────── Main app ──────────────────────────
-def main():
-    st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
-    engine = _get_engine()
-
-    with st.sidebar:
-        st.header("Análises")
-
-        st.text_input("Busca", key="sidebar_search")
-
-        pagina_analises = st.radio(
-            "Escolha a seção:",
-            ["Básica", "Avançada", "Criação de Portfólio"],
-            index=0,
-            key="pagina_analises",
+    mod = _import_first(*paths)
+    render = getattr(mod, "render", None)
+    if not callable(render):
+        raise ImportError(
+            f"Função render() não encontrada no módulo da página: {paths}"
         )
 
-        st.markdown("---")
+    return render
 
-        col_a, col_b = st.columns(2)
-        with col_a:
-            if st.button("Recarregar cache", use_container_width=True):
-                st.session_state.clear()
-                st.rerun()
-        with col_b:
-            if st.button("Diagnóstico", use_container_width=True):
-                st.session_state["__show_diag__"] = True
 
-        st.markdown("---")
+# ───────────────────────── Layout Global ───────────────────────────
+configurar_pagina, aplicar_estilos_css = _get_layout_funcs()
+configurar_pagina()
+aplicar_estilos_css()
 
-        if st.button("⚙️ Configurações", use_container_width=True):
-            st.session_state["page"] = "Configurações"
-            st.rerun()
 
-        st.markdown("---")
-
-        if st.button("Atualizar dados", use_container_width=True):
-            st.session_state["page"] = "Configurações"
-            st.rerun()
-
-        if st.session_state.get("page") != "Configurações":
-            st.session_state["page"] = pagina_analises
-
-    page = st.session_state.get("page", "Básica")
-
-    if page == "Configurações":
-        _render_configuracoes(engine)
+# ───────────────────────── Cache inicial ───────────────────────────
+def _ensure_setores_df() -> None:
+    if "setores_df" in st.session_state and st.session_state["setores_df"] is not None:
         return
 
-    renderer = _load_page_renderer(page)
-    renderer()
+    load_setores_from_db = _get_db_loader()
+    setores_df = load_setores_from_db()
+    st.session_state["setores_df"] = setores_df
 
 
-if __name__ == "__main__":
-    main()
+# ───────────────────────── Sidebar ─────────────────────────────────
+with st.sidebar:
+    st.markdown("## Análises")
+
+    pagina_escolhida = st.radio(
+        "Escolha a seção:",
+        ["Básica", "Avançada", "Criação de Portfólio"],
+        index=0,
+    )
+
+    st.markdown("---")
+    st.markdown("## Atualização CVM")
+
+    try:
+        status = get_sync_status(engine)
+        last_run = status.get("last_run")
+
+        if last_run:
+            st.success(f"Última atualização (UTC): {last_run}")
+        else:
+            st.warning("Nenhuma atualização executada ainda.")
+
+        if st.button("Atualizar agora", use_container_width=True):
+            placeholder = st.empty()
+
+            def _progress(msg: str):
+                placeholder.info(msg)
+
+            try:
+                apply_update(engine, progress_cb=_progress)
+
+                # força recarregamento dos dados
+                st.session_state.pop("setores_df", None)
+
+                st.success("Atualização finalizada com sucesso.")
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"Falha ao atualizar CVM: {e}")
+                logger.exception("Erro em apply_update()", exc_info=e)
+
+    except Exception as e:
+        st.error(f"Erro ao consultar status da CVM: {e}")
+        logger.exception("Erro em get_sync_status()", exc_info=e)
+
+    st.markdown("---")
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button("Recarregar cache", use_container_width=True):
+            st.session_state.pop("setores_df", None)
+            st.rerun()
+
+    with col_b:
+        if st.button("Diagnóstico", use_container_width=True):
+            st.session_state["__show_diag__"] = True
+
+
+# ───────────────────────── Diagnóstico ─────────────────────────────
+if st.session_state.get("__show_diag__"):
+    st.session_state["__show_diag__"] = False
+    with st.expander("Diagnóstico do App", expanded=True):
+        st.write("Root dir:", str(ROOT_DIR))
+        st.write("Root no sys.path:", str(ROOT_DIR) in sys.path)
+
+        try:
+            _ensure_setores_df()
+            s = st.session_state.get("setores_df")
+            st.write("setores_df carregado:", s is not None and not s.empty)
+            if s is not None and not s.empty:
+                st.write("Shape:", s.shape)
+                st.write("Colunas:", list(s.columns))
+        except Exception as e:
+            st.error(f"Falha ao carregar setores_df: {e}")
+
+
+# ───────────────────────── Execução principal ──────────────────────
+try:
+    _ensure_setores_df()
+except Exception as e:
+    st.error(f"Falha ao inicializar dados base (setores_df): {e}")
+    st.stop()
+
+try:
+    render_page = _load_page_renderer(pagina_escolhida)
+    render_page()
+except Exception as e:
+    st.error(f"Erro ao renderizar página '{pagina_escolhida}': {e}")
+    logger.exception("Erro de renderização", exc_info=e)
