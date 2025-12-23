@@ -25,7 +25,7 @@ from core.db.loader import (
     load_macro_summary,
 )
 from data_sources.yf_data import baixar_precos, coletar_dividendos
-from core.scoring import (
+from analytics.scoring import (
     calcular_score_acumulado,
     penalizar_plato,
 )
