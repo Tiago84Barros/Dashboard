@@ -45,9 +45,7 @@ def _import_first(*module_paths: str):
             return importlib.import_module(p)
         except Exception as e:
             errors.append((p, e))
-    msg = "Falha ao importar módulos. Tentativas:\n" + "\n".join(
-        [f"- {p}: {repr(e)}" for p, e in errors]
-    )
+    msg = "Falha ao importar módulos. Tentativas:\n" + "\n".join([f"- {p}: {repr(e)}" for p, e in errors])
     raise ImportError(msg)
 
 
@@ -75,6 +73,7 @@ def _get_layout_funcs() -> tuple[Callable[[], None], Callable[[], None]]:
                 initial_sidebar_state="expanded",
             )
         except Exception:
+            # set_page_config só pode ser chamado uma vez; ignora se já foi chamado.
             pass
 
     def _fallback_css():
@@ -110,13 +109,12 @@ def _load_page_renderer(page_key: str) -> Callable[[], None]:
     - page.basic / basic
     - page.advanced / advanced
     - page.criacao_portfolio / criacao_portfolio
-    - page.configuracoes / configuracoes
     """
     mapping = {
         "Básica": ("page.basic", "basic"),
         "Avançada": ("page.advanced", "advanced"),
         "Criação de Portfólio": ("page.criacao_portfolio", "criacao_portfolio"),
-        "Configurações": ("page.configuracoes", "configuracoes"),
+        "Configurações": ("page.configuracoes", "configuracoes"),  # opcional, se existir
     }
     paths = mapping.get(page_key)
     if not paths:
@@ -134,6 +132,47 @@ configurar_pagina, aplicar_estilos_css = _get_layout_funcs()
 configurar_pagina()
 aplicar_estilos_css()
 
+# ───────────────────────── CSS Profissional (Sidebar fixo) ─────────
+st.markdown(
+    """
+    <style>
+    /* Remove scroll do sidebar e do container interno */
+    [data-testid="stSidebar"] { overflow: hidden !important; }
+    [data-testid="stSidebar"] > div:first-child { overflow: hidden !important; height: 100vh !important; }
+    [data-testid="stSidebarContent"] { overflow: hidden !important; height: 100vh !important; }
+
+    /* Grid no sidebar: topo (conteúdo) + rodapé (botão) */
+    .sidebar-grid {
+        height: 100vh;
+        display: grid;
+        grid-template-rows: 1fr auto;
+        gap: 0.75rem;
+        padding-bottom: 0.75rem;
+    }
+
+    /* Bloco do rodapé */
+    .sidebar-footer {
+        padding-top: 0.25rem;
+        border-top: 1px solid rgba(255,255,255,0.08);
+    }
+
+    /* Ajuste fino para não "sobrar" espaço e provocar scroll */
+    .sidebar-top {
+        overflow: hidden;
+        padding-right: 0.25rem;
+    }
+
+    /* Botão com cara mais "produto" */
+    [data-testid="stSidebar"] button[kind="secondary"] {
+        border-radius: 10px !important;
+        padding: 0.6rem 0.9rem !important;
+        font-weight: 600 !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 # ───────────────────────── Cache inicial ───────────────────────────
 def _ensure_setores_df() -> None:
@@ -149,82 +188,64 @@ def _ensure_setores_df() -> None:
     st.session_state["setores_df"] = setores_df
 
 
-# ───────────────────────── Sidebar navegação (com rodapé) ──────────
-def _sidebar_nav() -> str:
-    """
-    Sidebar com:
-    - rádio para as páginas principais
-    - botão "Configurações" fixo no rodapé
-    """
-    # Estado inicial
-    if "page_key" not in st.session_state:
-        st.session_state["page_key"] = "Básica"
+# ───────────────────────── Estado de navegação ─────────────────────
+if "page_key" not in st.session_state:
+    st.session_state["page_key"] = "Básica"
 
-    # CSS para "rodapé" do sidebar
-    st.markdown(
-        """
-        <style>
-        section[data-testid="stSidebar"] > div {height: 100vh;}
-        .sidebar-wrap {display: flex; flex-direction: column; height: 100vh;}
-        .sidebar-footer {margin-top: auto; padding-top: 0.75rem;}
-        .sidebar-footer button {width: 100%;}
-        </style>
-        """,
-        unsafe_allow_html=True,
+
+# ───────────────────────── Sidebar navegação ───────────────────────
+with st.sidebar:
+    st.markdown('<div class="sidebar-grid">', unsafe_allow_html=True)
+
+    # Topo do sidebar
+    st.markdown('<div class="sidebar-top">', unsafe_allow_html=True)
+    st.markdown("## Análises")
+
+    pagina_escolhida = st.radio(
+        "Escolha a seção:",
+        ["Básica", "Avançada", "Criação de Portfólio"],
+        index=["Básica", "Avançada", "Criação de Portfólio"].index(st.session_state["page_key"])
+        if st.session_state["page_key"] in ["Básica", "Avançada", "Criação de Portfólio"]
+        else 0,
     )
 
-    with st.sidebar:
-        st.markdown("<div class='sidebar-wrap'>", unsafe_allow_html=True)
-
-        st.markdown("## Análises")
-
-        # Se estiver em Configurações, o rádio continua mostrando a última página "analítica"
-        last_analise = st.session_state.get("last_analise", "Básica")
-        if last_analise not in ["Básica", "Avançada", "Criação de Portfólio"]:
-            last_analise = "Básica"
-
-        pagina_escolhida = st.radio(
-            "Escolha a seção:",
-            ["Básica", "Avançada", "Criação de Portfólio"],
-            index=["Básica", "Avançada", "Criação de Portfólio"].index(last_analise),
-            key="radio_pages",
-        )
-        st.session_state["last_analise"] = pagina_escolhida
-
-        st.markdown("---")
-
-        # Rodapé: Configurações
-        st.markdown("<div class='sidebar-footer'>", unsafe_allow_html=True)
-        if st.button("⚙️ Configurações", use_container_width=True):
-            st.session_state["page_key"] = "Configurações"
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    # Prioridade: se clicou no botão, vai pra Configurações
-    if st.session_state.get("page_key") == "Configurações":
-        return "Configurações"
-
-    # Caso contrário, segue o rádio
+    # Atualiza a página selecionada pelo rádio
     st.session_state["page_key"] = pagina_escolhida
-    return pagina_escolhida
+    st.markdown("---")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # Rodapé do sidebar (botão fixo)
+    st.markdown('<div class="sidebar-footer">', unsafe_allow_html=True)
+    if st.button("⚙️ Configurações", use_container_width=True, type="secondary"):
+        st.session_state["page_key"] = "Configurações"
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
-# ───────────────────────── Execução / Roteamento ────────────────────
-pagina_escolhida = _sidebar_nav()
-
-# Só carrega setores_df quando estiver em páginas de análise
-# (Configurações pode rodar sem depender de setores_df)
-if pagina_escolhida != "Configurações":
-    try:
-        _ensure_setores_df()
-    except Exception as e:
-        st.error(f"Falha ao inicializar dados base (setores_df): {e}")
-        st.stop()
+# ───────────────────────── Execução / Roteamento ───────────────────
+# Carrega dados base (setores) apenas nas páginas que precisam
+try:
+    # Se quiser, pode carregar sempre. Mantive o padrão anterior (carrega antes de renderizar).
+    _ensure_setores_df()
+except Exception as e:
+    st.error(f"Falha ao inicializar dados base (setores_df): {e}")
+    st.stop()
 
 try:
-    render_page = _load_page_renderer(pagina_escolhida)
+    render_page = _load_page_renderer(st.session_state["page_key"])
     render_page()
+except ImportError as e:
+    # Se a página de configurações ainda não existe, mostra fallback amigável
+    if st.session_state["page_key"] == "Configurações":
+        st.markdown("## Configurações")
+        st.info(
+            "A página de Configurações ainda não está implementada como módulo.\n\n"
+            "Crie `page/configuracoes.py` com uma função `render()` para habilitar esta seção."
+        )
+    else:
+        st.error("Falha ao carregar a página selecionada.")
+        st.exception(e)
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
