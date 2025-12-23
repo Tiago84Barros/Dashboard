@@ -11,7 +11,7 @@ from core.db.loader import (
     load_multiplos,
     load_setores,
 )
-from core.helpers import get_logo_url
+from analytics.helpers import get_logo_url
 from page.empresa_view import render_empresa_view as exibir_detalhes_empresa
 
 pd.set_option("display.float_format", "{:.2f}".format)
