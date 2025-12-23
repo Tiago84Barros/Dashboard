@@ -10,7 +10,7 @@ import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 
-from core.db_loader import (
+from core.db.loader import (
     load_setores_from_db,
     load_data_from_db,
     load_multiplos_from_db,
