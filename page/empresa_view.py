@@ -6,12 +6,34 @@ import streamlit as st
 import plotly.express as px
 
 from core.helpers import get_company_info, get_logo_url
+from core.db.engine import get_engine
 from core.db.loader import (
-    load_data_from_db,
-    load_multiplos_from_db,
-    load_multiplos_limitado_from_db,
+    load_demonstracoes_financeiras,
+    load_multiplos,
 )
 from core.yf_data import get_price, get_fundamentals_yf
+
+
+# ─────────────────────────────────────────────────────────────
+# Engine (Supabase) cacheado
+# ─────────────────────────────────────────────────────────────
+@st.cache_resource
+def _engine():
+    return get_engine()
+
+
+def _norm_sa(ticker: str) -> str:
+    t = (ticker or "").strip().upper()
+    if not t:
+        return t
+    return t if t.endswith(".SA") else f"{t}.SA"
+
+
+def _pick_date_col(df: pd.DataFrame) -> str | None:
+    for c in ("Data", "data"):
+        if c in df.columns:
+            return c
+    return None
 
 
 # ─────────────────────────────────────────────────────────────
@@ -26,19 +48,23 @@ def calculate_growth_rate(df: pd.DataFrame, column: str) -> float:
     - Retorna np.nan se dados insuficientes
     """
     try:
-        if df is None or df.empty or "Data" not in df.columns or column not in df.columns:
+        if df is None or df.empty or column not in df.columns:
             return np.nan
 
-        tmp = df[["Data", column]].copy()
-        tmp["Data"] = pd.to_datetime(tmp["Data"], errors="coerce")
+        date_col = _pick_date_col(df)
+        if not date_col:
+            return np.nan
+
+        tmp = df[[date_col, column]].copy()
+        tmp[date_col] = pd.to_datetime(tmp[date_col], errors="coerce")
         tmp[column] = pd.to_numeric(tmp[column], errors="coerce")
-        tmp = tmp.dropna(subset=["Data", column])
-        tmp = tmp[tmp[column] > 0].sort_values("Data")
+        tmp = tmp.dropna(subset=[date_col, column])
+        tmp = tmp[tmp[column] > 0].sort_values(date_col)
 
         if tmp.shape[0] < 2:
             return np.nan
 
-        X = (tmp["Data"] - tmp["Data"].iloc[0]).dt.days / 365.25
+        X = (tmp[date_col] - tmp[date_col].iloc[0]).dt.days / 365.25
         y_log = np.log(tmp[column].values.astype(float))
 
         slope, _ = np.polyfit(X.values.astype(float), y_log, deg=1)
@@ -58,26 +84,27 @@ def format_growth_rate(value: float) -> str:
 # Helpers de múltiplos (display)
 # ─────────────────────────────────────────────────────────────
 
-def _latest_row_by_date(df: pd.DataFrame, date_col: str = "Data") -> pd.DataFrame:
+def _latest_row_by_date(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Retorna um DF com 1 linha: o último registro por Data.
+    Retorna um DF com 1 linha: o último registro por Data/data.
     Se não houver Data, retorna primeira linha.
     """
     if df is None or df.empty:
         return pd.DataFrame()
 
     out = df.copy()
-    if date_col in out.columns:
+    date_col = _pick_date_col(out)
+    if date_col:
         out[date_col] = pd.to_datetime(out[date_col], errors="coerce")
         out = out.dropna(subset=[date_col]).sort_values(date_col)
         if out.empty:
             return pd.DataFrame()
         return out.tail(1).reset_index(drop=True)
+
     return out.head(1).reset_index(drop=True)
 
 
 def _merge_display_multiplos(
-    ticker: str,
     db_latest: pd.DataFrame,
     yf_latest: pd.DataFrame,
 ) -> tuple[pd.DataFrame, dict]:
@@ -88,14 +115,12 @@ def _merge_display_multiplos(
     Retorna:
       (df_display, fonte_por_coluna)
     """
-    fonte = {}
+    fonte: dict = {}
 
-    # garante 1 linha
     db1 = _latest_row_by_date(db_latest) if db_latest is not None else pd.DataFrame()
     yf1 = yf_latest.copy() if isinstance(yf_latest, pd.DataFrame) else pd.DataFrame()
 
     if yf1 is None or yf1.empty:
-        # fallback total para DB
         df_disp = db1.copy()
         for c in df_disp.columns:
             fonte[c] = "DB"
@@ -150,6 +175,49 @@ def _fmt_metric(label: str, value) -> str:
 
 
 # ─────────────────────────────────────────────────────────────
+# Loads (DB) com cache
+# ─────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=3600)
+def _load_dre(ticker: str) -> pd.DataFrame:
+    return load_demonstracoes_financeiras(_norm_sa(ticker), engine=_engine())
+
+
+@st.cache_data(ttl=3600)
+def _load_multiplos(ticker: str) -> pd.DataFrame:
+    return load_multiplos(_norm_sa(ticker), engine=_engine())
+
+
+def _multiplos_limitado(ticker: str, limite: int = 12, anos: int | None = None) -> pd.DataFrame:
+    """
+    Substitui load_multiplos_limitado_from_db:
+    - se 'anos' informado: filtra por janela de tempo
+    - senão: retorna os últimos 'limite' registros ordenados por Data/data
+    """
+    df = _load_multiplos(ticker)
+    if df is None or df.empty:
+        return df
+
+    out = df.copy()
+    date_col = _pick_date_col(out)
+    if not date_col:
+        return out
+
+    out[date_col] = pd.to_datetime(out[date_col], errors="coerce")
+    out = out.dropna(subset=[date_col]).sort_values(date_col)
+
+    if out.empty:
+        return out
+
+    if anos is not None:
+        cutoff = pd.Timestamp.today().normalize() - pd.DateOffset(years=int(anos))
+        return out[out[date_col] >= cutoff].sort_values(date_col)
+
+    # por limite
+    return out.tail(int(limite)).reset_index(drop=True)
+
+
+# ─────────────────────────────────────────────────────────────
 # Página principal
 # ─────────────────────────────────────────────────────────────
 
@@ -158,15 +226,24 @@ def render_empresa_view(ticker: str):
         st.warning("Informe um ticker válido.")
         return
 
+    ticker = _norm_sa(ticker)
+
     # ── DRE / indicadores do DB (fonte primária)
-    indicadores = load_data_from_db(ticker)
+    indicadores = _load_dre(ticker)
     if indicadores is None or indicadores.empty:
         st.error("Indicadores financeiros (DRE) não encontrados no banco.")
         return
 
     indicadores = indicadores.drop(columns=["Ticker"], errors="ignore")
-    indicadores["Data"] = pd.to_datetime(indicadores["Data"], errors="coerce")
-    indicadores = indicadores.dropna(subset=["Data"]).sort_values("Data")
+    date_col = _pick_date_col(indicadores)
+    if date_col:
+        indicadores[date_col] = pd.to_datetime(indicadores[date_col], errors="coerce")
+        indicadores = indicadores.dropna(subset=[date_col]).sort_values(date_col)
+        if date_col != "Data":
+            indicadores = indicadores.rename(columns={date_col: "Data"})
+    else:
+        st.error("DRE sem coluna de data (Data/data).")
+        return
 
     # ── Cabeçalho
     company_name, company_website = get_company_info(ticker)
@@ -179,7 +256,10 @@ def render_empresa_view(ticker: str):
         if current_price is None:
             st.subheader(f"{company_name} — Preço atual indisponível")
         else:
-            st.subheader(f"{company_name} — Preço Atual: R$ {current_price:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            st.subheader(
+                f"{company_name} — Preço Atual: R$ {current_price:,.2f}"
+                .replace(",", "X").replace(".", ",").replace("X", ".")
+            )
         if company_website:
             st.caption(company_website)
         st.caption(f"Ticker: {ticker}")
@@ -300,14 +380,14 @@ def render_empresa_view(ticker: str):
     st.markdown("---")
     st.markdown("### Indicadores Financeiros")
 
-    # DB “recente”: pega últimos registros (equivalente ao TRI anterior)
-    mult_db_recent = load_multiplos_limitado_from_db(ticker, limite=12)
+    # DB “recente”: últimos registros (equivalente ao antigo limitado)
+    mult_db_recent = _multiplos_limitado(ticker, limite=12)
     mult_db_latest = _latest_row_by_date(mult_db_recent) if mult_db_recent is not None else pd.DataFrame()
 
     # YF (para exibição): 1 linha
     mult_yf_latest = get_fundamentals_yf(ticker)
 
-    multiplos_display, fontes = _merge_display_multiplos(ticker, mult_db_latest, mult_yf_latest)
+    multiplos_display, fontes = _merge_display_multiplos(mult_db_latest, mult_yf_latest)
 
     descricoes = {
         "Margem Líquida": "Lucro Líquido ÷ Receita Líquida — quanto sobra do faturamento como lucro final.",
@@ -365,19 +445,25 @@ def render_empresa_view(ticker: str):
     st.markdown("---")
     st.markdown("### Gráfico de Múltiplos (Histórico do Banco)")
 
-    mult_hist = load_multiplos_from_db(ticker)
+    mult_hist = _load_multiplos(ticker)
     if mult_hist is None or mult_hist.empty:
         st.info("Histórico de múltiplos não encontrado no banco.")
         return
 
     mult_hist = mult_hist.copy()
-    mult_hist["Data"] = pd.to_datetime(mult_hist["Data"], errors="coerce")
-    mult_hist = mult_hist.dropna(subset=["Data"]).sort_values("Data")
+    date_col = _pick_date_col(mult_hist)
+    if not date_col:
+        st.info("Histórico de múltiplos sem coluna de data (Data/data).")
+        return
+
+    mult_hist[date_col] = pd.to_datetime(mult_hist[date_col], errors="coerce")
+    mult_hist = mult_hist.dropna(subset=[date_col]).sort_values(date_col)
+    if date_col != "Data":
+        mult_hist = mult_hist.rename(columns={date_col: "Data"})
 
     exclude_columns = {"Data", "Ticker", "N Acoes", "N_Acoes"}
     cols_num = [c for c in mult_hist.columns if c not in exclude_columns]
 
-    # mapeamento de nome bonito
     col_name_mapping = {col: col.replace("_", " ").title() for col in cols_num}
     display_name_to_col = {v: k for k, v in col_name_mapping.items()}
     display_names = list(col_name_mapping.values())
