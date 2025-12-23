@@ -4,16 +4,17 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 
+from core.db.engine import get_engine
 from core.db.loader import (
-    load_setores_from_db,
-    load_data_from_db,
-    load_multiplos_from_db,
+    load_setores,
+    load_demonstracoes_financeiras,
+    load_multiplos,
     load_macro_summary,
 )
 from core.helpers import (
@@ -42,6 +43,14 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────
+# Engine (Supabase) cacheado
+# ─────────────────────────────────────────────────────────────
+@st.cache_resource
+def _engine():
+    return get_engine()
+
+
+# ─────────────────────────────────────────────────────────────
 # Utilitários internos (sem mexer em outros módulos)
 # ─────────────────────────────────────────────────────────────
 
@@ -53,6 +62,8 @@ def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 def _norm_sa(ticker: str) -> str:
     t = (ticker or "").strip().upper()
+    if not t:
+        return t
     return t if t.endswith(".SA") else f"{t}.SA"
 
 
@@ -60,12 +71,22 @@ def _strip_sa(ticker: str) -> str:
     return (ticker or "").strip().upper().replace(".SA", "")
 
 
+def _pick_date_col(df: pd.DataFrame) -> str | None:
+    if df is None or df.empty:
+        return None
+    for c in ("Data", "data"):
+        if c in df.columns:
+            return c
+    return None
+
+
 def _safe_year_count_from_dre(dre: pd.DataFrame) -> int:
     if dre is None or dre.empty:
         return 0
-    if "Data" not in dre.columns:
+    col = _pick_date_col(dre)
+    if not col:
         return 0
-    years = pd.to_datetime(dre["Data"], errors="coerce").dt.year
+    years = pd.to_datetime(dre[col], errors="coerce").dt.year
     return int(years.dropna().nunique())
 
 
@@ -77,7 +98,7 @@ class EmpresaCarregada:
     dre: pd.DataFrame
 
 
-def _carregar_empresa(row: dict) -> Optional[EmpresaCarregada]:
+def _carregar_empresa(row: dict, engine) -> Optional[EmpresaCarregada]:
     """
     Carrega multiplos + dre para uma empresa, retornando estrutura padronizada.
     """
@@ -89,8 +110,8 @@ def _carregar_empresa(row: dict) -> Optional[EmpresaCarregada]:
 
         tk_sa = _norm_sa(tk)
 
-        mult = load_multiplos_from_db(tk_sa)
-        dre = load_data_from_db(tk_sa)
+        mult = load_multiplos(tk_sa, engine=engine)
+        dre = load_demonstracoes_financeiras(tk_sa, engine=engine)
 
         if mult is None or dre is None or mult.empty or dre.empty:
             return None
@@ -99,10 +120,13 @@ def _carregar_empresa(row: dict) -> Optional[EmpresaCarregada]:
         dre = _clean_columns(dre)
 
         # adiciona Ano quando possível (compatível com scoring)
-        if "Data" in mult.columns:
-            mult["Ano"] = pd.to_datetime(mult["Data"], errors="coerce").dt.year
-        if "Data" in dre.columns:
-            dre["Ano"] = pd.to_datetime(dre["Data"], errors="coerce").dt.year
+        col_m = _pick_date_col(mult)
+        if col_m:
+            mult["Ano"] = pd.to_datetime(mult[col_m], errors="coerce").dt.year
+
+        col_d = _pick_date_col(dre)
+        if col_d:
+            dre["Ano"] = pd.to_datetime(dre[col_d], errors="coerce").dt.year
 
         return EmpresaCarregada(ticker=tk, nome=nome, multiplos=mult, dre=dre)
     except Exception as e:
@@ -110,7 +134,12 @@ def _carregar_empresa(row: dict) -> Optional[EmpresaCarregada]:
         return None
 
 
-def _filtrar_tickers_com_min_anos(tickers: Sequence[str], min_anos: int = 10, max_workers: int = 12) -> List[str]:
+def _filtrar_tickers_com_min_anos(
+    tickers: Sequence[str],
+    engine,
+    min_anos: int = 10,
+    max_workers: int = 12,
+) -> List[str]:
     """
     Filtra tickers que têm pelo menos `min_anos` anos de DRE.
     Usa paralelismo para acelerar.
@@ -120,7 +149,7 @@ def _filtrar_tickers_com_min_anos(tickers: Sequence[str], min_anos: int = 10, ma
         return []
 
     def _check(tk: str) -> Tuple[str, bool]:
-        dre = load_data_from_db(_norm_sa(tk))
+        dre = load_demonstracoes_financeiras(_norm_sa(tk), engine=engine)
         return tk, (_safe_year_count_from_dre(dre) >= min_anos)
 
     ok: List[str] = []
@@ -134,17 +163,24 @@ def _filtrar_tickers_com_min_anos(tickers: Sequence[str], min_anos: int = 10, ma
     return sorted(set(ok))
 
 
-def _build_macro() -> Optional[pd.DataFrame]:
-    dados_macro = load_macro_summary()
+def _build_macro(engine) -> Optional[pd.DataFrame]:
+    dados_macro = load_macro_summary(engine=engine)
     if dados_macro is None or dados_macro.empty:
         return None
-    dados_macro = _clean_columns(dados_macro)
 
-    if "Data" not in dados_macro.columns:
+    dados_macro = _clean_columns(dados_macro)
+    col = _pick_date_col(dados_macro)
+    if not col:
         return None
 
-    dados_macro["Data"] = pd.to_datetime(dados_macro["Data"], errors="coerce")
-    dados_macro = dados_macro.dropna(subset=["Data"]).set_index("Data").sort_index()
+    dados_macro[col] = pd.to_datetime(dados_macro[col], errors="coerce")
+    dados_macro = dados_macro.dropna(subset=[col]).sort_values(col)
+
+    # padroniza para "Data" como coluna (vários módulos assumem isso)
+    if col != "Data":
+        dados_macro = dados_macro.rename(columns={col: "Data"})
+
+    # manter coluna Data (não indexar) porque calcular_patrimonio_selic_macro aceita Data como coluna
     return dados_macro
 
 
@@ -172,10 +208,12 @@ def render():
     if not gerar:
         st.stop()
 
+    engine = _engine()
+
     # ── Carrega setores (cache em sessão)
     setores_df = st.session_state.get("setores_df")
     if setores_df is None or getattr(setores_df, "empty", True):
-        setores_df = load_setores_from_db()
+        setores_df = load_setores(engine=engine)
         if setores_df is None or setores_df.empty:
             st.error("Não foi possível carregar a base de setores do banco.")
             st.stop()
@@ -188,7 +226,7 @@ def render():
         st.error(f"Base de setores não contém as colunas esperadas: {sorted(required_cols)}")
         st.stop()
 
-    dados_macro = _build_macro()
+    dados_macro = _build_macro(engine)
     if dados_macro is None or dados_macro.empty:
         st.error("Não foi possível carregar/normalizar os dados macroeconômicos.")
         st.stop()
@@ -224,11 +262,13 @@ def render():
             continue
 
         # filtro de histórico mínimo (>=10 anos)
-        tickers_validos = _filtrar_tickers_com_min_anos(tickers_segmento, min_anos=10, max_workers=12)
+        tickers_validos = _filtrar_tickers_com_min_anos(tickers_segmento, engine=engine, min_anos=10, max_workers=12)
         if len(tickers_validos) <= 1:
             continue
 
-        empresas_validas = empresas_segmento[empresas_segmento["ticker"].astype(str).apply(lambda x: _strip_sa(x) in set(tickers_validos))]
+        empresas_validas = empresas_segmento[
+            empresas_segmento["ticker"].astype(str).apply(lambda x: _strip_sa(x) in set(tickers_validos))
+        ]
         if empresas_validas.empty or len(empresas_validas) <= 1:
             continue
 
@@ -237,7 +277,7 @@ def render():
         rows = empresas_validas.to_dict("records")
 
         with ThreadPoolExecutor(max_workers=12) as ex:
-            futs = [ex.submit(_carregar_empresa, r) for r in rows]
+            futs = [ex.submit(_carregar_empresa, r, engine) for r in rows]
             for fut in as_completed(futs):
                 item = fut.result()
                 if item is not None:
@@ -281,7 +321,7 @@ def render():
 
         # dividendos (para tickers do score) + líderes + backtest
         tickers_score = [str(t) for t in score["ticker"].dropna().unique().tolist()]
-        dividendos = coletar_dividendos(tickers_score)
+        dividendos = coletar_dividendos([_norm_sa(tk) for tk in tickers_score])
 
         lideres = determinar_lideres(score)
         if lideres is None or lideres.empty:
@@ -356,7 +396,7 @@ def render():
     # Bloco final: líderes para o próximo ano + distribuição setorial
     # ─────────────────────────────────────────────────────────
     if empresas_lideres_finais:
-        st.markdown("## \U0001F4D1 Empresas líderes para o próximo ano")
+        st.markdown("## 📑 Empresas líderes para o próximo ano")
         colunas_lideres = st.columns(3)
         for idx, emp in enumerate(empresas_lideres_finais):
             col = colunas_lideres[idx % 3]
@@ -372,7 +412,7 @@ def render():
                 unsafe_allow_html=True,
             )
 
-        st.markdown("## \U0001F4CA Distribuição setorial do portfólio sugerido")
+        st.markdown("## 📊 Distribuição setorial do portfólio sugerido")
         setores_portfolio = pd.Series([e["setor"] for e in empresas_lideres_finais]).value_counts()
         fig, ax = plt.subplots()
         ax.pie(
@@ -389,7 +429,7 @@ def render():
     # Etapa: Desempenho parcial no ano corrente (líderes do ano)
     # ─────────────────────────────────────────────────────────
     if empresas_lideres_finais:
-        st.markdown("## \U0001F4CA Desempenho parcial das líderes (ano atual)")
+        st.markdown("## 📊 Desempenho parcial das líderes (ano atual)")
 
         ano_corrente = datetime.now().year
         tickers_corrente = [e["ticker"] for e in empresas_lideres_finais if int(e["ano_compra"]) == ano_corrente]
@@ -422,8 +462,7 @@ def render():
 
             patrimonio_aporte = gerir_carteira_simples(precos, tickers_limpos, datas_aporte, dividendos_dict=dividendos_dict)
 
-            # Selic benchmark (no mesmo índice do patrimônio da estratégia)
-            df_selic = calcular_patrimonio_selic_macro(dados_macro.reset_index().rename(columns={"index": "Data"}), datas_aporte)
+            df_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aporte)
             if df_selic is None or df_selic.empty:
                 st.warning("⚠️ Não foi possível calcular o benchmark Selic para o período.")
                 st.stop()
