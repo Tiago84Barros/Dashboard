@@ -17,10 +17,11 @@ from core.helpers import (
     determinar_lideres,
     formatar_real,
 )
+from core.db.engine import get_engine
 from core.db.loader import (
     load_setores,
-    load_data_from_db,
-    load_multiplos_from_db,
+    load_demonstracoes_financeiras,
+    load_multiplos,
     load_macro_summary,
 )
 from core.yf_data import baixar_precos, coletar_dividendos
@@ -36,6 +37,14 @@ from core.portfolio import (
 from core.weights import get_pesos
 
 logger = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────
+# Engine (Supabase) cacheado
+# ─────────────────────────────────────────────────────────────
+@st.cache_resource
+def _engine():
+    return get_engine()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -60,9 +69,22 @@ def _clean_df_cols(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _count_years_from_dre(dre: Optional[pd.DataFrame]) -> int:
-    if dre is None or dre.empty or "Data" not in dre.columns:
+    """
+    Conta anos disponíveis na DRE.
+    Aceita Data ou data (legado/variações).
+    """
+    if dre is None or dre.empty:
         return 0
-    y = pd.to_datetime(dre["Data"], errors="coerce").dt.year
+
+    col = None
+    for c in ("Data", "data"):
+        if c in dre.columns:
+            col = c
+            break
+    if not col:
+        return 0
+
+    y = pd.to_datetime(dre[col], errors="coerce").dt.year
     return int(y.dropna().nunique())
 
 
@@ -74,15 +96,15 @@ class EmpresaDados:
     mult: pd.DataFrame
 
 
-def _load_empresa_dados(ticker: str, nome: str) -> Optional[EmpresaDados]:
+def _load_empresa_dados(ticker: str, nome: str, engine) -> Optional[EmpresaDados]:
     """Carrega DRE + múltiplos para um ticker (B3), retornando estrutura padronizada."""
     tk = _strip_sa(ticker)
     if not tk:
         return None
     tk_sa = _norm_sa(tk)
 
-    dre = load_data_from_db(tk_sa)
-    mult = load_multiplos_from_db(tk_sa)
+    dre = load_demonstracoes_financeiras(tk_sa, engine=engine)
+    mult = load_multiplos(tk_sa, engine=engine)
 
     if dre is None or mult is None or dre.empty or mult.empty:
         return None
@@ -90,24 +112,41 @@ def _load_empresa_dados(ticker: str, nome: str) -> Optional[EmpresaDados]:
     dre = _clean_df_cols(dre)
     mult = _clean_df_cols(mult)
 
-    # adiciona Ano quando existir Data
-    if "Data" in dre.columns and "Ano" not in dre.columns:
-        dre["Ano"] = pd.to_datetime(dre["Data"], errors="coerce").dt.year
-    if "Data" in mult.columns and "Ano" not in mult.columns:
-        mult["Ano"] = pd.to_datetime(mult["Data"], errors="coerce").dt.year
+    # adiciona Ano quando existir Data/data
+    for df_ in (dre, mult):
+        col_data = None
+        for c in ("Data", "data"):
+            if c in df_.columns:
+                col_data = c
+                break
+        if col_data and "Ano" not in df_.columns:
+            df_["Ano"] = pd.to_datetime(df_[col_data], errors="coerce").dt.year
 
     return EmpresaDados(ticker=tk, nome=nome, dre=dre, mult=mult)
 
 
-def _safe_macro() -> Optional[pd.DataFrame]:
-    dm = load_macro_summary()
+def _safe_macro(engine) -> Optional[pd.DataFrame]:
+    dm = load_macro_summary(engine=engine)
     if dm is None or dm.empty:
         return None
+
     dm = _clean_df_cols(dm)
+
     # portfolio.calcular_patrimonio_selic_macro aceita Data em coluna ou índice com nome Data
-    if "Data" in dm.columns:
-        dm["Data"] = pd.to_datetime(dm["Data"], errors="coerce")
-        dm = dm.dropna(subset=["Data"]).sort_values("Data")
+    col_data = None
+    for c in ("Data", "data"):
+        if c in dm.columns:
+            col_data = c
+            break
+
+    if col_data:
+        dm[col_data] = pd.to_datetime(dm[col_data], errors="coerce")
+        dm = dm.dropna(subset=[col_data]).sort_values(col_data)
+
+        # normaliza para coluna "Data" (o restante do projeto parece esperar "Data")
+        if col_data != "Data":
+            dm = dm.rename(columns={col_data: "Data"})
+
     return dm
 
 
@@ -118,10 +157,12 @@ def _safe_macro() -> Optional[pd.DataFrame]:
 def render() -> None:
     st.markdown("<h1 style='text-align:center'>Análise Avançada de Ações</h1>", unsafe_allow_html=True)
 
-    # ── setores em sessão
+    engine = _engine()
+
+    # ── setores em sessão (carrega do Supabase se não existir)
     setores = st.session_state.get("setores_df")
     if setores is None or getattr(setores, "empty", True):
-        setores = load_setores()
+        setores = load_setores(engine=engine)
         if setores is None or setores.empty:
             st.error("Não foi possível carregar a base de setores do banco.")
             return
@@ -134,7 +175,7 @@ def render() -> None:
         st.error(f"A tabela de setores não contém colunas esperadas: {sorted(needed)}")
         return
 
-    dados_macro = _safe_macro()
+    dados_macro = _safe_macro(engine)
     if dados_macro is None or dados_macro.empty:
         st.error("Não foi possível carregar os dados macroeconômicos (info_economica).")
         return
@@ -146,16 +187,16 @@ def render() -> None:
         subsetor = st.selectbox("Subsetor:", sorted(subsetores))
         segmentos = setores.loc[
             (setores["SETOR"] == setor) & (setores["SUBSETOR"] == subsetor),
-            "SEGMENTO"
+            "SEGMENTO",
         ].dropna().unique().tolist()
         segmento = st.selectbox("Segmento:", sorted(segmentos))
         tipo = st.radio("Perfil de empresa:", ["Crescimento (<10 anos)", "Estabelecida (≥10 anos)", "Todas"], index=2)
 
     # ── filtra tickers do segmento
     seg_df = setores[
-        (setores["SETOR"] == setor) &
-        (setores["SUBSETOR"] == subsetor) &
-        (setores["SEGMENTO"] == segmento)
+        (setores["SETOR"] == setor)
+        & (setores["SUBSETOR"] == subsetor)
+        & (setores["SEGMENTO"] == segmento)
     ].copy()
 
     if seg_df.empty:
@@ -180,7 +221,7 @@ def render() -> None:
     tickers = seg_df["ticker"].drop_duplicates().tolist()
 
     def _year_check(tk: str) -> Tuple[str, int]:
-        dre = load_data_from_db(_norm_sa(tk))
+        dre = load_demonstracoes_financeiras(_norm_sa(tk), engine=engine)
         return tk, _count_years_from_dre(dre)
 
     years_map: Dict[str, int] = {}
@@ -232,7 +273,7 @@ def render() -> None:
     empresas: List[EmpresaDados] = []
 
     with ThreadPoolExecutor(max_workers=12) as ex:
-        futs = [ex.submit(_load_empresa_dados, r["ticker"], r["nome_empresa"]) for r in rows]
+        futs = [ex.submit(_load_empresa_dados, r["ticker"], r["nome_empresa"], engine) for r in rows]
         for fut in as_completed(futs):
             item = fut.result()
             if item is not None:
@@ -344,13 +385,11 @@ def render() -> None:
     df_final["Valor Final"] = pd.to_numeric(df_final["Valor Final"], errors="coerce")
     df_final = df_final.dropna(subset=["Valor Final"]).sort_values("Valor Final", ascending=False)
 
-    # contagem de lideranças (mais coerente com “quantas vezes liderou”)
     contagem_lideres = lideres["ticker"].value_counts().to_dict()
 
     num_columns = 3
     cols_cards = st.columns(num_columns, gap="large")
 
-    # itertuples(name=None) => tuplas puras: (Ticker, Valor Final)
     for i, (tk, val) in enumerate(df_final.itertuples(index=False, name=None)):
         tk = str(tk)
         try:
@@ -358,15 +397,14 @@ def render() -> None:
         except Exception:
             continue
 
-        # ícones + bordas especiais
         if tk == "Patrimônio":
             icone_url = "https://cdn-icons-png.flaticon.com/512/1019/1019709.png"
-            border_color = "#DAA520"  # dourado
+            border_color = "#DAA520"
             nome_exibicao = "Estratégia de Aporte"
             lider_texto = ""
         elif tk == "Tesouro Selic":
             icone_url = "https://cdn-icons-png.flaticon.com/512/2331/2331949.png"
-            border_color = "#007bff"  # azul
+            border_color = "#007bff"
             nome_exibicao = "Tesouro Selic"
             lider_texto = ""
         else:
@@ -454,8 +492,10 @@ def render() -> None:
         dfm = e.mult.copy()
         if dfm is None or dfm.empty:
             continue
-        if "Ano" not in dfm.columns and "Data" in dfm.columns:
-            dfm["Ano"] = pd.to_datetime(dfm["Data"], errors="coerce").dt.year
+        if "Ano" not in dfm.columns:
+            col_data = "Data" if "Data" in dfm.columns else ("data" if "data" in dfm.columns else None)
+            if col_data:
+                dfm["Ano"] = pd.to_datetime(dfm[col_data], errors="coerce").dt.year
         if "Ano" not in dfm.columns or col_db not in dfm.columns:
             continue
 
@@ -511,8 +551,10 @@ def render() -> None:
         dfd = e.dre.copy()
         if dfd is None or dfd.empty:
             continue
-        if "Ano" not in dfd.columns and "Data" in dfd.columns:
-            dfd["Ano"] = pd.to_datetime(dfd["Data"], errors="coerce").dt.year
+        if "Ano" not in dfd.columns:
+            col_data = "Data" if "Data" in dfd.columns else ("data" if "data" in dfd.columns else None)
+            if col_data:
+                dfd["Ano"] = pd.to_datetime(dfd[col_data], errors="coerce").dt.year
         if "Ano" not in dfd.columns or col_dre not in dfd.columns:
             continue
 
