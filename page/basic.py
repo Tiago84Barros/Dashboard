@@ -92,7 +92,7 @@ def render() -> None:
             st.cache_data.clear()
             st.experimental_rerun()
 
-        ticker_input = st.text_input("Buscar ticker (ex.: PETR4)", key="ticker_box")
+        ticker_input = st.text_input("Buscar ticker", key="ticker_box")
         if ticker_input.strip():
             ticker = ticker_input.upper()
             if not ticker.endswith(".SA"):
