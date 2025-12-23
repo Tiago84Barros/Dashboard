@@ -24,7 +24,7 @@ def load_setores(engine: Engine | None = None) -> pd.DataFrame:
     Ajuste o SELECT conforme seu schema/tabela no Supabase.
     """
     if engine is not None:
-        q = text("select * from cvm.setores_empresas")
+        q = text("select * from cvm.setores")
         return pd.read_sql(q, engine)
 
     with _sqlite_conn() as conn:
