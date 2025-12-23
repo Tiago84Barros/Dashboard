@@ -244,13 +244,6 @@ def apply_update(engine=None, progress_cb: Optional[Callable[[float, str], None]
     if last_year is None:
         years = [remote_latest_year]
     else:
-        if remote_latest_year <= last_year:
-            cb(100, "Base já está atualizada. Nenhuma atualização necessária.")
-            try:
-                _write_log(engine, "ok", last_year, remote_latest_year, "Nenhuma atualização necessária.")
-            except Exception:
-                pass
-            return
         years = list(range(last_year + 1, remote_latest_year + 1))
 
     # Importa módulos de ingest existentes
