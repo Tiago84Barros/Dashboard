@@ -24,7 +24,7 @@ from core.db.loader import (
     load_multiplos,
     load_macro_summary,
 )
-from core.yf_data import baixar_precos, coletar_dividendos
+from data_sources.yf_data import baixar_precos, coletar_dividendos
 from core.scoring import (
     calcular_score_acumulado,
     penalizar_plato,
