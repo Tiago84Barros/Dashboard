@@ -13,9 +13,11 @@ import importlib
 import logging
 import pathlib
 import sys
-from typing import Callable, Optional
+from typing import Callable
 
 import streamlit as st
+
+from core.db.engine import get_engine
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,12 @@ logger = logging.getLogger(__name__)
 ROOT_DIR = pathlib.Path(__file__).resolve().parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.append(str(ROOT_DIR))
+
+
+# ───────────────────────── Engine (Supabase) ───────────────────────
+@st.cache_resource
+def _engine():
+    return get_engine()
 
 
 # ───────────────────────── Imports com fallback ─────────────────────
@@ -58,7 +66,6 @@ def _get_layout_funcs() -> tuple[Callable[[], None], Callable[[], None]]:
     except Exception:
         pass
 
-    # fallback seguro
     def _fallback_config():
         try:
             st.set_page_config(
@@ -67,7 +74,6 @@ def _get_layout_funcs() -> tuple[Callable[[], None], Callable[[], None]]:
                 initial_sidebar_state="expanded",
             )
         except Exception:
-            # set_page_config só pode ser chamado uma vez; ignora se já foi chamado.
             pass
 
     def _fallback_css():
@@ -87,8 +93,8 @@ def _get_layout_funcs() -> tuple[Callable[[], None], Callable[[], None]]:
 def _get_loader():
     """
     Obtém load_setores em:
-    - core.db.loader
-    - loader
+    - core.db.loader (padrão novo)
+    - loader (fallback legado, se existir)
     """
     mod = _import_first("core.db.loader", "loader")
     fn = getattr(mod, "load_setores", None)
@@ -128,16 +134,29 @@ aplicar_estilos_css()
 
 # ───────────────────────── Cache inicial ───────────────────────────
 def _ensure_setores_df() -> None:
-    if "setores_df" in st.session_state and st.session_state["setores_df"] is not None:
+    """
+    Garante setores_df no session_state, carregando do Supabase (engine).
+    """
+    s = st.session_state.get("setores_df")
+    if s is not None and getattr(s, "empty", False) is False:
         return
+
     load_setores = _get_loader()
-    setores_df = load_setores()
+    setores_df = load_setores(engine=_engine())
     st.session_state["setores_df"] = setores_df
 
 
 # ───────────────────────── Sidebar navegação ───────────────────────
 with st.sidebar:
     st.markdown("## Análises")
+
+    # botão para forçar recarga dos dados
+    if st.button("Atualizar dados (limpar cache)"):
+        st.cache_data.clear()
+        # mantém o engine cacheado (cache_resource), só limpa dados/estado
+        st.session_state.pop("setores_df", None)
+        st.experimental_rerun()
+
     pagina_escolhida = st.radio(
         "Escolha a seção:",
         ["Básica", "Avançada", "Criação de Portfólio"],
@@ -145,7 +164,12 @@ with st.sidebar:
     )
 
     st.markdown("---")
-    
+
+    # diagnóstico opcional
+    if st.button("Diagnóstico"):
+        st.session_state["__show_diag__"] = True
+
+
 # ───────────────────────── Diagnóstico leve ─────────────────────────
 if st.session_state.get("__show_diag__"):
     st.session_state["__show_diag__"] = False
@@ -153,6 +177,8 @@ if st.session_state.get("__show_diag__"):
         st.write("Root dir:", str(ROOT_DIR))
         st.write("Python path contém root:", str(ROOT_DIR) in sys.path)
         try:
+            eng = _engine()
+            st.write("Engine criado:", eng is not None)
             _ensure_setores_df()
             s = st.session_state.get("setores_df")
             st.write("setores_df carregado:", (s is not None) and (getattr(s, "empty", True) is False))
@@ -176,6 +202,3 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
-
-
-
