@@ -22,22 +22,22 @@ from analytics.helpers import (
     determinar_lideres,
     get_logo_url,
 )
-from core.scoring import (
+from analytics.scoring import (
     calcular_score_acumulado,
     penalizar_plato,
 )
-from core.portfolio import (
+from analytics.portfolio import (
     calcular_patrimonio_selic_macro,
     gerir_carteira,
     encontrar_proxima_data_valida,
     gerir_carteira_simples,
 )
-from core.yf_data import (
+from data_sources.yf_data import (
     baixar_precos,
     coletar_dividendos,
     baixar_precos_ano_corrente,
 )
-from core.weights import get_pesos
+from analytics.weights import get_pesos
 
 logger = logging.getLogger(__name__)
 
