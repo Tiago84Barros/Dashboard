@@ -21,7 +21,6 @@ from core.db.engine import get_engine
 
 logger = logging.getLogger(__name__)
 
-
 # ───────────────────────── Ajuste de path ──────────────────────────
 ROOT_DIR = pathlib.Path(__file__).resolve().parent
 if str(ROOT_DIR) not in sys.path:
@@ -46,7 +45,9 @@ def _import_first(*module_paths: str):
             return importlib.import_module(p)
         except Exception as e:
             errors.append((p, e))
-    msg = "Falha ao importar módulos. Tentativas:\n" + "\n".join([f"- {p}: {repr(e)}" for p, e in errors])
+    msg = "Falha ao importar módulos. Tentativas:\n" + "\n".join(
+        [f"- {p}: {repr(e)}" for p, e in errors]
+    )
     raise ImportError(msg)
 
 
@@ -109,11 +110,13 @@ def _load_page_renderer(page_key: str) -> Callable[[], None]:
     - page.basic / basic
     - page.advanced / advanced
     - page.criacao_portfolio / criacao_portfolio
+    - page.configuracoes / configuracoes
     """
     mapping = {
         "Básica": ("page.basic", "basic"),
         "Avançada": ("page.advanced", "advanced"),
         "Criação de Portfólio": ("page.criacao_portfolio", "criacao_portfolio"),
+        "Configurações": ("page.configuracoes", "configuracoes"),
     }
     paths = mapping.get(page_key)
     if not paths:
@@ -146,24 +149,78 @@ def _ensure_setores_df() -> None:
     st.session_state["setores_df"] = setores_df
 
 
-# ───────────────────────── Sidebar navegação ───────────────────────
-with st.sidebar:
-    st.markdown("## Análises")
+# ───────────────────────── Sidebar navegação (com rodapé) ──────────
+def _sidebar_nav() -> str:
+    """
+    Sidebar com:
+    - rádio para as páginas principais
+    - botão "Configurações" fixo no rodapé
+    """
+    # Estado inicial
+    if "page_key" not in st.session_state:
+        st.session_state["page_key"] = "Básica"
 
-    pagina_escolhida = st.radio(
-        "Escolha a seção:",
-        ["Básica", "Avançada", "Criação de Portfólio"],
-        index=0,
+    # CSS para "rodapé" do sidebar
+    st.markdown(
+        """
+        <style>
+        section[data-testid="stSidebar"] > div {height: 100vh;}
+        .sidebar-wrap {display: flex; flex-direction: column; height: 100vh;}
+        .sidebar-footer {margin-top: auto; padding-top: 0.75rem;}
+        .sidebar-footer button {width: 100%;}
+        </style>
+        """,
+        unsafe_allow_html=True,
     )
 
-    st.markdown("---")
+    with st.sidebar:
+        st.markdown("<div class='sidebar-wrap'>", unsafe_allow_html=True)
+
+        st.markdown("## Análises")
+
+        # Se estiver em Configurações, o rádio continua mostrando a última página "analítica"
+        last_analise = st.session_state.get("last_analise", "Básica")
+        if last_analise not in ["Básica", "Avançada", "Criação de Portfólio"]:
+            last_analise = "Básica"
+
+        pagina_escolhida = st.radio(
+            "Escolha a seção:",
+            ["Básica", "Avançada", "Criação de Portfólio"],
+            index=["Básica", "Avançada", "Criação de Portfólio"].index(last_analise),
+            key="radio_pages",
+        )
+        st.session_state["last_analise"] = pagina_escolhida
+
+        st.markdown("---")
+
+        # Rodapé: Configurações
+        st.markdown("<div class='sidebar-footer'>", unsafe_allow_html=True)
+        if st.button("⚙️ Configurações", use_container_width=True):
+            st.session_state["page_key"] = "Configurações"
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # Prioridade: se clicou no botão, vai pra Configurações
+    if st.session_state.get("page_key") == "Configurações":
+        return "Configurações"
+
+    # Caso contrário, segue o rádio
+    st.session_state["page_key"] = pagina_escolhida
+    return pagina_escolhida
+
 
 # ───────────────────────── Execução / Roteamento ────────────────────
-try:
-    _ensure_setores_df()
-except Exception as e:
-    st.error(f"Falha ao inicializar dados base (setores_df): {e}")
-    st.stop()
+pagina_escolhida = _sidebar_nav()
+
+# Só carrega setores_df quando estiver em páginas de análise
+# (Configurações pode rodar sem depender de setores_df)
+if pagina_escolhida != "Configurações":
+    try:
+        _ensure_setores_df()
+    except Exception as e:
+        st.error(f"Falha ao inicializar dados base (setores_df): {e}")
+        st.stop()
 
 try:
     render_page = _load_page_renderer(pagina_escolhida)
@@ -171,7 +228,3 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
-
-
-
-
