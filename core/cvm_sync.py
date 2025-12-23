@@ -134,41 +134,34 @@ def _write_log(engine, status: str, last_year: Optional[int], remote_latest_year
 # Public API expected by page/configuracoes.py
 # ─────────────────────────────────────────────────────────────────────
 def get_sync_status(engine=None) -> Dict[str, Any]:
-    """
-    Retorna um dicionário com:
-      - last_year: último ano já inserido (preferencialmente do log)
-      - last_run_at: ISO datetime da última atualização
-      - remote_latest_year: último ano disponível no site da CVM
-      - has_updates: bool ou None
-    """
     engine = engine or get_engine()
+
     try:
         _ensure_sync_log_table(engine)
     except Exception:
-        # não travar o app por conta de log
         pass
 
-    last_year, last_run_at = (None, None)
+    # 1️⃣ Último ano inserido (FONTE ÚNICA)
     try:
-        last_year, last_run_at = _read_last_log(engine)
+        last_year = _get_last_year_dfp(engine)
     except Exception:
-        pass
+        last_year = None
 
-    # Se não existe log ainda, tenta inferir
-    if last_year is None:
-        try:
-            last_year = _infer_last_year_from_tables(engine)
-        except Exception:
-            last_year = None
+    # 2️⃣ Última execução registrada
+    try:
+        _, last_run_at = _read_last_log(engine)
+    except Exception:
+        last_run_at = None
 
-    remote_latest_year = None
+    # 3️⃣ Último ano disponível na CVM
     try:
         remote_latest_year = _get_remote_latest_year()
     except Exception:
         remote_latest_year = None
 
+    # 4️⃣ Existe atualização?
     has_updates = None
-    if (last_year is not None) and (remote_latest_year is not None):
+    if last_year is not None and remote_latest_year is not None:
         has_updates = remote_latest_year > last_year
 
     return {
@@ -176,7 +169,6 @@ def get_sync_status(engine=None) -> Dict[str, Any]:
         "last_run_at": last_run_at,
         "remote_latest_year": remote_latest_year,
         "has_updates": has_updates,
-        "notes": None,
     }
 
 
