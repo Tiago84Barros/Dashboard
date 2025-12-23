@@ -98,54 +98,18 @@ def _read_last_log(engine) -> Tuple[Optional[int], Optional[str]]:
     return last_year, (run_at.isoformat() if run_at else None)
 
 
-def _infer_last_year_from_tables(engine) -> Optional[int]:
+def _get_last_year_dfp(engine) -> Optional[int]:
     """
-    Fallback: tenta inferir o último ano existente olhando tabelas do schema cvm
-    que tenham coluna 'ano' (int) OU 'dt_referencia'/'data_referencia' (date/timestamp).
+    Retorna o último ano inserido com base na tabela
+    cvm.demonstracoes_financeiras_dfp
     """
-    q_tables = """
-    select table_schema, table_name
-    from information_schema.tables
-    where table_schema = 'cvm' and table_type = 'BASE TABLE';
+    sql = """
+        select max(ano) 
+        from cvm.demonstracoes_financeiras_dfp
     """
     with engine.begin() as conn:
-        tables = conn.execute(text(q_tables)).fetchall()
-
-    candidates = []
-    for schema, tname in tables:
-        q_cols = """
-        select column_name, data_type
-        from information_schema.columns
-        where table_schema = :s and table_name = :t;
-        """
-        with engine.begin() as conn:
-            cols = conn.execute(text(q_cols), {"s": schema, "t": tname}).fetchall()
-
-        colnames = {c[0].lower(): c[1].lower() for c in cols}
-        if "ano" in colnames:
-            candidates.append((schema, tname, "ano"))
-        else:
-            for k in ("dt_referencia", "data_referencia", "data", "dt_fim_exercicio"):
-                if k in colnames:
-                    candidates.append((schema, tname, k))
-                    break
-
-    best: Optional[int] = None
-    for schema, tname, col in candidates:
-        try:
-            if col == "ano":
-                q = f"select max({col}) from {schema}.{tname}"
-            else:
-                # extrai ano de date/timestamp
-                q = f"select max(extract(year from {col})::int) from {schema}.{tname}"
-            with engine.begin() as conn:
-                val = conn.execute(text(q)).scalar()
-            if val is not None:
-                best = max(best or val, int(val))
-        except Exception:
-            continue
-
-    return best
+        val = conn.execute(text(sql)).scalar()
+    return int(val) if val is not None else None
 
 
 def _write_log(engine, status: str, last_year: Optional[int], remote_latest_year: Optional[int], message: str) -> None:
