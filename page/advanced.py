@@ -29,12 +29,12 @@ from core.scoring import (
     calcular_score_acumulado,
     penalizar_plato,
 )
-from core.portfolio import (
+from analytics.portfolio import (
     gerir_carteira,
     gerir_carteira_todas_empresas,
     calcular_patrimonio_selic_macro,
 )
-from core.weights import get_pesos
+from analytics.weights import get_pesos
 
 logger = logging.getLogger(__name__)
 
