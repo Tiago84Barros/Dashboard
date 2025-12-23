@@ -150,13 +150,6 @@ def _ensure_setores_df() -> None:
 with st.sidebar:
     st.markdown("## Análises")
 
-    # botão para forçar recarga dos dados
-    if st.button("Atualizar dados (limpar cache)"):
-        st.cache_data.clear()
-        # mantém o engine cacheado (cache_resource), só limpa dados/estado
-        st.session_state.pop("setores_df", None)
-        st.experimental_rerun()
-
     pagina_escolhida = st.radio(
         "Escolha a seção:",
         ["Básica", "Avançada", "Criação de Portfólio"],
@@ -164,7 +157,6 @@ with st.sidebar:
     )
 
     st.markdown("---")
-
 
 # ───────────────────────── Execução / Roteamento ────────────────────
 try:
@@ -179,5 +171,6 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
 
 
