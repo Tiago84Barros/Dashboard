@@ -5,7 +5,7 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 
-from core.helpers import get_company_info, get_logo_url
+from analytics.helpers import get_company_info, get_logo_url
 from core.db.engine import get_engine
 from core.db.loader import (
     load_demonstracoes_financeiras,
