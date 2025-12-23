@@ -166,25 +166,6 @@ with st.sidebar:
     st.markdown("---")
 
 
-# ───────────────────────── Diagnóstico leve ─────────────────────────
-if st.session_state.get("__show_diag__"):
-    st.session_state["__show_diag__"] = False
-    with st.expander("Diagnóstico do App", expanded=True):
-        st.write("Root dir:", str(ROOT_DIR))
-        st.write("Python path contém root:", str(ROOT_DIR) in sys.path)
-        try:
-            eng = _engine()
-            st.write("Engine criado:", eng is not None)
-            _ensure_setores_df()
-            s = st.session_state.get("setores_df")
-            st.write("setores_df carregado:", (s is not None) and (getattr(s, "empty", True) is False))
-            if s is not None and not getattr(s, "empty", True):
-                st.write("Linhas/Colunas:", s.shape)
-                st.write("Colunas:", list(s.columns))
-        except Exception as e:
-            st.error(f"Falha ao carregar setores_df: {e}")
-
-
 # ───────────────────────── Execução / Roteamento ────────────────────
 try:
     _ensure_setores_df()
@@ -198,4 +179,5 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
 
