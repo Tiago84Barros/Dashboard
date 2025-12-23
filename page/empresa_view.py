@@ -11,7 +11,7 @@ from core.db.loader import (
     load_demonstracoes_financeiras,
     load_multiplos,
 )
-from core.yf_data import get_price, get_fundamentals_yf
+from data_sources.yf_data import get_price, get_fundamentals_yf
 
 
 # ─────────────────────────────────────────────────────────────
