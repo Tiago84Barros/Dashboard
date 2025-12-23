@@ -11,7 +11,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import plotly.express as px
 
-from core.helpers import (
+from analytics.helpers import (
     get_logo_url,
     obter_setor_da_empresa,
     determinar_lideres,
