@@ -145,7 +145,84 @@ def _ensure_setores_df() -> None:
     setores_df = load_setores(engine=_engine())
     st.session_state["setores_df"] = setores_df
 
+# ───────────────────────── Sidebar navegação ───────────────────────
+def _sidebar_nav() -> str:
+    # CSS: empurra um bloco para o "rodapé" do sidebar
+    st.markdown(
+        """
+        <style>
+        /* dá altura para permitir "empurrar" o rodapé */
+        section[data-testid="stSidebar"] > div {height: 100vh;}
+        .sidebar-footer {margin-top: auto; padding-top: 0.75rem;}
+        .sidebar-footer button {width: 100%;}
+        .sidebar-wrap {display: flex; flex-direction: column; height: 100vh;}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
+    if "page_key" not in st.session_state:
+        st.session_state["page_key"] = "Básica"
+
+    with st.sidebar:
+        st.markdown("<div class='sidebar-wrap'>", unsafe_allow_html=True)
+
+        st.markdown("## Análises")
+        pagina_escolhida = st.radio(
+            "Escolha a seção:",
+            ["Básica", "Avançada", "Criação de Portfólio"],
+            index=["Básica", "Avançada", "Criação de Portfólio"].index(
+                st.session_state.get("page_key", "Básica")
+                if st.session_state.get("page_key") in ["Básica", "Avançada", "Criação de Portfólio"]
+                else "Básica"
+            ),
+            key="radio_pages",
+        )
+
+        st.markdown("---")
+
+        # (Opcional) seus botões antigos (Diagnóstico/Atualizar dados) devem ser REMOVIDOS
+        # para não duplicar. Se existirem em outro arquivo, remova de lá.
+
+        # Rodapé com botão isolado
+        st.markdown("<div class='sidebar-footer'>", unsafe_allow_html=True)
+        if st.button("⚙️ Configurações", use_container_width=True):
+            st.session_state["page_key"] = "Configurações"
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # Se o usuário clicou no botão, prevalece "Configurações"
+    if st.session_state.get("page_key") == "Configurações":
+        return "Configurações"
+
+    # Caso contrário, segue o radio
+    st.session_state["page_key"] = pagina_escolhida
+    return pagina_escolhida
+
+
+# ───────────────────────── Execução / Roteamento ────────────────────
+pagina_escolhida = _sidebar_nav()
+
+try:
+    _ensure_setores_df()
+except Exception as e:
+    st.error(f"Falha ao inicializar dados base (setores_df): {e}")
+    st.stop()
+
+try:
+    # adiciona Configurações ao roteamento
+    if pagina_escolhida == "Configurações":
+        render_page = _load_page_renderer("Configurações")
+    else:
+        render_page = _load_page_renderer(pagina_escolhida)
+
+    render_page()
+except Exception as e:
+    st.error("Falha ao carregar a página selecionada.")
+    st.exception(e)
+
+""""
 # ───────────────────────── Sidebar navegação ───────────────────────
 with st.sidebar:
     st.markdown("## Análises")
@@ -172,5 +249,6 @@ except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
 
+"""
 
 
