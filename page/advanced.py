@@ -17,7 +17,7 @@ from core.helpers import (
     determinar_lideres,
     formatar_real,
 )
-from core.db_loader import (
+from core.db.loader import (
     load_setores_from_db,
     load_data_from_db,
     load_multiplos_from_db,
