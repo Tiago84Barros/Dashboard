@@ -88,10 +88,7 @@ def render() -> None:
     st.header("Análise Básica de Ações")
 
     with st.sidebar:
-        if st.button("Atualizar dados", key="refresh_button"):
-            st.cache_data.clear()
-            st.experimental_rerun()
-
+        
         ticker_input = st.text_input("Buscar ticker", key="ticker_box")
         if ticker_input.strip():
             ticker = ticker_input.upper()
