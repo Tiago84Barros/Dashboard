@@ -165,10 +165,6 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # diagnóstico opcional
-    if st.button("Diagnóstico"):
-        st.session_state["__show_diag__"] = True
-
 
 # ───────────────────────── Diagnóstico leve ─────────────────────────
 if st.session_state.get("__show_diag__"):
@@ -202,3 +198,4 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
