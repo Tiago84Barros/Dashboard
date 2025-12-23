@@ -18,7 +18,7 @@ from core.helpers import (
     formatar_real,
 )
 from core.db.loader import (
-    load_setores_from_db,
+    load_setores,
     load_data_from_db,
     load_multiplos_from_db,
     load_macro_summary,
@@ -121,7 +121,7 @@ def render() -> None:
     # ── setores em sessão
     setores = st.session_state.get("setores_df")
     if setores is None or getattr(setores, "empty", True):
-        setores = load_setores_from_db()
+        setores = load_setores()
         if setores is None or setores.empty:
             st.error("Não foi possível carregar a base de setores do banco.")
             return
