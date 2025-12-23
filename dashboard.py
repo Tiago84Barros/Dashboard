@@ -84,16 +84,16 @@ def _get_layout_funcs() -> tuple[Callable[[], None], Callable[[], None]]:
     return _fallback_config, _fallback_css
 
 
-def _get_db_loader():
+def _get_loader():
     """
     Obtém load_setores_from_db em:
-    - core.db_loader
-    - db_loader
+    - core.db.loader
+    - loader
     """
-    mod = _import_first("core.db_loader", "db_loader")
+    mod = _import_first("core.db.loader", "loader")
     fn = getattr(mod, "load_setores_from_db", None)
     if not callable(fn):
-        raise ImportError("load_setores_from_db não encontrado em core.db_loader/db_loader.")
+        raise ImportError("load_setores_from_db não encontrado em core.db.loader/loader.")
     return fn
 
 
@@ -130,7 +130,7 @@ aplicar_estilos_css()
 def _ensure_setores_df() -> None:
     if "setores_df" in st.session_state and st.session_state["setores_df"] is not None:
         return
-    load_setores_from_db = _get_db_loader()
+    load_setores_from_db = _get_loader()
     setores_df = load_setores_from_db()
     st.session_state["setores_df"] = setores_df
 
@@ -176,4 +176,5 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
 
