@@ -17,7 +17,7 @@ from core.db.loader import (
     load_multiplos,
     load_macro_summary,
 )
-from core.helpers import (
+from analytics.helpers import (
     obter_setor_da_empresa,
     determinar_lideres,
     get_logo_url,
