@@ -272,7 +272,7 @@ def _sidebar() -> str:
 pagina_escolhida = _sidebar()
 
 # Só carrega setores_df se não for Configurações
-if pagina_escolhida != "configurações":
+if pagina_escolhida != "Configurações":
     try:
         _ensure_setores_df()
     except Exception as e:
@@ -285,6 +285,7 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
 
 
 
