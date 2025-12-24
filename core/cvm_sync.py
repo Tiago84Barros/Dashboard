@@ -109,12 +109,12 @@ def apply_update(
     """
     Atualiza TODAS as tabelas necessárias do app.
 
-    - DFP (anual)    -> cvm_dfp_ingest.run
-    - ITR (tri)      -> cvm_itr_ingest.run
-    - Setores        -> setores_ingest.run
-    - Macro (BCB)    -> macro_bcb_ingest.run
-    - Metrics        -> finance_metrics_builder.run
-    - Score          -> fundamental_scoring.run
+    - DFP (anual)    -> cvm.cvm_dfp_ingest.run
+    - ITR (tri)      -> cvm.cvm_tri_ingest.run
+    - (Opcional) Setores -> cvm.setores_ingest.run (se existir)
+    - Macro (BCB)    -> cvm.macro_bcb_ingest.run
+    - Metrics        -> cvm.finance_metrics_builder.run
+    - Score          -> cvm.fundamental_scoring.run
 
     Importante: imports são lazy (dentro da função) para não quebrar a página Configurações.
     """
@@ -140,7 +140,8 @@ def apply_update(
         _p(10, "DFP (anual): executando…")
         logs.append("dfp:start")
         try:
-            import cvm.cvm_dfp_ingest  # noqa
+            import cvm.cvm_dfp_ingest as cvm_dfp_ingest
+
             cvm_dfp_ingest.run(
                 engine,
                 progress_cb=lambda s: logs.append(f"DFP:{s}"),
@@ -157,7 +158,8 @@ def apply_update(
         _p(30, "ITR (trimestral): executando…")
         logs.append("itr:start")
         try:
-            import cvm.cvm_tri_ingest  # noqa
+            import cvm.cvm_tri_ingest as cvm_tri_ingest
+
             cvm_tri_ingest.run(
                 engine,
                 progress_cb=lambda s: logs.append(f"ITR:{s}"),
@@ -170,13 +172,16 @@ def apply_update(
             logs.append(f"itr:error:{e}")
             raise
 
-        # -------- Setores --------
+        # -------- Setores (opcional) --------
         _p(50, "Setores: atualizando…")
         logs.append("setores:start")
         try:
-            import cvm.setores_ingest  # noqa
+            import cvm.setores_ingest as setores_ingest  # se não existir, cai no except
+
             setores_ingest.run(engine, progress_cb=lambda s: logs.append(f"SETORES:{s}"))
             logs.append("setores:ok")
+        except ModuleNotFoundError:
+            logs.append("setores:skip (módulo cvm.setores_ingest não encontrado)")
         except Exception as e:
             logs.append(f"setores:error:{e}")
             raise
@@ -185,7 +190,8 @@ def apply_update(
         _p(65, "Macro (BCB): atualizando…")
         logs.append("macro:start")
         try:
-            import cvm.macro_bcb_ingest  # noqa
+            import cvm.macro_bcb_ingest as macro_bcb_ingest
+
             macro_bcb_ingest.run(engine, progress_cb=lambda s: logs.append(f"MACRO:{s}"))
             logs.append("macro:ok")
         except Exception as e:
@@ -196,7 +202,8 @@ def apply_update(
         _p(80, "Métricas: recalculando…")
         logs.append("metrics:start")
         try:
-            import cvm.finance_metrics_builder  # noqa
+            import cvm.finance_metrics_builder as finance_metrics_builder
+
             finance_metrics_builder.run(engine, progress_cb=lambda s: logs.append(f"METRICS:{s}"))
             logs.append("metrics:ok")
         except Exception as e:
@@ -207,7 +214,8 @@ def apply_update(
         _p(92, "Fundamental score: recalculando…")
         logs.append("score:start")
         try:
-            import cvm.fundamental_scoring  # noqa
+            import cvm.fundamental_scoring as fundamental_scoring
+
             fundamental_scoring.run(engine, progress_cb=lambda s: logs.append(f"SCORE:{s}"))
             logs.append("score:ok")
         except Exception as e:
@@ -223,7 +231,6 @@ def apply_update(
             if row and row.get("y"):
                 last_year = int(row["y"])
         except Exception:
-            # não derruba o sync por isso
             pass
 
         _p(100, "Concluído.")
