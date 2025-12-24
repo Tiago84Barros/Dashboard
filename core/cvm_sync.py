@@ -174,7 +174,7 @@ def apply_update(
         _p(50, "Setores: atualizando…")
         logs.append("setores:start")
         try:
-            import setores_ingest  # noqa
+            import cvm.setores_ingest  # noqa
             setores_ingest.run(engine, progress_cb=lambda s: logs.append(f"SETORES:{s}"))
             logs.append("setores:ok")
         except Exception as e:
@@ -185,7 +185,7 @@ def apply_update(
         _p(65, "Macro (BCB): atualizando…")
         logs.append("macro:start")
         try:
-            import macro_bcb_ingest  # noqa
+            import cvm.macro_bcb_ingest  # noqa
             macro_bcb_ingest.run(engine, progress_cb=lambda s: logs.append(f"MACRO:{s}"))
             logs.append("macro:ok")
         except Exception as e:
@@ -196,7 +196,7 @@ def apply_update(
         _p(80, "Métricas: recalculando…")
         logs.append("metrics:start")
         try:
-            import finance_metrics_builder  # noqa
+            import cvm.finance_metrics_builder  # noqa
             finance_metrics_builder.run(engine, progress_cb=lambda s: logs.append(f"METRICS:{s}"))
             logs.append("metrics:ok")
         except Exception as e:
@@ -207,7 +207,7 @@ def apply_update(
         _p(92, "Fundamental score: recalculando…")
         logs.append("score:start")
         try:
-            import fundamental_scoring  # noqa
+            import cvm.fundamental_scoring  # noqa
             fundamental_scoring.run(engine, progress_cb=lambda s: logs.append(f"SCORE:{s}"))
             logs.append("score:ok")
         except Exception as e:
