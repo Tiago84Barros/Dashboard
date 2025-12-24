@@ -1,28 +1,29 @@
 # core/db/engine.py
 from __future__ import annotations
 
+import os
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
+import streamlit as st
 
-from core.config.settings import get_settings
 
-
+@st.cache_resource(show_spinner=False)
 def get_engine() -> Engine:
     """
-    Engine SQLAlchemy para Supabase Postgres.
-    Usa pool_pre_ping para reduzir erros de conexão.
+    Engine único por sessão Streamlit.
+    Pool mínimo para não estourar conexões no Supabase Free.
     """
-    s = get_settings()
 
-    # OBS: mantém credenciais fora do código (st.secrets / env)
-    url = (
-        f"postgresql+psycopg2://{s.supabase_user}:{s.supabase_password}"
-        f"@{s.supabase_host}:{s.supabase_port}/{s.supabase_dbname}"
-    )
+    db_url = st.secrets.get("SUPABASE_DB_URL") or os.getenv("SUPABASE_DB_URL")
+    if not db_url:
+        raise RuntimeError("SUPABASE_DB_URL não configurada.")
 
-    return create_engine(
-        url,
+    engine = create_engine(
+        db_url,
+        pool_size=1,          # 🔴 crítico
+        max_overflow=0,       # 🔴 crítico
         pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=10,
+        pool_recycle=1800,
+        future=True,
     )
+    return engine
