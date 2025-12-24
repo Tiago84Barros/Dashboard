@@ -234,10 +234,11 @@ def _sidebar() -> str:
         key="radio_secao",
     )
 
-    # Se o usuário mudou no radio, atualiza o estado persistente
-    if pagina_radio != pagina_state and pagina_radio in opcoes_radio:
-        st.session_state["pagina_atual"] = pagina_radio
-        pagina_state = pagina_radio
+    # Se estivermos em Configurações, NÃO deixe o radio sobrescrever a página atual
+    if pagina_state != "Configurações":
+        if pagina_radio != pagina_state and pagina_radio in opcoes_radio:
+            st.session_state["pagina_atual"] = pagina_radio
+            pagina_state = pagina_radio
 
     # ───────────── Busca de ações (recolocada) ─────────────
     with st.sidebar.container():
@@ -301,3 +302,4 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
