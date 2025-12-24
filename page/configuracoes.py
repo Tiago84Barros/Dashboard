@@ -22,6 +22,9 @@ def render() -> None:
     st.markdown("## Configurações")
     st.caption("Atualize todas as tabelas do Supabase e acompanhe o status.")
 
+    # FIX: garante que a navegação permaneça em Configurações após qualquer rerun
+    st.session_state["pagina_atual"] = "Configurações"
+
     try:
         status: Dict[str, Any] = get_sync_status() or {}
     except Exception as e:
@@ -64,17 +67,61 @@ Erro capturado:
     with colA:
         st.subheader("Atualizar agora")
 
-        start_year = st.number_input("Ano inicial", min_value=2000, max_value=2100, value=2010, step=1)
-        end_year = st.number_input("Ano final", min_value=2000, max_value=2100, value=dt.datetime.now().year, step=1)
+        # FIX: manter valores entre reruns para não frustrar o usuário
+        default_start_year = int(st.session_state.get("cfg_start_year", 2010))
+        default_end_year = int(st.session_state.get("cfg_end_year", dt.datetime.now().year))
+        default_years_per_run = int(st.session_state.get("cfg_years_per_run", 1))
+        default_quarters_per_run = int(st.session_state.get("cfg_quarters_per_run", 1))
 
-        years_per_run = st.number_input("DFP por clique (anos)", min_value=1, max_value=10, value=1, step=1)
-        quarters_per_run = st.number_input("ITR por clique (trimestres)", min_value=1, max_value=12, value=1, step=1)
+        start_year = st.number_input(
+            "Ano inicial",
+            min_value=2000,
+            max_value=2100,
+            value=default_start_year,
+            step=1,
+        )
+        end_year = st.number_input(
+            "Ano final",
+            min_value=2000,
+            max_value=2100,
+            value=default_end_year,
+            step=1,
+        )
+
+        years_per_run = st.number_input(
+            "DFP por clique (anos)",
+            min_value=1,
+            max_value=10,
+            value=default_years_per_run,
+            step=1,
+        )
+        quarters_per_run = st.number_input(
+            "ITR por clique (trimestres)",
+            min_value=1,
+            max_value=12,
+            value=default_quarters_per_run,
+            step=1,
+        )
+
+        # Persistência dos inputs
+        st.session_state["cfg_start_year"] = int(start_year)
+        st.session_state["cfg_end_year"] = int(end_year)
+        st.session_state["cfg_years_per_run"] = int(years_per_run)
+        st.session_state["cfg_quarters_per_run"] = int(quarters_per_run)
+
+        # FIX: validação simples para evitar chamadas inválidas
+        if int(end_year) < int(start_year):
+            st.error("Ano final não pode ser menor que o ano inicial.")
+            st.stop()
 
         run = st.button("Atualizar banco (tudo)", use_container_width=True)
         progress = st.progress(0, text="Aguardando…")
         log_box = st.empty()
 
         if run:
+            # FIX: reafirma a página antes da execução (sobrevive a rerun do Streamlit)
+            st.session_state["pagina_atual"] = "Configurações"
+
             logs: list[str] = []
 
             def cb(pct: float, msg: str = "") -> None:
@@ -93,9 +140,15 @@ Erro capturado:
                     progress_cb=cb,
                 )
                 st.success("Atualização concluída.")
+
+                # FIX CRÍTICO: manter Configurações após o rerun
+                st.session_state["pagina_atual"] = "Configurações"
                 st.rerun()
+
             except Exception as e:
                 st.error(f"Falha ao atualizar: {e}")
+                # Mantém na página mesmo após erro
+                st.session_state["pagina_atual"] = "Configurações"
 
     with colB:
         st.subheader("Último log")
