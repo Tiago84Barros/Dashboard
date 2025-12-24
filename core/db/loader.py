@@ -14,8 +14,7 @@ def _table_exists(engine: Engine, schema: str, table: str) -> bool:
     limit 1
     """
     with engine.begin() as conn:
-        r = conn.execute(text(sql), {"schema": schema, "table": table}).fetchone()
-    return r is not None
+        return conn.execute(text(sql), {"schema": schema, "table": table}).fetchone() is not None
 
 
 def _get_columns(engine: Engine, schema: str, table: str) -> set[str]:
@@ -31,71 +30,54 @@ def _get_columns(engine: Engine, schema: str, table: str) -> set[str]:
 
 
 def _pick_col(cols: set[str], *candidates: str) -> str:
-    """
-    Escolhe a primeira coluna existente dentre os candidatos.
-    """
     for c in candidates:
         if c in cols:
             return c
-    raise KeyError(f"Nenhuma das colunas esperadas existe. Candidatos={candidates}. Existentes={sorted(cols)}")
+    raise KeyError(f"Colunas esperadas não encontradas. Candidatos={candidates}. Existentes={sorted(cols)}")
+
+
+def _q(col: str) -> str:
+    """
+    Quote apenas quando a coluna não for lower_snake (ex.: SETOR).
+    """
+    return f'"{col}"' if col.lower() != col else col
 
 
 def load_setores(engine: Engine) -> pd.DataFrame:
     """
-    Carrega a tabela de setores do Supabase.
+    Carrega setores do Supabase.
 
     Prioridade:
-      1) cvm.setores
-      2) public.setores
+      1) cvm.setores (seu caso)
+      2) public.setores (fallback, se existir)
 
-    E lida com colunas podendo estar como:
-      - setor/subsetor/segmento/nome_empresa
-      - SETOR/SUBSETOR/SEGMENTO/nome_empresa
-      - ou nomes levemente diferentes (fallback controlado)
+    Também trata colunas em maiúsculo (ex.: "SETOR") ou minúsculo.
     """
-    schema = None
-    if _table_exists(engine, "cvm", "setores"):
-        schema = "cvm"
-    elif _table_exists(engine, "public", "setores"):
-        schema = "public"
-    else:
-        raise RuntimeError("Tabela 'setores' não encontrada nos schemas cvm ou public no Supabase.")
+    schema = "cvm" if _table_exists(engine, "cvm", "setores") else ("public" if _table_exists(engine, "public", "setores") else None)
+    if schema is None:
+        raise RuntimeError("Tabela 'setores' não encontrada em cvm.setores nem public.setores.")
 
     cols = _get_columns(engine, schema, "setores")
 
-    # ticker quase sempre é ticker mesmo
     col_ticker = _pick_col(cols, "ticker", "Ticker")
-
-    # setor/subsetor/segmento podem existir em minúsculo ou maiúsculo (quoted)
     col_setor = _pick_col(cols, "setor", "SETOR")
     col_subsetor = _pick_col(cols, "subsetor", "SUBSETOR")
     col_segmento = _pick_col(cols, "segmento", "SEGMENTO")
-
-    # nome_empresa pode variar
     col_nome = _pick_col(cols, "nome_empresa", "NOME_EMPRESA", "nome", "NOME")
-
-    # Monta SQL com aspas apenas quando necessário (se vier maiúsculo)
-    def q(c: str) -> str:
-        # se tiver qualquer caractere fora do padrão lower_snake, quote
-        # (principalmente colunas maiúsculas)
-        if c.lower() != c:
-            return f'"{c}"'
-        return c
 
     sql = f"""
     select
-        {q(col_ticker)} as ticker,
-        {q(col_setor)} as setor,
-        {q(col_subsetor)} as subsetor,
-        {q(col_segmento)} as segmento,
-        {q(col_nome)} as nome_empresa
+        {_q(col_ticker)} as ticker,
+        {_q(col_setor)} as setor,
+        {_q(col_subsetor)} as subsetor,
+        {_q(col_segmento)} as segmento,
+        {_q(col_nome)} as nome_empresa
     from {schema}.setores
     """
 
     with engine.begin() as conn:
         df = pd.read_sql(text(sql), conn)
 
-    # Normalização leve
     df["ticker"] = df["ticker"].astype(str).str.strip().str.upper()
     for c in ["setor", "subsetor", "segmento", "nome_empresa"]:
         if c in df.columns:
