@@ -114,8 +114,7 @@ def _load_page_renderer(page_key: str) -> Callable[[], None]:
         "Básica": ("page.basic", "basic"),
         "Avançada": ("page.advanced", "advanced"),
         "Criação de Portfólio": ("page.criacao_portfolio", "criacao_portfolio"),
-        "Configurações": ("page.configuracoes","configuracoes")           
-        ),
+        "Configurações": ("page.configuracoes","configuracoes"),
     }
     paths = mapping.get(page_key)
     if not paths:
@@ -277,6 +276,7 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
 
 
 
