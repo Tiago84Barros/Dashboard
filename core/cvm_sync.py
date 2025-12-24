@@ -140,7 +140,7 @@ def apply_update(
         _p(10, "DFP (anual): executando…")
         logs.append("dfp:start")
         try:
-            import cvm_dfp_ingest  # noqa
+            import cvm.cvm_dfp_ingest  # noqa
             cvm_dfp_ingest.run(
                 engine,
                 progress_cb=lambda s: logs.append(f"DFP:{s}"),
@@ -157,8 +157,8 @@ def apply_update(
         _p(30, "ITR (trimestral): executando…")
         logs.append("itr:start")
         try:
-            import cvm_itr_ingest  # noqa
-            cvm_itr_ingest.run(
+            import cvm.cvm_tri_ingest  # noqa
+            cvm_tri_ingest.run(
                 engine,
                 progress_cb=lambda s: logs.append(f"ITR:{s}"),
                 start_year=int(start_year),
