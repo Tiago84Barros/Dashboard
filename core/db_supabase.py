@@ -48,20 +48,26 @@ def _build_db_url() -> str:
 
 
 @st.cache_resource(show_spinner=False)
-def get_engine() -> Engine:
-    """
-    Engine única por processo (cache_resource).
-    Pool pequeno para evitar estourar 'max client connections' no pooler do Supabase.
-    """
-    url = _build_db_url()
+def get_engine():
+    db_url = os.getenv("SUPABASE_DB_URL")
 
-    engine = create_engine(
-        url,
-        pool_size=2,
-        max_overflow=0,
-        pool_timeout=30,
-        pool_recycle=1800,
-        pool_pre_ping=True,
-        future=True,
-    )
-    return engine
+    # ✅ PRIORIDADE TOTAL PARA URL ÚNICA
+    if db_url:
+        return create_engine(db_url, pool_pre_ping=True)
+
+    # fallback legado
+    user = os.getenv("SUPABASE_USER")
+    password = os.getenv("SUPABASE_PASSWORD")
+    host = os.getenv("SUPABASE_HOST")
+    port = os.getenv("SUPABASE_PORT", "5432")
+    name = os.getenv("SUPABASE_DB_NAME", "postgres")
+
+    if not all([user, password, host]):
+        raise RuntimeError(
+            "Config Supabase incompleta. "
+            "Defina SUPABASE_DB_URL ou USER/PASSWORD/HOST."
+        )
+
+    url = f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{name}"
+    return create_engine(url, pool_pre_ping=True)
+
