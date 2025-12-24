@@ -117,28 +117,40 @@ def _ensure_setores_df() -> None:
 
 
 def _sidebar() -> str:
+    # CSS seguro: não mexe no overflow do root do sidebar
+    # e usa "sticky bottom" apenas no bloco do botão Configurações.
     st.sidebar.markdown(
         """
         <style>
-          /* Remove scrollbar “sobrando” do sidebar */
-          [data-testid="stSidebar"] > div:first-child { overflow: hidden; }
+          /* Evita rolagem "extra" por margens/paddings grandes, sem cortar conteúdo */
+          [data-testid="stSidebar"] { padding-top: 0.75rem; }
           [data-testid="stSidebar"] .stVerticalBlock { gap: .65rem; }
 
-          /* Layout flex: topo + empurra configurações para baixo */
-          .sb-wrap { height: calc(100vh - 1rem); display:flex; flex-direction:column; }
-          .sb-top { }
-          .sb-bottom { margin-top:auto; padding-top:.5rem; border-top:1px solid rgba(0,0,0,.08); }
+          /* Bloco do rodapé: fica no final sem empurrar o resto para baixo */
+          .sb-bottom {
+            position: sticky;
+            bottom: 0;
+            padding-top: .75rem;
+            padding-bottom: .75rem;
+            margin-top: 1rem;
+            border-top: 1px solid rgba(255,255,255,.08);
+            background: inherit;   /* importante para não ficar "transparente" ao rolar */
+            z-index: 10;
+          }
 
           .sb-title { font-size: 1.1rem; font-weight: 800; margin: .25rem 0 .25rem; }
-          .sb-sub { color:#6b7280; font-size:.85rem; margin-bottom:.25rem; }
+          .sb-sub { color:#9ca3af; font-size:.85rem; margin-bottom:.25rem; }
+
+          /* melhora aparência do botão */
+          [data-testid="stSidebar"] .stButton > button {
+            border-radius: 12px;
+            font-weight: 700;
+          }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    st.sidebar.markdown("<div class='sb-wrap'>", unsafe_allow_html=True)
-
-    st.sidebar.markdown("<div class='sb-top'>", unsafe_allow_html=True)
     st.sidebar.markdown("<div class='sb-title'>Análises</div>", unsafe_allow_html=True)
     st.sidebar.markdown("<div class='sb-sub'>Selecione uma seção.</div>", unsafe_allow_html=True)
 
@@ -148,18 +160,14 @@ def _sidebar() -> str:
         index=0,
         label_visibility="collapsed",
     )
-    st.sidebar.markdown("</div>", unsafe_allow_html=True)
 
     st.sidebar.markdown("<div class='sb-bottom'>", unsafe_allow_html=True)
     cfg = st.sidebar.button("Configurações", use_container_width=True)
     st.sidebar.markdown("</div>", unsafe_allow_html=True)
 
-    st.sidebar.markdown("</div>", unsafe_allow_html=True)
-
     if cfg:
         return "Configurações"
     return pagina
-
 
 # --- Execução
 try:
@@ -176,3 +184,4 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
