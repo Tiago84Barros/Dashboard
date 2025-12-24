@@ -13,7 +13,7 @@ import importlib
 import logging
 import pathlib
 import sys
-from typing import Callable
+from typing import Callable, Optional
 
 import streamlit as st
 
@@ -79,8 +79,8 @@ def _get_layout_funcs() -> tuple[Callable[[], None], Callable[[], None]]:
         st.markdown(
             """
             <style>
-              .block-container { padding-top: 1.2rem; padding-bottom: 2rem; }
-              [data-testid="stSidebar"] { padding-top: 1rem; }
+              .block-container { padding-top: 1.1rem; padding-bottom: 2rem; }
+              [data-testid="stSidebar"] { padding-top: 0.75rem; }
             </style>
             """,
             unsafe_allow_html=True,
@@ -105,16 +105,49 @@ def _get_loader():
 def _load_page_renderer(page_key: str) -> Callable[[], None]:
     """
     Carrega a função render() da página escolhida, com fallback de caminhos.
+
+    Observação importante:
+    - Em Streamlit Cloud (Linux), 'page' != 'Page' e acentos no nome do módulo podem falhar.
+    - Por isso tentamos várias opções (incluindo Page/ sem acento).
     """
     mapping = {
         "Básica": ("page.basic", "basic"),
         "Avançada": ("page.advanced", "advanced"),
         "Criação de Portfólio": ("page.criacao_portfolio", "criacao_portfolio"),
-        "Configurações": ("page.configuracoes", "configuracoes", "page.configurações", "configurações"),
+        "Configurações": (
+            # Preferência: sem acento e pasta em minúsculo
+            "page.configuracoes",
+            "page.configuracoes_page",
+            # Tentativas com pasta Page (P maiúsculo)
+            "Page.configuracoes",
+            # Tentativas com acento (pode existir localmente no Windows, mas falha no Linux)
+            "page.configurações",
+            "Page.configurações",
+        ),
     }
     paths = mapping.get(page_key)
     if not paths:
         raise ValueError(f"Página desconhecida: {page_key}")
+
+    # Se for Configurações e não existir, fallback inline (não quebra o app)
+    if page_key == "Configurações":
+        for p in paths:
+            try:
+                mod = importlib.import_module(p)
+                render = getattr(mod, "render", None)
+                if callable(render):
+                    return render
+            except Exception:
+                continue
+
+        def _fallback_config_page():
+            st.markdown("## Configurações")
+            st.info(
+                "A página de configurações não foi encontrada como módulo importável.\n\n"
+                "Recomendação: renomeie para **page/configuracoes.py** (sem acento e pasta em minúsculo) "
+                "com uma função **render()**."
+            )
+        return _fallback_config_page
 
     mod = _import_first(*paths)
     render = getattr(mod, "render", None)
@@ -143,23 +176,31 @@ def _ensure_setores_df() -> None:
     st.session_state["setores_df"] = setores_df
 
 
-# ───────────────────────── Sidebar (fixo e seguro) ──────────────────
+# ───────────────────────── Sidebar (seguro) ─────────────────────────
 def _sidebar() -> str:
     """
-    Sidebar com navegação no topo e botão Configurações isolado no rodapé.
-    Implementação segura: não mexe em overflow do root do sidebar (evita sumir tudo).
+    Sidebar com:
+      - Navegação no topo (radio)
+      - Busca de ações (botão)
+      - Botão Configurações isolado no rodapé (sticky)
     """
     st.sidebar.markdown(
         """
         <style>
-          /* Ajustes suaves sem quebrar estrutura */
+          /* Ajustes seguros (não mexe em overflow do root) */
           [data-testid="stSidebar"] { padding-top: 0.75rem; }
           [data-testid="stSidebar"] .stVerticalBlock { gap: .65rem; }
 
-          .sb-title { font-size: 1.1rem; font-weight: 800; margin: .25rem 0 .25rem; }
-          .sb-sub { color:#9ca3af; font-size:.85rem; margin-bottom:.25rem; }
+          .sb-title { font-size: 1.15rem; font-weight: 800; margin: .25rem 0 .25rem; }
+          .sb-sub { color:#9ca3af; font-size:.85rem; margin-bottom:.35rem; }
 
-          /* Rodapé sticky só para o bloco do botão */
+          .sb-card {
+            border: 1px solid rgba(255,255,255,.08);
+            border-radius: 14px;
+            padding: 12px;
+            background: rgba(255,255,255,.03);
+          }
+
           .sb-bottom {
             position: sticky;
             bottom: 0;
@@ -171,7 +212,6 @@ def _sidebar() -> str:
             z-index: 10;
           }
 
-          /* Botões mais “profissionais” */
           [data-testid="stSidebar"] .stButton > button {
             border-radius: 12px;
             font-weight: 700;
@@ -191,6 +231,34 @@ def _sidebar() -> str:
         label_visibility="visible",
     )
 
+    # ───────────── Busca de ações (recolocada) ─────────────
+    with st.sidebar.container():
+        st.markdown("<div class='sb-card'>", unsafe_allow_html=True)
+        st.markdown("**Busca de ações**")
+        ticker = st.text_input("Ticker", value=st.session_state.get("ticker_busca", ""), placeholder="Ex: PETR4")
+        col_a, col_b = st.columns([1, 1])
+        with col_a:
+            buscar = st.button("Buscar", use_container_width=True)
+        with col_b:
+            limpar = st.button("Limpar", use_container_width=True)
+
+        if limpar:
+            st.session_state["ticker_busca"] = ""
+            st.session_state.pop("ticker_selecionado", None)
+            st.session_state.pop("ticker_filtrado", None)
+            st.rerun()
+
+        if buscar:
+            t = (ticker or "").strip().upper()
+            st.session_state["ticker_busca"] = t
+            # Chaves genéricas que você pode usar nas páginas
+            st.session_state["ticker_selecionado"] = t
+            st.session_state["ticker_filtrado"] = t
+            st.success(f"Ticker definido: {t if t else '—'}")
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # ───────────── Botão Configurações fixo no rodapé ─────────────
     st.sidebar.markdown("<div class='sb-bottom'>", unsafe_allow_html=True)
     cfg = st.sidebar.button("Configurações", use_container_width=True)
     st.sidebar.markdown("</div>", unsafe_allow_html=True)
@@ -203,7 +271,7 @@ def _sidebar() -> str:
 # ───────────────────────── Roteamento / Execução ────────────────────
 pagina_escolhida = _sidebar()
 
-# Só carrega setores_df se a página NÃO for Configurações (para evitar erro desnecessário)
+# Só carrega setores_df se não for Configurações
 if pagina_escolhida != "Configurações":
     try:
         _ensure_setores_df()
