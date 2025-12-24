@@ -1,4 +1,4 @@
-#Antigo Algoritmo 5
+# cvm_tri_ingest.py
 from __future__ import annotations
 
 import io
@@ -14,6 +14,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from core.sync_state import ensure_sync_table, get_state, set_state
+from core.config.settings import get_settings
 
 URL_BASE_ITR = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/ITR/DADOS/"
 
@@ -22,7 +23,7 @@ DEFAULT_END_YEAR = 2025
 
 STATE_TARGET_START = "cvm:itr_target_start_year"
 STATE_TARGET_END = "cvm:itr_target_end_year"
-STATE_NEXT_YQ = "cvm:itr_next_yq"         # "YYYYQ" (ex. 20254 para 2025T4)
+STATE_NEXT_YQ = "cvm:itr_next_yq"
 STATE_LAST_DONE = "cvm:itr_last_completed_yq"
 
 
@@ -31,28 +32,15 @@ class ItrConfig:
     start_year: int = DEFAULT_START_YEAR
     end_year: int = DEFAULT_END_YEAR
     quarters_per_run: int = 1
-    ticker_map_path: Optional[str] = None
     timeout_sec: int = 120
 
 
-def _find_ticker_map(ticker_map_path: Optional[str]) -> Path:
-    if ticker_map_path:
-        p = Path(ticker_map_path)
-        if p.exists():
-            return p
-        raise FileNotFoundError(f"ticker_map_path informado não existe: {ticker_map_path}")
-
-    candidates = [
-        Path("cvm") / "cvm_to_ticker.csv",
-        Path("data") / "cvm_to_ticker.csv",
-        Path(__file__).resolve().parent / "cvm_to_ticker.csv",
-        Path(__file__).resolve().parent.parent / "cvm" / "cvm_to_ticker.csv",
-        Path(__file__).resolve().parent.parent / "data" / "cvm_to_ticker.csv",
-    ]
-    for c in candidates:
-        if c.exists():
-            return c
-    raise FileNotFoundError("Não encontrei cvm_to_ticker.csv (coloque em cvm/ ou informe ticker_map_path).")
+def _find_ticker_map() -> Path:
+    s = get_settings()
+    p = Path(s.cvm_to_ticker_path)
+    if p.exists():
+        return p
+    raise FileNotFoundError(f"Não encontrei {p}. Coloque em data/cvm_to_ticker.csv")
 
 
 def _ensure_table(engine: Engine) -> None:
@@ -88,17 +76,10 @@ def _read_consolidated_csvs(zip_bytes: bytes) -> dict[str, pd.DataFrame]:
         for name in z.namelist():
             if not (name.endswith(".csv") and "_con_" in name.lower()):
                 continue
-            u = name.upper()
-            if "DRE" not in u:
+            if "DRE" not in name.upper():
                 continue
             with z.open(name) as f:
-                df = pd.read_csv(
-                    f,
-                    sep=";",
-                    decimal=",",
-                    encoding="ISO-8859-1",
-                    low_memory=False,
-                )
+                df = pd.read_csv(f, sep=";", decimal=",", encoding="ISO-8859-1", low_memory=False)
             if "ORDEM_EXERC" in df.columns:
                 df = df[df["ORDEM_EXERC"] == "ÚLTIMO"]
             out["DRE"].append(df)
@@ -145,6 +126,7 @@ def _load_cvm_to_ticker(map_path: Path) -> pd.DataFrame:
         raise ValueError("cvm_to_ticker.csv precisa ter CD_CVM e Ticker.")
     df = df.rename(columns={cols["cd_cvm"]: "CD_CVM", cols["ticker"]: "ticker"})
     df["CD_CVM"] = pd.to_numeric(df["CD_CVM"], errors="coerce").astype("Int64")
+    df["ticker"] = df["ticker"].astype(str).str.strip().str.upper()
     return df.dropna(subset=["CD_CVM", "ticker"])[["CD_CVM", "ticker"]].drop_duplicates()
 
 
@@ -172,11 +154,6 @@ def _upsert(engine: Engine, df: pd.DataFrame, batch_size: int = 8000) -> None:
             conn.execute(text(sql), rows[i:i + batch_size])
 
 
-def _yq_from_date(d: date) -> str:
-    q = (d.month - 1) // 3 + 1
-    return f"{d.year}{q}"
-
-
 def _resolve_yq_to_process(engine: Engine, cfg: ItrConfig) -> Optional[Tuple[int, int]]:
     ensure_sync_table(engine)
     set_state(engine, STATE_TARGET_START, str(cfg.start_year))
@@ -184,7 +161,6 @@ def _resolve_yq_to_process(engine: Engine, cfg: ItrConfig) -> Optional[Tuple[int
 
     st_next = get_state(engine, STATE_NEXT_YQ)
     if not st_next or not st_next.get("value"):
-        # começa do fim: end_year T4
         year, q = cfg.end_year, 4
     else:
         raw = str(st_next["value"]).strip()
@@ -203,19 +179,12 @@ def run(
     start_year: int = DEFAULT_START_YEAR,
     end_year: int = DEFAULT_END_YEAR,
     quarters_per_run: int = 1,
-    ticker_map_path: Optional[str] = None,
     timeout_sec: int = 120,
 ) -> None:
-    cfg = ItrConfig(
-        start_year=start_year,
-        end_year=end_year,
-        quarters_per_run=quarters_per_run,
-        ticker_map_path=ticker_map_path,
-        timeout_sec=timeout_sec,
-    )
+    cfg = ItrConfig(start_year=start_year, end_year=end_year, quarters_per_run=quarters_per_run, timeout_sec=timeout_sec)
 
     _ensure_table(engine)
-    map_path = _find_ticker_map(cfg.ticker_map_path)
+    map_path = _find_ticker_map()
     df_map = _load_cvm_to_ticker(map_path)
 
     for _ in range(cfg.quarters_per_run):
@@ -234,11 +203,8 @@ def run(
 
         df_all = _build_quarter_frame(d["DRE"])
         if df_all.empty:
-            # marca e avança
             set_state(engine, STATE_LAST_DONE, f"{year}{q}")
-            # decrementa trimestre
-            q2 = q - 1
-            y2 = year
+            q2, y2 = q - 1, year
             if q2 == 0:
                 y2 -= 1
                 q2 = 4
@@ -247,10 +213,10 @@ def run(
                 progress_cb(f"ITR: {year}T{q} sem dados úteis (marcado como concluído).")
             continue
 
-        # filtra para o trimestre alvo
         df_all["data"] = pd.to_datetime(df_all["data"])
-        df_all["yq"] = df_all["data"].dt.to_period("Q").astype(str)  # ex "2025Q4"
+        df_all["yq"] = df_all["data"].dt.to_period("Q").astype(str)
         target = f"{year}Q{q}"
+
         df_q = df_all[df_all["yq"] == target].copy()
         df_q["data"] = df_q["data"].dt.date
         df_q = df_q.drop(columns=["yq"])
@@ -266,12 +232,9 @@ def run(
                     df_q[c] = pd.to_numeric(df_q[c], errors="coerce")
 
             _upsert(engine, df_q)
-
             set_state(engine, STATE_LAST_DONE, f"{year}{q}")
 
-        # próximo trimestre (retrocedendo)
-        q2 = q - 1
-        y2 = year
+        q2, y2 = q - 1, year
         if q2 == 0:
             y2 -= 1
             q2 = 4
