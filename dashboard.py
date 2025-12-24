@@ -116,7 +116,7 @@ def _load_page_renderer(page_key: str) -> Callable[[], None]:
     paths = mapping.get(page_key)
     if not paths:
         raise ValueError(f"Página desconhecida: {page_key}")
-    """
+  
     # Se for Configurações e não existir, fallback inline (não quebra o app)
     if page_key == "Configurações":
         for p in paths:
@@ -127,7 +127,7 @@ def _load_page_renderer(page_key: str) -> Callable[[], None]:
                     return render
             except Exception:
                 continue
-          
+     """
         def _fallback_config_page():
             st.markdown("## Configurações")
             st.info(
@@ -136,7 +136,7 @@ def _load_page_renderer(page_key: str) -> Callable[[], None]:
                 "com uma função **render()**."
             )
         return _fallback_config_page
-    """
+     """
     mod = _import_first(*paths)
     render = getattr(mod, "render", None)
     if not callable(render):
@@ -273,6 +273,7 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
 
 
 
