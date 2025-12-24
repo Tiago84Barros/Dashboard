@@ -260,11 +260,11 @@ def _sidebar() -> str:
 
     # ───────────── Botão Configurações fixo no rodapé ─────────────
     st.sidebar.markdown("<div class='sb-bottom'>", unsafe_allow_html=True)
-    cfg = st.sidebar.button("Configurações", use_container_width=True)
+    cfg = st.sidebar.button("Configuracoes", use_container_width=True)
     st.sidebar.markdown("</div>", unsafe_allow_html=True)
 
     if cfg:
-        return "Configurações"
+        return "configuracoes"
     return pagina
 
 
@@ -272,7 +272,7 @@ def _sidebar() -> str:
 pagina_escolhida = _sidebar()
 
 # Só carrega setores_df se não for Configurações
-if pagina_escolhida != "Configurações":
+if pagina_escolhida != "configuracoes":
     try:
         _ensure_setores_df()
     except Exception as e:
@@ -285,3 +285,4 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
