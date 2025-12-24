@@ -127,7 +127,7 @@ def _load_page_renderer(page_key: str) -> Callable[[], None]:
                     return render
             except Exception:
                 continue
-    """
+   
         def _fallback_config_page():
             st.markdown("## Configurações")
             st.info(
@@ -136,7 +136,7 @@ def _load_page_renderer(page_key: str) -> Callable[[], None]:
                 "com uma função **render()**."
             )
         return _fallback_config_page
-    """
+   
     mod = _import_first(*paths)
     render = getattr(mod, "render", None)
     if not callable(render):
@@ -273,6 +273,7 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
 
 
 
