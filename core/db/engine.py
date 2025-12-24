@@ -9,19 +9,20 @@ from core.config.settings import get_settings
 
 def get_engine() -> Engine:
     """
-    Engine do Supabase (Postgres) via SQLAlchemy.
-    Requer SUPABASE_DB_URL em st.secrets ou ENV.
+    Engine SQLAlchemy para Supabase Postgres.
+    Usa pool_pre_ping para reduzir erros de conexão.
     """
-    settings = get_settings()
-    if not settings.supabase_db_url:
-        raise RuntimeError(
-            "SUPABASE_DB_URL não configurada. Defina em st.secrets (Streamlit Cloud) ou ENV."
-        )
+    s = get_settings()
+
+    # OBS: mantém credenciais fora do código (st.secrets / env)
+    url = (
+        f"postgresql+psycopg2://{s.supabase_user}:{s.supabase_password}"
+        f"@{s.supabase_host}:{s.supabase_port}/{s.supabase_dbname}"
+    )
 
     return create_engine(
-        settings.supabase_db_url,
+        url,
         pool_pre_ping=True,
         pool_size=5,
-        max_overflow=5,
-        pool_recycle=1800,
+        max_overflow=10,
     )
