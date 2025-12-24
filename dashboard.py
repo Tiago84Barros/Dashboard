@@ -1,4 +1,3 @@
-# dashboard.py
 """
 dashboard.py
 ~~~~~~~~~~~~
@@ -22,17 +21,24 @@ from core.db.engine import get_engine
 
 logger = logging.getLogger(__name__)
 
+# ───────────────────────── Ajuste de path ──────────────────────────
 ROOT_DIR = pathlib.Path(__file__).resolve().parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.append(str(ROOT_DIR))
 
 
+# ───────────────────────── Engine (Supabase) ───────────────────────
 @st.cache_resource
 def _engine():
     return get_engine()
 
 
+# ───────────────────────── Imports com fallback ─────────────────────
 def _import_first(*module_paths: str):
+    """
+    Tenta importar o primeiro módulo disponível na lista.
+    Retorna o módulo importado ou levanta ImportError com detalhes.
+    """
     errors = []
     for p in module_paths:
         try:
@@ -44,6 +50,12 @@ def _import_first(*module_paths: str):
 
 
 def _get_layout_funcs() -> tuple[Callable[[], None], Callable[[], None]]:
+    """
+    Busca configurar_pagina() e aplicar_estilos_css() em:
+    - design.layout (estrutura modular)
+    - layout (arquivo solto)
+    Se não existir, usa fallback minimalista.
+    """
     try:
         mod = _import_first("design.layout", "layout")
         configurar_pagina = getattr(mod, "configurar_pagina", None)
@@ -68,7 +80,7 @@ def _get_layout_funcs() -> tuple[Callable[[], None], Callable[[], None]]:
             """
             <style>
               .block-container { padding-top: 1.2rem; padding-bottom: 2rem; }
-              [data-testid="stSidebar"] { padding-top: 0.75rem; }
+              [data-testid="stSidebar"] { padding-top: 1rem; }
             </style>
             """,
             unsafe_allow_html=True,
@@ -78,6 +90,11 @@ def _get_layout_funcs() -> tuple[Callable[[], None], Callable[[], None]]:
 
 
 def _get_loader():
+    """
+    Obtém load_setores em:
+    - core.db.loader (padrão novo)
+    - loader (fallback legado, se existir)
+    """
     mod = _import_first("core.db.loader", "loader")
     fn = getattr(mod, "load_setores", None)
     if not callable(fn):
@@ -86,11 +103,14 @@ def _get_loader():
 
 
 def _load_page_renderer(page_key: str) -> Callable[[], None]:
+    """
+    Carrega a função render() da página escolhida, com fallback de caminhos.
+    """
     mapping = {
         "Básica": ("page.basic", "basic"),
         "Avançada": ("page.advanced", "advanced"),
         "Criação de Portfólio": ("page.criacao_portfolio", "criacao_portfolio"),
-        "Configurações": ("page.configuracoes", "configuracoes"),
+        "Configurações": ("page.configuracoes", "configuracoes", "page.configurações", "configurações"),
     }
     paths = mapping.get(page_key)
     if not paths:
@@ -103,30 +123,43 @@ def _load_page_renderer(page_key: str) -> Callable[[], None]:
     return render
 
 
+# ───────────────────────── Layout Global ───────────────────────────
 configurar_pagina, aplicar_estilos_css = _get_layout_funcs()
 configurar_pagina()
 aplicar_estilos_css()
 
 
+# ───────────────────────── Cache inicial ───────────────────────────
 def _ensure_setores_df() -> None:
+    """
+    Garante setores_df no session_state, carregando do Supabase (engine).
+    """
     s = st.session_state.get("setores_df")
     if s is not None and getattr(s, "empty", False) is False:
         return
+
     load_setores = _get_loader()
-    st.session_state["setores_df"] = load_setores(engine=_engine())
+    setores_df = load_setores(engine=_engine())
+    st.session_state["setores_df"] = setores_df
 
 
+# ───────────────────────── Sidebar (fixo e seguro) ──────────────────
 def _sidebar() -> str:
-    # CSS seguro: não mexe no overflow do root do sidebar
-    # e usa "sticky bottom" apenas no bloco do botão Configurações.
+    """
+    Sidebar com navegação no topo e botão Configurações isolado no rodapé.
+    Implementação segura: não mexe em overflow do root do sidebar (evita sumir tudo).
+    """
     st.sidebar.markdown(
         """
         <style>
-          /* Evita rolagem "extra" por margens/paddings grandes, sem cortar conteúdo */
+          /* Ajustes suaves sem quebrar estrutura */
           [data-testid="stSidebar"] { padding-top: 0.75rem; }
           [data-testid="stSidebar"] .stVerticalBlock { gap: .65rem; }
 
-          /* Bloco do rodapé: fica no final sem empurrar o resto para baixo */
+          .sb-title { font-size: 1.1rem; font-weight: 800; margin: .25rem 0 .25rem; }
+          .sb-sub { color:#9ca3af; font-size:.85rem; margin-bottom:.25rem; }
+
+          /* Rodapé sticky só para o bloco do botão */
           .sb-bottom {
             position: sticky;
             bottom: 0;
@@ -134,14 +167,11 @@ def _sidebar() -> str:
             padding-bottom: .75rem;
             margin-top: 1rem;
             border-top: 1px solid rgba(255,255,255,.08);
-            background: inherit;   /* importante para não ficar "transparente" ao rolar */
+            background: inherit;
             z-index: 10;
           }
 
-          .sb-title { font-size: 1.1rem; font-weight: 800; margin: .25rem 0 .25rem; }
-          .sb-sub { color:#9ca3af; font-size:.85rem; margin-bottom:.25rem; }
-
-          /* melhora aparência do botão */
+          /* Botões mais “profissionais” */
           [data-testid="stSidebar"] .stButton > button {
             border-radius: 12px;
             font-weight: 700;
@@ -158,7 +188,7 @@ def _sidebar() -> str:
         "Escolha a seção:",
         ["Básica", "Avançada", "Criação de Portfólio"],
         index=0,
-        label_visibility="collapsed",
+        label_visibility="visible",
     )
 
     st.sidebar.markdown("<div class='sb-bottom'>", unsafe_allow_html=True)
@@ -169,14 +199,17 @@ def _sidebar() -> str:
         return "Configurações"
     return pagina
 
-# --- Execução
-try:
-    _ensure_setores_df()
-except Exception as e:
-    st.error(f"Falha ao inicializar dados base (setores_df): {e}")
-    st.stop()
 
+# ───────────────────────── Roteamento / Execução ────────────────────
 pagina_escolhida = _sidebar()
+
+# Só carrega setores_df se a página NÃO for Configurações (para evitar erro desnecessário)
+if pagina_escolhida != "Configurações":
+    try:
+        _ensure_setores_df()
+    except Exception as e:
+        st.error(f"Falha ao inicializar dados base (setores_df): {e}")
+        st.stop()
 
 try:
     render_page = _load_page_renderer(pagina_escolhida)
@@ -184,4 +217,3 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
-
