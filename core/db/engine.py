@@ -6,6 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 import streamlit as st
 
+from core.db_supabase import get_engine  # reexport
 
 @st.cache_resource(show_spinner=False)
 def get_engine() -> Engine:
