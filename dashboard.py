@@ -264,7 +264,7 @@ def _sidebar() -> str:
     st.sidebar.markdown("</div>", unsafe_allow_html=True)
 
     if cfg:
-        return "configuracoes"
+        return "Configurações"
     return pagina
 
 
@@ -285,6 +285,7 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
 
 
 
