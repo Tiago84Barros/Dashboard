@@ -1,10 +1,9 @@
-#Antigo Algoritmo 1
+# cvm_dfp_ingest.py - Antigo Algoritmo 1
 from __future__ import annotations
 
 import io
 import zipfile
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -14,18 +13,16 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from core.sync_state import ensure_sync_table, get_state, set_state
+from core.config.settings import get_settings
 
-# -----------------------------
-# Config
-# -----------------------------
 URL_BASE_DFP = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/DFP/DADOS/"
 
 DEFAULT_START_YEAR = 2010
-DEFAULT_END_YEAR = 2025  # ajuste conforme desejado (ou automatize depois)
+DEFAULT_END_YEAR = 2025
 
 STATE_TARGET_START = "cvm:dfp_target_start_year"
 STATE_TARGET_END = "cvm:dfp_target_end_year"
-STATE_NEXT_YEAR = "cvm:dfp_next_year"  # vamos preencher de trás para frente: end -> start
+STATE_NEXT_YEAR = "cvm:dfp_next_year"
 STATE_LAST_DONE = "cvm:dfp_last_completed_year"
 
 
@@ -33,32 +30,17 @@ STATE_LAST_DONE = "cvm:dfp_last_completed_year"
 class DfpConfig:
     start_year: int = DEFAULT_START_YEAR
     end_year: int = DEFAULT_END_YEAR
-    years_per_run: int = 1  # “complementar aos poucos”: 1 ano por clique/execução
-    ticker_map_path: Optional[str] = None
+    years_per_run: int = 1
     timeout_sec: int = 120
 
 
-def _find_ticker_map(ticker_map_path: Optional[str]) -> Path:
-    if ticker_map_path:
-        p = Path(ticker_map_path)
-        if p.exists():
-            return p
-        raise FileNotFoundError(f"ticker_map_path informado não existe: {ticker_map_path}")
-
-    # tenta caminhos padrão
-    candidates = [
-        Path("cvm") / "cvm_to_ticker.csv",
-        Path("data") / "cvm_to_ticker.csv",
-        Path(__file__).resolve().parent / "cvm_to_ticker.csv",
-        Path(__file__).resolve().parent.parent / "cvm" / "cvm_to_ticker.csv",
-        Path(__file__).resolve().parent.parent / "data" / "cvm_to_ticker.csv",
-    ]
-    for c in candidates:
-        if c.exists():
-            return c
+def _find_ticker_map() -> Path:
+    s = get_settings()
+    p = Path(s.cvm_to_ticker_path)
+    if p.exists():
+        return p
     raise FileNotFoundError(
-        "Não encontrei cvm_to_ticker.csv. Coloque em cvm/cvm_to_ticker.csv (recomendado) "
-        "ou informe ticker_map_path explicitamente."
+        f"Não encontrei cvm_to_ticker.csv em {p}. Coloque em data/cvm_to_ticker.csv no repositório."
     )
 
 
@@ -66,7 +48,7 @@ def _ensure_table(engine: Engine) -> None:
     ddl = """
     create schema if not exists cvm;
 
-    create table if not exists cvm.demonstracoes_financeiras (
+    create table if not exists cvm.demonstracoes_financeiras_dfp (
         ticker text not null,
         data date not null,
 
@@ -104,24 +86,15 @@ def _download_year_zip(ano: int, timeout_sec: int) -> bytes:
 
 
 def _read_consolidated_csvs(zip_bytes: bytes) -> dict[str, pd.DataFrame]:
-    """
-    Lê apenas os CSVs consolidados (_con_) e retorna dict com DRE/BPA/BPP/DFC.
-    """
     out = {"DRE": [], "BPA": [], "BPP": [], "DFC": []}
-
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
         for name in z.namelist():
             if not (name.endswith(".csv") and "_con_" in name.lower()):
                 continue
             with z.open(name) as f:
                 df = pd.read_csv(
-                    f,
-                    sep=";",
-                    decimal=",",
-                    encoding="ISO-8859-1",
-                    low_memory=False,
+                    f, sep=";", decimal=",", encoding="ISO-8859-1", low_memory=False
                 )
-            # “ÚLTIMO” conforme seu algoritmo original
             if "ORDEM_EXERC" in df.columns:
                 df = df[df["ORDEM_EXERC"] == "ÚLTIMO"]
 
@@ -139,33 +112,22 @@ def _read_consolidated_csvs(zip_bytes: bytes) -> dict[str, pd.DataFrame]:
 
 
 def _pick_value(df: pd.DataFrame, cd_conta: Optional[str] = None, ds_conta_in: Optional[list[str]] = None) -> pd.DataFrame:
-    """
-    Retorna dataframe com colunas: CD_CVM, DT_REFER, VL_CONTA (1 linha por (CD_CVM, DT_REFER)).
-    """
     if df.empty:
         return df
 
     x = df.copy()
     if cd_conta is not None and "CD_CONTA" in x.columns:
         x = x[x["CD_CONTA"] == cd_conta]
-
     if ds_conta_in is not None and "DS_CONTA" in x.columns:
         x = x[x["DS_CONTA"].isin(ds_conta_in)]
 
-    # remove duplicatas por data
     if "DT_REFER" in x.columns:
-        x = x.sort_values("DT_REFER")
-        x = x.drop_duplicates(subset=["CD_CVM", "DT_REFER"], keep="first")
+        x = x.sort_values("DT_REFER").drop_duplicates(subset=["CD_CVM", "DT_REFER"], keep="first")
 
     return x[["CD_CVM", "DT_REFER", "VL_CONTA"]]
 
 
 def _build_year_frame(df_dre: pd.DataFrame, df_bpa: pd.DataFrame, df_bpp: pd.DataFrame, df_dfc: pd.DataFrame) -> pd.DataFrame:
-    """
-    Monta um DF “largo” por (CD_CVM, Data) com as métricas principais.
-    Observação: mantém o espírito do seu notebook, porém sem exigir histórico completo.
-    """
-    # DRE
     receita = _pick_value(df_dre, cd_conta="3.01").rename(columns={"VL_CONTA": "receita_liquida"})
     ebit = _pick_value(df_dre, cd_conta="3.05").rename(columns={"VL_CONTA": "ebit"})
     lucro = _pick_value(
@@ -177,7 +139,6 @@ def _build_year_frame(df_dre: pd.DataFrame, df_bpa: pd.DataFrame, df_bpp: pd.Dat
     ).rename(columns={"VL_CONTA": "lucro_liquido"})
     lpa = _pick_value(df_dre, cd_conta="3.99.01.01").rename(columns={"VL_CONTA": "lpa"})
 
-    # BPA / BPP (os códigos seguem seu padrão original)
     ativo_total = _pick_value(df_bpa, cd_conta="1").rename(columns={"VL_CONTA": "ativo_total"})
     ativo_circ = _pick_value(df_bpa, cd_conta="1.01").rename(columns={"VL_CONTA": "ativo_circulante"})
     caixa = _pick_value(df_bpa, cd_conta="1.01").rename(columns={"VL_CONTA": "caixa_e_equivalentes"})
@@ -186,19 +147,14 @@ def _build_year_frame(df_dre: pd.DataFrame, df_bpa: pd.DataFrame, df_bpp: pd.Dat
     passivo_total = _pick_value(df_bpp, cd_conta="2").rename(columns={"VL_CONTA": "passivo_total"})
     pl = _pick_value(df_bpp, cd_conta="2.02").rename(columns={"VL_CONTA": "patrimonio_liquido"})
 
-    # DFC (seu notebook usa 6.01 para dividendos / fco; mantemos dividendos simples)
     dividendos = _pick_value(df_dfc, cd_conta="6.01").rename(columns={"VL_CONTA": "dividendos"})
 
-    # Merge “largo”
     dfs = [receita, ebit, lucro, lpa, ativo_total, ativo_circ, caixa, passivo_circ, passivo_total, pl, dividendos]
     base = None
     for d in dfs:
         if d.empty:
             continue
-        if base is None:
-            base = d.copy()
-        else:
-            base = base.merge(d, on=["CD_CVM", "DT_REFER"], how="outer")
+        base = d.copy() if base is None else base.merge(d, on=["CD_CVM", "DT_REFER"], how="outer")
 
     if base is None or base.empty:
         return pd.DataFrame()
@@ -206,8 +162,6 @@ def _build_year_frame(df_dre: pd.DataFrame, df_bpa: pd.DataFrame, df_bpp: pd.Dat
     base["data"] = pd.to_datetime(base["DT_REFER"]).dt.date
     base = base.drop(columns=["DT_REFER"])
 
-    # dívida (placeholder coerente): se você tem regra própria, trocamos depois.
-    # aqui usamos passivo_total como proxy de dívida_total (melhor que vazio), mas você pode ajustar.
     base["divida_total"] = base.get("passivo_total")
     base["divida_liquida"] = None
     if "divida_total" in base.columns and "caixa_e_equivalentes" in base.columns:
@@ -217,18 +171,17 @@ def _build_year_frame(df_dre: pd.DataFrame, df_bpa: pd.DataFrame, df_bpp: pd.Dat
 
 
 def _load_cvm_to_ticker(map_path: Path) -> pd.DataFrame:
-    # precisa conter pelo menos CD_CVM e Ticker (ou ticker)
     df = pd.read_csv(map_path, sep=",", encoding="utf-8")
     cols = {c.lower(): c for c in df.columns}
     if "cd_cvm" not in cols:
         raise ValueError("cvm_to_ticker.csv precisa ter coluna CD_CVM.")
-    # aceita Ticker / ticker
     if "ticker" not in cols:
         raise ValueError("cvm_to_ticker.csv precisa ter coluna Ticker (ou ticker).")
+
     df = df.rename(columns={cols["cd_cvm"]: "CD_CVM", cols["ticker"]: "ticker"})
     df["CD_CVM"] = pd.to_numeric(df["CD_CVM"], errors="coerce").astype("Int64")
-    df = df.dropna(subset=["CD_CVM", "ticker"])
-    return df[["CD_CVM", "ticker"]].drop_duplicates()
+    df["ticker"] = df["ticker"].astype(str).str.strip().str.upper()
+    return df.dropna(subset=["CD_CVM", "ticker"])[["CD_CVM", "ticker"]].drop_duplicates()
 
 
 def _upsert(engine: Engine, df: pd.DataFrame, batch_size: int = 5000) -> None:
@@ -243,12 +196,10 @@ def _upsert(engine: Engine, df: pd.DataFrame, batch_size: int = 5000) -> None:
         "dividendos", "caixa_e_equivalentes",
         "divida_total", "divida_liquida",
     ]
-
-    df2 = df.copy()
-    df2 = df2[cols]
+    df2 = df.copy()[cols]
 
     sql = """
-    insert into cvm.demonstracoes_financeiras (
+    insert into cvm.demonstracoes_financeiras_dfp (
         ticker, data,
         receita_liquida, ebit, lucro_liquido, lpa,
         ativo_total, ativo_circulante,
@@ -286,14 +237,7 @@ def _upsert(engine: Engine, df: pd.DataFrame, batch_size: int = 5000) -> None:
 
 
 def _resolve_year_to_process(engine: Engine, cfg: DfpConfig) -> Optional[int]:
-    """
-    Complemento gradual:
-    - começamos do end_year e vamos descendo até start_year
-    - salva checkpoint em STATE_NEXT_YEAR e STATE_LAST_DONE
-    """
     ensure_sync_table(engine)
-
-    # persistir meta (para transparência)
     set_state(engine, STATE_TARGET_START, str(cfg.start_year))
     set_state(engine, STATE_TARGET_END, str(cfg.end_year))
 
@@ -308,7 +252,6 @@ def _resolve_year_to_process(engine: Engine, cfg: DfpConfig) -> Optional[int]:
 
     if year < cfg.start_year:
         return None
-
     return year
 
 
@@ -319,27 +262,12 @@ def run(
     start_year: int = DEFAULT_START_YEAR,
     end_year: int = DEFAULT_END_YEAR,
     years_per_run: int = 1,
-    ticker_map_path: Optional[str] = None,
     timeout_sec: int = 120,
 ) -> None:
-    """
-    Executa a carga DFP de forma incremental:
-    - processa 'years_per_run' anos por execução (default 1)
-    - não apaga tabela
-    - faz UPSERT
-    - salva checkpoint no sync_state
-    """
-    cfg = DfpConfig(
-        start_year=start_year,
-        end_year=end_year,
-        years_per_run=years_per_run,
-        ticker_map_path=ticker_map_path,
-        timeout_sec=timeout_sec,
-    )
+    cfg = DfpConfig(start_year=start_year, end_year=end_year, years_per_run=years_per_run, timeout_sec=timeout_sec)
 
     _ensure_table(engine)
-
-    map_path = _find_ticker_map(cfg.ticker_map_path)
+    map_path = _find_ticker_map()
     df_map = _load_cvm_to_ticker(map_path)
 
     for _ in range(cfg.years_per_run):
@@ -357,26 +285,21 @@ def run(
 
         df_year = _build_year_frame(d["DRE"], d["BPA"], d["BPP"], d["DFC"])
         if df_year.empty:
-            # mesmo se vazio, marque como concluído para não travar eternamente nesse ano
             set_state(engine, STATE_LAST_DONE, str(year))
             set_state(engine, STATE_NEXT_YEAR, str(year - 1))
             if progress_cb:
                 progress_cb(f"DFP: ano {year} sem dados úteis (marcado como concluído).")
             continue
 
-        # merge com ticker
         df_year["CD_CVM"] = pd.to_numeric(df_year["CD_CVM"], errors="coerce").astype("Int64")
         df_year = df_year.merge(df_map, on="CD_CVM", how="inner")
 
-        # limpa NaNs em campos numéricos
         num_cols = [c for c in df_year.columns if c not in ("CD_CVM", "ticker", "data")]
         for c in num_cols:
             df_year[c] = pd.to_numeric(df_year[c], errors="coerce")
 
-        # upsert
         _upsert(engine, df_year)
 
-        # checkpoint
         set_state(engine, STATE_LAST_DONE, str(year))
         set_state(engine, STATE_NEXT_YEAR, str(year - 1))
 
