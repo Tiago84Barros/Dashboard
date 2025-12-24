@@ -89,7 +89,7 @@ def render() -> None:
 
     with st.sidebar:
         
-        ticker_input = st.text_input("Buscar ticker", key="ticker_box")
+        ticker_input = st.text_input("Ticker", key="ticker_box")
         if ticker_input.strip():
             ticker = ticker_input.upper()
             if not ticker.endswith(".SA"):
