@@ -13,7 +13,7 @@ import importlib
 import logging
 import pathlib
 import sys
-from typing import Callable, Optional
+from typing import Callable
 
 import streamlit as st
 
@@ -105,7 +105,6 @@ def _get_loader():
 def _load_page_renderer(page_key: str) -> Callable[[], None]:
     """
     Carrega a função render() da página escolhida, com fallback de caminhos.
-
     """
     mapping = {
         "Básica": ("page.basic", "basic"),
@@ -116,7 +115,7 @@ def _load_page_renderer(page_key: str) -> Callable[[], None]:
     paths = mapping.get(page_key)
     if not paths:
         raise ValueError(f"Página desconhecida: {page_key}")
-  
+
     # Se for Configurações e não existir, fallback inline (não quebra o app)
     if page_key == "Configurações":
         for p in paths:
@@ -127,7 +126,7 @@ def _load_page_renderer(page_key: str) -> Callable[[], None]:
                     return render
             except Exception:
                 continue
-   
+
         def _fallback_config_page():
             st.markdown("## Configurações")
             st.info(
@@ -135,8 +134,9 @@ def _load_page_renderer(page_key: str) -> Callable[[], None]:
                 "Recomendação: renomeie para **page/configuracoes.py** (sem acento e pasta em minúsculo) "
                 "com uma função **render()**."
             )
+
         return _fallback_config_page
-   
+
     mod = _import_first(*paths)
     render = getattr(mod, "render", None)
     if not callable(render):
@@ -171,6 +171,9 @@ def _sidebar() -> str:
       - Navegação no topo (radio)
       - Busca de ações (botão)
       - Botão Configurações isolado no rodapé (sticky)
+
+    Ajuste necessário:
+      - Persistir a página atual no session_state para não voltar ao default após rerun.
     """
     st.sidebar.markdown(
         """
@@ -212,18 +215,39 @@ def _sidebar() -> str:
     st.sidebar.markdown("<div class='sb-title'>Análises</div>", unsafe_allow_html=True)
     st.sidebar.markdown("<div class='sb-sub'>Selecione uma seção.</div>", unsafe_allow_html=True)
 
-    pagina = st.sidebar.radio(
+    # ── Estado persistente da página (FIX do rerun) ──
+    if "pagina_atual" not in st.session_state:
+        st.session_state["pagina_atual"] = "Básica"
+
+    opcoes_radio = ["Básica", "Avançada", "Criação de Portfólio"]
+    # Se a página atual for "Configurações", o radio não tem essa opção;
+    # então usamos "Básica" como fallback apenas para o índice visual do radio,
+    # mantendo a página real via session_state.
+    pagina_state = st.session_state.get("pagina_atual", "Básica")
+    radio_index = opcoes_radio.index(pagina_state) if pagina_state in opcoes_radio else 0
+
+    pagina_radio = st.sidebar.radio(
         "Escolha a seção:",
-        ["Básica", "Avançada", "Criação de Portfólio"],
-        index=0,
+        opcoes_radio,
+        index=radio_index,
         label_visibility="visible",
+        key="radio_secao",
     )
+
+    # Se o usuário mudou no radio, atualiza o estado persistente
+    if pagina_radio != pagina_state and pagina_radio in opcoes_radio:
+        st.session_state["pagina_atual"] = pagina_radio
+        pagina_state = pagina_radio
 
     # ───────────── Busca de ações (recolocada) ─────────────
     with st.sidebar.container():
         st.markdown("<div class='sb-card'>", unsafe_allow_html=True)
         st.markdown("**Busca de ações**")
-        ticker = st.text_input("Ticker", value=st.session_state.get("ticker_busca", ""), placeholder="Ex: PETR4")
+        ticker = st.text_input(
+            "Ticker",
+            value=st.session_state.get("ticker_busca", ""),
+            placeholder="Ex: PETR4",
+        )
         col_a, col_b = st.columns([1, 1])
         with col_a:
             buscar = st.button("Buscar", use_container_width=True)
@@ -252,8 +276,12 @@ def _sidebar() -> str:
     st.sidebar.markdown("</div>", unsafe_allow_html=True)
 
     if cfg:
+        # FIX: persistir a escolha para sobreviver ao rerun
+        st.session_state["pagina_atual"] = "Configurações"
         return "Configurações"
-    return pagina
+
+    # Se não clicou em Configurações, devolve a página persistida (radio)
+    return st.session_state["pagina_atual"]
 
 
 # ───────────────────────── Roteamento / Execução ────────────────────
@@ -273,16 +301,3 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
-
-
-
-
-
-
-
-
-
-
-
-
-
