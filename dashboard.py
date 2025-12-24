@@ -115,14 +115,7 @@ def _load_page_renderer(page_key: str) -> Callable[[], None]:
         "Avançada": ("page.advanced", "advanced"),
         "Criação de Portfólio": ("page.criacao_portfolio", "criacao_portfolio"),
         "Configurações": (
-            # Preferência: sem acento e pasta em minúsculo
-            "page.configuracoes",
-            "page.configuracoes_page",
-            # Tentativas com pasta Page (P maiúsculo)
-            "Page.configuracoes",
-            # Tentativas com acento (pode existir localmente no Windows, mas falha no Linux)
-            "page.configurações",
-            "Page.configurações",
+                      "page.configuracoes",           
         ),
     }
     paths = mapping.get(page_key)
@@ -285,6 +278,7 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
 
 
 
