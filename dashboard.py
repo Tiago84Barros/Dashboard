@@ -195,57 +195,56 @@ if "page_key" not in st.session_state:
 
 # ───────────────────────── Sidebar navegação ───────────────────────
 with st.sidebar:
-    st.markdown('<div class="sidebar-grid">', unsafe_allow_html=True)
+    # Container principal do sidebar (sem scroll)
+    st.markdown(
+        """
+        <style>
+        [data-testid="stSidebar"] { overflow: hidden !important; }
+        [data-testid="stSidebarContent"] {
+            height: 100vh !important;
+            overflow: hidden !important;
+            display: flex;
+            flex-direction: column;
+        }
+        .sidebar-top {
+            flex: 1 1 auto;
+            overflow: hidden;
+        }
+        .sidebar-bottom {
+            flex-shrink: 0;
+            padding-top: 0.75rem;
+            border-top: 1px solid rgba(255,255,255,0.08);
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    # Topo do sidebar
+    # ───── BLOCO SUPERIOR (fixo no topo) ─────
     st.markdown('<div class="sidebar-top">', unsafe_allow_html=True)
+
     st.markdown("## Análises")
 
     pagina_escolhida = st.radio(
         "Escolha a seção:",
         ["Básica", "Avançada", "Criação de Portfólio"],
-        index=["Básica", "Avançada", "Criação de Portfólio"].index(st.session_state["page_key"])
-        if st.session_state["page_key"] in ["Básica", "Avançada", "Criação de Portfólio"]
-        else 0,
+        index=["Básica", "Avançada", "Criação de Portfólio"].index(
+            st.session_state.get("page_key", "Básica")
+        ),
     )
 
-    # Atualiza a página selecionada pelo rádio
     st.session_state["page_key"] = pagina_escolhida
-    st.markdown("---")
+
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Rodapé do sidebar (botão fixo)
-    st.markdown('<div class="sidebar-footer">', unsafe_allow_html=True)
-    if st.button("⚙️ Configurações", use_container_width=True, type="secondary"):
+    # ───── BLOCO INFERIOR (fixo no rodapé) ─────
+    st.markdown('<div class="sidebar-bottom">', unsafe_allow_html=True)
+
+    if st.button(
+        "⚙️ Configurações",
+        use_container_width=True,
+        type="secondary",
+    ):
         st.session_state["page_key"] = "Configurações"
-    st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
-
-
-# ───────────────────────── Execução / Roteamento ───────────────────
-# Carrega dados base (setores) apenas nas páginas que precisam
-try:
-    # Se quiser, pode carregar sempre. Mantive o padrão anterior (carrega antes de renderizar).
-    _ensure_setores_df()
-except Exception as e:
-    st.error(f"Falha ao inicializar dados base (setores_df): {e}")
-    st.stop()
-
-try:
-    render_page = _load_page_renderer(st.session_state["page_key"])
-    render_page()
-except ImportError as e:
-    # Se a página de configurações ainda não existe, mostra fallback amigável
-    if st.session_state["page_key"] == "Configurações":
-        st.markdown("## Configurações")
-        st.info(
-            "A página de Configurações ainda não está implementada como módulo.\n\n"
-            "Crie `page/configuracoes.py` com uma função `render()` para habilitar esta seção."
-        )
-    else:
-        st.error("Falha ao carregar a página selecionada.")
-        st.exception(e)
-except Exception as e:
-    st.error("Falha ao carregar a página selecionada.")
-    st.exception(e)
