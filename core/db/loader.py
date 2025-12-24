@@ -1,136 +1,104 @@
-# core/db/loader.py
 from __future__ import annotations
-
-import sqlite3
-from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from core.config.settings import get_settings
+
+def _table_exists(engine: Engine, schema: str, table: str) -> bool:
+    sql = """
+    select 1
+    from information_schema.tables
+    where table_schema = :schema
+      and table_name = :table
+    limit 1
+    """
+    with engine.begin() as conn:
+        r = conn.execute(text(sql), {"schema": schema, "table": table}).fetchone()
+    return r is not None
 
 
-def _sqlite_conn() -> sqlite3.Connection:
-    s = get_settings()
-    p = Path(s.sqlite_path)
-    if not p.exists():
-        raise FileNotFoundError(f"SQLite local não encontrado: {p}")
-    return sqlite3.connect(str(p))
+def _get_columns(engine: Engine, schema: str, table: str) -> set[str]:
+    sql = """
+    select column_name
+    from information_schema.columns
+    where table_schema = :schema
+      and table_name = :table
+    """
+    with engine.begin() as conn:
+        rows = conn.execute(text(sql), {"schema": schema, "table": table}).fetchall()
+    return {str(r[0]) for r in rows}
 
 
-# ------------------------------------------------------------
-# Setores (Supabase: public.setores)
-# ------------------------------------------------------------
-def load_setores(engine: Engine | None = None) -> pd.DataFrame:
-    if engine is not None:
-        q = text('select ticker, "SETOR", "SUBSETOR", "SEGMENTO", nome_empresa from public.setores')
-        return pd.read_sql(q, engine)
-
-    with _sqlite_conn() as conn:
-        return pd.read_sql_query("SELECT * FROM setores", conn)
+def _pick_col(cols: set[str], *candidates: str) -> str:
+    """
+    Escolhe a primeira coluna existente dentre os candidatos.
+    """
+    for c in candidates:
+        if c in cols:
+            return c
+    raise KeyError(f"Nenhuma das colunas esperadas existe. Candidatos={candidates}. Existentes={sorted(cols)}")
 
 
-def load_setores_from_db(engine: Engine | None = None) -> pd.DataFrame:
-    return load_setores(engine=engine)
+def load_setores(engine: Engine) -> pd.DataFrame:
+    """
+    Carrega a tabela de setores do Supabase.
 
+    Prioridade:
+      1) cvm.setores
+      2) public.setores
 
-# ------------------------------------------------------------
-# DFP (tabela alvo: cvm.demonstracoes_financeiras_dfp)
-# ------------------------------------------------------------
-def load_data_from_db(ticker: str, engine: Engine | None = None) -> pd.DataFrame:
-    tk1 = (ticker or "").upper().strip()
-    tk2 = tk1.replace(".SA", "")
+    E lida com colunas podendo estar como:
+      - setor/subsetor/segmento/nome_empresa
+      - SETOR/SUBSETOR/SEGMENTO/nome_empresa
+      - ou nomes levemente diferentes (fallback controlado)
+    """
+    schema = None
+    if _table_exists(engine, "cvm", "setores"):
+        schema = "cvm"
+    elif _table_exists(engine, "public", "setores"):
+        schema = "public"
+    else:
+        raise RuntimeError("Tabela 'setores' não encontrada nos schemas cvm ou public no Supabase.")
 
-    if engine is not None:
-        q = text("""
-            select *
-            from cvm.demonstracoes_financeiras_dfp
-            where ticker = :tk1 or ticker = :tk2
-            order by data asc
-        """)
-        return pd.read_sql(q, engine, params={"tk1": tk1, "tk2": tk2})
+    cols = _get_columns(engine, schema, "setores")
 
-    with _sqlite_conn() as conn:
-        q = f"""
-            SELECT * FROM Demonstracoes_Financeiras
-            WHERE Ticker = '{tk1}' OR Ticker = '{tk2}'
-            ORDER BY Data ASC
-        """
-        return pd.read_sql_query(q, conn)
+    # ticker quase sempre é ticker mesmo
+    col_ticker = _pick_col(cols, "ticker", "Ticker")
 
+    # setor/subsetor/segmento podem existir em minúsculo ou maiúsculo (quoted)
+    col_setor = _pick_col(cols, "setor", "SETOR")
+    col_subsetor = _pick_col(cols, "subsetor", "SUBSETOR")
+    col_segmento = _pick_col(cols, "segmento", "SEGMENTO")
 
-# ------------------------------------------------------------
-# TRI (ITR consolidado)
-# ------------------------------------------------------------
-def load_tri_from_db(ticker: str, engine: Engine | None = None) -> pd.DataFrame:
-    tk1 = (ticker or "").upper().strip()
-    tk2 = tk1.replace(".SA", "")
+    # nome_empresa pode variar
+    col_nome = _pick_col(cols, "nome_empresa", "NOME_EMPRESA", "nome", "NOME")
 
-    if engine is not None:
-        q = text("""
-            select *
-            from cvm.demonstracoes_financeiras_tri
-            where ticker = :tk1 or ticker = :tk2
-            order by data asc
-        """)
-        return pd.read_sql(q, engine, params={"tk1": tk1, "tk2": tk2})
+    # Monta SQL com aspas apenas quando necessário (se vier maiúsculo)
+    def q(c: str) -> str:
+        # se tiver qualquer caractere fora do padrão lower_snake, quote
+        # (principalmente colunas maiúsculas)
+        if c.lower() != c:
+            return f'"{c}"'
+        return c
 
-    return pd.DataFrame()
+    sql = f"""
+    select
+        {q(col_ticker)} as ticker,
+        {q(col_setor)} as setor,
+        {q(col_subsetor)} as subsetor,
+        {q(col_segmento)} as segmento,
+        {q(col_nome)} as nome_empresa
+    from {schema}.setores
+    """
 
+    with engine.begin() as conn:
+        df = pd.read_sql(text(sql), conn)
 
-# ------------------------------------------------------------
-# Múltiplos: tenta cvm.multiplos; se não existir, tenta cvm.financial_metrics
-# (seu app usa “multiplos” para os cards e históricos)
-# ------------------------------------------------------------
-def load_multiplos_from_db(ticker: str, engine: Engine | None = None) -> pd.DataFrame:
-    tk1 = (ticker or "").upper().strip()
-    tk2 = tk1.replace(".SA", "")
+    # Normalização leve
+    df["ticker"] = df["ticker"].astype(str).str.strip().str.upper()
+    for c in ["setor", "subsetor", "segmento", "nome_empresa"]:
+        if c in df.columns:
+            df[c] = df[c].astype(str).str.strip()
 
-    if engine is None:
-        with _sqlite_conn() as conn:
-            q = f"""
-                SELECT * FROM multiplos
-                WHERE Ticker = '{tk1}' OR Ticker = '{tk2}'
-                ORDER BY Data ASC
-            """
-            return pd.read_sql_query(q, conn)
-
-    # Supabase
-    for table in ["cvm.multiplos", "cvm.financial_metrics", 'cvm."Financial_Metrics"']:
-        try:
-            q = text(f"""
-                select *
-                from {table}
-                where ticker = :tk1 or ticker = :tk2
-                order by data asc
-            """)
-            return pd.read_sql(q, engine, params={"tk1": tk1, "tk2": tk2})
-        except Exception:
-            continue
-
-    return pd.DataFrame()
-
-
-def load_multiplos_limitado_from_db(ticker: str, limite: int = 12, engine: Engine | None = None) -> pd.DataFrame:
-    df = load_multiplos_from_db(ticker, engine=engine)
-    if df is None or df.empty:
-        return pd.DataFrame()
-    if "Data" in df.columns:
-        df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
-        df = df.dropna(subset=["Data"]).sort_values("Data")
-        return df.tail(int(limite))
-    return df.tail(int(limite))
-
-
-# ------------------------------------------------------------
-# Macro (macro_bcb_ingest.py escreve em cvm.info_economica)
-# ------------------------------------------------------------
-def load_macro_summary(engine: Engine | None = None) -> pd.DataFrame:
-    if engine is not None:
-        q = text("select * from cvm.info_economica order by data asc")
-        return pd.read_sql(q, engine)
-
-    with _sqlite_conn() as conn:
-        return pd.read_sql_query("SELECT * FROM info_economica ORDER BY Data ASC", conn)
+    return df
