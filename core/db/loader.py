@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any, Dict
+
 import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
@@ -11,7 +13,6 @@ from sqlalchemy.engine import Engine
 def load_setores(engine: Engine) -> pd.DataFrame:
     """
     Carrega tabela cvm.setores.
-    Conexão é aberta e fechada corretamente.
     """
     sql = """
         SELECT
@@ -112,7 +113,7 @@ def load_fundamental_score(engine: Engine, ticker: str) -> pd.DataFrame:
 
 
 # =========================================================
-# INFO ECONÔMICA (MACRO)
+# INFO ECONÔMICA (MACRO) – TABELA
 # =========================================================
 def load_info_economica(engine: Engine) -> pd.DataFrame:
     sql = """
@@ -122,6 +123,34 @@ def load_info_economica(engine: Engine) -> pd.DataFrame:
     """
     with engine.connect() as conn:
         return pd.read_sql(text(sql), conn)
+
+
+# =========================================================
+# MACRO SUMMARY (USADO NO AVANÇADO)
+# =========================================================
+def load_macro_summary(engine: Engine) -> Dict[str, Any]:
+    """
+    Retorna um resumo (dict) do último registro de cvm.info_economica.
+    Essa função existe porque a página Avançada importa ela.
+
+    - Se a tabela não existir ou estiver vazia, retorna dict vazio.
+    - Não assume colunas específicas: devolve todas as colunas do último registro.
+    """
+    sql = """
+        SELECT *
+        FROM cvm.info_economica
+        ORDER BY data DESC
+        LIMIT 1
+    """
+    try:
+        with engine.connect() as conn:
+            df = pd.read_sql(text(sql), conn)
+        if df.empty:
+            return {}
+        # Converte a linha final em dict simples
+        return df.iloc[0].to_dict()
+    except Exception:
+        return {}
 
 
 # =========================================================
