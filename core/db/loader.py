@@ -141,7 +141,7 @@ def load_fundamental_score(engine: Engine, ticker: str) -> pd.DataFrame:
 
 
 # =========================================================
-# INFO ECONÔMICA (MACRO) – TABELA
+# INFO ECONÔMICA (ANUAL) – TABELA
 # =========================================================
 def load_info_economica(engine: Engine) -> pd.DataFrame:
     sql = """
@@ -151,6 +151,16 @@ def load_info_economica(engine: Engine) -> pd.DataFrame:
     """
     with engine.connect() as conn:
         return pd.read_sql(text(sql), conn)
+
+# =========================================================
+# INFO ECONÔMICA (MENSAL) - TABELA
+# =========================================================
+
+def load_macro_mensal(engine: Engine) -> pd.DataFrame:
+    sql = "select * from cvm.info_economica_mensal order by data"
+    with engine.connect() as conn:
+        return pd.read_sql(text(sql), conn)
+
 
 
 # =========================================================
