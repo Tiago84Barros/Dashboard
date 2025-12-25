@@ -109,8 +109,42 @@ def _parse_b3_classificacao(zip_bytes: bytes) -> pd.DataFrame:
         }
     )[1:-18]
 
+    # Descobre qual coluna contém o "código/ticker" após o rename.
+    # A B3 pode mudar cabeçalhos/posições; então não podemos assumir que "CÓDIGO" exista.
+    codigo_col = None
+    for cand in ["CÓDIGO", "CODIGO", "CÓDIGO DE NEGOCIAÇÃO", "CÓDIGO_DE_NEGOCIAÇÃO", "CÓDIGO_DE_NEGOCIACAO", "LISTAGEM"]:
+        if cand in df.columns:
+            codigo_col = cand
+            break
+    
+    # Se ainda não achou, tenta identificar a coluna que parece ticker (ex.: PETR4, VALE3)
+    if codigo_col is None:
+        # escolhe a primeira coluna que tenha muitos valores do tipo [A-Z]{4}\d
+        import re
+        ticker_re = re.compile(r"^[A-Z]{4}\d{1,2}$")
+        best = None
+        best_score = -1
+        for c in df.columns:
+            if df[c].dtype != "object":
+                continue
+            s = df[c].astype(str).str.strip().str.upper()
+            score = s.apply(lambda v: 1 if ticker_re.match(v) else 0).sum()
+            if score > best_score:
+                best_score = score
+                best = c
+        if best_score > 0:
+            codigo_col = best
+    
+    if codigo_col is None:
+        raise ValueError(f"Não encontrei coluna de código/ticker na planilha da B3. Colunas: {list(df.columns)}")
+    
+    # Garante nome canônico
+    if codigo_col != "CÓDIGO":
+        df = df.rename(columns={codigo_col: "CÓDIGO"})
+    
     # Preenche SEGMENTO com NOME quando CÓDIGO está vazio
-    df.loc[(df["CÓDIGO"].isnull()), "SEGMENTO"] = df.loc[(df["CÓDIGO"].isnull()), "NOME"]
+    df.loc[df["CÓDIGO"].isnull(), "SEGMENTO"] = df.loc[df["CÓDIGO"].isnull(), "NOME"]
+
 
     df = df.dropna(how="all")
     df["LISTAGEM"] = df["LISTAGEM"].fillna("AUSENTE")
