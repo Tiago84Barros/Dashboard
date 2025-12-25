@@ -7,9 +7,17 @@ from sqlalchemy.engine import Engine
 
 def load_setores(engine: Engine, schema: str = "cvm") -> pd.DataFrame:
     """
-    Carrega setores com compatibilidade:
-    - Prefere colunas novas: setor/subsetor/segmento
-    - Faz fallback para colunas legadas: "SETOR"/"SUBSETOR"/"SEGMENTO"
+    Carrega setores de forma compatível.
+
+    Retorna DF com colunas SEMPRE nestes nomes:
+      - ticker
+      - setor
+      - subsetor
+      - segmento
+      - nome_empresa
+
+    Tenta primeiro o schema novo (snake_case) e faz fallback para colunas legadas
+    ("SETOR"/"SUBSETOR"/"SEGMENTO") caso existam.
     """
     q_new = text(f"""
         select
@@ -35,7 +43,12 @@ def load_setores(engine: Engine, schema: str = "cvm") -> pd.DataFrame:
 
     with engine.connect() as conn:
         try:
-            return pd.read_sql(q_new, conn)
+            df = pd.read_sql(q_new, conn)
         except Exception:
-            # se não existir coluna nova (ou query falhar por schema antigo)
-            return pd.read_sql(q_old, conn)
+            df = pd.read_sql(q_old, conn)
+
+    # Normalizações defensivas
+    if "ticker" in df.columns:
+        df["ticker"] = df["ticker"].astype(str).str.upper().str.strip()
+
+    return df
