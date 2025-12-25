@@ -10,3 +10,4 @@ openai
 matplotlib
 sqlalchemy
 psycopg2-binary
+openpyxl
