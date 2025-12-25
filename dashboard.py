@@ -174,10 +174,6 @@ def _sidebar() -> str:
 
     Ajuste necessário:
       - Persistir a página atual no session_state para não voltar ao default após rerun.
-
-    Ajuste adicional (ticker):
-      - A busca do dashboard grava o ticker em múltiplas chaves no session_state
-        (ticker / ticker_selecionado / ticker_filtrado) para compatibilidade com páginas.
     """
     st.sidebar.markdown(
         """
@@ -244,7 +240,7 @@ def _sidebar() -> str:
             st.session_state["pagina_atual"] = pagina_radio
             pagina_state = pagina_radio
 
-    # ───────────── Busca de ações (única fonte) ─────────────
+    # ───────────── Busca de ações (recolocada) ─────────────
     with st.sidebar.container():
         st.markdown("<div class='sb-card'>", unsafe_allow_html=True)
         st.markdown("**Busca de ações**")
@@ -261,7 +257,6 @@ def _sidebar() -> str:
 
         if limpar:
             st.session_state["ticker_busca"] = ""
-            st.session_state.pop("ticker", None)
             st.session_state.pop("ticker_selecionado", None)
             st.session_state.pop("ticker_filtrado", None)
             st.rerun()
@@ -269,19 +264,10 @@ def _sidebar() -> str:
         if buscar:
             t = (ticker or "").strip().upper()
             st.session_state["ticker_busca"] = t
-
             # Chaves genéricas que você pode usar nas páginas
-            # Mantemos nomes distintos para compatibilidade retroativa.
-            if t:
-                st.session_state["ticker"] = t
-                st.session_state["ticker_selecionado"] = t
-                st.session_state["ticker_filtrado"] = t
-                st.success(f"Ticker definido: {t}")
-            else:
-                st.session_state.pop("ticker", None)
-                st.session_state.pop("ticker_selecionado", None)
-                st.session_state.pop("ticker_filtrado", None)
-                st.warning("Ticker vazio. Selecione um ticker válido (ex.: PETR4).")
+            st.session_state["ticker_selecionado"] = t
+            st.session_state["ticker_filtrado"] = t
+            st.success(f"Ticker definido: {t if t else '—'}")
 
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -316,3 +302,4 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
