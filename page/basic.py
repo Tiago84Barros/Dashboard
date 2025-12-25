@@ -3,7 +3,6 @@ import pandas as pd
 
 from core.db_supabase import get_engine
 from core.db.loader import (
-    load_empresa,
     load_demonstracoes_financeiras,
     load_multiplos,
 )
@@ -29,15 +28,23 @@ if not ticker:
 engine = get_engine()
 
 # ─────────────────────────────────────────────
-# Dados da empresa
+# Dados da empresa (via setores_df)
 # ─────────────────────────────────────────────
-empresa = load_empresa(engine=engine, ticker=ticker)
+setores_df = st.session_state.get("setores_df")
 
-if empresa is None or empresa.empty:
+if setores_df is None or setores_df.empty:
+    st.error("Dados de setores não carregados.")
+    st.stop()
+
+empresa = setores_df[setores_df["ticker"] == ticker]
+
+if empresa.empty:
     st.error(f"Empresa {ticker} não encontrada.")
     st.stop()
 
-st.subheader(f"{empresa.iloc[0]['nome_empresa']} ({ticker})")
+nome_empresa = empresa.iloc[0]["nome_empresa"]
+
+st.subheader(f"{nome_empresa} ({ticker})")
 
 # ─────────────────────────────────────────────
 # Demonstrações Financeiras
