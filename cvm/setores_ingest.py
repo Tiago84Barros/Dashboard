@@ -18,6 +18,19 @@ B3_SETOR_ZIP_URL = "https://www.b3.com.br/data/files/57/E6/AA/A1/68C778106445617
 
 
 def _ensure_table(engine: Engine) -> None:
+    ### APAGAR DEPOIS
+    if progress_cb:
+        import os
+        import hashlib
+        here = os.path.abspath(__file__)
+        try:
+            with open(__file__, "rb") as fh:
+                h = hashlib.md5(fh.read()).hexdigest()
+        except Exception:
+            h = "md5_unavailable"
+        progress_cb(f"SETORES_DEBUG: file={here} md5={h}")
+###########################################
+    
     ddl = """
     create table if not exists public.setores (
         ticker text primary key,
@@ -219,9 +232,14 @@ def run(
     zip_bytes = _download_b3_excel_zip(timeout_sec=timeout_sec)
     b3 = _parse_b3_classificacao(zip_bytes)
 
+    ###### APAGAR DEPOIS
+    if progress_cb:
+        progress_cb(f"SETORES_DEBUG: b3_cols={list(b3.columns)} b3_rows={len(b3)} sample={b3.head(3).to_dict('records')}")
+    ###########
+
     if progress_cb:
         progress_cb("SETORES: carregando cvm_to_ticker...")
-
+    
     cvm_map = _load_cvm_to_ticker(map_path)
 
     # Igual ao Algoritmo 2: ticker_base do B3 é o ticker sem dígito final
