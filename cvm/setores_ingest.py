@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import io
+import re
 from pathlib import Path
-from zipfile import ZipFile
 from typing import Callable, Optional
+from zipfile import ZipFile
 
 import pandas as pd
 import requests
@@ -32,35 +33,61 @@ def _ensure_table(engine: Engine) -> None:
 
 
 def _normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
-    # Normaliza colunas para facilitar detecção (remove espaços e padroniza underscore)
     df = df.copy()
-    df.columns = [str(c).strip().replace(" ", "_").replace("-", "_") for c in df.columns]
+    df.columns = [str(c).strip() for c in df.columns]
     return df
 
 
-def _pick_col(df: pd.DataFrame, candidates: list[str]) -> Optional[str]:
-    cols_upper = {c.upper(): c for c in df.columns}
+def _pick_col_loose(df: pd.DataFrame, candidates: list[str]) -> Optional[str]:
+    """
+    Procura coluna por aproximação, ignorando espaços/underscore/hífen e case.
+    """
+    def norm(x: str) -> str:
+        return (
+            str(x).strip().upper()
+            .replace(" ", "")
+            .replace("_", "")
+            .replace("-", "")
+            .replace("\n", "")
+        )
+
+    norm_map = {norm(c): c for c in df.columns}
     for cand in candidates:
-        key = cand.strip().upper().replace(" ", "_").replace("-", "_")
-        if key in cols_upper:
-            return cols_upper[key]
+        k = norm(cand)
+        if k in norm_map:
+            return norm_map[k]
     return None
+
+
+def _best_ticker_like_col(df: pd.DataFrame) -> Optional[str]:
+    """
+    Fallback: encontra coluna que parece conter tickers B3 (PETR4, VALE3 etc.)
+    """
+    ticker_re = re.compile(r"^[A-Z]{4}\d{1,2}$")
+    best = None
+    best_score = 0
+    for c in df.columns:
+        if df[c].dtype != "object":
+            continue
+        s = df[c].astype(str).str.strip().str.upper()
+        score = s.map(lambda v: 1 if ticker_re.match(v) else 0).sum()
+        if score > best_score:
+            best_score = score
+            best = c
+    return best if best_score > 0 else None
 
 
 def _load_cvm_to_ticker(path: Path) -> pd.DataFrame:
     """
-    Lê o csv de mapeamento e cria 'ticker_base' no padrão do Algoritmo 2:
-      - df['Ticker_base'] = df['Ticker'].str[:-1]  (na prática, remove o dígito final do ticker)
-
-    Aqui fazemos uma versão robusta:
-      - aceita coluna Ticker/ticker/TICKER
-      - não exige CD_CVM
-      - ticker_base remove apenas dígito final (ex.: PETR4 -> PETR)
+    Mantém sua lógica do Algoritmo 2:
+      - aceita coluna Ticker/ticker etc.
+      - cria ticker_base removendo dígito final (PETR4 -> PETR)
     """
     df = pd.read_csv(path, sep=",", encoding="utf-8")
-    df = _normalize_cols(df)
+    df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
 
-    ticker_col = _pick_col(df, ["Ticker", "ticker", "TICKER", "CODIGO", "COD_NEGOCIACAO", "SYMBOL"])
+    ticker_col = _pick_col_loose(df, ["Ticker", "ticker", "TICKER", "CODIGO", "COD_NEGOCIACAO", "SYMBOL"])
     if not ticker_col:
         raise ValueError(
             f"{path.as_posix()} precisa ter uma coluna de ticker (ex.: 'Ticker'). "
@@ -70,15 +97,9 @@ def _load_cvm_to_ticker(path: Path) -> pd.DataFrame:
     df = df.rename(columns={ticker_col: "ticker"})
     df["ticker"] = df["ticker"].astype(str).str.strip().str.upper()
     df = df.dropna(subset=["ticker"])
-
-    # Remover duplicados
     df = df.drop_duplicates(subset=["ticker"])
 
-    # ticker_base no espírito do Algoritmo 2:
-    # remove só o dígito final, se existir (PETR4 -> PETR)
     df["ticker_base"] = df["ticker"].str.replace(r"\d$", "", regex=True)
-
-    # Garante consistência e remove bases vazias
     df["ticker_base"] = df["ticker_base"].astype(str).str.strip().str.upper()
     df = df.dropna(subset=["ticker_base"])
     df = df[df["ticker_base"] != ""]
@@ -94,82 +115,69 @@ def _download_b3_excel_zip(timeout_sec: int = 60) -> bytes:
 
 
 def _parse_b3_classificacao(zip_bytes: bytes) -> pd.DataFrame:
+    """
+    Parser robusto do Excel B3:
+    - não depende de Unnamed fixo
+    - não depende de fatiamento [1:-18]
+    - garante ticker_b3 / nome_empresa / SETOR / SUBSETOR / SEGMENTO
+    """
     with ZipFile(io.BytesIO(zip_bytes)) as fold:
-        name = fold.namelist()[0]
+        names = fold.namelist()
+        if not names:
+            raise ValueError("ZIP da B3 veio vazio.")
+        name = names[0]
         with fold.open(name) as f:
-            df = pd.read_excel(io=f, skiprows=6)
+            df = pd.read_excel(f, skiprows=6)
 
-    # Normalizações equivalentes ao notebook (Algoritmo 2)
-    df = df.rename(
-        columns={
-            "SETOR ECONÔMICO": "SETOR",
-            "SEGMENTO": "NOME",
-            "LISTAGEM": "CÓDIGO",
-            "Unnamed: 4": "LISTAGEM",
+    df = df.dropna(how="all").copy()
+    df = _normalize_cols(df)
+
+    # localizar colunas principais
+    col_setor = _pick_col_loose(df, ["SETOR ECONÔMICO", "SETOR ECONOMICO", "SETOR"])
+    col_subsetor = _pick_col_loose(df, ["SUBSETOR", "SUB SETOR"])
+    col_segmento = _pick_col_loose(df, ["SEGMENTO", "SEGMENTO DE LISTAGEM"])
+
+    # coluna do ticker/código (pode ser LISTAGEM, CÓDIGO, etc.)
+    col_codigo = _pick_col_loose(df, ["CÓDIGO", "CODIGO", "CÓDIGO DE NEGOCIAÇÃO", "CODIGO DE NEGOCIACAO", "LISTAGEM", "TICKER"])
+    if col_codigo is None:
+        col_codigo = _best_ticker_like_col(df)
+
+    if col_codigo is None:
+        raise ValueError(f"Não encontrei coluna de ticker/código na planilha da B3. Colunas: {list(df.columns)}")
+
+    # coluna de "nome" (empresa) — a B3 costuma trazer algo parecido com "SEGMENTO"/"EMPRESA"
+    col_nome = _pick_col_loose(df, ["NOME", "EMPRESA", "COMPANHIA", "EMISSOR", "RAZÃO SOCIAL", "RAZAO SOCIAL"])
+    if col_nome is None:
+        # fallback razoável: se não existir nome, usa o próprio segmento
+        col_nome = col_segmento or col_codigo
+
+    out = pd.DataFrame(
+        {
+            "ticker_b3": df[col_codigo].astype(str).str.strip().str.upper(),
+            "nome_empresa": df[col_nome].astype(str).str.strip(),
+            "SETOR": df[col_setor].astype(str).str.strip() if col_setor else None,
+            "SUBSETOR": df[col_subsetor].astype(str).str.strip() if col_subsetor else None,
+            "SEGMENTO": df[col_segmento].astype(str).str.strip() if col_segmento else None,
         }
-    )[1:-18]
+    )
 
-    # Descobre qual coluna contém o "código/ticker" após o rename.
-    # A B3 pode mudar cabeçalhos/posições; então não podemos assumir que "CÓDIGO" exista.
-    codigo_col = None
-    for cand in ["CÓDIGO", "CODIGO", "CÓDIGO DE NEGOCIAÇÃO", "CÓDIGO_DE_NEGOCIAÇÃO", "CÓDIGO_DE_NEGOCIACAO", "LISTAGEM"]:
-        if cand in df.columns:
-            codigo_col = cand
-            break
-    
-    # Se ainda não achou, tenta identificar a coluna que parece ticker (ex.: PETR4, VALE3)
-    if codigo_col is None:
-        # escolhe a primeira coluna que tenha muitos valores do tipo [A-Z]{4}\d
-        import re
-        ticker_re = re.compile(r"^[A-Z]{4}\d{1,2}$")
-        best = None
-        best_score = -1
-        for c in df.columns:
-            if df[c].dtype != "object":
-                continue
-            s = df[c].astype(str).str.strip().str.upper()
-            score = s.apply(lambda v: 1 if ticker_re.match(v) else 0).sum()
-            if score > best_score:
-                best_score = score
-                best = c
-        if best_score > 0:
-            codigo_col = best
-    
-    if codigo_col is None:
-        raise ValueError(f"Não encontrei coluna de código/ticker na planilha da B3. Colunas: {list(df.columns)}")
-    
-    # Garante nome canônico
-    if codigo_col != "CÓDIGO":
-        df = df.rename(columns={codigo_col: "CÓDIGO"})
-    
-    # Preenche SEGMENTO com NOME quando CÓDIGO está vazio
-    df.loc[df["CÓDIGO"].isnull(), "SEGMENTO"] = df.loc[df["CÓDIGO"].isnull(), "NOME"]
+    # mantém apenas tickers válidos
+    out = out.dropna(subset=["ticker_b3"])
+    out = out[out["ticker_b3"].str.match(r"^[A-Z]{4}\d{1,2}$", na=False)]
 
+    # forward-fill hierárquico
+    for c in ["SETOR", "SUBSETOR", "SEGMENTO"]:
+        if c in out.columns:
+            out[c] = out[c].replace({"nan": None, "None": None, "": None}).ffill()
 
-    df = df.dropna(how="all")
-    df["LISTAGEM"] = df["LISTAGEM"].fillna("AUSENTE")
+    # se SEGMENTO estiver vazio, usa nome_empresa como fallback
+    if "SEGMENTO" in out.columns:
+        out.loc[out["SEGMENTO"].isnull(), "SEGMENTO"] = out.loc[out["SEGMENTO"].isnull(), "nome_empresa"]
 
-    # ffill (herança das células acima)
-    df["SETOR"] = df["SETOR"].ffill()
-    if "SUBSETOR" in df.columns:
-        df["SUBSETOR"] = df["SUBSETOR"].ffill()
-    if "SEGMENTO" in df.columns:
-        df["SEGMENTO"] = df["SEGMENTO"].ffill()
+    # remove duplicatas
+    out = out.drop_duplicates(subset=["ticker_b3"], keep="last").reset_index(drop=True)
 
-    # remove cabeçalhos repetidos e linhas inválidas
-    df = df.loc[(df["CÓDIGO"] != "CÓDIGO") & (df["CÓDIGO"] != "LISTAGEM") & (~df["CÓDIGO"].isnull())]
-
-    # strip geral
-    df = df.apply(lambda x: x.str.strip() if x.dtype == "object" else x)
-
-    # reordena/seleciona (quando existir)
-    keep = ["CÓDIGO", "NOME", "SETOR", "SUBSETOR", "SEGMENTO", "LISTAGEM"]
-    df = df[[c for c in keep if c in df.columns]].copy()
-
-    df = df.rename(columns={"CÓDIGO": "ticker_b3", "NOME": "nome_empresa"})
-    df["ticker_b3"] = df["ticker_b3"].astype(str).str.strip().str.upper()
-
-    return df
+    return out
 
 
 def _upsert(engine: Engine, df: pd.DataFrame, batch: int = 5000) -> None:
