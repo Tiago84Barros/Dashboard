@@ -2,20 +2,28 @@ from __future__ import annotations
 
 import datetime as dt
 from typing import Any, Dict, Optional
+from zoneinfo import ZoneInfo  # Python 3.9+
 
 import streamlit as st
 
 from core.cvm_sync import apply_update, get_sync_status
 
 
-def _fmt_dt(x: Optional[str]) -> str:
+
+
+BR_TZ = ZoneInfo("America/Sao_Paulo")
+
+def _fmt_dt(x):
     if not x:
         return "—"
     try:
         d = dt.datetime.fromisoformat(str(x).replace("Z", "+00:00"))
-        return d.astimezone().strftime("%d/%m/%Y %H:%M")
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=dt.timezone.utc)
+        return d.astimezone(BR_TZ).strftime("%d/%m/%Y %H:%M")
     except Exception:
         return str(x)
+
 
 
 def render() -> None:
