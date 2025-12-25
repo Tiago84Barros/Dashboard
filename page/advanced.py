@@ -23,6 +23,7 @@ from core.db.loader import (
     load_demonstracoes_financeiras,
     load_multiplos,
     load_macro_summary,
+    load_macro_mensal,
 )
 from data_sources.yf_data import baixar_precos, coletar_dividendos
 from analytics.scoring import (
