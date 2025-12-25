@@ -1,285 +1,278 @@
+# cvm/setores_ingest.py
 from __future__ import annotations
 
-import datetime as dt
-import traceback
-from typing import Any, Callable, Dict, Optional
+import io
+import re
+from pathlib import Path
+from zipfile import ZipFile
+from typing import Callable, Optional
 
+import pandas as pd
+import requests
 from sqlalchemy import text
+from sqlalchemy.engine import Engine
 
-from core.db_supabase import get_engine
+from core.config.settings import get_settings
+
+B3_SETOR_ZIP_URL = "https://www.b3.com.br/data/files/57/E6/AA/A1/68C7781064456178AC094EA8/ClassifSetorial.zip"
+
+# Ticker B3 típico: PETR4, VALE3, BBDC4, etc.
+_TICKER_RE = re.compile(r"^[A-Z]{4}\d{1,2}$")
 
 
-# -----------------------------
-# Tabelas de controle
-# -----------------------------
-def _ensure_sync_log(engine) -> None:
+def _ensure_table(engine: Engine) -> None:
     ddl = """
-    create schema if not exists cvm;
-
-    create table if not exists cvm.sync_log (
-        id bigserial primary key,
-        run_at timestamptz not null default now(),
-        status text not null,
-        last_year integer,
-        remote_latest_year integer,
-        message text
+    create table if not exists public.setores (
+        ticker text primary key,
+        "SETOR" text,
+        "SUBSETOR" text,
+        "SEGMENTO" text,
+        nome_empresa text,
+        created_at timestamptz not null default now()
     );
     """
     with engine.begin() as conn:
         conn.execute(text(ddl))
 
 
-def _insert_sync_log(
-    engine,
-    *,
-    status: str,
-    last_year: Optional[int],
-    remote_latest_year: Optional[int],
-    message: str,
-) -> None:
-    sql = """
-    insert into cvm.sync_log (run_at, status, last_year, remote_latest_year, message)
-    values (now(), :status, :last_year, :remote_latest_year, :message)
+def _normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    # Atenção: não transforme NaN em string "nan" aqui; mantenha como string só na lista final
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
+
+
+def _pick_col(df: pd.DataFrame, candidates: list[str]) -> Optional[str]:
+    # comparação sem acentos/variações simples
+    cols_upper = {str(c).strip().upper(): c for c in df.columns}
+    for cand in candidates:
+        key = cand.strip().upper()
+        if key in cols_upper:
+            return cols_upper[key]
+    return None
+
+
+def _load_cvm_to_ticker(path: Path) -> pd.DataFrame:
     """
+    Lê o csv de mapeamento e cria 'ticker_base' no padrão:
+      - ticker_base = ticker sem dígito final (PETR4 -> PETR)
+
+    Aceita variações no nome da coluna de ticker.
+    """
+    df = pd.read_csv(path, sep=",", encoding="utf-8")
+    df = _normalize_cols(df)
+
+    ticker_col = _pick_col(df, ["Ticker", "ticker", "TICKER", "CODIGO", "COD_NEGOCIACAO", "SYMBOL"])
+    if not ticker_col:
+        raise ValueError(
+            f"{path.as_posix()} precisa ter uma coluna de ticker (ex.: 'Ticker'). "
+            f"Colunas encontradas: {list(df.columns)}"
+        )
+
+    df = df.rename(columns={ticker_col: "ticker"})
+    df["ticker"] = df["ticker"].astype(str).str.strip().str.upper()
+    df = df.dropna(subset=["ticker"])
+    df = df.drop_duplicates(subset=["ticker"])
+
+    df["ticker_base"] = df["ticker"].str.replace(r"\d$", "", regex=True).astype(str).str.strip().str.upper()
+    df = df.dropna(subset=["ticker_base"])
+    df = df[df["ticker_base"] != ""]
+
+    return df[["ticker", "ticker_base"]].drop_duplicates()
+
+
+def _download_b3_excel_zip(timeout_sec: int = 60) -> bytes:
+    r = requests.get(B3_SETOR_ZIP_URL, timeout=timeout_sec)
+    if r.status_code != 200:
+        raise RuntimeError(f"Falha ao baixar ClassifSetorial.zip. HTTP {r.status_code}")
+    return r.content
+
+
+def _extract_ticker_from_row(row: pd.Series) -> Optional[str]:
+    """
+    EXTRAÇÃO DEFINITIVA:
+    varre todas as células da linha e retorna o primeiro valor que pareça ticker.
+    Não depende de nome/posição de coluna (resistente a Unnamed/nan/layout da B3).
+    """
+    for v in row.values:
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            continue
+        s = str(v).strip().upper()
+        if _TICKER_RE.match(s):
+            return s
+    return None
+
+
+def _parse_b3_classificacao(zip_bytes: bytes) -> pd.DataFrame:
+    """
+    Parser robusto do Excel da B3:
+    - Lê a planilha sem depender de cabeçalho fixo.
+    - Extrai ticker por regex linha-a-linha (solução definitiva para o erro atual).
+    - Tenta identificar colunas de Setor/Subsetor/Segmento/Emissor por nome quando existirem.
+    """
+    with ZipFile(io.BytesIO(zip_bytes)) as fold:
+        name = fold.namelist()[0]
+        with fold.open(name) as f:
+            # header=None para não depender de uma linha específica como header
+            raw = pd.read_excel(f, header=None)
+
+    # Remove linhas totalmente vazias
+    raw = raw.dropna(how="all")
+    if raw.empty:
+        raise ValueError("Planilha da B3 veio vazia após leitura.")
+
+    # Encontra a linha de cabeçalho: primeira linha que contenha 'SETOR' ou 'SETOR ECONÔMICO'
+    hdr_idx = None
+    for i in range(min(len(raw), 60)):
+        row_txt = " ".join([str(x).strip().upper() for x in raw.iloc[i].values if not pd.isna(x)])
+        if "SETOR" in row_txt and ("SUBSETOR" in row_txt or "SEGMENTO" in row_txt or "EMISSOR" in row_txt):
+            hdr_idx = i
+            break
+
+    # Se não achou, assume a mesma heurística antiga: pula 6 e pega a próxima como header
+    if hdr_idx is None:
+        hdr_idx = 6 if len(raw) > 7 else 0
+
+    header = raw.iloc[hdr_idx].astype(str).str.strip()
+    df = raw.iloc[hdr_idx + 1 :].copy()
+    df.columns = header.tolist()
+
+    df = _normalize_cols(df)
+
+    # Padroniza nomes conhecidos (quando existirem)
+    rename_map = {}
+    for c in list(df.columns):
+        cu = str(c).strip().upper()
+        if cu in ("SETOR ECONÔMICO", "SETOR ECONOMICO"):
+            rename_map[c] = "SETOR"
+        elif cu == "EMISSOR":
+            rename_map[c] = "EMISSOR"
+        elif cu == "SUBSETOR":
+            rename_map[c] = "SUBSETOR"
+        elif cu == "SEGMENTO":
+            rename_map[c] = "SEGMENTO"
+        elif cu in ("CÓDIGO", "CODIGO", "CÓDIGO DE NEGOCIAÇÃO", "CODIGO DE NEGOCIACAO"):
+            # Mesmo que exista, não vamos depender disso para ticker
+            rename_map[c] = "CODIGO_TENTATIVO"
+
+    if rename_map:
+        df = df.rename(columns=rename_map)
+
+    # GARANTE colunas de hierarquia (se não existirem, cria)
+    for col in ["SETOR", "SUBSETOR", "SEGMENTO", "EMISSOR"]:
+        if col not in df.columns:
+            df[col] = None
+
+    # Strip em texto
+    for col in df.columns:
+        if df[col].dtype == "object":
+            df[col] = df[col].astype(str).str.strip()
+
+    # Forward-fill de hierarquia
+    df["SETOR"] = df["SETOR"].replace({"nan": None, "None": None}).ffill()
+    df["SUBSETOR"] = df["SUBSETOR"].replace({"nan": None, "None": None}).ffill()
+    df["SEGMENTO"] = df["SEGMENTO"].replace({"nan": None, "None": None}).ffill()
+
+    # EXTRAÇÃO DEFINITIVA DO TICKER
+    df["ticker_b3"] = df.apply(_extract_ticker_from_row, axis=1)
+    df = df.dropna(subset=["ticker_b3"])
+    df["ticker_b3"] = df["ticker_b3"].astype(str).str.strip().str.upper()
+
+    # Nome da empresa: prioriza EMISSOR; se não tiver, tenta achar qualquer coluna com 'EMISSOR'/'NOME'
+    nome_empresa = df.get("EMISSOR")
+    if nome_empresa is None or nome_empresa.isna().all():
+        cand_nome = None
+        for c in df.columns:
+            cu = str(c).upper()
+            if "EMISSOR" in cu or cu in ("NOME", "NOME EMPRESA", "COMPANHIA"):
+                cand_nome = c
+                break
+        if cand_nome is not None:
+            df["nome_empresa"] = df[cand_nome].astype(str).str.strip()
+        else:
+            df["nome_empresa"] = None
+    else:
+        df["nome_empresa"] = df["EMISSOR"].astype(str).str.strip()
+
+    # Seleciona colunas finais
+    out = df[["ticker_b3", "nome_empresa", "SETOR", "SUBSETOR", "SEGMENTO"]].copy()
+
+    # Limpeza final
+    out = out.dropna(subset=["ticker_b3"])
+    out = out.drop_duplicates(subset=["ticker_b3"])
+
+    return out
+
+
+def _upsert(engine: Engine, df: pd.DataFrame, batch: int = 5000) -> None:
+    if df.empty:
+        return
+
+    sql = """
+    insert into public.setores (ticker, "SETOR", "SUBSETOR", "SEGMENTO", nome_empresa)
+    values (:ticker, :SETOR, :SUBSETOR, :SEGMENTO, :nome_empresa)
+    on conflict (ticker) do update set
+      "SETOR" = excluded."SETOR",
+      "SUBSETOR" = excluded."SUBSETOR",
+      "SEGMENTO" = excluded."SEGMENTO",
+      nome_empresa = excluded.nome_empresa;
+    """
+
+    rows = df[["ticker", "SETOR", "SUBSETOR", "SEGMENTO", "nome_empresa"]].to_dict("records")
     with engine.begin() as conn:
-        conn.execute(
-            text(sql),
-            {
-                "status": status,
-                "last_year": last_year,
-                "remote_latest_year": remote_latest_year,
-                # Limita para evitar erro de payload/banco
-                "message": (message or "")[:4000],
-            },
-        )
+        for i in range(0, len(rows), batch):
+            conn.execute(text(sql), rows[i : i + batch])
 
 
-def get_sync_status() -> Dict[str, Any]:
-    """
-    Retorna o último status de sincronização para a tela de Configurações.
-    """
-    engine = get_engine()
-    _ensure_sync_log(engine)
-
-    sql = """
-    select run_at, status, last_year, remote_latest_year, message
-    from cvm.sync_log
-    order by run_at desc
-    limit 1
-    """
-    with engine.connect() as conn:
-        row = conn.execute(text(sql)).mappings().first()
-
-    if not row:
-        return {
-            "last_year": None,
-            "last_run_at": None,
-            "remote_latest_year": None,
-            "has_updates": None,
-            "notes": "Sem histórico em cvm.sync_log.",
-            "status": None,
-        }
-
-    last_year = row.get("last_year")
-    remote_latest_year = row.get("remote_latest_year")
-
-    has_updates: Optional[bool] = None
-    if isinstance(last_year, int) and isinstance(remote_latest_year, int):
-        has_updates = remote_latest_year > last_year
-
-    return {
-        "last_year": last_year,
-        "last_run_at": row.get("run_at"),
-        "remote_latest_year": remote_latest_year,
-        "has_updates": has_updates,
-        "notes": row.get("message"),
-        "status": row.get("status"),
-    }
-
-
-# -----------------------------
-# Orquestrador: ATUALIZA TUDO
-# -----------------------------
-def apply_update(
+def run(
+    engine: Engine,
     *,
-    start_year: int = 2010,
-    end_year: Optional[int] = None,
-    years_per_run: int = 1,
-    quarters_per_run: int = 1,
-    progress_cb: Optional[Callable[[float, str], None]] = None,
+    progress_cb: Optional[Callable[[str], None]] = None,
+    timeout_sec: int = 60,
 ) -> None:
-    """
-    Atualiza TODAS as tabelas necessárias do app.
+    _ensure_table(engine)
 
-    - DFP (anual)    -> cvm.cvm_dfp_ingest.run
-    - ITR (tri)      -> cvm.cvm_tri_ingest.run
-    - (Opcional) Setores -> cvm.setores_ingest.run
-    - Macro (BCB)    -> cvm.macro_bcb_ingest.run
-    - Metrics        -> cvm.finance_metrics_builder.run
-    - Score          -> cvm.fundamental_scoring.run
-
-    Importante: imports são lazy (dentro da função) para não quebrar a página Configurações.
-    """
-    if end_year is None:
-        end_year = dt.datetime.now().year
-
-    def _p(pct: float, msg: str) -> None:
-        if progress_cb:
-            progress_cb(float(pct), str(msg))
-
-    # Mantém logs em memória para gravar em cvm.sync_log
-    logs: list[str] = []
-    last_year: Optional[int] = None
-    remote_latest_year: Optional[int] = int(end_year)
-
-    def _log(msg: str) -> None:
-        # garante string
-        logs.append(str(msg))
-
-    def _tail(n: int = 120) -> str:
-        # junta e devolve só o final
-        return " | ".join(logs[-n:])
-
-    def _run_step(
-        step_name: str,
-        pct_start: float,
-        pct_end: float,
-        fn: Callable[[], None],
-    ) -> None:
-        """
-        Executa um passo com logging e captura de traceback completo.
-        O traceback completo vai para logs (e portanto para o sync_log no banco).
-        Na UI, mostramos a mensagem curta e uma instrução para olhar o log.
-        """
-        _p(pct_start, f"{step_name}: executando…")
-        _log(f"{step_name}:start")
-
-        try:
-            fn()
-            _log(f"{step_name}:ok")
-            _p(pct_end, f"{step_name}: concluído.")
-        except Exception as e:
-            tb = traceback.format_exc()
-            _log(f"{step_name}:error:{repr(e)}")
-            _log(f"{step_name}:traceback:{tb}")
-
-            # Mensagem curta para UI (evita texto gigante na tela)
-            _p(pct_end, f"{step_name}: ERRO -> {e}. Veja detalhes no log (cvm.sync_log).")
-
-            # Re-raise para manter o comportamento atual (tela mostra “Falha ao atualizar: …”)
-            raise
-
-    engine = get_engine()
-    _ensure_sync_log(engine)
-
-    try:
-        _p(2, "Iniciando sincronização…")
-        _log("start")
-
-        # -------- DFP --------
-        def _dfp():
-            import cvm.cvm_dfp_ingest as cvm_dfp_ingest
-
-            cvm_dfp_ingest.run(
-                engine,
-                progress_cb=lambda s: _log(f"DFP:{s}"),
-                start_year=int(start_year),
-                end_year=int(end_year),
-                years_per_run=int(years_per_run),
-            )
-
-        _run_step("DFP (anual)", 10, 28, _dfp)
-
-        # -------- ITR --------
-        def _itr():
-            import cvm.cvm_tri_ingest as cvm_tri_ingest
-
-            cvm_tri_ingest.run(
-                engine,
-                progress_cb=lambda s: _log(f"ITR:{s}"),
-                start_year=int(start_year),
-                end_year=int(end_year),
-                quarters_per_run=int(quarters_per_run),
-            )
-
-        _run_step("ITR (trimestral)", 30, 48, _itr)
-
-        # -------- Setores --------
-        def _setores():
-            import cvm.setores_ingest as setores_ingest
-
-            setores_ingest.run(engine, progress_cb=lambda s: _log(f"SETORES:{s}"))
-
-        # Setores é opcional: se o módulo não existir, apenas pula
-        try:
-            _run_step("Setores", 50, 62, _setores)
-        except ModuleNotFoundError:
-            _log("Setores:skip (módulo cvm.setores_ingest não encontrado)")
-            _p(62, "Setores: pulado (módulo não encontrado).")
-
-        # -------- Macro --------
-        def _macro():
-            import cvm.macro_bcb_ingest as macro_bcb_ingest
-
-            macro_bcb_ingest.run(engine, progress_cb=lambda s: _log(f"MACRO:{s}"))
-
-        _run_step("Macro (BCB)", 65, 76, _macro)
-
-        # -------- Métricas --------
-        def _metrics():
-            import cvm.finance_metrics_builder as finance_metrics_builder
-
-            finance_metrics_builder.run(engine, progress_cb=lambda s: _log(f"METRICS:{s}"))
-
-        _run_step("Métricas", 80, 90, _metrics)
-
-        # -------- Score --------
-        def _score():
-            import cvm.fundamental_scoring as fundamental_scoring
-
-            fundamental_scoring.run(engine, progress_cb=lambda s: _log(f"SCORE:{s}"))
-
-        _run_step("Fundamental score", 92, 98, _score)
-
-        # -------- last_year (melhor esforço) --------
-        # OBS: seu código consultava cvm.demonstracoes_financeiras (não existe).
-        # Aqui tentamos DFP e TRI.
-        try:
-            with engine.connect() as conn:
-                row = conn.execute(
-                    text(
-                        """
-                        select
-                          greatest(
-                            coalesce((select max(extract(year from data))::int from cvm.demonstracoes_financeiras_dfp), 0),
-                            coalesce((select max(extract(year from data))::int from cvm.demonstracoes_financeiras_tri), 0)
-                          ) as y
-                        """
-                    )
-                ).mappings().first()
-            if row and row.get("y"):
-                y = int(row["y"])
-                if y > 0:
-                    last_year = y
-        except Exception as e:
-            _log(f"last_year:warn:{e}")
-
-        _p(100, "Concluído.")
-        _insert_sync_log(
-            engine,
-            status="success",
-            last_year=last_year,
-            remote_latest_year=remote_latest_year,
-            message=_tail(120),
+    settings = get_settings()
+    map_path = Path(settings.cvm_to_ticker_path)
+    if not map_path.exists():
+        raise FileNotFoundError(
+            f"Não encontrei {map_path}. Coloque o csv no GitHub (ex.: data/cvm_to_ticker.csv)."
         )
 
-    except Exception as e:
-        # grava erro com cauda + traceback (se já capturado nos passos)
-        _insert_sync_log(
-            engine,
-            status="error",
-            last_year=last_year,
-            remote_latest_year=remote_latest_year,
-            message=f"{e} | logs: " + _tail(120),
-        )
-        raise
+    if progress_cb:
+        progress_cb("SETORES: baixando classificação setorial da B3...")
+
+    zip_bytes = _download_b3_excel_zip(timeout_sec=timeout_sec)
+    b3 = _parse_b3_classificacao(zip_bytes)
+
+    if progress_cb:
+        progress_cb("SETORES: carregando cvm_to_ticker...")
+
+    cvm_map = _load_cvm_to_ticker(map_path)
+
+    # ticker_base do B3: remove dígito final
+    b3["ticker_base"] = b3["ticker_b3"].str.replace(r"\d$", "", regex=True)
+
+    merged = b3.merge(cvm_map, on="ticker_base", how="left")
+
+    # Atualiza o ticker final com o ticker completo do mapa (se encontrado)
+    merged["ticker"] = merged["ticker"].fillna(merged["ticker_b3"])
+    merged["ticker"] = merged["ticker"].astype(str).str.strip().str.upper()
+
+    merged = merged.dropna(subset=["ticker"])
+    merged = merged.drop_duplicates(subset=["ticker"])
+
+    # Garante colunas
+    for col in ["SETOR", "SUBSETOR", "SEGMENTO"]:
+        if col not in merged.columns:
+            merged[col] = None
+
+    out = merged[["ticker", "SETOR", "SUBSETOR", "SEGMENTO", "nome_empresa"]].copy()
+
+    if progress_cb:
+        progress_cb(f"SETORES: upsert de {len(out):,} linhas no Supabase...".replace(",", "."))
+
+    _upsert(engine, out)
+
+    if progress_cb:
+        progress_cb("SETORES: concluído.")
