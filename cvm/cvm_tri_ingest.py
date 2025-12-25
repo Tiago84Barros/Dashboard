@@ -4,7 +4,6 @@ from __future__ import annotations
 import io
 import zipfile
 from dataclasses import dataclass
-from datetime import date
 from pathlib import Path
 from typing import Callable, Optional, Tuple
 
@@ -33,6 +32,26 @@ class ItrConfig:
     end_year: int = DEFAULT_END_YEAR
     quarters_per_run: int = 1
     timeout_sec: int = 120
+
+
+def _col_as_series(df: pd.DataFrame, col: str) -> pd.Series:
+    """
+    Garante que df[col] seja uma Series.
+    Se houver colunas duplicadas, df[col] pode retornar DataFrame.
+    """
+    obj = df[col]
+    if isinstance(obj, pd.DataFrame):
+        obj = obj.iloc[:, 0]
+    return obj
+
+
+def _dedupe_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove colunas duplicadas mantendo a primeira."""
+    if df is None or df.empty:
+        return df
+    if df.columns.duplicated().any():
+        df = df.loc[:, ~df.columns.duplicated()].copy()
+    return df
 
 
 def _find_ticker_map() -> Path:
@@ -78,25 +97,56 @@ def _read_consolidated_csvs(zip_bytes: bytes) -> dict[str, pd.DataFrame]:
                 continue
             if "DRE" not in name.upper():
                 continue
+
             with z.open(name) as f:
-                df = pd.read_csv(f, sep=";", decimal=",", encoding="ISO-8859-1", low_memory=False)
+                df = pd.read_csv(
+                    f, sep=";", decimal=",", encoding="ISO-8859-1", low_memory=False
+                )
+
+            df = _dedupe_columns(df)
+
             if "ORDEM_EXERC" in df.columns:
-                df = df[df["ORDEM_EXERC"] == "ÚLTIMO"]
+                ord_series = _col_as_series(df, "ORDEM_EXERC").astype(str).str.strip()
+                df = df[ord_series == "ÚLTIMO"]
+
             out["DRE"].append(df)
 
     return {"DRE": (pd.concat(out["DRE"], ignore_index=True) if out["DRE"] else pd.DataFrame())}
 
 
-def _pick_value(df: pd.DataFrame, cd_conta: Optional[str] = None, ds_conta_in: Optional[list[str]] = None) -> pd.DataFrame:
+def _pick_value(
+    df: pd.DataFrame,
+    cd_conta: Optional[str] = None,
+    ds_conta_in: Optional[list[str]] = None
+) -> pd.DataFrame:
     if df.empty:
         return df
-    x = df.copy()
+
+    x = _dedupe_columns(df.copy())
+
     if cd_conta is not None and "CD_CONTA" in x.columns:
-        x = x[x["CD_CONTA"] == cd_conta]
+        cd = _col_as_series(x, "CD_CONTA").astype(str).str.strip()
+        x = x[cd == str(cd_conta).strip()]
+
     if ds_conta_in is not None and "DS_CONTA" in x.columns:
-        x = x[x["DS_CONTA"].isin(ds_conta_in)]
+        ds = _col_as_series(x, "DS_CONTA").astype(str).str.strip()
+        wanted = [str(s).strip() for s in ds_conta_in]
+        x = x[ds.isin(wanted)]
+
+    # Se não tiver as colunas mínimas, devolve vazio
+    needed = {"CD_CVM", "DT_REFER", "VL_CONTA"}
+    if not needed.issubset(set(x.columns)):
+        return pd.DataFrame()
+
+    # Ordena e remove duplicatas por empresa/data
     x = x.sort_values("DT_REFER").drop_duplicates(subset=["CD_CVM", "DT_REFER"], keep="first")
-    return x[["CD_CVM", "DT_REFER", "VL_CONTA"]]
+
+    out = x[["CD_CVM", "DT_REFER", "VL_CONTA"]].copy()
+
+    # Normaliza valor para numérico já aqui (evita mix de str/float)
+    out["VL_CONTA"] = pd.to_numeric(out["VL_CONTA"], errors="coerce")
+
+    return out
 
 
 def _build_quarter_frame(df_dre: pd.DataFrame) -> pd.DataFrame:
@@ -110,23 +160,38 @@ def _build_quarter_frame(df_dre: pd.DataFrame) -> pd.DataFrame:
         ],
     ).rename(columns={"VL_CONTA": "lucro_liquido"})
 
-    base = receita.merge(ebit, on=["CD_CVM", "DT_REFER"], how="outer").merge(lucro, on=["CD_CVM", "DT_REFER"], how="outer")
-    if base.empty:
+    base = None
+    for d in (receita, ebit, lucro):
+        if d.empty:
+            continue
+        base = d.copy() if base is None else base.merge(d, on=["CD_CVM", "DT_REFER"], how="outer")
+
+    if base is None or base.empty:
         return pd.DataFrame()
 
-    base["data"] = pd.to_datetime(base["DT_REFER"]).dt.date
+    base = _dedupe_columns(base)
+
+    dt_ref = _col_as_series(base, "DT_REFER")
+    base["data"] = pd.to_datetime(dt_ref, errors="coerce").dt.date
     base = base.drop(columns=["DT_REFER"])
+
     return base
 
 
 def _load_cvm_to_ticker(map_path: Path) -> pd.DataFrame:
     df = pd.read_csv(map_path, sep=",", encoding="utf-8")
-    cols = {c.lower(): c for c in df.columns}
+    df = _dedupe_columns(df)
+
+    cols = {str(c).lower(): c for c in df.columns}
     if "cd_cvm" not in cols or "ticker" not in cols:
         raise ValueError("cvm_to_ticker.csv precisa ter CD_CVM e Ticker.")
+
     df = df.rename(columns={cols["cd_cvm"]: "CD_CVM", cols["ticker"]: "ticker"})
-    df["CD_CVM"] = pd.to_numeric(df["CD_CVM"], errors="coerce").astype("Int64")
-    df["ticker"] = df["ticker"].astype(str).str.strip().str.upper()
+    df = _dedupe_columns(df)
+
+    df["CD_CVM"] = pd.to_numeric(_col_as_series(df, "CD_CVM"), errors="coerce").astype("Int64")
+    df["ticker"] = _col_as_series(df, "ticker").astype(str).str.strip().str.upper()
+
     return df.dropna(subset=["CD_CVM", "ticker"])[["CD_CVM", "ticker"]].drop_duplicates()
 
 
@@ -164,6 +229,7 @@ def _resolve_yq_to_process(engine: Engine, cfg: ItrConfig) -> Optional[Tuple[int
         year, q = cfg.end_year, 4
     else:
         raw = str(st_next["value"]).strip()
+        # formato esperado: "20254" (ano + trimestre)
         year = int(raw[:4])
         q = int(raw[4:5])
 
@@ -181,7 +247,12 @@ def run(
     quarters_per_run: int = 1,
     timeout_sec: int = 120,
 ) -> None:
-    cfg = ItrConfig(start_year=start_year, end_year=end_year, quarters_per_run=quarters_per_run, timeout_sec=timeout_sec)
+    cfg = ItrConfig(
+        start_year=start_year,
+        end_year=end_year,
+        quarters_per_run=quarters_per_run,
+        timeout_sec=timeout_sec,
+    )
 
     _ensure_table(engine)
     map_path = _find_ticker_map()
@@ -213,10 +284,13 @@ def run(
                 progress_cb(f"ITR: {year}T{q} sem dados úteis (marcado como concluído).")
             continue
 
-        df_all["data"] = pd.to_datetime(df_all["data"])
-        df_all["yq"] = df_all["data"].dt.to_period("Q").astype(str)
-        target = f"{year}Q{q}"
+        df_all = _dedupe_columns(df_all)
 
+        # data -> período trimestral
+        df_all["data"] = pd.to_datetime(_col_as_series(df_all, "data"), errors="coerce")
+        df_all["yq"] = df_all["data"].dt.to_period("Q").astype(str)
+
+        target = f"{year}Q{q}"
         df_q = df_all[df_all["yq"] == target].copy()
         df_q["data"] = df_q["data"].dt.date
         df_q = df_q.drop(columns=["yq"])
@@ -224,16 +298,19 @@ def run(
         if df_q.empty:
             set_state(engine, STATE_LAST_DONE, f"{year}{q}")
         else:
-            df_q["CD_CVM"] = pd.to_numeric(df_q["CD_CVM"], errors="coerce").astype("Int64")
+            df_q = _dedupe_columns(df_q)
+
+            df_q["CD_CVM"] = pd.to_numeric(_col_as_series(df_q, "CD_CVM"), errors="coerce").astype("Int64")
             df_q = df_q.merge(df_map, on="CD_CVM", how="inner")
 
             for c in ["receita_liquida", "ebit", "lucro_liquido"]:
                 if c in df_q.columns:
-                    df_q[c] = pd.to_numeric(df_q[c], errors="coerce")
+                    df_q[c] = pd.to_numeric(_col_as_series(df_q, c), errors="coerce")
 
             _upsert(engine, df_q)
             set_state(engine, STATE_LAST_DONE, f"{year}{q}")
 
+        # próximo trimestre (retrocedendo)
         q2, y2 = q - 1, year
         if q2 == 0:
             y2 -= 1
