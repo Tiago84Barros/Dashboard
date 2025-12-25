@@ -126,13 +126,24 @@ def _load_empresa_dados(ticker: str, nome: str, engine) -> Optional[EmpresaDados
 
 
 def _safe_macro(engine) -> Optional[pd.DataFrame]:
+    """
+    Carrega info_economica (macro) e normaliza para o padrão esperado pelo projeto:
+      - coluna 'Data' (datetime)
+      - coluna 'Selic' (numeric) para o benchmark em analytics.portfolio.calcular_patrimonio_selic_macro
+    Também tolera loader retornando dict (legado), convertendo para DataFrame.
+    """
     dm = load_macro_summary(engine=engine)
-    if dm is None or dm.empty:
+
+    # Tolerância a retorno dict (alguns loaders retornavam "último registro")
+    if isinstance(dm, dict):
+        dm = pd.DataFrame([dm])
+
+    if dm is None or getattr(dm, "empty", True):
         return None
 
     dm = _clean_df_cols(dm)
 
-    # portfolio.calcular_patrimonio_selic_macro aceita Data em coluna ou índice com nome Data
+    # Normaliza coluna de data para "Data"
     col_data = None
     for c in ("Data", "data"):
         if c in dm.columns:
@@ -142,10 +153,37 @@ def _safe_macro(engine) -> Optional[pd.DataFrame]:
     if col_data:
         dm[col_data] = pd.to_datetime(dm[col_data], errors="coerce")
         dm = dm.dropna(subset=[col_data]).sort_values(col_data)
-
-        # normaliza para coluna "Data" (o restante do projeto parece esperar "Data")
         if col_data != "Data":
             dm = dm.rename(columns={col_data: "Data"})
+    else:
+        # Caso raro: data venha como índice
+        if getattr(dm.index, "name", None) in ("Data", "data"):
+            dm = dm.reset_index()
+            dm["Data"] = pd.to_datetime(dm["Data"], errors="coerce")
+            dm = dm.dropna(subset=["Data"]).sort_values("Data")
+        else:
+            return None
+
+    # Normaliza nomes de colunas para o padrão "legado" do benchmark (Selic, etc.)
+    rename_map = {}
+    if "selic" in dm.columns and "Selic" not in dm.columns:
+        rename_map["selic"] = "Selic"
+    if "cambio" in dm.columns and "Cambio" not in dm.columns:
+        rename_map["cambio"] = "Cambio"
+    if "ipca" in dm.columns and "IPCA" not in dm.columns:
+        rename_map["ipca"] = "IPCA"
+    if "icc" in dm.columns and "ICC" not in dm.columns:
+        rename_map["icc"] = "ICC"
+    if "pib" in dm.columns and "PIB" not in dm.columns:
+        rename_map["pib"] = "PIB"
+    if "balanca_comercial" in dm.columns and "BALANCA_COMERCIAL" not in dm.columns:
+        rename_map["balanca_comercial"] = "BALANCA_COMERCIAL"
+    if rename_map:
+        dm = dm.rename(columns=rename_map)
+
+    # Coerção numérica (evita strings vindas do banco)
+    if "Selic" in dm.columns:
+        dm["Selic"] = pd.to_numeric(dm["Selic"], errors="coerce")
 
     return dm
 
