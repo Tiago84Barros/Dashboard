@@ -111,20 +111,32 @@ def _read_consolidated_csvs(zip_bytes: bytes) -> dict[str, pd.DataFrame]:
     return {k: (pd.concat(v, ignore_index=True) if v else pd.DataFrame()) for k, v in out.items()}
 
 
-def _pick_value(df: pd.DataFrame, cd_conta: Optional[str] = None, ds_conta_in: Optional[list[str]] = None) -> pd.DataFrame:
+def _pick_value(
+    df: pd.DataFrame,
+    cd_conta: Optional[str] = None,
+    ds_conta_in: Optional[list[str]] = None
+) -> pd.DataFrame:
     if df.empty:
         return df
 
     x = df.copy()
+
     if cd_conta is not None and "CD_CONTA" in x.columns:
         x = x[x["CD_CONTA"] == cd_conta]
+
     if ds_conta_in is not None and "DS_CONTA" in x.columns:
         x = x[x["DS_CONTA"].isin(ds_conta_in)]
 
     if "DT_REFER" in x.columns:
         x = x.sort_values("DT_REFER").drop_duplicates(subset=["CD_CVM", "DT_REFER"], keep="first")
 
-    return x[["CD_CVM", "DT_REFER", "VL_CONTA"]]
+    out = x[["CD_CVM", "DT_REFER", "VL_CONTA"]].copy()
+
+    # >>> FIX CRÍTICO: normaliza para numérico AQUI
+    out["VL_CONTA"] = pd.to_numeric(out["VL_CONTA"], errors="coerce")
+
+    return out
+
 
 
 def _build_year_frame(df_dre: pd.DataFrame, df_bpa: pd.DataFrame, df_bpp: pd.DataFrame, df_dfc: pd.DataFrame) -> pd.DataFrame:
@@ -163,11 +175,20 @@ def _build_year_frame(df_dre: pd.DataFrame, df_bpa: pd.DataFrame, df_bpp: pd.Dat
     base = base.drop(columns=["DT_REFER"])
 
     base["divida_total"] = base.get("passivo_total")
-    base["divida_liquida"] = None
+
+    # >>> FIX CRÍTICO: garantir numérico ANTES da subtração
+    if "divida_total" in base.columns:
+        base["divida_total"] = pd.to_numeric(base["divida_total"], errors="coerce")
+    if "caixa_e_equivalentes" in base.columns:
+        base["caixa_e_equivalentes"] = pd.to_numeric(base["caixa_e_equivalentes"], errors="coerce")
+
     if "divida_total" in base.columns and "caixa_e_equivalentes" in base.columns:
         base["divida_liquida"] = base["divida_total"] - base["caixa_e_equivalentes"]
+    else:
+        base["divida_liquida"] = None
 
     return base
+
 
 
 def _load_cvm_to_ticker(map_path: Path) -> pd.DataFrame:
