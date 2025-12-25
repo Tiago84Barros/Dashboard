@@ -133,7 +133,7 @@ def _safe_macro(engine) -> Optional[pd.DataFrame]:
       - coluna 'Selic' (numeric) para o benchmark em analytics.portfolio.calcular_patrimonio_selic_macro
     Também tolera loader retornando dict (legado), convertendo para DataFrame.
     """
-    dm = load_macro_summary(engine=engine)
+    dm = load_macro_mensal(engine)
 
     # Tolerância a retorno dict (alguns loaders retornavam "último registro")
     if isinstance(dm, dict):
