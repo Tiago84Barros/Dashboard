@@ -90,16 +90,13 @@ def _find_header_row(raw: pd.DataFrame) -> int:
         "CODIGO",
     }
 
-    # varre as primeiras ~80 linhas (suficiente para o arquivo da B3)
     max_scan = min(len(raw), 120)
     for i in range(max_scan):
         row = raw.iloc[i].astype(str).str.strip().str.upper().tolist()
         row_set = set([x for x in row if x and x != "NAN"])
-        # se a linha tiver pelo menos 2 termos relevantes, é candidata forte a cabeçalho
         if len(row_set.intersection(targets)) >= 2:
             return i
 
-    # fallback: se não achou, assume 0
     return 0
 
 
@@ -131,6 +128,18 @@ def _best_ticker_like_col(df: pd.DataFrame) -> Optional[str]:
     return best if best_score > 0 else None
 
 
+def _col_as_series(df: pd.DataFrame, col: Optional[str]) -> pd.Series:
+    """
+    Garante Series mesmo quando há colunas duplicadas (df[col] vira DataFrame).
+    """
+    if not col:
+        return pd.Series([""] * len(df))
+    obj = df[col]
+    if isinstance(obj, pd.DataFrame):
+        obj = obj.iloc[:, 0]
+    return obj
+
+
 def _parse_b3_classificacao(zip_bytes: bytes) -> pd.DataFrame:
     """
     Parser robusto do Excel B3, sem depender de skiprows fixo.
@@ -144,7 +153,6 @@ def _parse_b3_classificacao(zip_bytes: bytes) -> pd.DataFrame:
     raw = _read_excel_from_b3_zip(zip_bytes)
     df = _build_df_from_raw(raw)
 
-    # limpa nomes das colunas
     df.columns = [str(c).strip() for c in df.columns]
 
     col_setor = _pick_col_loose(df.columns.tolist(), ["SETOR ECONÔMICO", "SETOR ECONOMICO", "SETOR"])
@@ -158,30 +166,51 @@ def _parse_b3_classificacao(zip_bytes: bytes) -> pd.DataFrame:
     if col_codigo is None:
         raise ValueError(f"Não encontrei coluna de ticker/código na planilha da B3. Colunas: {list(df.columns)}")
 
-    # coluna de nome (empresa)
     col_nome = _pick_col_loose(df.columns.tolist(), ["NOME", "EMPRESA", "COMPANHIA", "EMISSOR", "RAZÃO SOCIAL", "RAZAO SOCIAL"])
     if col_nome is None:
-        # fallback: usa SEGMENTO se existir; senão deixa vazio
-        col_nome = col_segmento
+        col_nome = col_segmento  # fallback
+
+    s_ticker = _col_as_series(df, col_codigo).astype(str).str.strip().str.upper()
+    s_nome = _col_as_series(df, col_nome).astype(str).str.strip() if col_nome else pd.Series([""] * len(df))
+
+    if col_setor:
+        s_setor = _col_as_series(df, col_setor).astype(str).str.strip()
+    else:
+        s_setor = pd.Series([None] * len(df))
+
+    if col_subsetor:
+        s_subsetor = _col_as_series(df, col_subsetor).astype(str).str.strip()
+    else:
+        s_subsetor = pd.Series([None] * len(df))
+
+    if col_segmento:
+        s_segmento = _col_as_series(df, col_segmento).astype(str).str.strip()
+    else:
+        s_segmento = pd.Series([None] * len(df))
 
     out = pd.DataFrame(
         {
-            "ticker_b3": df[col_codigo].astype(str).str.strip().str.upper(),
-            "nome_empresa": df[col_nome].astype(str).str.strip() if col_nome else "",
-            "SETOR": df[col_setor].astype(str).str.strip() if col_setor else None,
-            "SUBSETOR": df[col_subsetor].astype(str).str.strip() if col_subsetor else None,
-            "SEGMENTO": df[col_segmento].astype(str).str.strip() if col_segmento else None,
+            "ticker_b3": s_ticker,
+            "nome_empresa": s_nome,
+            "SETOR": s_setor,
+            "SUBSETOR": s_subsetor,
+            "SEGMENTO": s_segmento,
         }
     )
 
     # mantém apenas tickers válidos
     out = out.dropna(subset=["ticker_b3"])
-    out = out[out["ticker_b3"].str.match(r"^[A-Z]{4}\d{1,2}$", na=False)]
+    out = out[out["ticker_b3"].astype(str).str.match(r"^[A-Z]{4}\d{1,2}$", na=False)]
+
+    # normaliza vazios
+    for c in ["SETOR", "SUBSETOR", "SEGMENTO"]:
+        if c in out.columns:
+            out[c] = out[c].replace({"nan": None, "None": None, "": None})
 
     # forward-fill hierárquico
     for c in ["SETOR", "SUBSETOR", "SEGMENTO"]:
         if c in out.columns:
-            out[c] = out[c].replace({"nan": None, "None": None, "": None}).ffill()
+            out[c] = out[c].ffill()
 
     # se SEGMENTO vazio, usa nome_empresa
     out.loc[out["SEGMENTO"].isnull(), "SEGMENTO"] = out.loc[out["SEGMENTO"].isnull(), "nome_empresa"]
