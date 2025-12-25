@@ -126,4 +126,132 @@ def apply_update(
     remote_latest_year: Optional[int] = int(end_year)
 
     def _stage_done(label: str) -> None:
-        _emit(
+        _emit(0, f"{label}: concluído.")
+        logs.append(f"{label}:done")
+
+    try:
+        _emit(2, "Iniciando sincronização…")
+        logs.append("start")
+
+        # -------- DFP --------
+        _emit(10, "DFP (anual): executando…")
+        logs.append("dfp:start")
+        try:
+            import cvm.cvm_dfp_ingest as cvm_dfp_ingest
+
+            cvm_dfp_ingest.run(
+                engine,
+                progress_cb=lambda s: logs.append(f"DFP:{s}"),
+                start_year=int(start_year),
+                end_year=int(end_year),
+                years_per_run=int(years_per_run),
+            )
+            logs.append("dfp:ok")
+            _stage_done("DFP (anual)")
+        except Exception as e:
+            logs.append(f"dfp:error:{e}")
+            raise
+
+        # -------- ITR --------
+        _emit(30, "ITR (trimestral): executando…")
+        logs.append("itr:start")
+        try:
+            import cvm.cvm_tri_ingest as cvm_tri_ingest
+
+            cvm_tri_ingest.run(
+                engine,
+                progress_cb=lambda s: logs.append(f"ITR:{s}"),
+                start_year=int(start_year),
+                end_year=int(end_year),
+                quarters_per_run=int(quarters_per_run),
+            )
+            logs.append("itr:ok")
+            _stage_done("ITR (trimestral)")
+        except Exception as e:
+            logs.append(f"itr:error:{e}")
+            raise
+
+        # -------- Setores --------
+        _emit(50, "Setores: executando…")
+        logs.append("setores:start")
+        try:
+            import cvm.setores_ingest as setores_ingest
+
+            setores_ingest.run(engine, progress_cb=lambda s: logs.append(f"SETORES:{s}"))
+            logs.append("setores:ok")
+            _stage_done("Setores")
+        except ModuleNotFoundError:
+            logs.append("setores:skip (módulo cvm.setores_ingest não encontrado)")
+            _emit(50, "Setores: ignorado (módulo não encontrado).")
+        except Exception as e:
+            logs.append(f"setores:error:{e}")
+            raise
+
+        # -------- Macro --------
+        _emit(65, "Macro (BCB): executando…")
+        logs.append("macro:start")
+        try:
+            import cvm.macro_bcb_ingest as macro_bcb_ingest
+
+            macro_bcb_ingest.run(engine, progress_cb=lambda s: logs.append(f"MACRO:{s}"))
+            logs.append("macro:ok")
+            _stage_done("Macro (BCB)")
+        except Exception as e:
+            logs.append(f"macro:error:{e}")
+            raise
+
+        # -------- Métricas --------
+        _emit(80, "Métricas: executando…")
+        logs.append("metrics:start")
+        try:
+            import cvm.finance_metrics_builder as finance_metrics_builder
+
+            finance_metrics_builder.run(engine, progress_cb=lambda s: logs.append(f"METRICS:{s}"))
+            logs.append("metrics:ok")
+            _stage_done("Métricas")
+        except Exception as e:
+            logs.append(f"metrics:error:{e}")
+            raise
+
+        # -------- Score --------
+        _emit(92, "Fundamental score: executando…")
+        logs.append("score:start")
+        try:
+            import cvm.fundamental_scoring as fundamental_scoring
+
+            fundamental_scoring.run(engine, progress_cb=lambda s: logs.append(f"SCORE:{s}"))
+            logs.append("score:ok")
+            _stage_done("Fundamental score")
+        except Exception as e:
+            logs.append(f"score:error:{e}")
+            raise
+
+        # -------- last_year (melhor esforço) --------
+        try:
+            with engine.connect() as conn:
+                row = conn.execute(
+                    text("select max(extract(year from data))::int as y from cvm.demonstracoes_financeiras_dfp")
+                ).mappings().first()
+            if row and row.get("y"):
+                last_year = int(row["y"])
+        except Exception:
+            pass
+
+        _emit(100, "Concluído.")
+        _insert_sync_log(
+            engine,
+            status="success",
+            last_year=last_year,
+            remote_latest_year=remote_latest_year,
+            message=" | ".join(logs[-80:]),
+        )
+
+    except Exception as e:
+        _insert_sync_log(
+            engine,
+            status="error",
+            last_year=last_year,
+            remote_latest_year=remote_latest_year,
+            message=f"{e} | logs: " + " | ".join(logs[-80:]),
+        )
+        raise
