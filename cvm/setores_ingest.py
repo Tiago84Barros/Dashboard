@@ -14,7 +14,12 @@ from sqlalchemy.engine import Engine
 
 from core.config.settings import get_settings
 
-B3_SETOR_ZIP_URL = "https://www.b3.com.br/data/files/57/E6/AA/A1/68C7781064456178AC094EA8/ClassifSetorial.zip"
+B3_SETOR_ZIP_URL = (
+    "https://www.b3.com.br/data/files/57/E6/AA/A1/68C7781064456178AC094EA8/ClassifSetorial.zip"
+)
+
+# Regex de ticker B3 (mais comum). Ex: PETR4, VALE3, BBDC4, etc.
+_TICKER_RE = re.compile(r"^[A-Z]{4}\d{1,2}$")
 
 
 def _ensure_table(engine: Engine) -> None:
@@ -32,6 +37,12 @@ def _ensure_table(engine: Engine) -> None:
         conn.execute(text(ddl))
 
 
+def _normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
+
+
 def _download_b3_excel_zip(timeout_sec: int = 60) -> bytes:
     r = requests.get(B3_SETOR_ZIP_URL, timeout=timeout_sec)
     if r.status_code != 200:
@@ -39,140 +50,200 @@ def _download_b3_excel_zip(timeout_sec: int = 60) -> bytes:
     return r.content
 
 
-def _dedupe_columns(df: pd.DataFrame) -> pd.DataFrame:
-    # remove colunas duplicadas (pandas às vezes cria quando renomeamos)
-    if df.columns.duplicated().any():
-        df = df.loc[:, ~df.columns.duplicated()].copy()
-    return df
-
-
-def _col_as_series(df: pd.DataFrame, col: str) -> pd.Series:
-    obj = df[col]
-    if isinstance(obj, pd.DataFrame):  # se virou DF por colunas duplicadas
-        obj = obj.iloc[:, 0]
-    return obj
-
-
-def _find_header_row(raw: pd.DataFrame) -> int:
+def _find_header_row(raw: pd.DataFrame) -> Optional[int]:
     """
-    Encontra a linha do cabeçalho real procurando por 'SETOR ECONÔMICO' ou variações.
-    raw é um DataFrame lido com header=None (cada linha vira uma linha).
+    Procura uma linha que pareça ser o cabeçalho real.
+    A B3 frequentemente contém linhas "soltas" antes do header.
     """
-    targets = {"SETOR ECONÔMICO", "SETOR ECONOMICO", "SETOR"}
-    for i in range(min(len(raw), 60)):  # busca nas primeiras linhas
-        row = raw.iloc[i].astype(str).str.upper().str.strip()
-        if any(t in set(row.values) for t in targets):
+    # Palavras-chave típicas do arquivo
+    keys = ["SETOR", "SUBSETOR", "SEGMENTO", "EMISSOR", "LISTAGEM", "CÓDIGO", "CODIGO"]
+
+    # varre as primeiras ~40 linhas para achar algo consistente
+    max_scan = min(len(raw), 60)
+    for i in range(max_scan):
+        row = raw.iloc[i].astype(str).str.upper().tolist()
+        hits = 0
+        for cell in row:
+            if any(k in cell for k in keys):
+                hits += 1
+        # se a linha tiver várias chaves, é um bom candidato
+        if hits >= 2:
             return i
-        # também aceita se "SETOR ECONÔMICO" aparecer como substring
-        if any("SETOR ECON" in v for v in row.values if isinstance(v, str)):
-            return i
-    # se não achou, falha com contexto
-    raise ValueError(f"Não consegui detectar o header da planilha B3. Primeiras colunas/linhas: {raw.head(15).to_dict()}")
+    return None
 
 
-def _read_b3_excel_from_zip(zip_bytes: bytes) -> pd.DataFrame:
-    with ZipFile(io.BytesIO(zip_bytes)) as z:
-        name = z.namelist()[0]
-        with z.open(name) as f:
-            # 1) lê cru para detectar header
-            raw = pd.read_excel(f, header=None)
+def _dedupe_columns(cols: list[str]) -> list[str]:
+    """
+    Evita colunas duplicadas (causa do erro clássico: df['CÓDIGO'] virar DataFrame).
+    """
+    seen = {}
+    out = []
+    for c in cols:
+        base = c
+        if base not in seen:
+            seen[base] = 0
+            out.append(base)
+        else:
+            seen[base] += 1
+            out.append(f"{base}__{seen[base]}")
+    return out
 
-    header_row = _find_header_row(raw)
 
-    # 2) relê agora com header correto
-    with ZipFile(io.BytesIO(zip_bytes)) as z:
-        name = z.namelist()[0]
-        with z.open(name) as f:
-            df = pd.read_excel(f, header=header_row)
+def _select_ticker_column(df: pd.DataFrame) -> Optional[str]:
+    """
+    Identifica a coluna que mais parece conter tickers, por conteúdo (regex).
+    Funciona mesmo quando o nome vem como Unnamed: X.
+    """
+    best_col = None
+    best_score = 0
 
-    return df
+    for c in df.columns:
+        # precisa ser coluna "textual"
+        s = df[c]
+        # converte para string sem quebrar
+        s2 = s.astype(str).str.strip().str.upper()
+
+        # ignora colunas muito vazias
+        non_empty = (s2 != "").sum()
+        if non_empty == 0:
+            continue
+
+        score = s2.apply(lambda v: 1 if _TICKER_RE.match(v) else 0).sum()
+
+        # dá preferência para a coluna com maior volume de tickers válidos
+        if score > best_score:
+            best_score = score
+            best_col = c
+
+    # exige pelo menos alguns matches para ser considerada
+    if best_score >= 5:
+        return best_col
+    return None
 
 
 def _parse_b3_classificacao(zip_bytes: bytes) -> pd.DataFrame:
-    df = _read_b3_excel_from_zip(zip_bytes)
-    df = _dedupe_columns(df)
+    with ZipFile(io.BytesIO(zip_bytes)) as fold:
+        name = fold.namelist()[0]
+        with fold.open(name) as f:
+            # Leitura crua: sem header
+            raw = pd.read_excel(io=f, header=None)
 
-    # padroniza colunas esperadas
-    # OBS: dependendo do arquivo, "LISTAGEM" pode estar com nome diferente; deixamos robusto.
-    rename_map = {}
-    for c in df.columns:
-        cu = str(c).strip().upper()
-        if cu == "SETOR ECONÔMICO" or cu == "SETOR ECONOMICO":
-            rename_map[c] = "SETOR"
-        elif cu == "SUBSETOR":
-            rename_map[c] = "SUBSETOR"
-        elif cu == "SEGMENTO":
-            rename_map[c] = "SEGMENTO"
-        elif cu in ("SEGMENTO DE LISTAGEM", "LISTAGEM"):
-            rename_map[c] = "LISTAGEM"
-        elif cu in ("CÓDIGO", "CODIGO", "CÓDIGO DE NEGOCIAÇÃO", "CODIGO DE NEGOCIACAO"):
-            rename_map[c] = "CÓDIGO"
-        elif cu in ("NOME", "EMPRESA", "DENOMINAÇÃO SOCIAL", "DENOMINACAO SOCIAL"):
-            rename_map[c] = "NOME"
+    # encontra a linha do header real
+    hdr = _find_header_row(raw)
 
-    df = df.rename(columns=rename_map)
-    df = _dedupe_columns(df)
+    if hdr is None:
+        # fallback: tenta o padrão antigo
+        # (alguns arquivos ainda funcionam com skiprows=6)
+        with ZipFile(io.BytesIO(zip_bytes)) as fold:
+            name = fold.namelist()[0]
+            with fold.open(name) as f:
+                df = pd.read_excel(io=f, skiprows=6)
+        df = _normalize_cols(df)
+        df.columns = _dedupe_columns(list(df.columns))
+    else:
+        # recria df a partir do header encontrado
+        header = raw.iloc[hdr].astype(str).str.strip()
+        df = raw.iloc[hdr + 1 :].copy()
+        df.columns = _dedupe_columns(header.tolist())
+        df = _normalize_cols(df)
 
-    # se não veio CÓDIGO, tenta detectar coluna com tickers
-    if "CÓDIGO" not in df.columns:
-        ticker_re = re.compile(r"^[A-Z]{4}\d{1,2}$")
-        best_col = None
-        best_score = -1
-        for c in df.columns:
-            s = df[c]
-            if s.dtype != "object":
-                continue
-            su = s.astype(str).str.strip().str.upper()
-            score = su.apply(lambda v: 1 if ticker_re.match(v) else 0).sum()
-            if score > best_score:
-                best_score = score
-                best_col = c
-        if best_score > 0 and best_col is not None:
-            df = df.rename(columns={best_col: "CÓDIGO"})
-        else:
-            raise ValueError(f"Não encontrei coluna de ticker na B3. Colunas: {list(df.columns)}")
+    # remove linhas totalmente vazias
+    df = df.dropna(how="all")
 
-    # garante colunas mínimas
-    for col in ["SETOR", "SUBSETOR", "SEGMENTO", "LISTAGEM", "NOME"]:
+    # normaliza nomes conhecidos (quando existirem)
+    rename_map = {
+        "SETOR ECONÔMICO": "SETOR",
+        "SETOR ECONOMICO": "SETOR",
+        "SUBSETOR ECONÔMICO": "SUBSETOR",
+        "SUBSETOR ECONOMICO": "SUBSETOR",
+        "EMISSOR": "EMISSOR",
+        "SEGMENTO": "SEGMENTO",
+        "LISTAGEM": "LISTAGEM",
+        "CÓDIGO": "CÓDIGO",
+        "CODIGO": "CÓDIGO",
+        "CÓDIGO DE NEGOCIAÇÃO": "CÓDIGO",
+        "CODIGO DE NEGOCIACAO": "CÓDIGO",
+        "CÓDIGO_DE_NEGOCIAÇÃO": "CÓDIGO",
+        "CODIGO_DE_NEGOCIACAO": "CÓDIGO",
+        "CÓDIGO DE NEGOCIACAO": "CÓDIGO",
+    }
+    # aplica rename por match exato (caso o header venha “limpo”)
+    df = df.rename(columns={c: rename_map.get(c, c) for c in df.columns})
+
+    # garante que as colunas macro existam (ou cria vazias)
+    for col in ["SETOR", "SUBSETOR", "SEGMENTO", "EMISSOR"]:
         if col not in df.columns:
             df[col] = None
 
-    df = _dedupe_columns(df)
+    # resolve ticker: 1) tenta por nomes comuns; 2) tenta por conteúdo (regex)
+    ticker_col = None
+    for cand in ["CÓDIGO", "CODIGO", "LISTAGEM"]:
+        if cand in df.columns:
+            ticker_col = cand
+            break
+    if ticker_col is None:
+        ticker_col = _select_ticker_column(df)
 
-    # ffill hierárquico (B3 usa células mescladas)
-    df["SETOR"] = _col_as_series(df, "SETOR").ffill()
-    df["SUBSETOR"] = _col_as_series(df, "SUBSETOR").ffill()
-    df["SEGMENTO"] = _col_as_series(df, "SEGMENTO").ffill()
+    if ticker_col is None:
+        raise ValueError(
+            f"Não encontrei coluna de ticker na B3. Colunas: {list(df.columns)}"
+        )
 
-    # limpa e remove ruídos
-    codigo = _col_as_series(df, "CÓDIGO").astype(str).str.strip().str.upper()
-    df["CÓDIGO"] = codigo
+    # prepara ticker_b3 como Series garantida
+    ticker_s = df[ticker_col]
+    if isinstance(ticker_s, pd.DataFrame):
+        # acontece se houver duplicidade de colunas
+        ticker_s = ticker_s.iloc[:, 0]
 
-    # remove linhas que são cabeçalhos repetidos
-    df = df[df["CÓDIGO"].notna()]
-    df = df[df["CÓDIGO"] != "CÓDIGO"]
-    df = df[df["CÓDIGO"] != "LISTAGEM"]
+    df["ticker_b3"] = ticker_s.astype(str).str.strip().str.upper()
 
-    # ticker e nome
-    df["ticker_b3"] = _col_as_series(df, "CÓDIGO").astype(str).str.strip().str.upper()
-    df["nome_empresa"] = _col_as_series(df, "NOME").astype(str).str.strip()
+    # filtra só tickers válidos
+    df = df[df["ticker_b3"].apply(lambda v: bool(_TICKER_RE.match(v)))].copy()
 
-    out = df[["ticker_b3", "SETOR", "SUBSETOR", "SEGMENTO", "nome_empresa"]].copy()
-    out = out.dropna(subset=["ticker_b3"])
-    out = out.drop_duplicates(subset=["ticker_b3"])
+    # nome empresa: prefere EMISSOR, senão tenta achar alguma coluna "NOME"
+    if "EMISSOR" in df.columns:
+        nome = df["EMISSOR"]
+    else:
+        nome = pd.Series([None] * len(df), index=df.index)
+
+    df["nome_empresa"] = nome.astype(str).str.strip()
+
+    # fill-down de hierarquia (setor/subsetor/segmento costumam vir em bloco)
+    df["SETOR"] = df["SETOR"].ffill()
+    df["SUBSETOR"] = df["SUBSETOR"].ffill()
+    df["SEGMENTO"] = df["SEGMENTO"].ffill()
+
+    # seleciona saída
+    out = df[["ticker_b3", "nome_empresa", "SETOR", "SUBSETOR", "SEGMENTO"]].copy()
+    out["ticker_b3"] = out["ticker_b3"].astype(str).str.strip().str.upper()
+    out = out.dropna(subset=["ticker_b3"]).drop_duplicates(subset=["ticker_b3"])
+
     return out
 
 
 def _load_cvm_to_ticker(path: Path) -> pd.DataFrame:
+    """
+    Mapa CVM -> Ticker (para alinhar ticker oficial com ticker_base).
+    Mantém a lógica estilo algoritmo_2: ticker_base = ticker sem o dígito final.
+    """
     df = pd.read_csv(path, sep=",", encoding="utf-8")
-    cols = {c.lower(): c for c in df.columns}
-    if "ticker" not in cols:
-        raise ValueError("cvm_to_ticker.csv precisa ter coluna Ticker/ticker.")
+    df.columns = [str(c).strip() for c in df.columns]
 
-    df = df.rename(columns={cols["ticker"]: "ticker"})
+    # aceita variações
+    cols = {c.lower(): c for c in df.columns}
+    if "ticker" not in cols and "Ticker" not in df.columns:
+        raise ValueError(f"{path.as_posix()} precisa ter coluna Ticker/ticker.")
+
+    ticker_col = cols.get("ticker") or "Ticker"
+    df = df.rename(columns={ticker_col: "ticker"})
+
     df["ticker"] = df["ticker"].astype(str).str.strip().str.upper()
     df = df.dropna(subset=["ticker"]).drop_duplicates(subset=["ticker"])
-    df["ticker_base"] = df["ticker"].str.replace(r"\d$", "", regex=True)
+
+    df["ticker_base"] = df["ticker"].str.replace(r"\d$", "", regex=True).str.strip().str.upper()
+    df = df.dropna(subset=["ticker_base"])
+    df = df[df["ticker_base"] != ""]
+
     return df[["ticker", "ticker_base"]].drop_duplicates()
 
 
@@ -193,7 +264,7 @@ def _upsert(engine: Engine, df: pd.DataFrame, batch: int = 5000) -> None:
     rows = df[["ticker", "SETOR", "SUBSETOR", "SEGMENTO", "nome_empresa"]].to_dict("records")
     with engine.begin() as conn:
         for i in range(0, len(rows), batch):
-            conn.execute(text(sql), rows[i:i + batch])
+            conn.execute(text(sql), rows[i : i + batch])
 
 
 def run(
@@ -207,32 +278,30 @@ def run(
     settings = get_settings()
     map_path = Path(settings.cvm_to_ticker_path)
     if not map_path.exists():
-        raise FileNotFoundError(f"Não encontrei {map_path}. Coloque o csv no repositório (ex.: data/cvm_to_ticker.csv).")
+        raise FileNotFoundError(
+            f"Não encontrei {map_path}. Coloque o csv no GitHub (ex.: data/cvm_to_ticker.csv)."
+        )
 
-    if progress_cb:
-        progress_cb("SETORES: baixando classificação setorial da B3...")
-
+    # 1) baixa e parseia B3
     zip_bytes = _download_b3_excel_zip(timeout_sec=timeout_sec)
     b3 = _parse_b3_classificacao(zip_bytes)
 
-    if progress_cb:
-        progress_cb("SETORES: carregando cvm_to_ticker...")
-
+    # 2) carrega map CVM->ticker (para ajustar ticker final, se desejar)
     cvm_map = _load_cvm_to_ticker(map_path)
 
-    # ticker_base (B3) = ticker sem o dígito final
-    b3["ticker_base"] = b3["ticker_b3"].str.replace(r"\d$", "", regex=True)
-
+    # 3) merge por ticker_base (ticker sem o dígito final)
+    b3["ticker_base"] = b3["ticker_b3"].str.replace(r"\d$", "", regex=True).str.strip().str.upper()
     merged = b3.merge(cvm_map, on="ticker_base", how="left")
+
+    # 4) ticker final: se o mapa tiver ticker completo, usa; senão usa o ticker_b3
     merged["ticker"] = merged["ticker"].fillna(merged["ticker_b3"])
     merged["ticker"] = merged["ticker"].astype(str).str.strip().str.upper()
 
     merged = merged.dropna(subset=["ticker"]).drop_duplicates(subset=["ticker"])
 
-    if progress_cb:
-        progress_cb(f"SETORES: upsert de {len(merged):,} linhas...".replace(",", "."))
+    out = merged[["ticker", "SETOR", "SUBSETOR", "SEGMENTO", "nome_empresa"]].copy()
 
-    _upsert(engine, merged[["ticker", "SETOR", "SUBSETOR", "SEGMENTO", "nome_empresa"]])
+    _upsert(engine, out)
 
     if progress_cb:
         progress_cb("SETORES: concluído.")
