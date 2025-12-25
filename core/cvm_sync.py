@@ -53,9 +53,6 @@ def _insert_sync_log(
 
 
 def get_sync_status() -> Dict[str, Any]:
-    """
-    Retorna o último status de sincronização para a tela de Configurações.
-    """
     engine = get_engine()
     _ensure_sync_log(engine)
 
@@ -106,16 +103,6 @@ def apply_update(
     quarters_per_run: int = 1,
     progress_cb: Optional[Callable[[float, str], None]] = None,
 ) -> None:
-    """
-    Atualiza TODAS as tabelas necessárias do app.
-
-    - DFP (anual)    -> cvm.cvm_dfp_ingest.run
-    - ITR (tri)      -> cvm.cvm_tri_ingest.run
-    - Setores        -> cvm.setores_ingest.run (agora via metadados.db)
-    - Macro (BCB)    -> cvm.macro_bcb_ingest.run
-    - Metrics        -> cvm.finance_metrics_builder.run
-    - Score          -> cvm.fundamental_scoring.run
-    """
     if end_year is None:
         end_year = dt.datetime.now().year
 
@@ -131,132 +118,83 @@ def apply_update(
     remote_latest_year: Optional[int] = int(end_year)
 
     try:
-        # ----------------- START -----------------
         _p(2, "Iniciando sincronização…")
         logs.append("start")
 
-        # ----------------- DFP -----------------
+        # -------- DFP --------
         _p(10, "DFP (anual): executando…")
         logs.append("dfp:start")
-        try:
-            import cvm.cvm_dfp_ingest as cvm_dfp_ingest
+        import cvm.cvm_dfp_ingest as cvm_dfp_ingest
 
-            # não repassar progress_cb para não “poluir” a UI
-            cvm_dfp_ingest.run(
-                engine,
-                progress_cb=None,
-                start_year=int(start_year),
-                end_year=int(end_year),
-                years_per_run=int(years_per_run),
-            )
+        cvm_dfp_ingest.run(
+            engine,
+            progress_cb=lambda s: logs.append(f"DFP:{s}"),
+            start_year=int(start_year),
+            end_year=int(end_year),
+            years_per_run=int(years_per_run),
+        )
+        _p(25, "DFP (anual): concluído.")
+        logs.append("dfp:ok")
 
-            logs.append("dfp:ok")
-            _p(25, "DFP (anual): concluído.")
-        except Exception as e:
-            logs.append(f"dfp:error:{e}")
-            raise
-
-        # ----------------- ITR -----------------
+        # -------- ITR --------
         _p(30, "ITR (trimestral): executando…")
         logs.append("itr:start")
-        try:
-            import cvm.cvm_tri_ingest as cvm_tri_ingest
+        import cvm.cvm_tri_ingest as cvm_tri_ingest
 
-            # não repassar progress_cb para não “poluir” a UI
-            cvm_tri_ingest.run(
-                engine,
-                progress_cb=None,
-                start_year=int(start_year),
-                end_year=int(end_year),
-                quarters_per_run=int(quarters_per_run),
-            )
+        cvm_tri_ingest.run(
+            engine,
+            progress_cb=lambda s: logs.append(f"ITR:{s}"),
+            start_year=int(start_year),
+            end_year=int(end_year),
+            quarters_per_run=int(quarters_per_run),
+        )
+        _p(45, "ITR (trimestral): concluído.")
+        logs.append("itr:ok")
 
-            logs.append("itr:ok")
-            _p(45, "ITR (trimestral): concluído.")
-        except Exception as e:
-            logs.append(f"itr:error:{e}")
-            raise
-
-        # ----------------- SETORES -----------------
+        # -------- Setores --------
         _p(50, "Setores: executando…")
         logs.append("setores:start")
-        try:
-            import cvm.setores_ingest as setores_ingest
+        import cvm.setores_ingest as setores_ingest
 
-            setores_ingest.run(
-                engine,
-                progress_cb=None,  # manter UI limpa
-            )
+        setores_ingest.run(engine, progress_cb=lambda s: logs.append(f"SETORES:{s}"))
+        _p(60, "Setores: concluído.")
+        logs.append("setores:ok")
 
-            logs.append("setores:ok")
-            _p(60, "Setores: concluído.")
-        except ModuleNotFoundError:
-            logs.append("setores:skip (módulo cvm.setores_ingest não encontrado)")
-            _p(60, "Setores: ignorado (módulo não encontrado).")
-        except Exception as e:
-            logs.append(f"setores:error:{e}")
-            raise
-
-        # ----------------- MACRO -----------------
+        # -------- Macro --------
         _p(65, "Macro (BCB): executando…")
         logs.append("macro:start")
-        try:
-            import cvm.macro_bcb_ingest as macro_bcb_ingest
+        import cvm.macro_bcb_ingest as macro_bcb_ingest
 
-            macro_bcb_ingest.run(engine, progress_cb=None)
+        macro_bcb_ingest.run(engine, progress_cb=lambda s: logs.append(f"MACRO:{s}"))
+        _p(75, "Macro (BCB): concluído.")
+        logs.append("macro:ok")
 
-            logs.append("macro:ok")
-            _p(75, "Macro (BCB): concluído.")
-        except Exception as e:
-            logs.append(f"macro:error:{e}")
-            raise
-
-        # ----------------- METRICS -----------------
-        _p(80, "Métricas: executando…")
+        # -------- Métricas --------
+        _p(80, "Métricas: recalculando…")
         logs.append("metrics:start")
-        try:
-            import cvm.finance_metrics_builder as finance_metrics_builder
+        import cvm.finance_metrics_builder as finance_metrics_builder
 
-            finance_metrics_builder.run(engine, progress_cb=None)
+        finance_metrics_builder.run(engine, progress_cb=lambda s: logs.append(f"METRICS:{s}"))
+        _p(90, "Métricas: concluído.")
+        logs.append("metrics:ok")
 
-            logs.append("metrics:ok")
-            _p(90, "Métricas: concluído.")
-        except Exception as e:
-            logs.append(f"metrics:error:{e}")
-            raise
-
-        # ----------------- SCORE -----------------
-        _p(92, "Fundamental score: executando…")
+        # -------- Score --------
+        _p(92, "Fundamental score: recalculando…")
         logs.append("score:start")
-        try:
-            import cvm.fundamental_scoring as fundamental_scoring
+        import cvm.fundamental_scoring as fundamental_scoring
 
-            fundamental_scoring.run(engine, progress_cb=None)
-
-            logs.append("score:ok")
-            _p(98, "Fundamental score: concluído.")
-        except Exception as e:
-            logs.append(f"score:error:{e}")
-            raise
-
-        # ----------------- last_year (melhor esforço) -----------------
-        try:
-            with engine.connect() as conn:
-                row = conn.execute(
-                    text("select max(extract(year from data))::int as y from cvm.demonstracoes_financeiras_dfp")
-                ).mappings().first()
-            if row and row.get("y"):
-                last_year = int(row["y"])
-        except Exception:
-            pass
+        fundamental_scoring.run(engine, progress_cb=lambda s: logs.append(f"SCORE:{s}"))
+        _p(99, "Fundamental score: concluído.")
+        logs.append("score:ok")
 
         _p(100, "Concluído.")
+
         _insert_sync_log(
             engine,
             status="success",
             last_year=last_year,
             remote_latest_year=remote_latest_year,
-            message=" | ".join(logs[-120:]),
+            message=" | ".join(logs[-80:]),
         )
 
     except Exception as e:
@@ -265,6 +203,6 @@ def apply_update(
             status="error",
             last_year=last_year,
             remote_latest_year=remote_latest_year,
-            message=f"{e} | logs: " + " | ".join(logs[-120:]),
+            message=f"{e} | logs: " + " | ".join(logs[-80:]),
         )
         raise
