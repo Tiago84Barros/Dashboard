@@ -52,13 +52,6 @@ def _get_ticker_from_state() -> str | None:
 def render() -> None:
     st.header("Análise Básica de Ações")
 
-    # Botão opcional para atualizar (sem sidebar local)
-    col1, col2 = st.columns([1, 6])
-    with col1:
-        if st.button("Atualizar dados", key="basic_refresh"):
-            st.cache_data.clear()
-            st.rerun()
-
     ticker = _get_ticker_from_state()
     setores_df = st.session_state.get("setores_df")
 
