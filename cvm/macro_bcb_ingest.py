@@ -6,136 +6,211 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-
 SCHEMA = "cvm"
 RAW_TABLE = "macro_bcb"
+
+WIDE_TABLE = "info_economica"
+MONTHLY_TABLE = "info_economica_mensal"
+
 RAW_FULL = f"{SCHEMA}.{RAW_TABLE}"
+WIDE_FULL = f"{SCHEMA}.{WIDE_TABLE}"
+MONTHLY_FULL = f"{SCHEMA}.{MONTHLY_TABLE}"
 
-WIDE_ANUAL = f"{SCHEMA}.info_economica"
-WIDE_MENSAL = f"{SCHEMA}.info_economica_mensal"
-
-
-SERIES = {
-    "SELIC": "selic",
+# Mapeia NOMES REAIS do RAW (conforme macro_catalog.py) -> colunas finais
+# selic: preferimos SELIC_EFETIVA; se não houver, usamos SELIC_META como fallback
+SERIES_TO_COL = {
     "IPCA_MENSAL": "ipca",
-    "CAMBIO": "cambio",
     "ICC": "icc",
+    "PIB": "pib",
+    "BALANCA_COMERCIAL": "balanca_comercial",
+    "CAMBIO_PTX": "cambio",
+    "SELIC_EFETIVA": "selic_efetiva",
+    "SELIC_META": "selic_meta",
 }
 
 
-# ─────────────────────────────────────────────────────────────
-# Criação das tabelas
-# ─────────────────────────────────────────────────────────────
-
 def _ensure_tables(engine: Engine) -> None:
+    ddl_schema = f"create schema if not exists {SCHEMA};"
+
+    ddl_wide = f"""
+    create table if not exists {WIDE_FULL} (
+      data date primary key,
+      selic double precision,
+      cambio double precision,
+      ipca double precision,
+      icc double precision,
+      pib double precision,
+      balanca_comercial double precision,
+      fetched_at timestamptz default now()
+    );
+    """
+
+    ddl_monthly = f"""
+    create table if not exists {MONTHLY_FULL} (
+      data date primary key,
+      selic double precision,
+      ipca double precision,
+      cambio double precision,
+      icc double precision,
+      pib double precision,
+      balanca_comercial double precision,
+      fetched_at timestamptz default now()
+    );
+    """
+
     with engine.begin() as conn:
-        conn.execute(text(f"create schema if not exists {SCHEMA};"))
+        conn.execute(text(ddl_schema))
+        conn.execute(text(ddl_wide))
+        conn.execute(text(ddl_monthly))
 
-        conn.execute(text(f"""
-        create table if not exists {WIDE_MENSAL} (
-            data date primary key,
-            selic double precision,
-            ipca double precision,
-            cambio double precision,
-            icc double precision,
-            fetched_at timestamptz default now()
-        );
-        """))
-
-
-# ─────────────────────────────────────────────────────────────
-# Load RAW
-# ─────────────────────────────────────────────────────────────
 
 def _load_raw(engine: Engine) -> pd.DataFrame:
-    q = text(f"""
+    series_list = tuple(SERIES_TO_COL.keys())
+    q = text(
+        f"""
         select
-            data::date as data,
-            series_name::text,
-            valor::double precision
+          data::date as data,
+          series_name::text as series_name,
+          valor::double precision as valor
         from {RAW_FULL}
-        where series_name in :series
-    """)
-    with engine.connect() as conn:
-        return pd.read_sql(q, conn, params={"series": tuple(SERIES.keys())})
-
-
-# ─────────────────────────────────────────────────────────────
-# Transformação mensal
-# ─────────────────────────────────────────────────────────────
-
-def _to_mensal(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return df
-
-    df = df.copy()
-    df["col"] = df["series_name"].map(SERIES)
-    df = df.dropna(subset=["data", "col"])
-
-    df["data"] = pd.to_datetime(df["data"])
-    df["periodo"] = df["data"].dt.to_period("M")
-
-    mensal = (
-        df.sort_values("data")
-          .groupby(["periodo", "col"])["valor"]
-          .last()
-          .unstack()
-          .reset_index()
+        where series_name = any(:series_list)
+        """
     )
-
-    mensal["data"] = mensal["periodo"].dt.to_timestamp("M").dt.date
-    mensal = mensal.drop(columns=["periodo"])
-
-    cols = ["data"] + list(SERIES.values())
-    for c in SERIES.values():
-        if c not in mensal.columns:
-            mensal[c] = None
-
-    return mensal[cols].sort_values("data").reset_index(drop=True)
+    with engine.connect() as conn:
+        df = pd.read_sql(q, conn, params={"series_list": list(series_list)})
+    return df
 
 
-# ─────────────────────────────────────────────────────────────
-# UPSERT
-# ─────────────────────────────────────────────────────────────
+def _to_wide_daily(df_raw: pd.DataFrame) -> pd.DataFrame:
+    if df_raw.empty:
+        return df_raw
 
-def _upsert_mensal(engine: Engine, df: pd.DataFrame) -> None:
+    df = df_raw.copy()
+    df["col"] = df["series_name"].map(SERIES_TO_COL)
+    df = df.dropna(subset=["col", "data"])
+
+    # remove duplicidade por (data, col)
+    df = df.sort_values(["data"]).drop_duplicates(subset=["data", "col"], keep="last")
+
+    wide = df.pivot(index="data", columns="col", values="valor").reset_index()
+
+    # selic preferida
+    # se selic_efetiva existir, usa; senão usa selic_meta
+    if "selic_efetiva" in wide.columns and "selic_meta" in wide.columns:
+        wide["selic"] = wide["selic_efetiva"].combine_first(wide["selic_meta"])
+    elif "selic_efetiva" in wide.columns:
+        wide["selic"] = wide["selic_efetiva"]
+    elif "selic_meta" in wide.columns:
+        wide["selic"] = wide["selic_meta"]
+    else:
+        wide["selic"] = None
+
+    # cambio
+    if "cambio" not in wide.columns:
+        wide["cambio"] = None
+
+    # colunas macro
+    for c in ["ipca", "icc", "pib", "balanca_comercial"]:
+        if c not in wide.columns:
+            wide[c] = None
+
+    wide = wide[["data", "selic", "cambio", "ipca", "icc", "pib", "balanca_comercial"]]
+    wide = wide.sort_values("data").reset_index(drop=True)
+    return wide
+
+
+def _to_monthly(wide_daily: pd.DataFrame) -> pd.DataFrame:
+    if wide_daily.empty:
+        return wide_daily
+
+    df = wide_daily.copy()
+    df["data"] = pd.to_datetime(df["data"])
+    df = df.set_index("data").sort_index()
+
+    # consolida para mês (último dia do mês)
+    # daily -> last; monthly já estará posicionada em datas do mês; last resolve também
+    monthly = df.resample("M").last()
+
+    # PIB trimestral: tende a cair em um mês específico do trimestre.
+    # Opcional: preencher meses seguintes até próximo valor trimestral (forward-fill).
+    # Isso ajuda gráficos e comparações mensais não ficarem "quebrados".
+    monthly["pib"] = monthly["pib"].ffill()
+
+    monthly = monthly.reset_index()
+    monthly["data"] = monthly["data"].dt.date
+
+    cols = ["data", "selic", "ipca", "cambio", "icc", "pib", "balanca_comercial"]
+    for c in cols:
+        if c not in monthly.columns:
+            monthly[c] = None
+
+    return monthly[cols].sort_values("data").reset_index(drop=True)
+
+
+def _upsert(engine: Engine, table_full: str, df: pd.DataFrame, batch: int = 2000) -> None:
     if df.empty:
         return
 
     sql = f"""
-    insert into {WIDE_MENSAL} (data, selic, ipca, cambio, icc, fetched_at)
-    values (:data, :selic, :ipca, :cambio, :icc, now())
+    insert into {table_full} (
+      data, selic, cambio, ipca, icc, pib, balanca_comercial, fetched_at
+    )
+    values (
+      :data, :selic, :cambio, :ipca, :icc, :pib, :balanca_comercial, now()
+    )
     on conflict (data) do update set
-        selic = excluded.selic,
-        ipca = excluded.ipca,
-        cambio = excluded.cambio,
-        icc = excluded.icc,
-        fetched_at = now();
+      selic = excluded.selic,
+      cambio = excluded.cambio,
+      ipca = excluded.ipca,
+      icc = excluded.icc,
+      pib = excluded.pib,
+      balanca_comercial = excluded.balanca_comercial,
+      fetched_at = now();
     """
 
+    rows = df.to_dict("records")
     with engine.begin() as conn:
-        conn.execute(text(sql), df.to_dict("records"))
+        for i in range(0, len(rows), batch):
+            conn.execute(text(sql), rows[i : i + batch])
 
 
-# ─────────────────────────────────────────────────────────────
-# Orquestração
-# ─────────────────────────────────────────────────────────────
-
-def run(engine: Engine, *, progress_cb: Optional[Callable[[str], None]] = None) -> None:
+def build_macro_tables(
+    engine: Engine,
+    *,
+    progress_cb: Optional[Callable[[str], None]] = None,
+) -> None:
     _ensure_tables(engine)
 
     if progress_cb:
-        progress_cb("MACRO: carregando dados brutos (BCB)...")
+        progress_cb("MACRO WIDE: carregando RAW (cvm.macro_bcb)...")
 
     df_raw = _load_raw(engine)
     if df_raw.empty:
-        raise RuntimeError("Tabela cvm.macro_bcb vazia ou incompleta.")
+        raise RuntimeError("MACRO WIDE: cvm.macro_bcb não contém as séries necessárias do catálogo.")
 
     if progress_cb:
-        progress_cb("MACRO: gerando info_economica_mensal...")
+        progress_cb(f"MACRO WIDE: RAW carregado ({len(df_raw)} linhas). Gerando info_economica...")
 
-    mensal = _to_mensal(df_raw)
-    _upsert_mensal(engine, mensal)
+    wide_daily = _to_wide_daily(df_raw)
 
     if progress_cb:
-        progress_cb(f"MACRO: info_economica_mensal atualizada ({len(mensal)} linhas).")
+        progress_cb(f"MACRO WIDE: upsert em {WIDE_FULL} ({len(wide_daily)} linhas)...")
+
+    _upsert(engine, WIDE_FULL, wide_daily)
+
+    if progress_cb:
+        progress_cb("MACRO WIDE: gerando info_economica_mensal (resample mês)...")
+
+    wide_monthly = _to_monthly(wide_daily)
+
+    if progress_cb:
+        progress_cb(f"MACRO WIDE: upsert em {MONTHLY_FULL} ({len(wide_monthly)} linhas)...")
+
+    _upsert(engine, MONTHLY_FULL, wide_monthly)
+
+    if progress_cb:
+        progress_cb("MACRO WIDE: tabelas macro atualizadas com sucesso.")
+
+
+def run(engine: Engine, *, progress_cb: Optional[Callable[[str], None]] = None) -> None:
+    build_macro_tables(engine, progress_cb=progress_cb)
