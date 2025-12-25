@@ -45,5 +45,8 @@ def ingest_macro_bcb():
             method="multi"
         )
 
+def run(engine):
+    ingest_macro_bcb(engine)
+
 if __name__ == "__main__":
     ingest_macro_bcb()
