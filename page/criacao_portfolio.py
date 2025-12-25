@@ -16,6 +16,7 @@ from core.db.loader import (
     load_demonstracoes_financeiras,
     load_multiplos,
     load_macro_summary,
+    load_macro_mensal,
 )
 from analytics.helpers import (
     obter_setor_da_empresa,
@@ -89,7 +90,7 @@ def _safe_years_from_dre(dre: pd.DataFrame) -> int:
 # ─────────────────────────────────────────────────────────────
 
 def _safe_macro(engine) -> Optional[pd.DataFrame]:
-    dm = load_macro_summary(engine=engine)
+    dm = load_macro_mensal(engine)
 
     if isinstance(dm, dict):
         dm = pd.DataFrame([dm])
