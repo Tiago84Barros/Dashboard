@@ -1,0 +1,41 @@
+from __future__ import annotations
+
+import pandas as pd
+from sqlalchemy import text
+from sqlalchemy.engine import Engine
+
+
+def load_setores(engine: Engine, schema: str = "cvm") -> pd.DataFrame:
+    """
+    Carrega setores com compatibilidade:
+    - Prefere colunas novas: setor/subsetor/segmento
+    - Faz fallback para colunas legadas: "SETOR"/"SUBSETOR"/"SEGMENTO"
+    """
+    q_new = text(f"""
+        select
+          ticker,
+          setor,
+          subsetor,
+          segmento,
+          nome_empresa
+        from {schema}.setores
+        order by setor nulls last, ticker
+    """)
+
+    q_old = text(f"""
+        select
+          ticker,
+          "SETOR"    as setor,
+          "SUBSETOR" as subsetor,
+          "SEGMENTO" as segmento,
+          nome_empresa
+        from {schema}.setores
+        order by "SETOR" nulls last, ticker
+    """)
+
+    with engine.connect() as conn:
+        try:
+            return pd.read_sql(q_new, conn)
+        except Exception:
+            # se não existir coluna nova (ou query falhar por schema antigo)
+            return pd.read_sql(q_old, conn)
