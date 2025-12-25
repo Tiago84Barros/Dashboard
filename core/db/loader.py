@@ -13,8 +13,27 @@ from sqlalchemy.engine import Engine
 def load_setores(engine: Engine) -> pd.DataFrame:
     """
     Carrega tabela cvm.setores.
+
+    Compatibilidade de schema:
+    - Preferência: colunas novas (setor/subsetor/segmento)
+    - Fallback: colunas legadas com aspas ("SETOR"/"SUBSETOR"/"SEGMENTO")
+
+    Para manter compatibilidade com as páginas atuais, o DataFrame retornado
+    SEMPRE expõe as colunas em CAIXA ALTA: SETOR/SUBSETOR/SEGMENTO.
     """
-    sql = """
+
+    sql_new = """
+        SELECT
+            ticker,
+            setor    AS "SETOR",
+            subsetor AS "SUBSETOR",
+            segmento AS "SEGMENTO",
+            nome_empresa
+        FROM cvm.setores
+        ORDER BY setor NULLS LAST, ticker
+    """
+
+    sql_old = """
         SELECT
             ticker,
             "SETOR",
@@ -22,10 +41,19 @@ def load_setores(engine: Engine) -> pd.DataFrame:
             "SEGMENTO",
             nome_empresa
         FROM cvm.setores
-        ORDER BY "SETOR", ticker
+        ORDER BY "SETOR" NULLS LAST, ticker
     """
+
     with engine.connect() as conn:
-        return pd.read_sql(text(sql), conn)
+        try:
+            df = pd.read_sql(text(sql_new), conn)
+        except Exception:
+            df = pd.read_sql(text(sql_old), conn)
+
+    if "ticker" in df.columns:
+        df["ticker"] = df["ticker"].astype(str).str.upper().str.strip()
+
+    return df
 
 
 # =========================================================
