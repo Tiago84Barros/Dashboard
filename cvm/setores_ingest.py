@@ -1,15 +1,16 @@
-# cvm/setores_ingest.py
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from typing import Callable, Optional
 
 import pandas as pd
-import sqlite3
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from core.config.settings import get_settings
+
+# Caminho fixo do banco versionado no repositório
+METADADOS_DB_PATH = Path("data/metadados.db")
 
 
 def _ensure_table(engine: Engine) -> None:
@@ -27,24 +28,29 @@ def _ensure_table(engine: Engine) -> None:
         conn.execute(text(ddl))
 
 
-def _load_from_metadados(db_path: Path) -> pd.DataFrame:
-    if not db_path.exists():
-        raise FileNotFoundError(f"metadados.db não encontrado em {db_path}")
+def _load_setores_from_metadados() -> pd.DataFrame:
+    if not METADADOS_DB_PATH.exists():
+        raise FileNotFoundError(
+            f"Banco não encontrado em {METADADOS_DB_PATH.resolve()}"
+        )
 
-    with sqlite3.connect(db_path) as conn:
+    conn = sqlite3.connect(METADADOS_DB_PATH)
+    try:
         df = pd.read_sql(
             """
-            select
-                upper(trim(ticker)) as ticker,
-                setor as "SETOR",
-                subsetor as "SUBSETOR",
-                segmento as "SEGMENTO",
+            SELECT
+                UPPER(TRIM(ticker))      AS ticker,
+                SETOR,
+                SUBSETOR,
+                SEGMENTO,
                 nome_empresa
-            from setores
-            where ticker is not null
+            FROM setores
+            WHERE ticker IS NOT NULL
             """,
             conn,
         )
+    finally:
+        conn.close()
 
     df = df.dropna(subset=["ticker"])
     df = df.drop_duplicates(subset=["ticker"])
@@ -67,7 +73,6 @@ def _upsert(engine: Engine, df: pd.DataFrame, batch: int = 5000) -> None:
     """
 
     rows = df.to_dict("records")
-
     with engine.begin() as conn:
         for i in range(0, len(rows), batch):
             conn.execute(text(sql), rows[i : i + batch])
@@ -80,16 +85,16 @@ def run(
 ) -> None:
     _ensure_table(engine)
 
-    settings = get_settings()
-    metadados_path = Path(settings.metadados_db_path)
+    if progress_cb:
+        progress_cb("SETORES: carregando dados do metadados.db...")
+
+    df = _load_setores_from_metadados()
+
+    if df.empty:
+        raise RuntimeError("Tabela setores no metadados.db está vazia.")
 
     if progress_cb:
-        progress_cb("SETORES: carregando dados de metadados.db...")
-
-    df = _load_from_metadados(metadados_path)
-
-    if progress_cb:
-        progress_cb(f"SETORES: {len(df):,} registros encontrados.".replace(",", "."))
+        progress_cb(f"SETORES: upsert de {len(df):,} registros...".replace(",", "."))
 
     _upsert(engine, df)
 
