@@ -2,18 +2,15 @@ from __future__ import annotations
 
 import os
 import sqlite3
-import requests
 from pathlib import Path
 from typing import Callable, Optional
 
 import pandas as pd
+import requests
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-
-# ============================================================
-# CONFIGURAÇÕES
-# ============================================================
+# ───────────────────────── Config ─────────────────────────
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 METADADOS_DB_PATH = PROJECT_ROOT / "data" / "metadados.db"
@@ -21,14 +18,18 @@ METADADOS_DB_PATH = PROJECT_ROOT / "data" / "metadados.db"
 DADOS_MERCADO_URL = "https://api.dadosdemercado.com.br/v1/companies"
 DADOS_MERCADO_TOKEN = os.getenv("DADOS_MERCADO_TOKEN")  # opcional
 
+SCHEMA = "cvm"
+TABLE = "setores"
+FULL_TABLE = f"{SCHEMA}.{TABLE}"
 
-# ============================================================
-# UTILIDADES
-# ============================================================
 
-def _ensure_table(engine: Engine) -> None:
-    ddl = """
-    create table if not exists public.setores (
+# ───────────────────────── DDL ─────────────────────────
+
+def _ensure_schema_and_table(engine: Engine) -> None:
+    ddl_schema = f"create schema if not exists {SCHEMA};"
+
+    ddl_table = f"""
+    create table if not exists {FULL_TABLE} (
         ticker text primary key,
         setor text,
         subsetor text,
@@ -38,20 +39,18 @@ def _ensure_table(engine: Engine) -> None:
         fetched_at timestamptz default now()
     );
     """
+
     with engine.begin() as conn:
-        conn.execute(text(ddl))
+        conn.execute(text(ddl_schema))
+        conn.execute(text(ddl_table))
 
 
 def _count_remote(engine: Engine) -> int:
     with engine.connect() as conn:
-        return int(
-            conn.execute(text("select count(*) from public.setores")).scalar() or 0
-        )
+        return int(conn.execute(text(f"select count(*) from {FULL_TABLE}")).scalar() or 0)
 
 
-# ============================================================
-# FONTE 1 — API DADOS DE MERCADO
-# ============================================================
+# ───────────────────────── Fonte 1: API ─────────────────────────
 
 def _load_from_api() -> pd.DataFrame:
     headers = {}
@@ -62,12 +61,12 @@ def _load_from_api() -> pd.DataFrame:
     resp.raise_for_status()
 
     data = resp.json()
-
     df = pd.DataFrame(data)
 
     if df.empty:
         return df
 
+    # Normaliza nomes
     df = df.rename(
         columns={
             "ticker": "ticker",
@@ -78,17 +77,22 @@ def _load_from_api() -> pd.DataFrame:
         }
     )
 
-    df["ticker"] = df["ticker"].str.upper().str.strip()
+    if "ticker" not in df.columns:
+        return pd.DataFrame()
+
+    df["ticker"] = df["ticker"].astype(str).str.upper().str.strip()
     df["source"] = "dadosdemercado"
 
-    return df[
-        ["ticker", "setor", "subsetor", "segmento", "nome_empresa", "source"]
-    ].dropna(subset=["ticker"])
+    cols = ["ticker", "setor", "subsetor", "segmento", "nome_empresa", "source"]
+    for c in cols:
+        if c not in df.columns:
+            df[c] = None
+
+    df = df[cols].dropna(subset=["ticker"]).drop_duplicates(subset=["ticker"])
+    return df
 
 
-# ============================================================
-# FONTE 2 — SQLITE (FALLBACK)
-# ============================================================
+# ───────────────────────── Fonte 2: SQLite (fallback) ─────────────────────────
 
 def _load_from_sqlite() -> pd.DataFrame:
     if not METADADOS_DB_PATH.exists():
@@ -115,17 +119,26 @@ def _load_from_sqlite() -> pd.DataFrame:
     if df.empty:
         return df
 
+    df["ticker"] = df["ticker"].astype(str).str.upper().str.strip()
     df["source"] = "metadados_sqlite"
-    return df.drop_duplicates(subset=["ticker"])
+    df = df.dropna(subset=["ticker"]).drop_duplicates(subset=["ticker"])
+
+    # garante colunas
+    for c in ["setor", "subsetor", "segmento", "nome_empresa", "source"]:
+        if c not in df.columns:
+            df[c] = None
+
+    return df[["ticker", "setor", "subsetor", "segmento", "nome_empresa", "source"]]
 
 
-# ============================================================
-# UPSERT
-# ============================================================
+# ───────────────────────── Upsert ─────────────────────────
 
 def _upsert(engine: Engine, df: pd.DataFrame, batch: int = 2000) -> None:
-    sql = """
-    insert into public.setores
+    if df.empty:
+        return
+
+    sql = f"""
+    insert into {FULL_TABLE}
         (ticker, setor, subsetor, segmento, nome_empresa, source, fetched_at)
     values
         (:ticker, :setor, :subsetor, :segmento, :nome_empresa, :source, now())
@@ -144,52 +157,46 @@ def _upsert(engine: Engine, df: pd.DataFrame, batch: int = 2000) -> None:
             conn.execute(text(sql), rows[i : i + batch])
 
 
-# ============================================================
-# ENTRYPOINT
-# ============================================================
+# ───────────────────────── Entry point ─────────────────────────
 
 def run(
     engine: Engine,
     *,
     progress_cb: Optional[Callable[[str], None]] = None,
 ) -> None:
-    _ensure_table(engine)
+    _ensure_schema_and_table(engine)
 
     before = _count_remote(engine)
 
     if progress_cb:
         progress_cb("SETORES: carregando via API Dados de Mercado...")
 
+    df = pd.DataFrame()
     try:
         df = _load_from_api()
     except Exception as e:
         if progress_cb:
-            progress_cb(f"SETORES: falha na API ({e}), usando fallback local...")
-        df = pd.DataFrame()
+            progress_cb(f"SETORES: falha na API ({e}). Tentando fallback local...")
 
     if df.empty:
+        if progress_cb:
+            progress_cb("SETORES: carregando via metadados.db (fallback)...")
         df = _load_from_sqlite()
 
     if df.empty:
-        raise RuntimeError(
-            "SETORES: nenhuma fonte retornou dados (API e SQLite vazios)."
-        )
+        raise RuntimeError("SETORES: nenhuma fonte retornou dados (API e SQLite vazios).")
 
     if progress_cb:
-        progress_cb(f"SETORES: upsert de {len(df)} registros...")
+        progress_cb(f"SETORES: upsert de {len(df)} registros em {FULL_TABLE}...")
 
     _upsert(engine, df)
 
     after = _count_remote(engine)
-
     if after == 0:
         raise RuntimeError(
-            "SETORES: ingestão executada, mas Supabase permanece vazio. "
-            "Verifique a URL/engine do Supabase."
+            f"SETORES: ingestão executada, mas {FULL_TABLE} permanece vazia. "
+            "Verifique URL/engine do Supabase, permissões do schema cvm e RLS."
         )
 
     if progress_cb:
-        progress_cb(
-            f"SETORES: concluído — total {after} registros "
-            f"(delta +{after - before})."
-        )
+        progress_cb(f"SETORES: concluído — total {after} (delta +{after - before}).")
