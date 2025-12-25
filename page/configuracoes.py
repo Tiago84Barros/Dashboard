@@ -7,6 +7,8 @@ from zoneinfo import ZoneInfo  # Python 3.9+
 import streamlit as st
 
 from core.cvm_sync import apply_update, get_sync_status
+from ingest.macro_bcb_raw_ingest import run as run_macro_raw
+from macro_bcb_ingest import run as run_macro_wide
 
 
 
