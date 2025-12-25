@@ -157,7 +157,11 @@ def load_info_economica(engine: Engine) -> pd.DataFrame:
 # =========================================================
 
 def load_macro_mensal(engine: Engine) -> pd.DataFrame:
-    sql = "select * from cvm.info_economica_mensal order by data"
+    sql = """
+        select *
+        from cvm.info_economica_mensal
+        order by data
+    """
     with engine.connect() as conn:
         return pd.read_sql(text(sql), conn)
 
