@@ -1,146 +1,155 @@
-# cvm/macro_bcb_ingest.py
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass
-from typing import Callable, Optional, Dict
+from typing import Callable, Optional
 
 import pandas as pd
-import requests
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 
-# API pública SGS (BCB)
-# Ex: https://api.bcb.gov.br/dados/serie/bcdata.sgs.432/dados?formato=json
-SGS_URL = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.{code}/dados"
+SCHEMA = "cvm"
+RAW_TABLE = "macro_bcb"
+WIDE_TABLE = "info_economica"
+RAW_FULL = f"{SCHEMA}.{RAW_TABLE}"
+WIDE_FULL = f"{SCHEMA}.{WIDE_TABLE}"
 
 
-# Séries macro mais usadas (se alguma falhar, o job continua e registra)
-# Observação: códigos SGS podem variar conforme o indicador escolhido.
-# Se quiser trocar/expandir, edite este dicionário.
-DEFAULT_SERIES: Dict[str, int] = {
-    "SELIC_META_AA": 432,      # taxa Selic (meta) - série bem comum; se a sua não retornar, troque o código
-    "IPCA_MENSAL": 433,        # IPCA variação mensal - idem
-    "CAMBIO_USD_BRL": 1,       # câmbio comercial (pode variar); se falhar, troque o código
+# Mapeie aqui os nomes das séries do RAW -> colunas do WIDE
+# Ajuste os valores à esquerda exatamente como aparecem em series_name no seu cvm.macro_bcb
+SERIES_TO_COL = {
+    "SELIC": "selic",
+    "CAMBIO": "cambio",
+    "IPCA_MENSAL": "ipca",
+    "ICC": "icc",
+    "PIB": "pib",
+    "BALANCA_COMERCIAL": "balanca_comercial",
 }
 
 
-@dataclass(frozen=True)
-class MacroConfig:
-    start_date: dt.date
-    end_date: dt.date
-    timeout_sec: int = 60
-
-
-def _ensure_table(engine: Engine) -> None:
-    ddl = """
-    create schema if not exists cvm;
-
-    create table if not exists cvm.macro_bcb (
-        series_name text not null,
-        series_code integer not null,
-        data date not null,
-        valor double precision,
-        primary key (series_code, data)
+def _ensure_wide_table(engine: Engine) -> None:
+    ddl_schema = f"create schema if not exists {SCHEMA};"
+    ddl_table = f"""
+    create table if not exists {WIDE_FULL} (
+      data date primary key,
+      selic double precision,
+      cambio double precision,
+      ipca double precision,
+      icc double precision,
+      pib double precision,
+      balanca_comercial double precision,
+      fetched_at timestamptz default now()
     );
     """
     with engine.begin() as conn:
-        conn.execute(text(ddl))
+        conn.execute(text(ddl_schema))
+        conn.execute(text(ddl_table))
 
 
-def _fetch_sgs_series(code: int, cfg: MacroConfig) -> pd.DataFrame:
-    params = {
-        "formato": "json",
-        "dataInicial": cfg.start_date.strftime("%d/%m/%Y"),
-        "dataFinal": cfg.end_date.strftime("%d/%m/%Y"),
-    }
-    url = SGS_URL.format(code=code)
-
-    r = requests.get(url, params=params, timeout=cfg.timeout_sec)
-    if r.status_code != 200:
-        raise RuntimeError(f"BCB SGS HTTP {r.status_code} para série {code}. URL={r.url}")
-
-    data = r.json()
-    if not isinstance(data, list) or len(data) == 0:
-        return pd.DataFrame(columns=["data", "valor"])
-
-    df = pd.DataFrame(data)
-    # esperado: "data" (dd/mm/aaaa) e "valor" (string numérica)
-    if "data" not in df.columns or "valor" not in df.columns:
-        return pd.DataFrame(columns=["data", "valor"])
-
-    df["data"] = pd.to_datetime(df["data"], format="%d/%m/%Y", errors="coerce").dt.date
-    df["valor"] = pd.to_numeric(df["valor"].astype(str).str.replace(",", ".", regex=False), errors="coerce")
-    df = df.dropna(subset=["data"])
-    df = df.sort_values("data").drop_duplicates(subset=["data"], keep="last")
-
-    return df[["data", "valor"]]
+def _load_raw(engine: Engine) -> pd.DataFrame:
+    # Puxa só séries necessárias para o WIDE.
+    series_list = tuple(SERIES_TO_COL.keys())
+    q = text(
+        f"""
+        select
+          data::date as data,
+          series_name::text as series_name,
+          valor::double precision as valor
+        from {RAW_FULL}
+        where series_name in :series_list
+        """
+    )
+    with engine.connect() as conn:
+        df = pd.read_sql(q, conn, params={"series_list": series_list})
+    return df
 
 
-def _upsert(engine: Engine, df: pd.DataFrame, batch_size: int = 5000) -> None:
-    if df.empty:
+def _to_wide(df_raw: pd.DataFrame) -> pd.DataFrame:
+    if df_raw.empty:
+        return df_raw
+
+    df = df_raw.copy()
+    df["col"] = df["series_name"].map(SERIES_TO_COL)
+    df = df.dropna(subset=["col", "data"])
+
+    # Para evitar duplicidades (ex.: série diária vs mensal), você pode precisar
+    # escolher última observação do mês/ano. Aqui adotamos "último valor por data".
+    df = df.sort_values(["data"]).drop_duplicates(subset=["data", "col"], keep="last")
+
+    wide = df.pivot(index="data", columns="col", values="valor").reset_index()
+
+    # Garante colunas existentes
+    for c in SERIES_TO_COL.values():
+        if c not in wide.columns:
+            wide[c] = None
+
+    # Ordena
+    cols = ["data"] + list(SERIES_TO_COL.values())
+    wide = wide[cols].sort_values("data").reset_index(drop=True)
+
+    return wide
+
+
+def _upsert_wide(engine: Engine, wide: pd.DataFrame, batch: int = 2000) -> None:
+    if wide.empty:
         return
 
-    sql = """
-    insert into cvm.macro_bcb (series_name, series_code, data, valor)
-    values (:series_name, :series_code, :data, :valor)
-    on conflict (series_code, data) do update set
-        series_name = excluded.series_name,
-        valor = excluded.valor;
+    sql = f"""
+    insert into {WIDE_FULL} (
+      data, selic, cambio, ipca, icc, pib, balanca_comercial, fetched_at
+    )
+    values (
+      :data, :selic, :cambio, :ipca, :icc, :pib, :balanca_comercial, now()
+    )
+    on conflict (data) do update set
+      selic = excluded.selic,
+      cambio = excluded.cambio,
+      ipca = excluded.ipca,
+      icc = excluded.icc,
+      pib = excluded.pib,
+      balanca_comercial = excluded.balanca_comercial,
+      fetched_at = now();
     """
 
-    rows = df.to_dict(orient="records")
+    rows = wide.to_dict("records")
     with engine.begin() as conn:
-        for i in range(0, len(rows), batch_size):
-            conn.execute(text(sql), rows[i:i + batch_size])
+        for i in range(0, len(rows), batch):
+            conn.execute(text(sql), rows[i : i + batch])
 
 
-def run(
+def build_info_economica_from_raw(
     engine: Engine,
     *,
     progress_cb: Optional[Callable[[str], None]] = None,
-    timeout_sec: int = 60,
-    # Janela padrão: últimos 10 anos (ajuste se quiser)
-    years_back: int = 10,
-    series: Optional[Dict[str, int]] = None,
 ) -> None:
-    _ensure_table(engine)
-
-    if series is None:
-        series = DEFAULT_SERIES
-
-    end_date = dt.date.today()
-    start_date = dt.date(end_date.year - int(years_back), 1, 1)
-    cfg = MacroConfig(start_date=start_date, end_date=end_date, timeout_sec=int(timeout_sec))
-
-    ok = 0
-    fail = 0
-
-    for name, code in series.items():
-        try:
-            if progress_cb:
-                progress_cb(f"MACRO: baixando {name} (SGS {code})...")
-
-            df = _fetch_sgs_series(int(code), cfg)
-            if df.empty:
-                # não quebra o pipeline
-                if progress_cb:
-                    progress_cb(f"MACRO: {name} (SGS {code}) sem dados (ignorado).")
-                continue
-
-            df["series_name"] = str(name)
-            df["series_code"] = int(code)
-
-            _upsert(engine, df)
-            ok += 1
-
-            if progress_cb:
-                progress_cb(f"MACRO: {name} (SGS {code}) concluído.")
-        except Exception as e:
-            fail += 1
-            if progress_cb:
-                progress_cb(f"MACRO: {name} (SGS {code}) falhou: {e}")
+    _ensure_wide_table(engine)
 
     if progress_cb:
-        progress_cb(f"MACRO: finalizado. OK={ok}, FALHAS={fail}.")
+        progress_cb("MACRO (BCB): carregando tabela bruta cvm.macro_bcb...")
+
+    df_raw = _load_raw(engine)
+
+    if df_raw.empty:
+        raise RuntimeError(
+            "MACRO (BCB): cvm.macro_bcb não possui as séries necessárias para gerar cvm.info_economica."
+        )
+
+    if progress_cb:
+        progress_cb("MACRO (BCB): transformando para formato wide (info_economica)...")
+
+    wide = _to_wide(df_raw)
+
+    if progress_cb:
+        progress_cb(f"MACRO (BCB): upsert em {WIDE_FULL} ({len(wide)} linhas)...")
+
+    _upsert_wide(engine, wide)
+
+    if progress_cb:
+        progress_cb("MACRO (BCB): info_economica atualizada com sucesso.")
+
+
+# Mantém compatibilidade com seu orquestrador: chama run(engine, progress_cb=...)
+def run(engine: Engine, *, progress_cb: Optional[Callable[[str], None]] = None) -> None:
+    # O ingest bruto pode continuar existindo (caso seu projeto já preencha macro_bcb).
+    # Aqui garantimos a tabela wide que você precisa.
+    build_info_economica_from_raw(engine, progress_cb=progress_cb)
