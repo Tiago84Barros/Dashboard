@@ -1,62 +1,54 @@
-# macro_bcb_ingest.py
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable, Optional, Dict
 
 import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from core.macro_catalog import BCB_SERIES_CATALOG
+
 SCHEMA = "cvm"
-RAW_FULL = f"{SCHEMA}.macro_bcb"
-MENSAL_FULL = f"{SCHEMA}.info_economica_mensal"
+RAW_TABLE = "macro_bcb"
+RAW_FULL = f"{SCHEMA}.{RAW_TABLE}"
+
+WIDE_TABLE = "info_economica"
+WIDE_M_TABLE = "info_economica_mensal"
+
+WIDE_FULL = f"{SCHEMA}.{WIDE_TABLE}"
+WIDE_M_FULL = f"{SCHEMA}.{WIDE_M_TABLE}"
 
 
-# Mapeamento do RAW -> colunas analíticas
+# ───────────────────────────────────────────────────────────────
+# Qual série do RAW alimenta cada coluna analítica
+# (chaves devem bater com macro_catalog.py e com o RAW)
+# ───────────────────────────────────────────────────────────────
 SERIES_TO_COL = {
-    "IPCA_MENSAL": "ipca",
-    "SELIC_META": "selic",
-    "SELIC_EFETIVA": "selic_efetiva",
+    "SELIC_EFETIVA": "selic",            # ou troque para SELIC_META se preferir
     "CAMBIO_PTX": "cambio",
+    "IPCA_MENSAL": "ipca",
     "ICC": "icc",
     "PIB": "pib",
     "BALANCA_COMERCIAL": "balanca_comercial",
 }
 
 
-@dataclass(frozen=True)
-class Rule:
-    freq: str  # "daily" | "monthly" | "quarterly"
-    reducer: str  # "last" | "mean"
-    fill: str  # "none" | "asof" | "ffill"
-    ffill_limit: int = 0
-    interpolate: Optional[str] = None  # "time" ou None
+# ───────────────────────────────────────────────────────────────
+# DDL + migração (evita UndefinedColumn)
+# ───────────────────────────────────────────────────────────────
+def _ensure_schema(engine: Engine) -> None:
+    with engine.begin() as conn:
+        conn.execute(text(f"create schema if not exists {SCHEMA};"))
 
 
-RULES = {
-    # Diárias
-    "SELIC_META": Rule(freq="daily", reducer="last", fill="asof", ffill_limit=45),
-    "SELIC_EFETIVA": Rule(freq="daily", reducer="last", fill="asof", ffill_limit=45),
-    "CAMBIO_PTX": Rule(freq="daily", reducer="mean", fill="asof", ffill_limit=45),
-
-    # Mensais
-    "IPCA_MENSAL": Rule(freq="monthly", reducer="last", fill="ffill", ffill_limit=2),
-    "ICC": Rule(freq="monthly", reducer="last", fill="ffill", ffill_limit=2),
-    "BALANCA_COMERCIAL": Rule(freq="monthly", reducer="last", fill="ffill", ffill_limit=2),
-
-    # Trimestral
-    "PIB": Rule(freq="quarterly", reducer="last", fill="ffill", ffill_limit=4, interpolate=None),
-}
-
-
-def _ensure_mensal_table(engine: Engine) -> None:
-    ddl_schema = f"create schema if not exists {SCHEMA};"
+def _ensure_table_wide(engine: Engine) -> None:
+    """
+    Tabela com chave por 'data' (date). Mantém colunas completas.
+    """
     ddl = f"""
-    create table if not exists {MENSAL_FULL} (
+    create table if not exists {WIDE_FULL} (
       data date primary key,
       selic double precision,
-      selic_efetiva double precision,
       cambio double precision,
       ipca double precision,
       icc double precision,
@@ -65,188 +57,250 @@ def _ensure_mensal_table(engine: Engine) -> None:
       fetched_at timestamptz default now()
     );
     """
-    alter = f"""
-    alter table {MENSAL_FULL}
-      add column if not exists selic double precision,
-      add column if not exists selic_efetiva double precision,
-      add column if not exists cambio double precision,
-      add column if not exists ipca double precision,
-      add column if not exists icc double precision,
-      add column if not exists pib double precision,
-      add column if not exists balanca_comercial double precision,
-      add column if not exists fetched_at timestamptz default now();
+    with engine.begin() as conn:
+        conn.execute(text(ddl))
+
+    # Migração defensiva: adiciona colunas se a tabela já existe “capada”
+    _add_missing_cols(engine, WIDE_FULL, include_pib=True)
+
+
+def _ensure_table_wide_mensal(engine: Engine) -> None:
+    """
+    Tabela mensal. Também inclui pib e balanca para evitar seu erro atual.
+    """
+    ddl = f"""
+    create table if not exists {WIDE_M_FULL} (
+      data date primary key,
+      selic double precision,
+      cambio double precision,
+      ipca double precision,
+      icc double precision,
+      pib double precision,
+      balanca_comercial double precision,
+      fetched_at timestamptz default now()
+    );
     """
     with engine.begin() as conn:
-        conn.execute(text(ddl_schema))
         conn.execute(text(ddl))
-        conn.execute(text(alter))
+
+    # Migração defensiva: adiciona colunas ausentes
+    _add_missing_cols(engine, WIDE_M_FULL, include_pib=True)
 
 
-def _load_raw(engine: Engine, series_name: str) -> pd.DataFrame:
+def _add_missing_cols(engine: Engine, table_full: str, include_pib: bool = True) -> None:
+    cols = [
+        ("selic", "double precision"),
+        ("cambio", "double precision"),
+        ("ipca", "double precision"),
+        ("icc", "double precision"),
+        ("balanca_comercial", "double precision"),
+        ("fetched_at", "timestamptz"),
+    ]
+    if include_pib:
+        cols.insert(4, ("pib", "double precision"))
+
+    with engine.begin() as conn:
+        for col, typ in cols:
+            conn.execute(text(f"alter table {table_full} add column if not exists {col} {typ};"))
+
+
+# ───────────────────────────────────────────────────────────────
+# Leitura RAW
+# ───────────────────────────────────────────────────────────────
+def _load_raw(engine: Engine) -> pd.DataFrame:
+    """
+    Carrega do RAW apenas as séries necessárias (SERIES_TO_COL.keys()).
+    """
+    series_list = tuple(SERIES_TO_COL.keys())
+
     q = text(
         f"""
-        select data::date as data, valor::double precision as valor
+        select
+          data::date as data,
+          series_name::text as series_name,
+          valor::double precision as valor
         from {RAW_FULL}
-        where series_name = :series_name
-        order by data
+        where series_name in :series_list
         """
     )
     with engine.connect() as conn:
-        df = pd.read_sql(q, conn, params={"series_name": series_name})
-    if df.empty:
-        return df
-    df["data"] = pd.to_datetime(df["data"])
+        df = pd.read_sql(q, conn, params={"series_list": series_list})
+    return df
+
+
+# ───────────────────────────────────────────────────────────────
+# Normalização para mensal (respeita freq do catálogo)
+# ───────────────────────────────────────────────────────────────
+def _to_monthly_series(df_raw: pd.DataFrame) -> pd.DataFrame:
+    """
+    Retorna um DataFrame mensal (data = último dia do mês) com colunas:
+      data, selic, cambio, ipca, icc, pib, balanca_comercial
+    """
+
+    if df_raw.empty:
+        return df_raw
+
+    df = df_raw.copy()
+    df["data"] = pd.to_datetime(df["data"], errors="coerce")
+    df = df.dropna(subset=["data", "series_name"])
     df["valor"] = pd.to_numeric(df["valor"], errors="coerce")
-    return df.dropna(subset=["data"])
 
+    # Converte series_name -> coluna destino
+    df["col"] = df["series_name"].map(SERIES_TO_COL)
+    df = df.dropna(subset=["col"])
 
-def _monthly_index(start: pd.Timestamp, end: pd.Timestamp) -> pd.DatetimeIndex:
-    start_me = (start + pd.offsets.MonthEnd(0)).normalize()
-    end_me = (end + pd.offsets.MonthEnd(0)).normalize()
-    return pd.date_range(start=start_me, end=end_me, freq="M")
+    # Se houver duplicidade no mesmo dia (raro), pega o último
+    df = df.sort_values(["series_name", "data"]).drop_duplicates(subset=["series_name", "data"], keep="last")
 
-
-def _reduce_to_monthly(df: pd.DataFrame, rule: Rule) -> pd.Series:
-    """
-    df: columns [data(datetime64), valor(float)]
-    output: Series index = month_end, values = reduced values
-    """
-    if df.empty:
-        return pd.Series(dtype="float64")
-
-    s = df.set_index("data")["valor"].sort_index()
-
-    # Reamostragem para mês-fim
-    if rule.reducer == "last":
-        m = s.resample("M").last()
-    elif rule.reducer == "mean":
-        m = s.resample("M").mean()
-    else:
-        raise ValueError(f"Reducer inválido: {rule.reducer}")
-
-    # Interpolação opcional (ex.: PIB trimestral -> mensal)
-    if rule.interpolate:
-        m = m.interpolate(method=rule.interpolate)
-
-    # Preenchimento controlado
-    if rule.fill == "ffill" and rule.ffill_limit > 0:
-        m = m.ffill(limit=rule.ffill_limit)
-    return m
-
-
-def _asof_fill(monthly_base: pd.Series, daily_df: pd.DataFrame, max_days: int = 45) -> pd.Series:
-    """
-    Preenche meses vazios usando o último valor disponível até o mês-fim (asof).
-    """
-    if daily_df.empty:
-        return monthly_base
-
-    d = daily_df.copy()
-    d = d.dropna(subset=["data"]).sort_values("data")
-    d["data"] = pd.to_datetime(d["data"])
-    d["valor"] = pd.to_numeric(d["valor"], errors="coerce")
-
-    # dataframe alvo com month_end
-    target = monthly_base.index.to_frame(index=False, name="month_end").sort_values("month_end")
-
-    # asof merge: pega último ponto <= month_end
-    merged = pd.merge_asof(
-        target,
-        d.rename(columns={"data": "day"})[["day", "valor"]].sort_values("day"),
-        left_on="month_end",
-        right_on="day",
-        direction="backward",
-        tolerance=pd.Timedelta(days=max_days),
-    )
-    filled = monthly_base.copy()
-    # só preenche onde estava NaN
-    mask = filled.isna()
-    filled.loc[mask] = merged.loc[mask.values, "valor"].values
-    return filled
-
-
-def _build_info_economica_mensal(engine: Engine, *, progress_cb: Optional[Callable[[str], None]] = None) -> pd.DataFrame:
-    # Determina janela temporal com base no RAW
-    q = text(f"select min(data)::date as min_d, max(data)::date as max_d from {RAW_FULL};")
-    with engine.connect() as conn:
-        r = conn.execute(q).mappings().first()
-
-    if not r or r["min_d"] is None or r["max_d"] is None:
-        raise RuntimeError("MACRO: cvm.macro_bcb está vazio. Rode o ingest RAW primeiro.")
-
-    start = pd.to_datetime(r["min_d"])
-    end = pd.to_datetime(r["max_d"])
-    idx = _monthly_index(start, end)
-
-    out = pd.DataFrame({"data": idx})
+    # Vamos construir por coluna, respeitando a freq do catálogo
+    month_end_index = None
+    series_monthly: Dict[str, pd.Series] = {}
 
     for series_name, col in SERIES_TO_COL.items():
-        rule = RULES.get(series_name)
-        if rule is None:
-            # sem regra: não cria coluna
+        s = df.loc[df["series_name"] == series_name, ["data", "valor"]].set_index("data")["valor"]
+        if s.empty:
             continue
 
-        if progress_cb:
-            progress_cb(f"MACRO: processando {series_name} -> {col} ({rule.freq}, {rule.reducer})")
+        freq = (BCB_SERIES_CATALOG.get(series_name, {}) or {}).get("freq", "")
 
-        df = _load_raw(engine, series_name)
+        # Define o índice mensal global (range)
+        s = s.sort_index()
+        start = s.index.min().to_period("M").to_timestamp("M")
+        end = s.index.max().to_period("M").to_timestamp("M")
+        idx_m = pd.date_range(start=start, end=end, freq="M")
+        if month_end_index is None:
+            month_end_index = idx_m
+        else:
+            # expande para cobrir tudo
+            month_end_index = month_end_index.union(idx_m)
 
-        # base mensal (reamostrado)
-        monthly = _reduce_to_monthly(df, rule)
-        monthly = monthly.reindex(idx)  # garante índice completo
+        if freq == "daily":
+            # último valor do mês
+            sm = s.resample("M").last()
+            sm = sm.reindex(idx_m)
+        elif freq == "monthly":
+            # garante alinhamento em month-end
+            # se vier dia 01 do mês (ou qualquer dia), joga para month-end e pega último do mês
+            sm = s.copy()
+            sm.index = sm.index.to_period("M").to_timestamp("M")
+            sm = sm.groupby(sm.index).last()
+            sm = sm.reindex(idx_m)
+        elif freq == "quarterly":
+            # alinha em quarter-end e propaga para meses do trimestre
+            sq = s.copy()
+            sq.index = sq.index.to_period("Q").to_timestamp("Q")
+            sq = sq.groupby(sq.index).last()
 
-        # se for diária e estiver faltando, asof-fill é mais correto do que ffill puro
-        if rule.freq == "daily":
-            monthly = _asof_fill(monthly, df, max_days=rule.ffill_limit)
+            # cria mensal e forward-fill dentro do trimestre
+            sm = sq.reindex(idx_m, method=None)
+            sm = sm.ffill()
 
-        # preenchimento final (se configurado)
-        if rule.fill == "ffill" and rule.ffill_limit > 0:
-            monthly = monthly.ffill(limit=rule.ffill_limit)
+            # opcional: se quiser suavizar buracos longos, interpola no tempo
+            sm = sm.astype("float").interpolate(method="time", limit_direction="both")
+        else:
+            # fallback conservador: último valor do mês
+            sm = s.resample("M").last().reindex(idx_m)
 
-        out[col] = monthly.values
+        series_monthly[col] = sm
 
-    # Converte data para date
-    out["data"] = pd.to_datetime(out["data"]).dt.date
+    if month_end_index is None:
+        return pd.DataFrame(columns=["data"] + list(SERIES_TO_COL.values()))
+
+    # Monta wide mensal
+    out = pd.DataFrame(index=month_end_index)
+
+    for col in SERIES_TO_COL.values():
+        if col in series_monthly:
+            out[col] = series_monthly[col]
+        else:
+            out[col] = pd.NA
+
+    out = out.reset_index().rename(columns={"index": "data"})
+    out["data"] = out["data"].dt.date
+
+    # Ordena colunas
+    cols = ["data"] + list(SERIES_TO_COL.values())
+    out = out[cols].sort_values("data").reset_index(drop=True)
+
     return out
 
 
-def _upsert_mensal(engine: Engine, df: pd.DataFrame, batch: int = 2000) -> None:
-    if df.empty:
+# ───────────────────────────────────────────────────────────────
+# Upsert (WIDE e WIDE_M)
+# ───────────────────────────────────────────────────────────────
+def _upsert(engine: Engine, table_full: str, wide: pd.DataFrame, batch: int = 2000) -> None:
+    if wide.empty:
         return
 
-    cols = ["data"] + [c for c in df.columns if c != "data"]
-    col_list = ", ".join(cols)
-    val_list = ", ".join([f":{c}" for c in cols])
-    set_list = ", ".join([f"{c} = excluded.{c}" for c in cols if c != "data"])
-
     sql = f"""
-    insert into {MENSAL_FULL} ({col_list}, fetched_at)
-    values ({val_list}, now())
+    insert into {table_full} (
+      data, selic, cambio, ipca, icc, pib, balanca_comercial, fetched_at
+    )
+    values (
+      :data, :selic, :cambio, :ipca, :icc, :pib, :balanca_comercial, now()
+    )
     on conflict (data) do update set
-      {set_list},
+      selic = excluded.selic,
+      cambio = excluded.cambio,
+      ipca = excluded.ipca,
+      icc = excluded.icc,
+      pib = excluded.pib,
+      balanca_comercial = excluded.balanca_comercial,
       fetched_at = now();
     """
 
-    rows = df.to_dict("records")
+    rows = wide.to_dict("records")
     with engine.begin() as conn:
         for i in range(0, len(rows), batch):
             conn.execute(text(sql), rows[i : i + batch])
 
 
+# ───────────────────────────────────────────────────────────────
+# Pipeline público
+# ───────────────────────────────────────────────────────────────
+def build_info_economica(engine: Engine, *, progress_cb: Optional[Callable[[str], None]] = None) -> None:
+    _ensure_schema(engine)
+    _ensure_table_wide(engine)
+    _ensure_table_wide_mensal(engine)
+
+    if progress_cb:
+        progress_cb("MACRO WIDE: carregando RAW (cvm.macro_bcb)...")
+
+    df_raw = _load_raw(engine)
+
+    if df_raw.empty:
+        raise RuntimeError("MACRO WIDE: cvm.macro_bcb está vazio para as séries necessárias.")
+
+    # Log útil: contagem de séries realmente presentes
+    if progress_cb:
+        present = df_raw["series_name"].value_counts(dropna=False).to_dict()
+        progress_cb(f"MACRO WIDE: séries encontradas no RAW: {present}")
+
+    if progress_cb:
+        progress_cb("MACRO WIDE: normalizando para mensal (month-end) e construindo wide...")
+
+    wide_m = _to_monthly_series(df_raw)
+
+    if wide_m.empty:
+        raise RuntimeError("MACRO WIDE: transformação mensal retornou vazio (verifique RAW e catálogo).")
+
+    if progress_cb:
+        filled = {c: int(wide_m[c].notna().sum()) for c in SERIES_TO_COL.values()}
+        progress_cb(f"MACRO WIDE: preenchimento mensal (contagem não-null): {filled}")
+
+    # Você pode optar por gravar o mesmo conteúdo em info_economica e info_economica_mensal.
+    # Aqui mantemos ambos idênticos (mensal). Se no futuro quiser uma diária, criamos outro builder.
+    if progress_cb:
+        progress_cb(f"MACRO WIDE: upsert em {WIDE_M_FULL} ({len(wide_m)} linhas)...")
+    _upsert(engine, WIDE_M_FULL, wide_m)
+
+    if progress_cb:
+        progress_cb(f"MACRO WIDE: upsert em {WIDE_FULL} ({len(wide_m)} linhas)...")
+    _upsert(engine, WIDE_FULL, wide_m)
+
+    if progress_cb:
+        progress_cb("MACRO WIDE: concluído com sucesso.")
+
+
 def run(engine: Engine, *, progress_cb: Optional[Callable[[str], None]] = None) -> None:
-    _ensure_mensal_table(engine)
-
-    if progress_cb:
-        progress_cb("MACRO: construindo info_economica_mensal com regras por série (resample/asof/interp)...")
-
-    df_m = _build_info_economica_mensal(engine, progress_cb=progress_cb)
-
-    # Checagem mínima: evita “sucesso falso”
-    filled_counts = {c: int(df_m[c].notna().sum()) for c in df_m.columns if c != "data"}
-    if progress_cb:
-        progress_cb(f"MACRO: preenchimento (not null) por coluna: {filled_counts}")
-
-    _upsert_mensal(engine, df_m)
-
-    if progress_cb:
-        progress_cb("MACRO: info_economica_mensal atualizada com sucesso.")
+    build_info_economica(engine, progress_cb=progress_cb)
