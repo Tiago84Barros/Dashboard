@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 from typing import Callable, Optional
-import math
 import numpy as np
 import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
-from core.settings import START_YEAR
+
+# ============================================================
+# CONFIGURAÇÃO LOCAL (decisão de produto)
+# ============================================================
+
+START_YEAR = 2010
+
+# ============================================================
+# TABELAS
+# ============================================================
 
 SCHEMA = "cvm"
 RAW_TABLE = "macro_bcb"
@@ -15,18 +23,32 @@ WIDE_TABLE = "info_economica_mensal"
 RAW_FULL = f"{SCHEMA}.{RAW_TABLE}"
 WIDE_FULL = f"{SCHEMA}.{WIDE_TABLE}"
 
-# Mapeamento das séries do RAW → colunas finais
+# ============================================================
+# MAPEAMENTO CORRETO (bate com macro_catalog / RAW)
+# ============================================================
+
 SERIES_TO_COL = {
-    "SELIC": "selic",
-    "CAMBIO": "cambio",
+    "SELIC_EFETIVA": "selic",
+    "SELIC_META": "selic",            # fallback
+    "CAMBIO_PTX": "cambio",
     "IPCA_MENSAL": "ipca",
     "ICC": "icc",
     "PIB": "pib",
     "BALANCA_COMERCIAL": "balanca_comercial",
 }
 
-REQUIRED_COLS = list(SERIES_TO_COL.values())
+REQUIRED_COLS = [
+    "selic",
+    "ipca",
+    "cambio",
+    "icc",
+    "pib",
+    "balanca_comercial",
+]
 
+# ============================================================
+# DDL
+# ============================================================
 
 def _ensure_wide_table(engine: Engine) -> None:
     ddl = f"""
@@ -46,10 +68,11 @@ def _ensure_wide_table(engine: Engine) -> None:
     with engine.begin() as conn:
         conn.execute(text(ddl))
 
+# ============================================================
+# LOAD RAW (COM CORTE EM 2010)
+# ============================================================
 
 def _load_raw(engine: Engine) -> pd.DataFrame:
-    series_list = tuple(SERIES_TO_COL.keys())
-
     sql = text(f"""
         select
             data::date as data,
@@ -65,13 +88,16 @@ def _load_raw(engine: Engine) -> pd.DataFrame:
             sql,
             conn,
             params={
-                "series_list": series_list,
+                "series_list": tuple(SERIES_TO_COL.keys()),
                 "start_year": START_YEAR,
             },
         )
 
     return df
 
+# ============================================================
+# TRANSFORMAÇÃO PARA WIDE (MENSAL)
+# ============================================================
 
 def _to_wide(df_raw: pd.DataFrame) -> pd.DataFrame:
     if df_raw.empty:
@@ -81,25 +107,34 @@ def _to_wide(df_raw: pd.DataFrame) -> pd.DataFrame:
     df["col"] = df["series_name"].map(SERIES_TO_COL)
     df = df.dropna(subset=["data", "col"])
 
+    # ordena para permitir fallback SELIC_META → SELIC_EFETIVA
+    df["priority"] = df["series_name"].apply(
+        lambda x: 0 if x == "SELIC_EFETIVA" else 1
+    )
+
     df = (
-        df.sort_values("data")
-        .drop_duplicates(subset=["data", "col"], keep="last")
+        df.sort_values(["data", "col", "priority"])
+        .drop_duplicates(subset=["data", "col"], keep="first")
+        .drop(columns="priority")
     )
 
     wide = df.pivot(index="data", columns="col", values="valor").reset_index()
 
-    # garante TODAS as colunas esperadas
+    # garante todas as colunas
     for col in REQUIRED_COLS:
         if col not in wide.columns:
             wide[col] = None
 
     wide = wide[["data"] + REQUIRED_COLS].sort_values("data")
 
-    # NaN → None (Postgres-friendly)
+    # NaN → None (Postgres-safe)
     wide = wide.replace({np.nan: None})
 
     return wide.reset_index(drop=True)
 
+# ============================================================
+# UPSERT
+# ============================================================
 
 def _upsert_wide(engine: Engine, wide: pd.DataFrame, batch: int = 2000) -> None:
     if wide.empty:
@@ -107,9 +142,23 @@ def _upsert_wide(engine: Engine, wide: pd.DataFrame, batch: int = 2000) -> None:
 
     sql = f"""
     insert into {WIDE_FULL} (
-        data, selic, ipca, cambio, icc, pib, balanca_comercial, fetched_at
+        data,
+        selic,
+        ipca,
+        cambio,
+        icc,
+        pib,
+        balanca_comercial,
+        fetched_at
     ) values (
-        :data, :selic, :ipca, :cambio, :icc, :pib, :balanca_comercial, now()
+        :data,
+        :selic,
+        :ipca,
+        :cambio,
+        :icc,
+        :pib,
+        :balanca_comercial,
+        now()
     )
     on conflict (data) do update set
         selic = excluded.selic,
@@ -123,15 +172,18 @@ def _upsert_wide(engine: Engine, wide: pd.DataFrame, batch: int = 2000) -> None:
 
     rows = wide.to_dict("records")
 
-    # blindagem final: garante chave em todas as linhas
+    # blindagem final
     for r in rows:
-        for k in REQUIRED_COLS:
-            r.setdefault(k, None)
+        for col in REQUIRED_COLS:
+            r.setdefault(col, None)
 
     with engine.begin() as conn:
         for i in range(0, len(rows), batch):
             conn.execute(text(sql), rows[i:i + batch])
 
+# ============================================================
+# PIPELINE
+# ============================================================
 
 def build_info_economica_mensal(
     engine: Engine,
@@ -147,7 +199,7 @@ def build_info_economica_mensal(
 
     if df_raw.empty:
         raise RuntimeError(
-            "MACRO (BCB): tabela cvm.macro_bcb não possui séries suficientes."
+            "MACRO (BCB): tabela cvm.macro_bcb não possui séries após 2010."
         )
 
     if progress_cb:
@@ -164,7 +216,6 @@ def build_info_economica_mensal(
 
     if progress_cb:
         progress_cb("MACRO (BCB): info_economica_mensal atualizada com sucesso.")
-
 
 def run(
     engine: Engine,
