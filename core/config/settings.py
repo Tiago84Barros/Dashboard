@@ -2,70 +2,109 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import os
+from pathlib import Path
 from typing import Optional
+import os
 
 
-# ============================================================
-# Modelo de Settings (API pública do projeto)
-# ============================================================
+PROJECT_ROOT = Path(__file__).resolve().parents[2]  # .../core/config/settings.py -> raiz do projeto
+
+
+def _env_str(name: str, default: str = "") -> str:
+    v = os.getenv(name)
+    return v if v is not None and v.strip() != "" else default
+
+
+def _env_int(name: str, default: int) -> int:
+    v = os.getenv(name)
+    if v is None or v.strip() == "":
+        return default
+    try:
+        return int(v)
+    except ValueError:
+        return default
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    v = os.getenv(name)
+    if v is None:
+        return default
+    return v.strip().lower() in ("1", "true", "yes", "y", "on")
+
 
 @dataclass(frozen=True)
 class Settings:
-    """
-    Configurações globais do projeto.
-
-    IMPORTANTE:
-    - Este módulo é importado por vários pontos do app.
-    - Ele precisa expor get_settings() para compatibilidade.
-    """
+    # ============================================================
+    # NOVO PONTO (decisão de produto): corte histórico
+    # ============================================================
     start_year: int = 2010
 
-    # (Opcional) parâmetros comuns que costumam existir em apps streamlit/supabase
-    # Mantive genérico e seguro: se não forem usados, não atrapalham.
+    # ============================================================
+    # Ambiente
+    # ============================================================
     environment: str = "production"
     debug: bool = False
 
+    # ============================================================
+    # Paths / arquivos auxiliares
+    # ============================================================
+    data_dir: str = str(PROJECT_ROOT / "data")
+    assets_dir: str = str(PROJECT_ROOT / "assets")
+    logs_dir: str = str(PROJECT_ROOT / "logs")
 
-# ============================================================
-# API LEGADA / ESPERADA PELO PROJETO
-# ============================================================
+    # Campo que seu app está exigindo
+    cvm_to_ticker_path: str = str(PROJECT_ROOT / "data" / "cvm_to_ticker.csv")
 
-_SETTINGS_SINGLETON: Optional[Settings] = None
+    # ============================================================
+    # Conexões (se o seu projeto usar)
+    # ============================================================
+    database_url: str = ""
+    supabase_url: str = ""
+    supabase_key: str = ""
+
+
+_SETTINGS: Optional[Settings] = None
 
 
 def get_settings() -> Settings:
     """
-    Retorna um singleton Settings.
-
-    Motivo:
-    - Vários módulos provavelmente fazem:
-        from core.config.settings import get_settings
-        s = get_settings()
-    - Se remover, quebra o app (como você viu).
+    API global esperada pelo app.
     """
-    global _SETTINGS_SINGLETON
-    if _SETTINGS_SINGLETON is not None:
-        return _SETTINGS_SINGLETON
+    global _SETTINGS
+    if _SETTINGS is not None:
+        return _SETTINGS
 
-    # START_YEAR pode ser sobrescrito por variável de ambiente (opcional)
-    start_year_env = os.getenv("START_YEAR")
-    start_year = int(start_year_env) if start_year_env and start_year_env.isdigit() else 2010
+    start_year = _env_int("START_YEAR", 2010)
+    environment = _env_str("APP_ENV", "production")
+    debug = _env_bool("DEBUG", False)
 
-    env = os.getenv("APP_ENV", "production")
-    debug = os.getenv("DEBUG", "0") in ("1", "true", "True", "YES", "yes")
+    data_dir = _env_str("DATA_DIR", str(PROJECT_ROOT / "data"))
+    assets_dir = _env_str("ASSETS_DIR", str(PROJECT_ROOT / "assets"))
+    logs_dir = _env_str("LOGS_DIR", str(PROJECT_ROOT / "logs"))
 
-    _SETTINGS_SINGLETON = Settings(
-        start_year=start_year,
-        environment=env,
-        debug=debug,
+    cvm_to_ticker_path = _env_str(
+        "CVM_TO_TICKER_PATH",
+        str(Path(data_dir) / "cvm_to_ticker.csv"),
     )
-    return _SETTINGS_SINGLETON
+
+    database_url = _env_str("DATABASE_URL", "")
+    supabase_url = _env_str("SUPABASE_URL", "")
+    supabase_key = _env_str("SUPABASE_KEY", "")
+
+    _SETTINGS = Settings(
+        start_year=start_year,
+        environment=environment,
+        debug=debug,
+        data_dir=data_dir,
+        assets_dir=assets_dir,
+        logs_dir=logs_dir,
+        cvm_to_ticker_path=cvm_to_ticker_path,
+        database_url=database_url,
+        supabase_url=supabase_url,
+        supabase_key=supabase_key,
+    )
+    return _SETTINGS
 
 
-# ============================================================
-# ATALHOS PARA COMPATIBILIDADE (imports diretos)
-# ============================================================
-
-# Muitos módulos fazem: from core.config.settings import START_YEAR
+# Compatibilidade (muitos módulos fazem import direto)
 START_YEAR: int = get_settings().start_year
