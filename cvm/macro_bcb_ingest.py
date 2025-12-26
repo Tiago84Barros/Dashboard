@@ -1,14 +1,13 @@
-# core/ingest/macro_bcb_ingest.py
 from __future__ import annotations
 
 from typing import Callable, Optional
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Engine
 
-from core.config.settings import START_YEAR
+from core.config.settings import START_YEAR  # fonte única
 
 SCHEMA = "cvm"
 RAW_TABLE = "macro_bcb"
@@ -17,27 +16,17 @@ WIDE_TABLE = "info_economica_mensal"
 RAW_FULL = f"{SCHEMA}.{RAW_TABLE}"
 WIDE_FULL = f"{SCHEMA}.{WIDE_TABLE}"
 
-# Mapeamento CORRETO (bate com core/macro_catalog.py e o RAW ingerido)
-# Regras:
-# - Selic: preferir SELIC_EFETIVA; se não houver, cair para SELIC_META
+# Mapeamento das séries do RAW → colunas finais
 SERIES_TO_COL = {
-    "SELIC_EFETIVA": "selic",
-    "SELIC_META": "selic",  # fallback
-    "CAMBIO_PTX": "cambio",
+    "SELIC": "selic",
+    "CAMBIO": "cambio",
     "IPCA_MENSAL": "ipca",
     "ICC": "icc",
     "PIB": "pib",
     "BALANCA_COMERCIAL": "balanca_comercial",
 }
 
-REQUIRED_COLS = [
-    "selic",
-    "ipca",
-    "cambio",
-    "icc",
-    "pib",
-    "balanca_comercial",
-]
+REQUIRED_COLS = list(SERIES_TO_COL.values())
 
 
 def _ensure_wide_table(engine: Engine) -> None:
@@ -60,8 +49,9 @@ def _ensure_wide_table(engine: Engine) -> None:
 
 
 def _load_raw(engine: Engine) -> pd.DataFrame:
-    sql = text(
-        f"""
+    series_list = list(SERIES_TO_COL.keys())
+
+    sql = text(f"""
         select
             data::date as data,
             series_name::text as series_name,
@@ -69,16 +59,15 @@ def _load_raw(engine: Engine) -> pd.DataFrame:
         from {RAW_FULL}
         where series_name in :series_list
           and data >= make_date(:start_year, 1, 1)
-        """
-    )
+    """).bindparams(bindparam("series_list", expanding=True))
 
     with engine.connect() as conn:
         df = pd.read_sql(
             sql,
             conn,
             params={
-                "series_list": tuple(SERIES_TO_COL.keys()),
-                "start_year": int(START_YEAR),
+                "series_list": series_list,
+                "start_year": START_YEAR,
             },
         )
 
@@ -93,55 +82,29 @@ def _to_wide(df_raw: pd.DataFrame) -> pd.DataFrame:
     df["col"] = df["series_name"].map(SERIES_TO_COL)
     df = df.dropna(subset=["data", "col"])
 
-    # Prioridade: manter SELIC_EFETIVA quando coexistir com SELIC_META
-    # (menor priority = mais importante)
-    df["priority"] = df["series_name"].apply(lambda x: 0 if x == "SELIC_EFETIVA" else 1)
-
-    # Para cada (data, col), escolhe a linha de maior prioridade (priority menor)
-    df = (
-        df.sort_values(["data", "col", "priority"])
-        .drop_duplicates(subset=["data", "col"], keep="first")
-        .drop(columns="priority")
-    )
+    df = df.sort_values("data").drop_duplicates(subset=["data", "col"], keep="last")
 
     wide = df.pivot(index="data", columns="col", values="valor").reset_index()
 
-    # Garante todas as colunas
-    for c in REQUIRED_COLS:
-        if c not in wide.columns:
-            wide[c] = None
+    for col in REQUIRED_COLS:
+        if col not in wide.columns:
+            wide[col] = None
 
-    wide = wide[["data"] + REQUIRED_COLS].sort_values("data").reset_index(drop=True)
-
-    # NaN → None (Postgres-friendly)
+    wide = wide[["data"] + REQUIRED_COLS].sort_values("data")
     wide = wide.replace({np.nan: None})
 
-    return wide
+    return wide.reset_index(drop=True)
 
 
-def _upsert_wide(engine: Engine, wide: pd.DataFrame, batch: int = 5000) -> None:
+def _upsert_wide(engine: Engine, wide: pd.DataFrame, batch: int = 2000) -> None:
     if wide.empty:
         return
 
     sql = f"""
     insert into {WIDE_FULL} (
-        data,
-        selic,
-        ipca,
-        cambio,
-        icc,
-        pib,
-        balanca_comercial,
-        fetched_at
+        data, selic, ipca, cambio, icc, pib, balanca_comercial, fetched_at
     ) values (
-        :data,
-        :selic,
-        :ipca,
-        :cambio,
-        :icc,
-        :pib,
-        :balanca_comercial,
-        now()
+        :data, :selic, :ipca, :cambio, :icc, :pib, :balanca_comercial, now()
     )
     on conflict (data) do update set
         selic = excluded.selic,
@@ -155,10 +118,10 @@ def _upsert_wide(engine: Engine, wide: pd.DataFrame, batch: int = 5000) -> None:
 
     rows = wide.to_dict("records")
 
-    # Blindagem final: todas as chaves existem em todas as linhas
+    # blindagem final
     for r in rows:
-        for col in REQUIRED_COLS:
-            r.setdefault(col, None)
+        for k in REQUIRED_COLS:
+            r.setdefault(k, None)
 
     with engine.begin() as conn:
         for i in range(0, len(rows), batch):
@@ -173,22 +136,22 @@ def build_info_economica_mensal(
     _ensure_wide_table(engine)
 
     if progress_cb:
-        progress_cb(f"MACRO (BCB): carregando cvm.macro_bcb (>= {START_YEAR})...")
+        progress_cb(f"MACRO (BCB): carregando dados brutos (>= {START_YEAR})…")
 
     df_raw = _load_raw(engine)
 
     if df_raw.empty:
         raise RuntimeError(
-            f"MACRO (BCB): cvm.macro_bcb não possui séries necessárias após {START_YEAR}."
+            f"MACRO (BCB): tabela {RAW_FULL} não possui séries suficientes após {START_YEAR}."
         )
 
     if progress_cb:
-        progress_cb("MACRO (BCB): transformando para formato mensal (wide)...")
+        progress_cb("MACRO (BCB): transformando para formato mensal…")
 
     wide = _to_wide(df_raw)
 
     if progress_cb:
-        progress_cb(f"MACRO (BCB): upsert em {WIDE_FULL} ({len(wide)} linhas)...")
+        progress_cb(f"MACRO (BCB): upsert em {WIDE_FULL} ({len(wide)} linhas)…")
 
     _upsert_wide(engine, wide)
 
@@ -196,5 +159,9 @@ def build_info_economica_mensal(
         progress_cb("MACRO (BCB): info_economica_mensal atualizada com sucesso.")
 
 
-def run(engine: Engine, *, progress_cb: Optional[Callable[[str], None]] = None) -> None:
+def run(
+    engine: Engine,
+    *,
+    progress_cb: Optional[Callable[[str], None]] = None,
+) -> None:
     build_info_economica_mensal(engine, progress_cb=progress_cb)
