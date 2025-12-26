@@ -8,11 +8,8 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 
-# ============================================================
-# Infraestrutura
-# ============================================================
 SCHEMA = "cvm"
-TABLE = "Financial_Metrics"  # sem aspas -> Postgres cria como financial_metrics
+TABLE = "financial_metrics"  # sem aspas -> postgres usa lowercase
 
 
 def _ensure_table(engine: Engine) -> None:
@@ -20,52 +17,48 @@ def _ensure_table(engine: Engine) -> None:
     create schema if not exists {SCHEMA};
 
     create table if not exists {SCHEMA}.{TABLE} (
-        Ticker text not null,
-        Ano integer not null,
+        ticker text not null,
+        ano integer not null,
 
-        Receita_Liquida double precision,
-        EBIT double precision,
-        Lucro_Liquido double precision,
+        receita_liquida double precision,
+        ebit double precision,
+        lucro_liquido double precision,
 
-        Margem_EBIT double precision,
-        Margem_Liquida double precision,
+        margem_ebit double precision,
+        margem_liquida double precision,
 
-        ROE double precision,
-        ROIC double precision,
+        roe double precision,
+        roic double precision,
 
-        CAGR_Receita double precision,
-        CAGR_Lucro double precision,
+        cagr_receita double precision,
+        cagr_lucro double precision,
 
-        primary key (Ticker, Ano)
+        primary key (ticker, ano)
     );
     """
     with engine.begin() as conn:
         conn.execute(text(ddl))
 
 
-# ============================================================
-# Métricas auxiliares
-# ============================================================
 def _safe_div(num, den):
-    """Evita divisão por zero e propaga None."""
     if num is None or den is None:
         return None
     try:
         if den == 0:
             return None
-        return num / den
+        return float(num) / float(den)
     except Exception:
         return None
 
 
 def _calc_cagr(series: pd.Series) -> float | None:
-    series = series.dropna()
-    if len(series) < 2:
+    s = series.dropna()
+    if len(s) < 2:
         return None
-    n = len(series) - 1
+    n = len(s) - 1
     try:
-        first = series.iloc[0]
-        last = series.iloc[-1]
+        first = s.iloc[0]
+        last = s.iloc[-1]
         if first in (0, None) or pd.isna(first):
             return None
         return (last / first) ** (1 / n) - 1
@@ -73,9 +66,6 @@ def _calc_cagr(series: pd.Series) -> float | None:
         return None
 
 
-# ============================================================
-# Função principal
-# ============================================================
 def run(
     engine: Engine,
     *,
@@ -83,35 +73,26 @@ def run(
     start_year: int = 2010,
     batch: int = 5000,
 ) -> pd.DataFrame:
-    """
-    Construção de Métricas Financeiras:
-    - Consome dados anuais (DFP) da tabela cvm.Demonstracoes_Financeiras
-    - Calcula margens, ROE, ROIC
-    - Calcula CAGR por empresa
-    - Persiste em cvm.Financial_Metrics (upsert)
-    """
-
-    if progress_cb:
-        progress_cb("MÉTRICAS: garantindo tabela…")
     _ensure_table(engine)
 
     if progress_cb:
         progress_cb("MÉTRICAS: lendo base anual (DFP)…")
 
+    # IMPORTANTÍSSIMO: aliases padronizados em lowercase
     df = pd.read_sql(
         text(
             f"""
             select
-                Ticker,
-                extract(year from Data)::int as Ano,
-                Receita_Liquida,
-                EBIT,
-                Lucro_Liquido,
-                Patrimonio_Liquido,
-                Ativo_Total,
-                Divida_Total
-            from {SCHEMA}.Demonstracoes_Financeiras
-            where extract(year from Data)::int >= :start_year
+                ticker as ticker,
+                extract(year from data)::int as ano,
+                receita_liquida as receita_liquida,
+                ebit as ebit,
+                lucro_liquido as lucro_liquido,
+                patrimonio_liquido as patrimonio_liquido,
+                ativo_total as ativo_total,
+                divida_total as divida_total
+            from {SCHEMA}.demonstracoes_financeiras
+            where extract(year from data)::int >= :start_year
             """
         ),
         engine,
@@ -123,10 +104,14 @@ def run(
             progress_cb("MÉTRICAS: base vazia. Nada a fazer.")
         return df
 
-    # Normaliza tipos numéricos (evita strings e objetos)
+    # Normaliza numéricos
     num_cols = [
-        "Receita_Liquida", "EBIT", "Lucro_Liquido",
-        "Patrimonio_Liquido", "Ativo_Total", "Divida_Total",
+        "receita_liquida",
+        "ebit",
+        "lucro_liquido",
+        "patrimonio_liquido",
+        "ativo_total",
+        "divida_total",
     ]
     for c in num_cols:
         df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -134,16 +119,13 @@ def run(
     if progress_cb:
         progress_cb("MÉTRICAS: calculando margens e retornos…")
 
-    # Métricas básicas com segurança
-    df["Margem_EBIT"] = df.apply(lambda r: _safe_div(r["EBIT"], r["Receita_Liquida"]), axis=1)
-    df["Margem_Liquida"] = df.apply(lambda r: _safe_div(r["Lucro_Liquido"], r["Receita_Liquida"]), axis=1)
+    df["margem_ebit"] = df.apply(lambda r: _safe_div(r["ebit"], r["receita_liquida"]), axis=1)
+    df["margem_liquida"] = df.apply(lambda r: _safe_div(r["lucro_liquido"], r["receita_liquida"]), axis=1)
+    df["roe"] = df.apply(lambda r: _safe_div(r["lucro_liquido"], r["patrimonio_liquido"]), axis=1)
 
-    df["ROE"] = df.apply(lambda r: _safe_div(r["Lucro_Liquido"], r["Patrimonio_Liquido"]), axis=1)
-
-    # ROIC = EBIT / (Ativo_Total - Divida_Total)  (blindando denominador zero)
-    invested_capital = df["Ativo_Total"] - df["Divida_Total"]
-    df["ROIC"] = [
-        _safe_div(e, ic) for e, ic in zip(df["EBIT"].tolist(), invested_capital.tolist())
+    invested_capital = df["ativo_total"] - df["divida_total"]
+    df["roic"] = [
+        _safe_div(e, ic) for e, ic in zip(df["ebit"].tolist(), invested_capital.tolist())
     ]
 
     if progress_cb:
@@ -151,30 +133,30 @@ def run(
 
     resultados: list[dict] = []
 
-    for ticker, df_emp in df.groupby("Ticker", dropna=True):
-        df_emp = df_emp.sort_values("Ano")
+    for ticker, df_emp in df.groupby("ticker", dropna=True):
+        df_emp = df_emp.sort_values("ano")
 
-        cagr_receita = _calc_cagr(df_emp["Receita_Liquida"])
-        cagr_lucro = _calc_cagr(df_emp["Lucro_Liquido"])
+        cagr_receita = _calc_cagr(df_emp["receita_liquida"])
+        cagr_lucro = _calc_cagr(df_emp["lucro_liquido"])
 
         for _, row in df_emp.iterrows():
             resultados.append(
                 {
-                    "Ticker": ticker,
-                    "Ano": int(row["Ano"]),
-                    "Receita_Liquida": row["Receita_Liquida"],
-                    "EBIT": row["EBIT"],
-                    "Lucro_Liquido": row["Lucro_Liquido"],
-                    "Margem_EBIT": row["Margem_EBIT"],
-                    "Margem_Liquida": row["Margem_Liquida"],
-                    "ROE": row["ROE"],
-                    "ROIC": row["ROIC"],
-                    "CAGR_Receita": cagr_receita,
-                    "CAGR_Lucro": cagr_lucro,
+                    "ticker": ticker,
+                    "ano": int(row["ano"]),
+                    "receita_liquida": row["receita_liquida"],
+                    "ebit": row["ebit"],
+                    "lucro_liquido": row["lucro_liquido"],
+                    "margem_ebit": row["margem_ebit"],
+                    "margem_liquida": row["margem_liquida"],
+                    "roe": row["roe"],
+                    "roic": row["roic"],
+                    "cagr_receita": cagr_receita,
+                    "cagr_lucro": cagr_lucro,
                 }
             )
 
-    df_final = pd.DataFrame(resultados)
+    df_final = pd.DataFrame(resultados).replace({np.nan: None})
     if df_final.empty:
         if progress_cb:
             progress_cb("MÉTRICAS: nada para persistir.")
@@ -185,33 +167,31 @@ def run(
 
     upsert = f"""
     insert into {SCHEMA}.{TABLE} (
-        Ticker, Ano,
-        Receita_Liquida, EBIT, Lucro_Liquido,
-        Margem_EBIT, Margem_Liquida,
-        ROE, ROIC,
-        CAGR_Receita, CAGR_Lucro
+        ticker, ano,
+        receita_liquida, ebit, lucro_liquido,
+        margem_ebit, margem_liquida,
+        roe, roic,
+        cagr_receita, cagr_lucro
     )
     values (
-        :Ticker, :Ano,
-        :Receita_Liquida, :EBIT, :Lucro_Liquido,
-        :Margem_EBIT, :Margem_Liquida,
-        :ROE, :ROIC,
-        :CAGR_Receita, :CAGR_Lucro
+        :ticker, :ano,
+        :receita_liquida, :ebit, :lucro_liquido,
+        :margem_ebit, :margem_liquida,
+        :roe, :roic,
+        :cagr_receita, :cagr_lucro
     )
-    on conflict (Ticker, Ano) do update set
-        Receita_Liquida = excluded.Receita_Liquida,
-        EBIT = excluded.EBIT,
-        Lucro_Liquido = excluded.Lucro_Liquido,
-        Margem_EBIT = excluded.Margem_EBIT,
-        Margem_Liquida = excluded.Margem_Liquida,
-        ROE = excluded.ROE,
-        ROIC = excluded.ROIC,
-        CAGR_Receita = excluded.CAGR_Receita,
-        CAGR_Lucro = excluded.CAGR_Lucro;
+    on conflict (ticker, ano) do update set
+        receita_liquida = excluded.receita_liquida,
+        ebit = excluded.ebit,
+        lucro_liquido = excluded.lucro_liquido,
+        margem_ebit = excluded.margem_ebit,
+        margem_liquida = excluded.margem_liquida,
+        roe = excluded.roe,
+        roic = excluded.roic,
+        cagr_receita = excluded.cagr_receita,
+        cagr_lucro = excluded.cagr_lucro;
     """
 
-    # NaN -> None para o driver
-    df_final = df_final.replace({np.nan: None})
     rows = df_final.to_dict(orient="records")
 
     with engine.begin() as conn:
