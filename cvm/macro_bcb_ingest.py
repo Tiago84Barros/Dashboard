@@ -1,20 +1,14 @@
+# core/ingest/macro_bcb_ingest.py
 from __future__ import annotations
 
 from typing import Callable, Optional
+
 import numpy as np
 import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-# ============================================================
-# CONFIGURAÇÃO LOCAL (decisão de produto)
-# ============================================================
-
-START_YEAR = 2010
-
-# ============================================================
-# TABELAS
-# ============================================================
+from core.config.settings import START_YEAR
 
 SCHEMA = "cvm"
 RAW_TABLE = "macro_bcb"
@@ -23,13 +17,12 @@ WIDE_TABLE = "info_economica_mensal"
 RAW_FULL = f"{SCHEMA}.{RAW_TABLE}"
 WIDE_FULL = f"{SCHEMA}.{WIDE_TABLE}"
 
-# ============================================================
-# MAPEAMENTO CORRETO (bate com macro_catalog / RAW)
-# ============================================================
-
+# Mapeamento CORRETO (bate com core/macro_catalog.py e o RAW ingerido)
+# Regras:
+# - Selic: preferir SELIC_EFETIVA; se não houver, cair para SELIC_META
 SERIES_TO_COL = {
     "SELIC_EFETIVA": "selic",
-    "SELIC_META": "selic",            # fallback
+    "SELIC_META": "selic",  # fallback
     "CAMBIO_PTX": "cambio",
     "IPCA_MENSAL": "ipca",
     "ICC": "icc",
@@ -46,9 +39,6 @@ REQUIRED_COLS = [
     "balanca_comercial",
 ]
 
-# ============================================================
-# DDL
-# ============================================================
 
 def _ensure_wide_table(engine: Engine) -> None:
     ddl = f"""
@@ -68,12 +58,10 @@ def _ensure_wide_table(engine: Engine) -> None:
     with engine.begin() as conn:
         conn.execute(text(ddl))
 
-# ============================================================
-# LOAD RAW (COM CORTE EM 2010)
-# ============================================================
 
 def _load_raw(engine: Engine) -> pd.DataFrame:
-    sql = text(f"""
+    sql = text(
+        f"""
         select
             data::date as data,
             series_name::text as series_name,
@@ -81,7 +69,8 @@ def _load_raw(engine: Engine) -> pd.DataFrame:
         from {RAW_FULL}
         where series_name in :series_list
           and data >= make_date(:start_year, 1, 1)
-    """)
+        """
+    )
 
     with engine.connect() as conn:
         df = pd.read_sql(
@@ -89,15 +78,12 @@ def _load_raw(engine: Engine) -> pd.DataFrame:
             conn,
             params={
                 "series_list": tuple(SERIES_TO_COL.keys()),
-                "start_year": START_YEAR,
+                "start_year": int(START_YEAR),
             },
         )
 
     return df
 
-# ============================================================
-# TRANSFORMAÇÃO PARA WIDE (MENSAL)
-# ============================================================
 
 def _to_wide(df_raw: pd.DataFrame) -> pd.DataFrame:
     if df_raw.empty:
@@ -107,11 +93,11 @@ def _to_wide(df_raw: pd.DataFrame) -> pd.DataFrame:
     df["col"] = df["series_name"].map(SERIES_TO_COL)
     df = df.dropna(subset=["data", "col"])
 
-    # ordena para permitir fallback SELIC_META → SELIC_EFETIVA
-    df["priority"] = df["series_name"].apply(
-        lambda x: 0 if x == "SELIC_EFETIVA" else 1
-    )
+    # Prioridade: manter SELIC_EFETIVA quando coexistir com SELIC_META
+    # (menor priority = mais importante)
+    df["priority"] = df["series_name"].apply(lambda x: 0 if x == "SELIC_EFETIVA" else 1)
 
+    # Para cada (data, col), escolhe a linha de maior prioridade (priority menor)
     df = (
         df.sort_values(["data", "col", "priority"])
         .drop_duplicates(subset=["data", "col"], keep="first")
@@ -120,23 +106,20 @@ def _to_wide(df_raw: pd.DataFrame) -> pd.DataFrame:
 
     wide = df.pivot(index="data", columns="col", values="valor").reset_index()
 
-    # garante todas as colunas
-    for col in REQUIRED_COLS:
-        if col not in wide.columns:
-            wide[col] = None
+    # Garante todas as colunas
+    for c in REQUIRED_COLS:
+        if c not in wide.columns:
+            wide[c] = None
 
-    wide = wide[["data"] + REQUIRED_COLS].sort_values("data")
+    wide = wide[["data"] + REQUIRED_COLS].sort_values("data").reset_index(drop=True)
 
-    # NaN → None (Postgres-safe)
+    # NaN → None (Postgres-friendly)
     wide = wide.replace({np.nan: None})
 
-    return wide.reset_index(drop=True)
+    return wide
 
-# ============================================================
-# UPSERT
-# ============================================================
 
-def _upsert_wide(engine: Engine, wide: pd.DataFrame, batch: int = 2000) -> None:
+def _upsert_wide(engine: Engine, wide: pd.DataFrame, batch: int = 5000) -> None:
     if wide.empty:
         return
 
@@ -172,18 +155,15 @@ def _upsert_wide(engine: Engine, wide: pd.DataFrame, batch: int = 2000) -> None:
 
     rows = wide.to_dict("records")
 
-    # blindagem final
+    # Blindagem final: todas as chaves existem em todas as linhas
     for r in rows:
         for col in REQUIRED_COLS:
             r.setdefault(col, None)
 
     with engine.begin() as conn:
         for i in range(0, len(rows), batch):
-            conn.execute(text(sql), rows[i:i + batch])
+            conn.execute(text(sql), rows[i : i + batch])
 
-# ============================================================
-# PIPELINE
-# ============================================================
 
 def build_info_economica_mensal(
     engine: Engine,
@@ -193,33 +173,28 @@ def build_info_economica_mensal(
     _ensure_wide_table(engine)
 
     if progress_cb:
-        progress_cb("MACRO (BCB): carregando dados brutos…")
+        progress_cb(f"MACRO (BCB): carregando cvm.macro_bcb (>= {START_YEAR})...")
 
     df_raw = _load_raw(engine)
 
     if df_raw.empty:
         raise RuntimeError(
-            "MACRO (BCB): tabela cvm.macro_bcb não possui séries após 2010."
+            f"MACRO (BCB): cvm.macro_bcb não possui séries necessárias após {START_YEAR}."
         )
 
     if progress_cb:
-        progress_cb("MACRO (BCB): transformando para formato mensal…")
+        progress_cb("MACRO (BCB): transformando para formato mensal (wide)...")
 
     wide = _to_wide(df_raw)
 
     if progress_cb:
-        progress_cb(
-            f"MACRO (BCB): upsert em {WIDE_FULL} ({len(wide)} linhas)…"
-        )
+        progress_cb(f"MACRO (BCB): upsert em {WIDE_FULL} ({len(wide)} linhas)...")
 
     _upsert_wide(engine, wide)
 
     if progress_cb:
         progress_cb("MACRO (BCB): info_economica_mensal atualizada com sucesso.")
 
-def run(
-    engine: Engine,
-    *,
-    progress_cb: Optional[Callable[[str], None]] = None,
-) -> None:
+
+def run(engine: Engine, *, progress_cb: Optional[Callable[[str], None]] = None) -> None:
     build_info_economica_mensal(engine, progress_cb=progress_cb)
