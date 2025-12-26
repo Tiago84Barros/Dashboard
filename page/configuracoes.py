@@ -5,11 +5,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional, List, Tuple
 
 import streamlit as st
-
-# ============================================================
-# Compatibilidade máxima: o dashboard pode chamar render(), run(),
-# main() ou show(). Vamos expor todos.
-# ============================================================
+from sqlalchemy import text
 
 
 @dataclass
@@ -20,12 +16,8 @@ class StepResult:
 
 
 def _get_engine_safe():
-    """
-    Tenta obter o engine do Supabase do mesmo lugar que o resto do projeto.
-    Ajuste aqui se o seu caminho for diferente.
-    """
     try:
-        from core.db_supabase import get_engine  # padrão do seu projeto
+        from core.db_supabase import get_engine
         return get_engine()
     except Exception as e:
         st.error(f"Falha ao importar/get_engine() de core.db_supabase: {e}")
@@ -39,182 +31,182 @@ def _call_step(step_name: str, fn: Callable[[], None], log: Callable[[str], None
         log(f"✅ {step_name}: concluído")
         return StepResult(step_name, True, "OK")
     except Exception as e:
-        log(f"❌ {step_name}: ERRO -> {e}")
-        return StepResult(step_name, False, str(e))
+        log(f"❌ {step_name}: ERRO -> {repr(e)}")
+        return StepResult(step_name, False, repr(e))
 
 
-def _resolve_runner(module_path: str):
+def _resolve_runner(module_candidates: List[str]):
     """
-    Importa dinamicamente um módulo e tenta achar uma função executável.
-    Prioridade: run(engine, progress_cb=...)
+    Tenta importar um módulo em múltiplos caminhos e retorna a função run(engine, progress_cb=?).
+    Isso resolve o seu erro: "No module named core.macro_bcb_raw_ingest".
     """
     import importlib
 
-    mod = importlib.import_module(module_path)
-
-    if hasattr(mod, "run") and callable(getattr(mod, "run")):
-        return getattr(mod, "run")
-
-    raise AttributeError(f"Módulo '{module_path}' não expõe função run(engine, progress_cb=...).")
-
-
-def _run_all_updates(
-    engine,
-    *,
-    ano_inicial: int,
-    ano_final: int,
-    dfp_por_clique_anos: int,
-    itr_por_clique_trimestres: int,
-    log: Callable[[str], None],
-):
-    """
-    Orquestrador único: CVM + Macro.
-    Ajuste os módulos abaixo conforme o nome real no seu repo.
-    """
-
-    steps: List[Tuple[str, Callable[[], None]]] = []
-
-    # -----------------------------
-    # CVM (DFP/ITR) - usa core.cvm_sync.apply_update ou módulos dedicados
-    # -----------------------------
-    def step_cvm():
-        # Se você tiver um orquestrador pronto:
+    last_err = None
+    for mod_path in module_candidates:
         try:
-            from core.cvm_sync import apply_update  # já apareceu no seu dashboard.py
+            mod = importlib.import_module(mod_path)
+            if hasattr(mod, "run") and callable(getattr(mod, "run")):
+                return mod_path, getattr(mod, "run")
+            raise AttributeError(f"Módulo '{mod_path}' importou, mas não tem função run().")
         except Exception as e:
-            raise RuntimeError(f"Não consegui importar core.cvm_sync.apply_update: {e}")
+            last_err = e
 
-        # apply_update(engine, ano_inicial, ano_final, ...) => depende da sua assinatura real.
-        # Para não quebrar, tentamos chamar de forma flexível.
-        try:
-            # caso mais comum
-            apply_update(
-                engine,
-                ano_inicial=ano_inicial,
-                ano_final=ano_final,
-                dfp_por_clique_anos=dfp_por_clique_anos,
-                itr_por_clique_trimestres=itr_por_clique_trimestres,
-                progress_cb=log,
-            )
-        except TypeError:
-            # fallback: assinatura diferente
-            apply_update(engine)  # e deixe o módulo lidar com defaults
+    raise ModuleNotFoundError(
+        f"Não consegui importar nenhum dos módulos: {module_candidates}. Último erro: {last_err}"
+    )
 
-    steps.append(("Atualizar CVM (DFP/ITR)", step_cvm))
 
-    # -----------------------------
-    # Macro RAW (BCB -> cvm.macro_bcb)
-    # -----------------------------
-    def step_macro_raw():
-        runner = _resolve_runner("core.macro_bcb_raw_ingest")  # ajuste se estiver em outro path
-        runner(engine, progress_cb=log)
+def _sql_count_macro_raw(engine) -> str:
+    # Mostra o que realmente foi gravado em cvm.macro_bcb
+    q = """
+    select series_name,
+           count(*) as n_linhas,
+           count(valor) as n_valor,
+           min(data) as data_min,
+           max(data) as data_max
+    from cvm.macro_bcb
+    group by series_name
+    order by n_linhas desc;
+    """
+    with engine.begin() as conn:
+        rows = conn.execute(text(q)).fetchall()
+    if not rows:
+        return "cvm.macro_bcb: sem dados."
+    lines = ["cvm.macro_bcb (por série):"]
+    for r in rows:
+        lines.append(
+            f"- {r[0]} | linhas={r[1]} | valor={r[2]} | {r[3]} -> {r[4]}"
+        )
+    return "\n".join(lines)
 
-    steps.append(("Atualizar Macro RAW (BCB -> cvm.macro_bcb)", step_macro_raw))
 
-    # -----------------------------
-    # Macro Analítico (gera info_economica / info_economica_mensal)
-    # -----------------------------
-    def step_macro_analitico():
-        runner = _resolve_runner("core.macro_bcb_ingest")  # ajuste se estiver em outro path
-        runner(engine, progress_cb=log)
-
-    steps.append(("Gerar tabelas analíticas (info_economica / info_economica_mensal)", step_macro_analitico))
-
-    # -----------------------------
-    # Executa as etapas com auditoria
-    # -----------------------------
-    results: List[StepResult] = []
-    for name, fn in steps:
-        results.append(_call_step(name, fn, log))
-
-    return results
+def _sql_count_info_economica(engine, table_full: str) -> str:
+    # Auditoria das tabelas analíticas
+    q = f"""
+    select
+      count(*) as linhas,
+      count(selic) as selic_ok,
+      count(cambio) as cambio_ok,
+      count(ipca) as ipca_ok,
+      count(icc) as icc_ok,
+      count(pib) as pib_ok,
+      count(balanca_comercial) as balanca_ok,
+      min(data) as data_min,
+      max(data) as data_max
+    from {table_full};
+    """
+    with engine.begin() as conn:
+        r = conn.execute(text(q)).fetchone()
+    if not r:
+        return f"{table_full}: sem dados."
+    return (
+        f"{table_full}: linhas={r[0]} | selic={r[1]} | cambio={r[2]} | ipca={r[3]} | "
+        f"icc={r[4]} | pib={r[5]} | balanca={r[6]} | {r[7]} -> {r[8]}"
+    )
 
 
 def render():
-    st.title("Configurações")
+    st.title("Configurações — Auditoria Macro (BCB)")
 
     st.caption(
-        "Esta página é o orquestrador único de sincronização do Supabase. "
-        "Ela executa CVM e Macro em sequência e exibe auditoria de cada etapa."
+        "Esta tela audita exclusivamente o pipeline de Macro: "
+        "1) RAW (SGS -> cvm.macro_bcb)  2) Analítico (-> info_economica / info_economica_mensal)."
     )
 
     engine = _get_engine_safe()
     if engine is None:
         st.stop()
 
-    # -----------------------------
-    # Parâmetros (mantive o que você já usava)
-    # -----------------------------
-    c1, c2 = st.columns(2)
-    with c1:
-        ano_inicial = st.number_input("Ano inicial", min_value=1990, max_value=2100, value=2010, step=1)
-        dfp_por_clique_anos = st.number_input("DFP por clique (anos)", min_value=1, max_value=10, value=1, step=1)
-
-    with c2:
-        ano_final = st.number_input("Ano final", min_value=1990, max_value=2100, value=2025, step=1)
-        itr_por_clique_trimestres = st.number_input(
-            "ITR por clique (trimestres)", min_value=1, max_value=20, value=1, step=1
-        )
-
-    st.divider()
-
-    # -----------------------------
-    # Auditoria: log em tela
-    # -----------------------------
+    # Logs
     if "cfg_logs" not in st.session_state:
         st.session_state.cfg_logs = []
 
     def log(msg: str):
         st.session_state.cfg_logs.append(msg)
 
-    # -----------------------------
-    # Botão ÚNICO (como você pediu)
-    # -----------------------------
-    col_btn, col_clear = st.columns([3, 1])
-    with col_btn:
-        clicked = st.button("Atualizar banco (CVM + Macro)", use_container_width=True)
-
-    with col_clear:
+    # Botões
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        clicked = st.button("Atualizar Macro (BCB) — Auditoria Completa", use_container_width=True)
+    with c2:
         if st.button("Limpar logs", use_container_width=True):
             st.session_state.cfg_logs = []
 
-    # Área de log sempre visível
+    # Área de auditoria
     st.subheader("Auditoria (passo a passo)")
-    st.code("\n".join(st.session_state.cfg_logs[-300:]) if st.session_state.cfg_logs else "Aguardando...")
+    st.code("\n".join(st.session_state.cfg_logs[-400:]) if st.session_state.cfg_logs else "Aguardando...")
 
-    if clicked:
-        st.session_state.cfg_logs = []  # reinicia auditoria a cada execução
-        log("Iniciando atualização completa (CVM + Macro)...")
+    if not clicked:
+        return
 
-        with st.spinner("Executando etapas..."):
-            results = _run_all_updates(
-                engine,
-                ano_inicial=int(ano_inicial),
-                ano_final=int(ano_final),
-                dfp_por_clique_anos=int(dfp_por_clique_anos),
-                itr_por_clique_trimestres=int(itr_por_clique_trimestres),
-                log=log,
-            )
+    st.session_state.cfg_logs = []
+    log("Macro: início da auditoria completa.")
 
-        ok_all = all(r.ok for r in results)
-        st.divider()
-        st.subheader("Resumo")
+    # Resolve módulos (tenta raiz e core/)
+    raw_candidates = [
+        "macro_bcb_raw_ingest",
+        "core.macro_bcb_raw_ingest",
+    ]
+    analitico_candidates = [
+        "macro_bcb_ingest",
+        "core.macro_bcb_ingest",
+    ]
 
-        for r in results:
-            if r.ok:
-                st.success(f"{r.name}: OK")
-            else:
-                st.error(f"{r.name}: FALHOU — {r.message}")
+    def step_imports():
+        mod_path, _ = _resolve_runner(raw_candidates)
+        log(f"Import OK (RAW): {mod_path}")
+        mod_path2, _ = _resolve_runner(analitico_candidates)
+        log(f"Import OK (ANALÍTICO): {mod_path2}")
 
-        if ok_all:
-            st.success("Atualização completa finalizada com sucesso.")
+    def step_raw():
+        mod_path, runner = _resolve_runner(raw_candidates)
+        log(f"Executando RAW via: {mod_path}.run(engine, progress_cb=log)")
+        runner(engine, progress_cb=log)
+        log(_sql_count_macro_raw(engine))
+
+    def step_analitico():
+        mod_path, runner = _resolve_runner(analitico_candidates)
+        log(f"Executando ANALÍTICO via: {mod_path}.run(engine, progress_cb=log)")
+        runner(engine, progress_cb=log)
+
+        # Auditoria das duas tabelas (se existirem)
+        try:
+            log(_sql_count_info_economica(engine, "cvm.info_economica"))
+        except Exception as e:
+            log(f"⚠ Não consegui auditar cvm.info_economica: {repr(e)}")
+        try:
+            log(_sql_count_info_economica(engine, "cvm.info_economica_mensal"))
+        except Exception as e:
+            log(f"⚠ Não consegui auditar cvm.info_economica_mensal: {repr(e)}")
+
+    steps: List[Tuple[str, Callable[[], None]]] = [
+        ("Validar imports Macro", step_imports),
+        ("Ingest RAW (SGS -> cvm.macro_bcb)", step_raw),
+        ("Gerar Analítico (-> info_economica / info_economica_mensal)", step_analitico),
+    ]
+
+    results: List[StepResult] = []
+    with st.spinner("Executando Macro com auditoria..."):
+        for name, fn in steps:
+            results.append(_call_step(name, fn, log))
+
+    st.divider()
+    st.subheader("Resumo (Macro)")
+    ok_all = all(r.ok for r in results)
+    for r in results:
+        if r.ok:
+            st.success(f"{r.name}: OK")
         else:
-            st.error("Atualização completa finalizada com falhas. Veja a auditoria acima.")
+            st.error(f"{r.name}: FALHOU — {r.message}")
+
+    if ok_all:
+        st.success("Macro finalizado com sucesso.")
+    else:
+        st.error("Macro finalizado com falhas. Veja a auditoria acima.")
 
 
-# ============================================================
-# Aliases de compatibilidade (para qualquer loader antigo)
-# ============================================================
+# Aliases de compatibilidade com loaders antigos
 def run(*args, **kwargs):
     return render()
 
