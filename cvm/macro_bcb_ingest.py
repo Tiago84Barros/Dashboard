@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
+from core.settings import START_YEAR
 
 SCHEMA = "cvm"
 RAW_TABLE = "macro_bcb"
@@ -56,10 +57,18 @@ def _load_raw(engine: Engine) -> pd.DataFrame:
             valor::double precision as valor
         from {RAW_FULL}
         where series_name in :series_list
+          and data >= make_date(:start_year, 1, 1)
     """)
 
     with engine.connect() as conn:
-        df = pd.read_sql(sql, conn, params={"series_list": series_list})
+        df = pd.read_sql(
+            sql,
+            conn,
+            params={
+                "series_list": series_list,
+                "start_year": START_YEAR,
+            },
+        )
 
     return df
 
