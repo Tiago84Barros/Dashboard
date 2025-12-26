@@ -5,7 +5,7 @@ from typing import Callable, Optional
 
 from sqlalchemy.engine import Engine
 
-from core.macro_bcb_raw_ingest import ingest_macro_bcb_raw
+from core.ingest.macro_bcb_raw_ingest import ingest_macro_bcb_raw
 from core.macro_bcb_analytics import build_info_economica_mensal
 
 
