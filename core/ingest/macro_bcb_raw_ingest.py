@@ -1,4 +1,4 @@
-# macro_bcb_raw_ingest.py
+# core/macro_bcb_raw_ingest.py
 from __future__ import annotations
 
 from typing import Callable, Optional
@@ -33,15 +33,37 @@ def _ensure_raw_table(engine: Engine) -> None:
         conn.execute(text(ddl_table))
 
 
+def _parse_valor(series: pd.Series) -> pd.Series:
+    """
+    Parse robusto para valores que podem vir como:
+    "13,75", "13.75", "1.234,56", "R$ 10,00", etc.
+    """
+    s = series.astype(str).str.strip()
+
+    # remove separador de milhar comum PT-BR (.)
+    # e troca vírgula decimal por ponto
+    # Ex: "1.234,56" -> "1234.56"
+    s = s.str.replace(".", "", regex=False)
+    s = s.str.replace(",", ".", regex=False)
+
+    # limpa tudo que não for dígito, ponto, sinal
+    s = s.str.replace(r"[^0-9\.\-]", "", regex=True)
+
+    return pd.to_numeric(s, errors="coerce")
+
+
 def _fetch_sgs(codigo: int) -> pd.DataFrame:
     """
     Baixa série do BCB SGS e retorna DataFrame com colunas:
       - data (date)
       - valor (float)
-    Observação: o BCB pode devolver valor com vírgula decimal (ex.: "13,75").
     """
     url = BCB_URL.format(codigo=codigo)
-    r = requests.get(url, timeout=60)
+
+    # headers ajudam a evitar bloqueios/ratelimit “silenciosos”
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; macro-ingest/1.0)"}
+
+    r = requests.get(url, timeout=60, headers=headers)
     r.raise_for_status()
 
     data = r.json()
@@ -51,12 +73,7 @@ def _fetch_sgs(codigo: int) -> pd.DataFrame:
 
     # BCB devolve data em dd/mm/yyyy
     df["data"] = pd.to_datetime(df["data"], dayfirst=True, errors="coerce").dt.date
-
-    # Parse robusto do "valor" (aceita "13,75", "13.75", etc.)
-    s = df["valor"].astype(str).str.strip()
-    s = s.str.replace(",", ".", regex=False)
-    s = s.str.replace(r"[^0-9\.\-]", "", regex=True)  # limpa ruídos
-    df["valor"] = pd.to_numeric(s, errors="coerce")
+    df["valor"] = _parse_valor(df["valor"])
 
     df = df.dropna(subset=["data"])
     return df[["data", "valor"]]
@@ -85,6 +102,10 @@ def ingest_macro_bcb_raw(
     *,
     progress_cb: Optional[Callable[[str], None]] = None,
 ) -> None:
+    """
+    Ingere TODAS as séries do catálogo para cvm.macro_bcb (RAW).
+    Não “inventa” mensalização aqui. Apenas grava o que a API entrega.
+    """
     _ensure_raw_table(engine)
 
     total_series = len(BCB_SERIES_CATALOG)
@@ -95,20 +116,24 @@ def ingest_macro_bcb_raw(
         progress_cb(f"MACRO RAW: iniciando ingest de {total_series} séries do BCB (SGS).")
 
     for idx, (series_name, meta) in enumerate(BCB_SERIES_CATALOG.items(), start=1):
-        codigo = meta.get("sgs")
+        codigo = int(meta.get("sgs"))
+
         if progress_cb:
             progress_cb(f"MACRO RAW: ({idx}/{total_series}) baixando {series_name} (SGS {codigo})...")
 
         try:
-            df = _fetch_sgs(int(codigo))
+            df = _fetch_sgs(codigo)
+
             if df.empty:
                 fail += 1
                 if progress_cb:
                     progress_cb(f"MACRO RAW: {series_name} retornou 0 linhas.")
                 continue
 
-            # Se veio data mas não veio valor numérico útil, trate como falha (evita 'OK' falso)
-            if df["valor"].notna().sum() == 0:
+            # aceite valores nulos (é comum em algumas séries),
+            # mas exija ao menos 1 valor válido para considerar “ok”
+            valid = int(df["valor"].notna().sum())
+            if valid == 0:
                 fail += 1
                 if progress_cb:
                     progress_cb(f"MACRO RAW: {series_name} retornou valores inválidos (tudo NULL após parse).")
@@ -119,10 +144,7 @@ def ingest_macro_bcb_raw(
             ok += 1
 
             if progress_cb:
-                progress_cb(
-                    f"MACRO RAW: {series_name} OK "
-                    f"({len(df)} linhas, {int(df['valor'].notna().sum())} valores válidos)."
-                )
+                progress_cb(f"MACRO RAW: {series_name} OK ({len(df)} linhas, {valid} valores válidos).")
 
         except Exception as e:
             fail += 1
