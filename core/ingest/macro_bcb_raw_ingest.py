@@ -1,4 +1,4 @@
-# core/macro_bcb_raw_ingest.py
+# core/ingest/macro_bcb_raw_ingest.py
 from __future__ import annotations
 
 from typing import Callable, Optional
@@ -17,7 +17,7 @@ RAW_FULL = f"{SCHEMA}.{RAW_TABLE}"
 BCB_URL = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados?formato=json"
 
 
-def _ensure_raw_table(engine: Engine) -> None:
+def _ensure_raw_table(engine: Engine, *, progress_cb: Optional[Callable[[str], None]] = None) -> None:
     ddl_schema = f"create schema if not exists {SCHEMA};"
     ddl_table = f"""
     create table if not exists {RAW_FULL} (
@@ -32,39 +32,34 @@ def _ensure_raw_table(engine: Engine) -> None:
         conn.execute(text(ddl_schema))
         conn.execute(text(ddl_table))
 
-
-def _parse_valor(series: pd.Series) -> pd.Series:
-    s = series.astype(str).str.strip()
-    s = s.str.replace(".", "", regex=False)         # remove milhar PT-BR
-    s = s.str.replace(",", ".", regex=False)        # vírgula -> ponto
-    s = s.str.replace(r"[^0-9\.\-]", "", regex=True)
-    return pd.to_numeric(s, errors="coerce")
+    if progress_cb:
+        progress_cb(f"MACRO RAW: schema/tabela garantidos: {RAW_FULL} (PK: data+series_name).")
 
 
-def _fetch_sgs(codigo: int, *, audit: Optional[Callable[[str], None]] = None) -> pd.DataFrame:
+def _fetch_sgs(codigo: int) -> pd.DataFrame:
+    """
+    Baixa série do BCB (SGS) e retorna DataFrame com colunas:
+      - data (date)
+      - valor (float)
+    Observação: o BCB pode devolver valor com vírgula decimal (ex.: "13,75").
+    """
     url = BCB_URL.format(codigo=codigo)
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; macro-ingest/1.0)"}
-
-    if audit:
-        audit(f"[RAW] GET {url}")
-
-    r = requests.get(url, timeout=60, headers=headers)
-
-    if audit:
-        audit(f"[RAW] HTTP {r.status_code} | bytes={len(r.content)}")
-
+    r = requests.get(url, timeout=60)
     r.raise_for_status()
 
     data = r.json()
-    if audit:
-        audit(f"[RAW] JSON items={len(data) if isinstance(data, list) else 'N/A'}")
-
     df = pd.DataFrame(data)
     if df.empty:
         return df
 
+    # BCB devolve data em dd/mm/yyyy
     df["data"] = pd.to_datetime(df["data"], dayfirst=True, errors="coerce").dt.date
-    df["valor"] = _parse_valor(df["valor"])
+
+    # Parse robusto do "valor" (aceita "13,75", "13.75", etc.)
+    s = df["valor"].astype(str).str.strip()
+    s = s.str.replace(",", ".", regex=False)
+    s = s.str.replace(r"[^0-9\.\-]", "", regex=True)  # limpa ruídos
+    df["valor"] = pd.to_numeric(s, errors="coerce")
 
     df = df.dropna(subset=["data"])
     return df[["data", "valor"]]
@@ -88,91 +83,83 @@ def _upsert_raw(engine: Engine, df: pd.DataFrame, batch: int = 2000) -> None:
             conn.execute(text(sql), rows[i : i + batch])
 
 
-def _count_series(engine: Engine, series_name: str) -> tuple[int, int]:
-    q = text(
-        f"""
-        select count(*) as n, count(valor) as n_valor
-        from {RAW_FULL}
-        where series_name = :s
-        """
-    )
-    with engine.begin() as conn:
-        row = conn.execute(q, {"s": series_name}).mappings().first()
-    return int(row["n"]), int(row["n_valor"])
-
-
 def ingest_macro_bcb_raw(
     engine: Engine,
     *,
     progress_cb: Optional[Callable[[str], None]] = None,
-    audit_cb: Optional[Callable[[str], None]] = None,
 ) -> None:
-    _ensure_raw_table(engine)
+    _ensure_raw_table(engine, progress_cb=progress_cb)
 
     total_series = len(BCB_SERIES_CATALOG)
-    if audit_cb:
-        audit_cb(f"[RAW] Tabela garantida: {RAW_FULL}")
-        audit_cb(f"[RAW] Séries no catálogo: {total_series}")
-
+    ok, fail = 0, 0
     frames: list[pd.DataFrame] = []
 
+    if progress_cb:
+        progress_cb(f"MACRO RAW: iniciando ingest de {total_series} séries do BCB (SGS).")
+
     for idx, (series_name, meta) in enumerate(BCB_SERIES_CATALOG.items(), start=1):
-        codigo = int(meta["sgs"])
-        freq = meta.get("freq")
+        codigo = meta.get("sgs")
 
         if progress_cb:
-            progress_cb(f"RAW ({idx}/{total_series}) {series_name} ...")
-
-        if audit_cb:
-            audit_cb(f"\n[RAW] ===== {series_name} | SGS={codigo} | freq={freq} =====")
+            progress_cb(f"MACRO RAW: ({idx}/{total_series}) baixando {series_name} (SGS {codigo})...")
 
         try:
-            df = _fetch_sgs(codigo, audit=audit_cb)
+            df = _fetch_sgs(int(codigo))
 
+            # Auditoria: df vazio
             if df.empty:
-                if audit_cb:
-                    audit_cb(f"[RAW] {series_name}: df vazio (0 linhas).")
+                fail += 1
+                if progress_cb:
+                    progress_cb(f"MACRO RAW: {series_name} retornou 0 linhas (df.empty).")
                 continue
 
-            valid = int(df["valor"].notna().sum())
-            if audit_cb:
-                audit_cb(
-                    f"[RAW] {series_name}: linhas={len(df)} | validos={valid} | "
-                    f"min_data={df['data'].min()} | max_data={df['data'].max()}"
-                )
-                audit_cb(f"[RAW] {series_name}: head=\n{df.head(5).to_string(index=False)}")
+            # Auditoria: contagem de valores válidos
+            validos = int(df["valor"].notna().sum())
 
-            if valid == 0:
-                if audit_cb:
-                    audit_cb(f"[RAW] {series_name}: TODOS os valores viraram NULL após parse. (descartado)")
+            # >>> ALTERAÇÃO SUGERIDA: log detalhado + exemplo antes de descartar <<<
+            if validos == 0:
+                fail += 1
+                if progress_cb:
+                    progress_cb(
+                        f"MACRO RAW: {series_name} DESCARTADA — "
+                        f"{len(df)} linhas, 0 valores numéricos após parse."
+                    )
+                    # Exemplo bruto para auditoria (3 primeiras linhas)
+                    progress_cb(f"MACRO RAW: exemplo ({series_name}) head(3): {df.head(3).to_dict('records')}")
                 continue
 
+            # Mantém o comportamento: salva o que for válido
             df["series_name"] = series_name
             frames.append(df)
+            ok += 1
+
+            if progress_cb:
+                progress_cb(
+                    f"MACRO RAW: {series_name} OK "
+                    f"({len(df)} linhas, {validos} valores válidos). "
+                    f"Head(3): {df.head(3).to_dict('records')}"
+                )
 
         except Exception as e:
-            if audit_cb:
-                audit_cb(f"[RAW] ERRO {series_name}: {repr(e)}")
+            fail += 1
+            if progress_cb:
+                progress_cb(f"MACRO RAW: ERRO em {series_name} (SGS {codigo}): {e}")
 
     if not frames:
         raise RuntimeError(
-            "RAW: nenhuma série foi ingerida com valores válidos. "
-            "A auditoria acima deve mostrar se a API retornou dados ou se o parse/HTTP falhou."
+            "MACRO RAW: nenhuma série foi ingerida com valores válidos. "
+            "Verifique conectividade com api.bcb.gov.br e os códigos SGS em core/macro_catalog.py."
         )
 
     all_df = pd.concat(frames, ignore_index=True)
-
-    if audit_cb:
-        audit_cb(f"\n[RAW] CONCAT total linhas={len(all_df)} | series_unicas={all_df['series_name'].nunique()}")
-
     _upsert_raw(engine, all_df)
 
-    if audit_cb:
-        audit_cb("[RAW] UPSERT concluído. Contagens no banco (por série):")
-        for sname in BCB_SERIES_CATALOG.keys():
-            n, n_valor = _count_series(engine, sname)
-            audit_cb(f"[RAW] {sname}: n={n} | n_valor={n_valor}")
+    if progress_cb:
+        progress_cb(
+            f"MACRO RAW: concluído. Séries OK: {ok}/{total_series}. "
+            f"Séries com falha/sem dados: {fail}. Linhas gravadas: {len(all_df)}."
+        )
 
 
-def run(engine: Engine, *, progress_cb: Optional[Callable[[str], None]] = None, audit_cb: Optional[Callable[[str], None]] = None) -> None:
-    ingest_macro_bcb_raw(engine, progress_cb=progress_cb, audit_cb=audit_cb)
+def run(engine: Engine, *, progress_cb: Optional[Callable[[str], None]] = None) -> None:
+    ingest_macro_bcb_raw(engine, progress_cb=progress_cb)
