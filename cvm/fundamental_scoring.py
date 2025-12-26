@@ -1,31 +1,40 @@
 from __future__ import annotations
 
-from typing import Callable, Optional, Dict, Any
+from typing import Callable, Optional
 
 import numpy as np
 import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
+from scipy.stats import zscore
+
+
+SCHEMA = "cvm"
+SRC_TABLE = "financial_metrics"     # tabela de entrada (o Postgres tende a guardar em minúsculo)
+DST_TABLE = "fundamental_score"     # tabela de saída
+
+SRC_FULL = f"{SCHEMA}.{SRC_TABLE}"
+DST_FULL = f"{SCHEMA}.{DST_TABLE}"
 
 
 # ============================================================
 # Infraestrutura Supabase
 # ============================================================
 def _ensure_table(engine: Engine) -> None:
-    ddl = """
-    create schema if not exists cvm;
+    ddl = f"""
+    create schema if not exists {SCHEMA};
 
-    create table if not exists cvm.Fundamental_Score (
-        Ticker text not null,
-        Ano integer not null,
+    create table if not exists {DST_FULL} (
+        ticker text not null,
+        ano integer not null,
 
-        Score_Qualidade double precision,
-        Score_Crescimento double precision,
-        Score_Rentabilidade double precision,
-        Score_Total double precision,
-        Ranking integer,
+        score_qualidade double precision,
+        score_crescimento double precision,
+        score_rentabilidade double precision,
+        score_total double precision,
+        ranking integer,
 
-        primary key (Ticker, Ano)
+        primary key (ticker, ano)
     );
     """
     with engine.begin() as conn:
@@ -33,37 +42,30 @@ def _ensure_table(engine: Engine) -> None:
 
 
 # ============================================================
+# Normalização de nomes (case-insensitive)
+# ============================================================
+def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.columns = [c.strip().lower() for c in df.columns]
+    return df
+
+
+def _require_cols(df: pd.DataFrame, cols: list[str], prefix_msg: str) -> None:
+    missing = [c for c in cols if c not in df.columns]
+    if missing:
+        raise RuntimeError(f"{prefix_msg}: colunas ausentes em {SRC_FULL}: {missing}")
+
+
+# ============================================================
 # Funções auxiliares
 # ============================================================
-def _safe_zscore(s: pd.Series, invert: bool = False) -> pd.Series:
-    """
-    Z-score robusto:
-    - ignora NaN
-    - se std == 0 (ou tudo NaN), devolve 0 (neutro)
-    - opcionalmente inverte o sinal
-    """
-    s = pd.to_numeric(s, errors="coerce")
-    mean = s.mean(skipna=True)
-    std = s.std(skipna=True, ddof=0)
-
-    if pd.isna(std) or std == 0:
-        z = pd.Series(0.0, index=s.index)
-    else:
-        z = (s - mean) / std
-
+def _zscore(df: pd.DataFrame, col: str, invert: bool = False) -> pd.Series:
+    # zscore precisa de float; nan_policy omit ignora NaN
+    s = zscore(df[col].astype(float), nan_policy="omit")
     if invert:
-        z = -z
-
-    # z pode ter NaN onde s era NaN; mantemos NaN (não atrapalha nas somas com fillna)
-    return z
-
-
-def _require_columns(df: pd.DataFrame, required: list[str]) -> None:
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        raise RuntimeError(
-            f"FUNDAMENTAL SCORE: colunas ausentes em cvm.Financial_Metrics: {missing}"
-        )
+        s = -s
+    # zscore pode retornar ndarray; converte para Series alinhada
+    return pd.Series(s, index=df.index)
 
 
 # ============================================================
@@ -75,121 +77,88 @@ def run(
     progress_cb: Optional[Callable[[str], None]] = None,
 ) -> pd.DataFrame:
     """
-    Algoritmo 4 — Scoring Fundamentalista
+    Algoritmo — Scoring Fundamentalista
 
-    - Normalização por z-score (robusto, sem SciPy)
-    - Scores agregados
-    - Ranking anual
-    - Persistência em cvm.Fundamental_Score
-
-    Compatível com pipeline: aceita progress_cb.
+    - Lê cvm.financial_metrics (normaliza colunas para minúsculo)
+    - Normaliza por z-score por ANO
+    - Calcula scores agregados e ranking anual
+    - Persiste em cvm.fundamental_score (minúsculo, Postgres-friendly)
     """
 
     _ensure_table(engine)
 
     if progress_cb:
-        progress_cb("FUNDAMENTAL SCORE: lendo Financial_Metrics…")
+        progress_cb("FUNDAMENTAL SCORE: carregando métricas base…")
 
-    df = pd.read_sql(
-        """
-        select
-            Ticker,
-            Ano,
-            Margem_EBIT,
-            Margem_Liquida,
-            ROE,
-            ROIC,
-            CAGR_Receita,
-            CAGR_Lucro
-        from cvm.Financial_Metrics
-        """,
-        engine,
-    )
+    df = pd.read_sql(f"select * from {SRC_FULL}", engine)
 
     if df.empty:
         if progress_cb:
-            progress_cb("FUNDAMENTAL SCORE: Financial_Metrics vazio. Nada a fazer.")
+            progress_cb("FUNDAMENTAL SCORE: tabela de métricas vazia; nada a fazer.")
         return df
 
-    # Garante que as colunas usadas existem
-    _require_columns(
-        df,
-        [
-            "Ticker",
-            "Ano",
-            "Margem_EBIT",
-            "Margem_Liquida",
-            "ROE",
-            "ROIC",
-            "CAGR_Receita",
-            "CAGR_Lucro",
-        ],
-    )
+    df = _normalize_columns(df)
 
-    # Normaliza tipos básicos
-    df["Ano"] = pd.to_numeric(df["Ano"], errors="coerce").astype("Int64")
-    df["Ticker"] = df["Ticker"].astype(str)
+    required = [
+        "ticker",
+        "ano",
+        "margem_ebit",
+        "margem_liquida",
+        "roe",
+        "roic",
+        "cagr_receita",
+        "cagr_lucro",
+    ]
+    _require_cols(df, required, "FUNDAMENTAL SCORE")
 
-    # Remove linhas sem Ano/Ticker (evita explosão de grupos)
-    df = df.dropna(subset=["Ano", "Ticker"])
-    if df.empty:
-        if progress_cb:
-            progress_cb("FUNDAMENTAL SCORE: sem linhas válidas após limpeza.")
-        return df
-
-    # --------------------------------------------------------
-    # Definição de métricas e pesos (iguais ao notebook)
-    # --------------------------------------------------------
-    metricas: Dict[str, Dict[str, Any]] = {
-        "Margem_EBIT": {"peso": 0.2, "invert": False},
-        "Margem_Liquida": {"peso": 0.2, "invert": False},
-        "ROE": {"peso": 0.2, "invert": False},
-        "ROIC": {"peso": 0.2, "invert": False},
-        "CAGR_Receita": {"peso": 0.1, "invert": False},
-        "CAGR_Lucro": {"peso": 0.1, "invert": False},
-    }
+    # garante tipos mínimos
+    df["ano"] = df["ano"].astype(int)
 
     if progress_cb:
         progress_cb("FUNDAMENTAL SCORE: calculando scores por ano…")
 
-    resultados: list[pd.DataFrame] = []
+    metricas = {
+        "margem_ebit": {"peso": 0.2, "invert": False},
+        "margem_liquida": {"peso": 0.2, "invert": False},
+        "roe": {"peso": 0.2, "invert": False},
+        "roic": {"peso": 0.2, "invert": False},
+        "cagr_receita": {"peso": 0.1, "invert": False},
+        "cagr_lucro": {"peso": 0.1, "invert": False},
+    }
 
-    # --------------------------------------------------------
-    # Cálculo dos scores por ano
-    # --------------------------------------------------------
-    for ano, df_ano in df.groupby("Ano"):
+    resultados = []
+
+    for ano, df_ano in df.groupby("ano", sort=True):
         df_ano = df_ano.copy()
 
-        # z-scores por métrica
+        # z-scores
         for m, cfg in metricas.items():
-            df_ano[f"z_{m}"] = _safe_zscore(df_ano[m], invert=bool(cfg["invert"]))
+            df_ano[f"z_{m}"] = _zscore(df_ano, m, cfg["invert"])
 
-        # Scores parciais (mantendo a mesma lógica do seu script)
-        # Usamos fillna(0) nas somas para não derrubar o score quando uma métrica não existe.
-        df_ano["Score_Qualidade"] = (
-            df_ano["z_Margem_EBIT"].fillna(0) * 0.5
-            + df_ano["z_Margem_Liquida"].fillna(0) * 0.5
+        # scores parciais (mesma lógica)
+        df_ano["score_qualidade"] = (
+            df_ano["z_margem_ebit"] * 0.5
+            + df_ano["z_margem_liquida"] * 0.5
         )
 
-        df_ano["Score_Rentabilidade"] = (
-            df_ano["z_ROE"].fillna(0) * 0.5
-            + df_ano["z_ROIC"].fillna(0) * 0.5
+        df_ano["score_rentabilidade"] = (
+            df_ano["z_roe"] * 0.5
+            + df_ano["z_roic"] * 0.5
         )
 
-        df_ano["Score_Crescimento"] = (
-            df_ano["z_CAGR_Receita"].fillna(0) * 0.5
-            + df_ano["z_CAGR_Lucro"].fillna(0) * 0.5
+        df_ano["score_crescimento"] = (
+            df_ano["z_cagr_receita"] * 0.5
+            + df_ano["z_cagr_lucro"] * 0.5
         )
 
-        df_ano["Score_Total"] = (
-            df_ano["Score_Qualidade"] * 0.4
-            + df_ano["Score_Rentabilidade"] * 0.4
-            + df_ano["Score_Crescimento"] * 0.2
+        df_ano["score_total"] = (
+            df_ano["score_qualidade"] * 0.4
+            + df_ano["score_rentabilidade"] * 0.4
+            + df_ano["score_crescimento"] * 0.2
         )
 
-        # Ranking denso, maior score = melhor
-        df_ano["Ranking"] = (
-            df_ano["Score_Total"]
+        df_ano["ranking"] = (
+            df_ano["score_total"]
             .rank(ascending=False, method="dense")
             .astype(int)
         )
@@ -197,46 +166,40 @@ def run(
         resultados.append(
             df_ano[
                 [
-                    "Ticker",
-                    "Ano",
-                    "Score_Qualidade",
-                    "Score_Crescimento",
-                    "Score_Rentabilidade",
-                    "Score_Total",
-                    "Ranking",
+                    "ticker",
+                    "ano",
+                    "score_qualidade",
+                    "score_crescimento",
+                    "score_rentabilidade",
+                    "score_total",
+                    "ranking",
                 ]
             ]
         )
 
     df_final = pd.concat(resultados, ignore_index=True)
-
-    # Limpa inf/-inf e converte NaN -> None
-    df_final = df_final.replace([np.inf, -np.inf], np.nan)
     df_final = df_final.where(pd.notnull(df_final), None)
 
     if progress_cb:
-        progress_cb(f"FUNDAMENTAL SCORE: upsert ({len(df_final)} linhas)…")
+        progress_cb(f"FUNDAMENTAL SCORE: gravando em {DST_FULL}…")
 
-    # --------------------------------------------------------
-    # Persistência (UPSERT)
-    # --------------------------------------------------------
-    upsert = """
-    insert into cvm.Fundamental_Score (
-        Ticker, Ano,
-        Score_Qualidade, Score_Crescimento,
-        Score_Rentabilidade, Score_Total, Ranking
+    upsert = f"""
+    insert into {DST_FULL} (
+        ticker, ano,
+        score_qualidade, score_crescimento,
+        score_rentabilidade, score_total, ranking
     )
     values (
-        :Ticker, :Ano,
-        :Score_Qualidade, :Score_Crescimento,
-        :Score_Rentabilidade, :Score_Total, :Ranking
+        :ticker, :ano,
+        :score_qualidade, :score_crescimento,
+        :score_rentabilidade, :score_total, :ranking
     )
-    on conflict (Ticker, Ano) do update set
-        Score_Qualidade = excluded.Score_Qualidade,
-        Score_Crescimento = excluded.Score_Crescimento,
-        Score_Rentabilidade = excluded.Score_Rentabilidade,
-        Score_Total = excluded.Score_Total,
-        Ranking = excluded.Ranking;
+    on conflict (ticker, ano) do update set
+        score_qualidade = excluded.score_qualidade,
+        score_crescimento = excluded.score_crescimento,
+        score_rentabilidade = excluded.score_rentabilidade,
+        score_total = excluded.score_total,
+        ranking = excluded.ranking;
     """
 
     with engine.begin() as conn:
