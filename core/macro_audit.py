@@ -1,29 +1,32 @@
-# core/macro_audit.py
-from __future__ import annotations
-
-from dataclasses import dataclass, field
-from typing import List, Optional
-
-import streamlit as st
+from sqlalchemy import text
+from sqlalchemy.engine import Engine
 
 
-@dataclass
-class AuditLogger:
-    title: str = "Auditoria Macro (BCB)"
-    lines: List[str] = field(default_factory=list)
-    _box: Optional[st.delta_generator.DeltaGenerator] = None
+def audit_macro(engine: Engine) -> dict:
+    results = {}
 
-    def bind(self, box: st.delta_generator.DeltaGenerator) -> "AuditLogger":
-        self._box = box
-        self._render()
-        return self
+    with engine.connect() as conn:
+        results["total_linhas"] = conn.execute(
+            text("select count(*) from cvm.info_economica_mensal")
+        ).scalar()
 
-    def log(self, msg: str) -> None:
-        self.lines.append(msg)
-        self._render()
+        results["datas_distintas"] = conn.execute(
+            text("select count(distinct data) from cvm.info_economica_mensal")
+        ).scalar()
 
-    def _render(self) -> None:
-        if self._box is None:
-            return
-        text = "\n".join(self.lines[-500:])  # evita ficar gigante
-        self._box.code(text, language="text")
+        results["linhas_sem_cambio"] = conn.execute(
+            text("""
+                select count(*) 
+                from cvm.info_economica_mensal 
+                where cambio is null
+            """)
+        ).scalar()
+
+        results["intervalo_datas"] = conn.execute(
+            text("""
+                select min(data) as inicio, max(data) as fim
+                from cvm.info_economica_mensal
+            """)
+        ).mappings().first()
+
+    return results
