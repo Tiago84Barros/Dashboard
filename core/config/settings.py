@@ -2,20 +2,23 @@
 from __future__ import annotations
 
 """
-Arquivo de CONFIGURAÇÃO GLOBAL (sem lógica de negócio).
-- Não deve importar pandas / sqlalchemy / engine.
-- Deve conter apenas constantes e decisões de produto.
+Configurações globais do projeto.
+
+Este arquivo deve conter APENAS decisões de produto e parâmetros
+compartilhados entre múltiplos módulos.
+
+Não coloque lógica de negócio aqui.
 """
 
 # ============================================================
-# DECISÕES DE PRODUTO / CORTE DE HISTÓRICO
+# DECISÕES DE PRODUTO / CORTE HISTÓRICO
 # ============================================================
 
-# Ano mínimo para ingestões/consultas (ex.: Macro BCB, etc.)
+# Ano inicial para ingestões macroeconômicas (BCB, IBGE, etc.)
 START_YEAR: int = 2010
 
 # ============================================================
-# BANCO / SCHEMAS PADRÃO
+# (se já existirem outros settings seus abaixo, eles podem
+# continuar normalmente — o importante é que START_YEAR
+# exista no topo e sem condicional)
 # ============================================================
-
-CVM_SCHEMA: str = "cvm"
