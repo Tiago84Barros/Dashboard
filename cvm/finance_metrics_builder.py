@@ -7,8 +7,15 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+try:
+    from sklearn.linear_model import LinearRegression
+except Exception as e:
+    raise ImportError(
+        "O módulo de métricas precisa do scikit-learn para regressão linear. "
+        "Instale/adicione no requirements: scikit-learn"
+    ) from e
 
-# Postgres: identificadores não-quoteados viram minúsculo.
+
 SCHEMA = "cvm"
 SRC_TABLE = "demonstracoes_financeiras"
 DST_TABLE = "financial_metrics"
@@ -21,6 +28,10 @@ DST_FULL = f"{SCHEMA}.{DST_TABLE}"
 # Infra
 # ------------------------------------------------------------
 def _ensure_table(engine: Engine) -> None:
+    """
+    Mantém compatibilidade: preserva cagr_* (pode ficar NULL),
+    adiciona growth_* (novo padrão).
+    """
     ddl = f"""
     create schema if not exists {SCHEMA};
 
@@ -38,14 +49,33 @@ def _ensure_table(engine: Engine) -> None:
         roe double precision,
         roic double precision,
 
+        -- legado/compatibilidade
         cagr_receita double precision,
         cagr_lucro double precision,
+
+        -- novo padrão (regressão)
+        growth_receita double precision,
+        growth_lucro double precision,
 
         primary key (ticker, ano)
     );
     """
     with engine.begin() as conn:
         conn.execute(text(ddl))
+
+    # garante colunas novas em bases já existentes
+    alter_sql = f"""
+    alter table {DST_FULL}
+      add column if not exists growth_receita double precision;
+    alter table {DST_FULL}
+      add column if not exists growth_lucro double precision;
+    alter table {DST_FULL}
+      add column if not exists cagr_receita double precision;
+    alter table {DST_FULL}
+      add column if not exists cagr_lucro double precision;
+    """
+    with engine.begin() as conn:
+        conn.execute(text(alter_sql))
 
 
 # ------------------------------------------------------------
@@ -56,23 +86,41 @@ def _safe_div(num: pd.Series, den: pd.Series) -> pd.Series:
     return num / den0
 
 
-def _cagr_group(series: pd.Series) -> float | None:
+def _linear_growth(series: pd.Series) -> float | None:
     """
-    CAGR sobre uma série anual (já ordenada).
-    Usa apenas primeiro e último valor não-nulo.
+    Tendência (slope) por regressão linear:
+      X = [0..n-1], y = valores.
+    Aceita valores negativos e evita complex.
     """
     s = series.dropna()
     if len(s) < 2:
         return None
-    first = float(s.iloc[0])
-    last = float(s.iloc[-1])
-    if first == 0:
-        return None
-    n = len(s) - 1
+
+    X = np.arange(len(s), dtype=float).reshape(-1, 1)
+    y = s.values.astype(float).reshape(-1, 1)
+
     try:
-        return (last / first) ** (1.0 / n) - 1.0
+        model = LinearRegression()
+        model.fit(X, y)
+        coef = float(model.coef_[0][0])
+        return coef if np.isfinite(coef) else None
     except Exception:
         return None
+
+
+def _sanitize_for_db(df: pd.DataFrame) -> pd.DataFrame:
+    df2 = df.copy()
+
+    # remove inf/-inf
+    df2 = df2.replace([np.inf, -np.inf], np.nan)
+
+    # qualquer complex -> None (defesa final)
+    for col in df2.columns:
+        df2[col] = df2[col].apply(lambda x: None if isinstance(x, complex) else x)
+
+    # NaN -> None
+    df2 = df2.where(pd.notnull(df2), None)
+    return df2
 
 
 def _upsert(engine: Engine, df: pd.DataFrame, batch: int = 2000) -> None:
@@ -85,13 +133,15 @@ def _upsert(engine: Engine, df: pd.DataFrame, batch: int = 2000) -> None:
         receita_liquida, ebit, lucro_liquido,
         margem_ebit, margem_liquida,
         roe, roic,
-        cagr_receita, cagr_lucro
+        cagr_receita, cagr_lucro,
+        growth_receita, growth_lucro
     ) values (
         :ticker, :ano,
         :receita_liquida, :ebit, :lucro_liquido,
         :margem_ebit, :margem_liquida,
         :roe, :roic,
-        :cagr_receita, :cagr_lucro
+        :cagr_receita, :cagr_lucro,
+        :growth_receita, :growth_lucro
     )
     on conflict (ticker, ano) do update set
         receita_liquida = excluded.receita_liquida,
@@ -102,10 +152,12 @@ def _upsert(engine: Engine, df: pd.DataFrame, batch: int = 2000) -> None:
         roe = excluded.roe,
         roic = excluded.roic,
         cagr_receita = excluded.cagr_receita,
-        cagr_lucro = excluded.cagr_lucro;
+        cagr_lucro = excluded.cagr_lucro,
+        growth_receita = excluded.growth_receita,
+        growth_lucro = excluded.growth_lucro;
     """
 
-    df2 = df.where(pd.notnull(df), None)
+    df2 = _sanitize_for_db(df)
     rows = df2.to_dict(orient="records")
 
     with engine.begin() as conn:
@@ -124,15 +176,12 @@ def run(
     batch: int = 2000,
 ) -> pd.DataFrame:
     """
-    Construção de Métricas Financeiras (OTIMIZADO + DEDUP ANUAL)
+    Métricas Financeiras (OTIMIZADO + DEDUP + GROWTH POR REGRESSÃO)
 
-    Melhorias-chave:
-    - DEDUP por (ticker, ano): DISTINCT ON ... ORDER BY data DESC
-      (resolve contagens > 1 por ano e reduz carga)
-    - Vetorizado (sem iterrows)
-    - CAGR por grupo e broadcast
-    - UPSERT em lotes
-    - Compatível com progress_cb
+    - Dedup por (ticker, ano): DISTINCT ON ... ORDER BY data DESC
+    - Vetorizado para margens/ROE/ROIC
+    - Growth por regressão linear (slope) para Receita e Lucro
+    - Persiste em cvm.financial_metrics
     """
 
     _ensure_table(engine)
@@ -146,7 +195,7 @@ def run(
         where_year = "and extract(year from data)::int >= :start_year"
         params["start_year"] = int(start_year)
 
-    # 1 linha por ticker/ano (pega a mais recente do ano)
+    # 1 linha por ticker/ano (mais recente do ano)
     sql = text(f"""
         with base as (
             select distinct on (ticker, extract(year from data)::int)
@@ -188,39 +237,43 @@ def run(
             progress_cb("Métricas: base vazia, nada a calcular.")
         return df
 
-    if progress_cb:
-        progress_cb(f"Métricas: calculando indicadores (linhas={len(df)})…")
-
-    # Tipos/saneamento
     df["ano"] = df["ano"].astype(int)
     df = df.sort_values(["ticker", "ano"]).reset_index(drop=True)
+
+    if progress_cb:
+        progress_cb(f"Métricas: calculando indicadores (linhas={len(df)})…")
 
     # Margens
     df["margem_ebit"] = _safe_div(df["ebit"], df["receita_liquida"])
     df["margem_liquida"] = _safe_div(df["lucro_liquido"], df["receita_liquida"])
 
-    # ROE / ROIC
+    # ROE
     df["roe"] = _safe_div(df["lucro_liquido"], df["patrimonio_liquido"])
+
+    # ROIC (pode ser NaN se denominador <=0/0; será sanitizado)
     invested_capital = (df["ativo_total"] - df["divida_total"]).replace({0: np.nan})
     df["roic"] = df["ebit"] / invested_capital
 
     if progress_cb:
-        progress_cb("Métricas: calculando CAGR por empresa…")
+        progress_cb("Métricas: calculando crescimento por regressão (slope) por empresa…")
 
-    # CAGR por ticker (rápido)
-    cagr_receita = (
+    growth_receita = (
         df.groupby("ticker", sort=False)["receita_liquida"]
-        .apply(_cagr_group)
-        .rename("cagr_receita")
+        .apply(_linear_growth)
+        .rename("growth_receita")
     )
-    cagr_lucro = (
+    growth_lucro = (
         df.groupby("ticker", sort=False)["lucro_liquido"]
-        .apply(_cagr_group)
-        .rename("cagr_lucro")
+        .apply(_linear_growth)
+        .rename("growth_lucro")
     )
 
-    df = df.join(cagr_receita, on="ticker")
-    df = df.join(cagr_lucro, on="ticker")
+    df = df.join(growth_receita, on="ticker")
+    df = df.join(growth_lucro, on="ticker")
+
+    # Mantém compatibilidade: cagr_* ficará NULL (não calculamos)
+    df["cagr_receita"] = None
+    df["cagr_lucro"] = None
 
     df_final = df[
         [
@@ -235,6 +288,8 @@ def run(
             "roic",
             "cagr_receita",
             "cagr_lucro",
+            "growth_receita",
+            "growth_lucro",
         ]
     ].copy()
 
