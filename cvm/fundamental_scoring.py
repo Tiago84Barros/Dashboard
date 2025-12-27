@@ -1,22 +1,28 @@
+# fundamental_scoring.py
 from __future__ import annotations
 
 from typing import Callable, Optional
 
 import numpy as np
 import pandas as pd
+from scipy.stats import zscore
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
-from scipy.stats import zscore
 
-
+# -------------------------------------------------------------------
+# Config
+# -------------------------------------------------------------------
 SCHEMA = "cvm"
-SRC_TABLE = "financial_metrics"
-DST_TABLE = "fundamental_score"
+SRC_TABLE = "financial_metrics"     # entrada (Postgres tende a guardar em minúsculo)
+DST_TABLE = "fundamental_score"     # saída
 
 SRC_FULL = f"{SCHEMA}.{SRC_TABLE}"
 DST_FULL = f"{SCHEMA}.{DST_TABLE}"
 
 
+# ============================================================
+# Infraestrutura Supabase
+# ============================================================
 def _ensure_table(engine: Engine) -> None:
     ddl = f"""
     create schema if not exists {SCHEMA};
@@ -38,6 +44,9 @@ def _ensure_table(engine: Engine) -> None:
         conn.execute(text(ddl))
 
 
+# ============================================================
+# Utilitários de saneamento
+# ============================================================
 def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [c.strip().lower() for c in df.columns]
@@ -50,36 +59,65 @@ def _require_cols(df: pd.DataFrame, cols: list[str], prefix_msg: str) -> None:
         raise RuntimeError(f"{prefix_msg}: colunas ausentes em {SRC_FULL}: {missing}")
 
 
+def _to_float(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    """
+    Converte colunas numéricas para float, forçando inválidos para NaN.
+    """
+    df = df.copy()
+    for c in cols:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
+
+
+# ============================================================
+# Z-score robusto (evita NaN/Inf por variância zero)
+# ============================================================
 def _z(df: pd.DataFrame, col: str, invert: bool = False) -> pd.Series:
-    s = zscore(df[col].astype(float), nan_policy="omit")
+    s = pd.to_numeric(df[col], errors="coerce").astype(float)
+
+    # Se a série tem variância zero (todos iguais) ou não tem dados suficientes,
+    # usamos score neutro (0.0) para evitar NaN do zscore.
+    if s.nunique(dropna=True) <= 1:
+        z = pd.Series(0.0, index=df.index)
+    else:
+        z = pd.Series(zscore(s, nan_policy="omit"), index=df.index)
+
     if invert:
-        s = -s
-    return pd.Series(s, index=df.index)
+        z = -z
+
+    # Blindagem final: remove inf/-inf
+    z = z.replace([np.inf, -np.inf], np.nan)
+
+    return z
 
 
+# ============================================================
+# Função principal
+# ============================================================
 def run(
     engine: Engine,
     *,
     progress_cb: Optional[Callable[[str], None]] = None,
 ) -> pd.DataFrame:
     """
-    Scoring Fundamentalista (usa crescimento por regressão: growth_receita/growth_lucro)
+    Algoritmo — Scoring Fundamentalista
 
-    - Lê cvm.financial_metrics
-    - Z-score por ANO
-    - Scores agregados
-    - Ranking anual
-    - UPSERT em cvm.fundamental_score
+    - Lê cvm.financial_metrics (normaliza colunas para minúsculo)
+    - Calcula z-score por ANO (robusto: sem NaN/inf por variância zero)
+    - Agrega scores e calcula ranking anual (nullable)
+    - Persiste em cvm.fundamental_score
     """
+
     _ensure_table(engine)
 
     if progress_cb:
-        progress_cb("FUND SCORE: carregando financial_metrics…")
+        progress_cb("FUNDAMENTAL SCORE: carregando métricas base…")
 
     df = pd.read_sql(f"select * from {SRC_FULL}", engine)
+
     if df.empty:
         if progress_cb:
-            progress_cb("FUND SCORE: tabela vazia; nada a fazer.")
+            progress_cb("FUNDAMENTAL SCORE: tabela de métricas vazia; nada a fazer.")
         return df
 
     df = _normalize_columns(df)
@@ -91,33 +129,55 @@ def run(
         "margem_liquida",
         "roe",
         "roic",
-        "growth_receita",
-        "growth_lucro",
+        "cagr_receita",
+        "cagr_lucro",
     ]
-    _require_cols(df, required, "FUND SCORE")
+    _require_cols(df, required, "FUNDAMENTAL SCORE")
 
-    df["ano"] = df["ano"].astype(int)
+    # Tipos
+    df["ticker"] = df["ticker"].astype(str).str.strip().str.upper()
+    df["ano"] = pd.to_numeric(df["ano"], errors="coerce").astype("Int64")
+
+    num_cols = [
+        "margem_ebit",
+        "margem_liquida",
+        "roe",
+        "roic",
+        "cagr_receita",
+        "cagr_lucro",
+    ]
+    df = _to_float(df, num_cols)
+
+    # Remove linhas inválidas mínimas (sem ticker ou ano)
+    df = df[df["ticker"].notna() & df["ano"].notna()].copy()
+    if df.empty:
+        if progress_cb:
+            progress_cb("FUNDAMENTAL SCORE: não há linhas válidas (ticker/ano).")
+        return df
 
     if progress_cb:
-        progress_cb("FUND SCORE: calculando scores por ano…")
+        progress_cb("FUNDAMENTAL SCORE: calculando scores por ano…")
 
     metricas = {
         "margem_ebit": {"invert": False},
         "margem_liquida": {"invert": False},
         "roe": {"invert": False},
         "roic": {"invert": False},
-        "growth_receita": {"invert": False},
-        "growth_lucro": {"invert": False},
+        "cagr_receita": {"invert": False},
+        "cagr_lucro": {"invert": False},
     }
 
-    resultados = []
+    resultados: list[pd.DataFrame] = []
 
-    for ano, df_ano in df.groupby("ano", sort=True):
+    # groupby em Int64: converter para int nativo para estabilidade
+    for ano, df_ano in df.groupby(df["ano"].astype(int), sort=True):
         df_ano = df_ano.copy()
 
+        # z-scores por métrica
         for m, cfg in metricas.items():
             df_ano[f"z_{m}"] = _z(df_ano, m, cfg["invert"])
 
+        # scores parciais
         df_ano["score_qualidade"] = (
             df_ano["z_margem_ebit"] * 0.5
             + df_ano["z_margem_liquida"] * 0.5
@@ -129,8 +189,8 @@ def run(
         )
 
         df_ano["score_crescimento"] = (
-            df_ano["z_growth_receita"] * 0.5
-            + df_ano["z_growth_lucro"] * 0.5
+            df_ano["z_cagr_receita"] * 0.5
+            + df_ano["z_cagr_lucro"] * 0.5
         )
 
         df_ano["score_total"] = (
@@ -139,10 +199,14 @@ def run(
             + df_ano["score_crescimento"] * 0.2
         )
 
+        # Blindagem: remove inf/-inf antes do ranking
+        df_ano["score_total"] = df_ano["score_total"].replace([np.inf, -np.inf], np.nan)
+
+        # Ranking: somente onde score_total é finito
+        rank = df_ano["score_total"].rank(ascending=False, method="dense")
         df_ano["ranking"] = (
-            df_ano["score_total"]
-            .rank(ascending=False, method="dense")
-            .astype(int)
+            rank.where(np.isfinite(rank))      # NaN permanece NaN
+            .astype("Int64")                   # inteiro nullable (sem crash)
         )
 
         resultados.append(
@@ -160,11 +224,12 @@ def run(
         )
 
     df_final = pd.concat(resultados, ignore_index=True)
-    df_final = df_final.replace([np.inf, -np.inf], np.nan)
-    df_final = df_final.where(pd.notnull(df_final), None)
+
+    # Postgres-safe: NaN -> None
+    df_final = df_final.replace({np.nan: None})
 
     if progress_cb:
-        progress_cb(f"FUND SCORE: gravando em {DST_FULL}…")
+        progress_cb(f"FUNDAMENTAL SCORE: gravando em {DST_FULL}…")
 
     upsert = f"""
     insert into {DST_FULL} (
@@ -189,6 +254,6 @@ def run(
         conn.execute(text(upsert), df_final.to_dict(orient="records"))
 
     if progress_cb:
-        progress_cb("FUND SCORE: concluído.")
+        progress_cb("FUNDAMENTAL SCORE: concluído.")
 
     return df_final
