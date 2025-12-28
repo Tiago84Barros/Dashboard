@@ -1,15 +1,17 @@
 """
 page/empresa_view.py
 ~~~~~~~~~~~~~~~~~~~
-Visão de empresa (detalhes por ticker) e carregamento de DRE/DFs.
+Renderização de detalhes por empresa (ticker) na seção Básica.
 
-Correções:
-1) Remove o erro "multiple values for argument 'engine'" ao NÃO passar engine na assinatura.
-2) Remove o erro "UnhashableParamError: Cannot hash argument 'engine'" ao não cachear Engine.
+Objetivo:
+- Ler demonstrações financeiras do Supabase (schema cvm).
+- Ser robusto a variações de schema/colunas (auto-detecção).
+- Evitar erros de cache do Streamlit com SQLAlchemy Engine.
 
-Estratégia correta Streamlit:
-- Engine: @st.cache_resource
-- Dados: @st.cache_data (somente parâmetros hashable)
+Tabelas disponíveis (conforme seu Supabase):
+- cvm.demonstracoes_financeiras
+- cvm.demonstracoes_financeiras_dfp
+- cvm.demonstracoes_financeiras_tri
 """
 
 from __future__ import annotations
@@ -24,16 +26,17 @@ from sqlalchemy.engine import Engine
 
 from core.db_supabase import get_engine
 
+
 # ---------------------------------------------------------------------
 # CONFIG
 # ---------------------------------------------------------------------
 
-_DEFAULT_TABLE = "demonstracoes_financeiras"  # ajuste se necessário
+DEFAULT_TABLE = "cvm.demonstracoes_financeiras_dfp"  # anual
+# DEFAULT_TABLE = "cvm.demonstracoes_financeiras_tri"  # trimestral
 
 
 @st.cache_resource(show_spinner=False)
 def _engine() -> Engine:
-    """Engine singleton cacheado (não entra em @cache_data)."""
     return get_engine()
 
 
@@ -46,106 +49,180 @@ def _norm_sa(ticker: str) -> str:
 
 @dataclass(frozen=True)
 class EmpresaViewConfig:
-    table: str = _DEFAULT_TABLE
+    table: str = DEFAULT_TABLE
     max_rows: int = 20_000
 
 
-def _sql_demonstracoes(table: str) -> str:
-    """
-    Ajuste este SELECT para o seu schema real, se necessário.
-    O COALESCE tenta cobrir variações de nomes de colunas.
-    """
-    return f"""
-        SELECT
-            ticker,
-            COALESCE(periodo, dt_ref, data_referencia, ano_trimestre, ano) AS periodo,
-            COALESCE(demonstracao, tipo_demonstracao, demonstrativo, relatorio) AS demonstracao,
-            COALESCE(conta, descricao, item, linha) AS conta,
-            valor
-        FROM {table}
-        WHERE ticker = :ticker
-        ORDER BY
-            COALESCE(periodo, dt_ref, data_referencia, ano_trimestre, ano) DESC
-    """
+# ---------------------------------------------------------------------
+# SCHEMA INTROSPECTION
+# ---------------------------------------------------------------------
+
+def _split_schema_table(fullname: str) -> tuple[str, str]:
+    if "." in fullname:
+        schema, table = fullname.split(".", 1)
+        return schema, table
+    return "public", fullname
 
 
-def _safe_to_numeric(s: pd.Series) -> pd.Series:
-    return pd.to_numeric(s, errors="coerce")
+@st.cache_data(show_spinner=False, ttl=24 * 60 * 60)
+def get_table_columns(full_table_name: str) -> list[str]:
+    """
+    Busca colunas reais da tabela no Supabase.
+    Cache de 24h (schema não muda toda hora).
+    """
+    schema, table = _split_schema_table(full_table_name)
+    sql = """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = :schema
+          AND table_name   = :table
+        ORDER BY ordinal_position
+    """
+    df = pd.read_sql(text(sql), con=_engine(), params={"schema": schema, "table": table})
+    return df["column_name"].tolist() if not df.empty else []
+
+
+def _first_existing(cols: list[str], candidates: list[str]) -> Optional[str]:
+    for c in candidates:
+        if c in cols:
+            return c
+    return None
 
 
 # ---------------------------------------------------------------------
-# DATA LOADING (CACHE SAFE)
+# DATA LOAD
 # ---------------------------------------------------------------------
 
 @st.cache_data(show_spinner=False, ttl=60 * 60)
-def load_demonstracoes_financeiras(
+def load_raw_table(
     ticker: str,
     *,
-    table: str = _DEFAULT_TABLE,
-    max_rows: int = 20_000,
+    table: str,
+    max_rows: int,
 ) -> pd.DataFrame:
     """
-    Carrega demonstrações financeiras brutas do banco.
-
-    OBS:
-    - Não recebe 'engine' como argumento (para evitar UnhashableParamError).
-    - Usa _engine() internamente (cache_resource).
+    Carrega registros do ticker na tabela informada, sem assumir colunas além de 'ticker' quando existir.
+    Faz ORDER BY pelo melhor campo de data/período que existir.
     """
     t = _norm_sa(ticker)
-    eng = _engine()
-
-    sql = _sql_demonstracoes(table)
-    df = pd.read_sql(text(sql), con=eng, params={"ticker": t})
-
-    if df is None or df.empty:
+    cols = get_table_columns(table)
+    if not cols:
         return pd.DataFrame()
 
-    if "valor" in df.columns:
-        df["valor"] = _safe_to_numeric(df["valor"])
-
-    for col in ("ticker", "periodo", "demonstracao", "conta"):
-        if col in df.columns:
-            df[col] = df[col].astype(str)
-
-    if len(df) > max_rows:
-        df = df.head(max_rows)
-
-    return df
-
-
-@st.cache_data(show_spinner=False, ttl=60 * 60)
-def load_dre(ticker: str, *, table: str = _DEFAULT_TABLE) -> pd.DataFrame:
-    """
-    Retorna DRE pivotada (contas x períodos).
-    """
-    df = load_demonstracoes_financeiras(
-        _norm_sa(ticker),
-        table=table,
+    # campos prováveis de data/período
+    order_col = _first_existing(
+        cols,
+        ["data", "dt_ref", "data_referencia", "periodo", "ano_trimestre", "ano", "ref"],
     )
 
+    # se não existir coluna ticker, não há como filtrar por ticker (evita erro)
+    if "ticker" not in cols:
+        return pd.DataFrame()
+
+    sql = f"SELECT * FROM {table} WHERE ticker = :ticker"
+    if order_col:
+        sql += f" ORDER BY {order_col} DESC"
+    if max_rows:
+        sql += f" LIMIT {int(max_rows)}"
+
+    df = pd.read_sql(text(sql), con=_engine(), params={"ticker": t})
+    return df if df is not None else pd.DataFrame()
+
+
+def _build_dre_from_long(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Constrói DRE pivot a partir de um formato LONGO:
+      conta/descricao + valor + periodo/data + demonstracao(tipo)
+    """
+    cols = df.columns.tolist()
+
+    periodo = _first_existing(cols, ["periodo", "data", "dt_ref", "data_referencia", "ano_trimestre", "ano"])
+    conta = _first_existing(cols, ["conta", "descricao", "item", "linha"])
+    valor = _first_existing(cols, ["valor", "value", "vlr"])
+    demo = _first_existing(cols, ["demonstracao", "tipo_demonstracao", "demonstrativo", "relatorio", "tipo"])
+
+    if not (periodo and conta and valor):
+        return pd.DataFrame()
+
+    work = df.copy()
+    work[valor] = pd.to_numeric(work[valor], errors="coerce")
+
+    # filtra DRE se houver coluna de demonstrativo/tipo
+    if demo:
+        mask = work[demo].astype(str).str.upper().str.contains("DRE", na=False)
+        if mask.any():
+            work = work.loc[mask]
+
+    if work.empty:
+        return pd.DataFrame()
+
+    pivot = work.pivot_table(index=conta, columns=periodo, values=valor, aggfunc="sum")
+
+    # ordenar colunas (mais recente primeiro) se possível
+    try:
+        pivot = pivot.reindex(sorted(pivot.columns, reverse=True), axis=1)
+    except Exception:
+        pass
+
+    return pivot
+
+
+def _build_dre_from_wide(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Constrói visão wide (index=data/período; colunas=métricas) sem depender de nomes exatos.
+    Mantém apenas colunas numéricas mais relevantes (exclui chaves/metadata).
+    """
     if df.empty:
         return pd.DataFrame()
 
-    # filtra DRE (tolerante)
-    dre_mask = df["demonstracao"].str.upper().str.contains("DRE", na=False)
-    dre = df.loc[dre_mask].copy()
-    if dre.empty:
-        dre = df.copy()
+    cols = df.columns.tolist()
+    idx = _first_existing(cols, ["data", "periodo", "dt_ref", "data_referencia", "ano_trimestre", "ano"])
+    work = df.copy()
 
-    pivot = (
-        dre.pivot_table(
-            index="conta",
-            columns="periodo",
-            values="valor",
-            aggfunc="sum",
-        )
-        .sort_index()
-    )
+    if idx and idx in work.columns:
+        # tenta converter datas
+        work[idx] = pd.to_datetime(work[idx], errors="ignore")
+        work = work.sort_values(idx)
+        work = work.set_index(idx)
 
-    # mais recente primeiro
-    pivot = pivot.reindex(sorted(pivot.columns, reverse=True), axis=1)
+    # remove colunas claramente não-métricas
+    drop_like = {"id", "created_at", "updated_at", "fetched_at", "cnpj", "nome", "razao", "ticker"}
+    keep = [c for c in work.columns if c not in drop_like]
 
-    return pivot
+    # tenta manter numéricas
+    out = work[keep].copy()
+    for c in out.columns:
+        out[c] = pd.to_numeric(out[c], errors="ignore")
+
+    # se sobrar muita coisa, mantém só as numéricas
+    num = out.select_dtypes(include="number")
+    if not num.empty:
+        out = num
+
+    return out
+
+
+@st.cache_data(show_spinner=False, ttl=60 * 60)
+def load_dre(ticker: str, *, table: str, max_rows: int) -> pd.DataFrame:
+    """
+    Decide automaticamente se a tabela é LONGA ou WIDE e monta a visão.
+    """
+    raw = load_raw_table(ticker, table=table, max_rows=max_rows)
+    if raw.empty:
+        return pd.DataFrame()
+
+    # Heurística: se existir (conta|descricao) + (valor) => LONG
+    cols = raw.columns.tolist()
+    has_conta = any(c in cols for c in ["conta", "descricao", "item", "linha"])
+    has_valor = any(c in cols for c in ["valor", "value", "vlr"])
+
+    if has_conta and has_valor:
+        dre = _build_dre_from_long(raw)
+        if not dre.empty:
+            return dre
+
+    # fallback: wide
+    return _build_dre_from_wide(raw)
 
 
 # ---------------------------------------------------------------------
@@ -157,16 +234,34 @@ def render_empresa_view(ticker: str, *, config: Optional[EmpresaViewConfig] = No
     t = _norm_sa(ticker)
 
     st.subheader(f"Empresa: {t}")
+    st.caption(f"Tabela fonte: `{cfg.table}`")
 
-    with st.spinner("Carregando demonstrações financeiras..."):
-        dre = load_dre(t, table=cfg.table)
-
-    if dre.empty:
-        st.warning(
-            "Não encontrei demonstrações financeiras para esse ticker no banco.\n\n"
-            f"Verifique se a tabela `{cfg.table}` está populada e se o ticker está normalizado."
+    # diagnóstico rápido das colunas
+    cols = get_table_columns(cfg.table)
+    if not cols:
+        st.error(
+            f"Não consegui ler o schema da tabela `{cfg.table}`. "
+            "Verifique permissões e se ela existe no Supabase."
         )
         return
 
-    st.markdown("### DRE (por período)")
-    st.dataframe(dre, use_container_width=True)
+    with st.expander("Diagnóstico: colunas detectadas"):
+        st.write(cols)
+
+    try:
+        with st.spinner("Carregando demonstrações..."):
+            dre = load_dre(t, table=cfg.table, max_rows=cfg.max_rows)
+
+        if dre.empty:
+            st.warning(
+                "Não encontrei dados para esse ticker na tabela selecionada.\n\n"
+                "Confirme se o ticker existe na tabela e se o seu pipeline CVM populou DFP/TRI."
+            )
+            return
+
+        st.markdown("### Demonstrações (visão gerada automaticamente)")
+        st.dataframe(dre, use_container_width=True)
+
+    except Exception as e:
+        st.error("Falha inesperada ao renderizar os detalhes da empresa.")
+        st.exception(e)
