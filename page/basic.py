@@ -43,39 +43,10 @@ def _get_ticker_from_state() -> str | None:
         return None
 
     t = str(t).strip().upper()
+    # Se vier no formato PETR4.SA, normaliza para PETR4
     if t.endswith(".SA"):
         t = t[:-3]
     return t or None
-
-
-def _safe_exibir_detalhes_empresa(ticker: str) -> None:
-    """
-    Evita quebra total da página.
-    Tenta chamadas compatíveis com assinaturas diferentes.
-    """
-    try:
-        # 1) Forma original (posicional)
-        exibir_detalhes_empresa(ticker)
-        return
-    except TypeError:
-        # 2) Forma alternativa (keyword), caso a assinatura seja render_empresa_view(ticker=...)
-        try:
-            exibir_detalhes_empresa(ticker=ticker)  # type: ignore[call-arg]
-            return
-        except TypeError as e:
-            # Erro específico que você mostrou (engine duplicado) costuma estourar dentro de empresa_view.py
-            st.error("Falha ao carregar a página selecionada.")
-            st.write(
-                "O erro ocorre durante o carregamento das demonstrações financeiras. "
-                "A correção definitiva está em `page/empresa_view.py` (chamada de "
-                "`load_demonstracoes_financeiras`)."
-            )
-            st.exception(e)
-            return
-    except Exception as e:
-        st.error("Falha inesperada ao renderizar os detalhes da empresa.")
-        st.exception(e)
-        return
 
 
 def render() -> None:
@@ -86,7 +57,7 @@ def render() -> None:
 
     # Se houver ticker, exibe detalhes da empresa
     if ticker:
-        _safe_exibir_detalhes_empresa(ticker)
+        exibir_detalhes_empresa(ticker)
         return
 
     st.subheader("Empresas distribuídas por setor")
@@ -94,6 +65,7 @@ def render() -> None:
         st.info("Base de setores não carregada.")
         return
 
+    # Garantias mínimas para não quebrar caso alguma coluna não exista
     df = setores_df.copy()
     for col in ["SETOR", "SUBSETOR", "SEGMENTO", "ticker"]:
         if col not in df.columns:
