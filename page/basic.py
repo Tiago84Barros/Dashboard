@@ -3,12 +3,13 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from analytics.helpers import get_logo_url
+from core.helpers import get_logo_url
 from page.empresa_view import render_empresa_view as exibir_detalhes_empresa
 
 pd.set_option("display.float_format", "{:.2f}".format)
 
 
+# HTML do bloco de exibição por setor
 def _sector_box_html(row: pd.Series) -> str:
     ticker = row.get("ticker", "—")
     subsetor = row.get("SUBSETOR", "—")
@@ -26,47 +27,84 @@ def _sector_box_html(row: pd.Series) -> str:
     """
 
 
-def _get_ticker_from_state() -> str | None:
+def _norm_ticker_input(raw: str) -> str | None:
     """
-    Compatível com o dashboard:
-      - ticker_selecionado / ticker_filtrado (padrão novo)
-      - ticker (legado)
-    Retorna ticker normalizado (ex: PETR4) sem sufixo .SA.
+    Normaliza o ticker digitado.
+    Aceita: petr4 | PETR4 | PETR4.SA
+    Retorna: PETR4.SA (padrão do seu algoritmo) ou None.
     """
-    t = (
-        st.session_state.get("ticker_selecionado")
-        or st.session_state.get("ticker_filtrado")
-        or st.session_state.get("ticker")
-    )
+    if not raw:
+        return None
 
+    t = str(raw).strip().upper()
     if not t:
         return None
 
-    t = str(t).strip().upper()
-    # Se vier no formato PETR4.SA, normaliza para PETR4
-    if t.endswith(".SA"):
-        t = t[:-3]
-    return t or None
+    if not t.endswith(".SA"):
+        t += ".SA"
+    return t
+
+
+def _safe_exibir_detalhes_empresa(ticker: str) -> None:
+    """
+    Renderiza a visão da empresa com tolerância a variações na assinatura.
+    """
+    try:
+        # forma posicional
+        exibir_detalhes_empresa(ticker)
+        return
+    except TypeError:
+        # forma keyword (caso a assinatura tenha mudado)
+        try:
+            exibir_detalhes_empresa(ticker=ticker)  # type: ignore[call-arg]
+            return
+        except Exception as e:
+            st.error("Falha inesperada ao renderizar os detalhes da empresa.")
+            st.exception(e)
+            return
+    except Exception as e:
+        st.error("Falha inesperada ao renderizar os detalhes da empresa.")
+        st.exception(e)
+        return
 
 
 def render() -> None:
     st.header("Análise Básica de Ações")
 
-    ticker = _get_ticker_from_state()
-    setores_df = st.session_state.get("setores_df")
+    # Sidebar (seguindo seu algoritmo)
+    with st.sidebar:
+        if st.button("Atualizar dados", key="refresh_button"):
+            st.cache_data.clear()
+            st.cache_resource.clear()
+            st.rerun()
 
-    # Se houver ticker, exibe detalhes da empresa
+        ticker_input = st.text_input("Buscar ticker (ex.: PETR4)", key="ticker_box")
+
+        ticker_norm = _norm_ticker_input(ticker_input)
+        if ticker_norm:
+            st.session_state["ticker"] = ticker_norm
+        else:
+            # se o usuário apagou o campo, remove o ticker
+            if "ticker" in st.session_state:
+                del st.session_state["ticker"]
+
+    ticker = st.session_state.get("ticker", None)
+    setores_df = st.session_state.get("setores_df", None)
+
+    # Se houver ticker, exibe os detalhes da empresa
     if ticker:
-        exibir_detalhes_empresa(ticker)
+        _safe_exibir_detalhes_empresa(ticker)
         return
 
+    # Grid por setor
     st.subheader("Empresas distribuídas por setor")
     if setores_df is None or getattr(setores_df, "empty", True):
         st.info("Base de setores não carregada.")
         return
 
-    # Garantias mínimas para não quebrar caso alguma coluna não exista
     df = setores_df.copy()
+
+    # Garantias mínimas para evitar KeyError
     for col in ["SETOR", "SUBSETOR", "SEGMENTO", "ticker"]:
         if col not in df.columns:
             df[col] = "—"
