@@ -1,18 +1,15 @@
 """
 page/empresa_view.py
 ~~~~~~~~~~~~~~~~~~~
-Renderização da visão de empresa (detalhes por ticker) e carregamento de DRE/DFs.
+Visão de empresa (detalhes por ticker) e carregamento de DRE/DFs.
 
-Correção principal:
-- load_demonstracoes_financeiras(..., *, engine=...) -> engine é keyword-only
-  evitando: "got multiple values for argument 'engine'".
+Correções:
+1) Remove o erro "multiple values for argument 'engine'" ao NÃO passar engine na assinatura.
+2) Remove o erro "UnhashableParamError: Cannot hash argument 'engine'" ao não cachear Engine.
 
-Dependências esperadas:
-- core.db_supabase.get_engine  (SQLAlchemy Engine)
-- Streamlit
-
-Atenção:
-- Ajuste o nome da tabela em _DEFAULT_TABLE se necessário.
+Estratégia correta Streamlit:
+- Engine: @st.cache_resource
+- Dados: @st.cache_data (somente parâmetros hashable)
 """
 
 from __future__ import annotations
@@ -31,52 +28,33 @@ from core.db_supabase import get_engine
 # CONFIG
 # ---------------------------------------------------------------------
 
-# AJUSTE AQUI se a tabela no seu Supabase tiver outro nome.
-_DEFAULT_TABLE = "demonstracoes_financeiras"
-
-# Colunas mínimas esperadas na tabela (o módulo tenta se adaptar, mas estas são as mais comuns)
-# ticker | periodo (ou dt_ref/ano_trimestre) | conta (ou descricao) | valor | demonstracao (DRE/BP/DFC)
-# Se suas colunas forem diferentes, adapte o SELECT em _sql_demonstracoes().
+_DEFAULT_TABLE = "demonstracoes_financeiras"  # ajuste se necessário
 
 
-# ---------------------------------------------------------------------
-# HELPERS
-# ---------------------------------------------------------------------
+@st.cache_resource(show_spinner=False)
+def _engine() -> Engine:
+    """Engine singleton cacheado (não entra em @cache_data)."""
+    return get_engine()
 
 
 def _norm_sa(ticker: str) -> str:
-    """Normaliza ticker para o padrão sem sufixo .SA e em maiúsculas."""
     t = (ticker or "").strip().upper()
     if t.endswith(".SA"):
         t = t[:-3]
     return t
 
 
-@st.cache_resource(show_spinner=False)
-def _engine() -> Engine:
-    """Engine singleton cacheado (ideal para Streamlit Cloud)."""
-    return get_engine()
-
-
 @dataclass(frozen=True)
 class EmpresaViewConfig:
     table: str = _DEFAULT_TABLE
-    max_rows: int = 20_000  # segurança para não explodir memória em deploy
+    max_rows: int = 20_000
 
 
 def _sql_demonstracoes(table: str) -> str:
     """
-    SQL flexível: seleciona campos típicos.
-    Caso seu schema seja diferente, ajuste aqui.
-
-    Estratégia:
-    - tentar cobrir nomes de coluna comuns com aliases padronizados:
-      periodo, demonstracao, conta, valor
+    Ajuste este SELECT para o seu schema real, se necessário.
+    O COALESCE tenta cobrir variações de nomes de colunas.
     """
-    # Você pode ajustar os nomes conforme seu banco:
-    # Exemplo se você tiver "dt_ref" e "tipo_demonstracao":
-    # SELECT ticker, dt_ref as periodo, tipo_demonstracao as demonstracao, conta, valor ...
-
     return f"""
         SELECT
             ticker,
@@ -92,44 +70,43 @@ def _sql_demonstracoes(table: str) -> str:
 
 
 def _safe_to_numeric(s: pd.Series) -> pd.Series:
-    """Converte com tolerância valores que podem vir como texto."""
     return pd.to_numeric(s, errors="coerce")
 
 
 # ---------------------------------------------------------------------
-# CORE LOADING (AQUI ESTÁ A CORREÇÃO DO ENGINE)
+# DATA LOADING (CACHE SAFE)
 # ---------------------------------------------------------------------
 
-
-@st.cache_data(show_spinner=False, ttl=60 * 60)  # 1h
+@st.cache_data(show_spinner=False, ttl=60 * 60)
 def load_demonstracoes_financeiras(
     ticker: str,
     *,
-    engine: Engine,
     table: str = _DEFAULT_TABLE,
     max_rows: int = 20_000,
 ) -> pd.DataFrame:
     """
     Carrega demonstrações financeiras brutas do banco.
 
-    Correção: engine é keyword-only (*, engine=...)
+    OBS:
+    - Não recebe 'engine' como argumento (para evitar UnhashableParamError).
+    - Usa _engine() internamente (cache_resource).
     """
     t = _norm_sa(ticker)
+    eng = _engine()
 
     sql = _sql_demonstracoes(table)
-    df = pd.read_sql(text(sql), con=engine, params={"ticker": t})
+    df = pd.read_sql(text(sql), con=eng, params={"ticker": t})
 
     if df is None or df.empty:
         return pd.DataFrame()
 
-    # sanitização
     if "valor" in df.columns:
         df["valor"] = _safe_to_numeric(df["valor"])
+
     for col in ("ticker", "periodo", "demonstracao", "conta"):
         if col in df.columns:
             df[col] = df[col].astype(str)
 
-    # proteção
     if len(df) > max_rows:
         df = df.head(max_rows)
 
@@ -137,34 +114,24 @@ def load_demonstracoes_financeiras(
 
 
 @st.cache_data(show_spinner=False, ttl=60 * 60)
-def load_dre(
-    ticker: str,
-    *,
-    table: str = _DEFAULT_TABLE,
-) -> pd.DataFrame:
+def load_dre(ticker: str, *, table: str = _DEFAULT_TABLE) -> pd.DataFrame:
     """
-    Retorna DRE pivotada (contas x períodos), pronta para exibir.
-
-    Importante: engine é passado apenas como keyword (engine=_engine()).
+    Retorna DRE pivotada (contas x períodos).
     """
     df = load_demonstracoes_financeiras(
         _norm_sa(ticker),
-        engine=_engine(),
         table=table,
     )
 
     if df.empty:
         return pd.DataFrame()
 
-    # filtra DRE (tolerante a nulos e variações)
+    # filtra DRE (tolerante)
     dre_mask = df["demonstracao"].str.upper().str.contains("DRE", na=False)
     dre = df.loc[dre_mask].copy()
-
     if dre.empty:
-        # se não houver a flag "DRE", retorna tudo (melhor do que quebrar)
         dre = df.copy()
 
-    # pivot: linhas=conta, colunas=periodo, valores=valor
     pivot = (
         dre.pivot_table(
             index="conta",
@@ -175,7 +142,7 @@ def load_dre(
         .sort_index()
     )
 
-    # ordena períodos da direita para a esquerda (mais recente primeiro), se possível
+    # mais recente primeiro
     pivot = pivot.reindex(sorted(pivot.columns, reverse=True), axis=1)
 
     return pivot
@@ -185,18 +152,12 @@ def load_dre(
 # RENDER
 # ---------------------------------------------------------------------
 
-
 def render_empresa_view(ticker: str, *, config: Optional[EmpresaViewConfig] = None) -> None:
-    """
-    Render da página de detalhes da empresa.
-    Chamado por page/basic.py (exibir_detalhes_empresa).
-    """
     cfg = config or EmpresaViewConfig()
-
     t = _norm_sa(ticker)
+
     st.subheader(f"Empresa: {t}")
 
-    # Carrega DRE
     with st.spinner("Carregando demonstrações financeiras..."):
         dre = load_dre(t, table=cfg.table)
 
@@ -207,40 +168,5 @@ def render_empresa_view(ticker: str, *, config: Optional[EmpresaViewConfig] = No
         )
         return
 
-    # Exibição (DRE)
-    st.markdown("### DRE (pivot por período)")
+    st.markdown("### DRE (por período)")
     st.dataframe(dre, use_container_width=True)
-
-    # Alguns indicadores rápidos (opcional, sem assumir muito do seu schema)
-    st.markdown("### Destaques (se disponíveis)")
-    try:
-        # heurística por nome de conta
-        contas = [c.upper() for c in dre.index.astype(str).tolist()]
-        col_mais_recente = dre.columns[0] if len(dre.columns) else None
-
-        def _get_by_contains(keys: list[str]) -> Optional[float]:
-            if col_mais_recente is None:
-                return None
-            for i, nome in enumerate(contas):
-                if any(k in nome for k in keys):
-                    v = dre.iloc[i][col_mais_recente]
-                    if pd.notna(v):
-                        return float(v)
-            return None
-
-        receita = _get_by_contains(["RECEITA", "VENDA", "FATUR"])
-        ebitda = _get_by_contains(["EBITDA"])
-        lucro = _get_by_contains(["LUCRO", "RESULTADO"])
-
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.metric("Receita (últ. período)", f"{receita:,.0f}" if receita is not None else "—")
-        with c2:
-            st.metric("EBITDA (últ. período)", f"{ebitda:,.0f}" if ebitda is not None else "—")
-        with c3:
-            st.metric("Lucro (últ. período)", f"{lucro:,.0f}" if lucro is not None else "—")
-
-    except Exception as e:
-        # não quebra a página por conta de indicadores auxiliares
-        st.info("Indicadores rápidos indisponíveis para este formato de dados.")
-        st.caption(f"Detalhe técnico: {e}")
