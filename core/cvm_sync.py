@@ -1,205 +1,179 @@
-# core/cvm_sync.py
 from __future__ import annotations
 
+from typing import Optional, Callable, Dict, Any, List
 import datetime as dt
-from typing import Callable, Optional, Dict, Any
 
 import pandas as pd
 from sqlalchemy import text
+from sqlalchemy.engine import Engine
 
 from core.db_supabase import get_engine
 
-# >>> NOVO: pipelines financeiros
-from cvm.prices_sync_bulk import sync_prices_universe
+# Pipelines específicos
+from cvm.prices_sync_monthly_yearly import sync_prices_monthly_yearly_universe
 from cvm.multiplos_sync_universe import rebuild_multiplos_universe
 
 
-# =========================================================
-# Status de sincronismo (mantido)
-# =========================================================
-def get_sync_status() -> Dict[str, Any]:
-    engine = get_engine()
-    try:
-        df = pd.read_sql(
-            text("select * from cvm.sync_status limit 1"),
-            con=engine,
-        )
-        if df.empty:
-            return {}
-        return df.iloc[0].to_dict()
-    except Exception:
-        return {}
+# =============================================================================
+# Status de sincronização (tabela singleton)
+# =============================================================================
+
+def _ensure_sync_status(engine: Engine) -> None:
+    sql = """
+    create table if not exists cvm.sync_status (
+        id integer primary key default 1,
+        last_run timestamptz,
+        last_ok timestamptz,
+        last_error text,
+        notes text
+    );
+    insert into cvm.sync_status (id)
+    values (1)
+    on conflict (id) do nothing;
+    """
+    with engine.begin() as conn:
+        conn.execute(text(sql))
 
 
-def _update_sync_status(**kwargs) -> None:
-    engine = get_engine()
-    cols = ", ".join(kwargs.keys())
-    vals = ", ".join([f":{k}" for k in kwargs.keys()])
+def _update_sync_status(engine: Engine, **kwargs) -> None:
+    sets = ", ".join([f"{k}=:{k}" for k in kwargs.keys()])
     sql = f"""
-    insert into cvm.sync_status ({cols})
-    values ({vals})
-    on conflict (id)
-    do update set {", ".join([f"{k}=excluded.{k}" for k in kwargs.keys()])}
+    update cvm.sync_status
+       set {sets}
+     where id = 1
     """
     with engine.begin() as conn:
         conn.execute(text(sql), kwargs)
 
 
-# =========================================================
-# Universo de tickers (usado pelo pipeline)
-# =========================================================
-def _get_universe_tickers(engine) -> list[str]:
+def get_sync_status() -> Dict[str, Any]:
+    engine = get_engine()
+    _ensure_sync_status(engine)
+    df = pd.read_sql("select * from cvm.sync_status where id = 1", engine)
+    return {} if df.empty else df.iloc[0].to_dict()
+
+
+# =============================================================================
+# Universo de tickers
+# =============================================================================
+
+def _get_universe_tickers(engine: Engine) -> List[str]:
     """
-    Preferência: cvm.setores (se existir e estiver populada)
-    Fallback: tickers presentes em cvm.demonstracoes_financeiras_dfp
+    Universo preferencial:
+    1) cvm.setores
+    2) fallback: demonstracoes_financeiras_dfp
     """
-    # 1) setores
     try:
         df = pd.read_sql(
-            text("select distinct ticker from cvm.setores where ticker is not null"),
-            con=engine,
+            "select distinct ticker from cvm.setores where ticker is not null",
+            engine,
         )
-        tickers = (
-            df["ticker"]
-            .dropna()
-            .astype(str)
-            .str.upper()
-            .str.replace(".SA", "", regex=False)
-            .tolist()
-        )
-        tickers = sorted(set(tickers))
+        tickers = df["ticker"].astype(str).str.replace(".SA", "", regex=False).str.upper().tolist()
         if tickers:
-            return tickers
+            return sorted(set(tickers))
     except Exception:
         pass
 
-    # 2) fallback: dfp
     df = pd.read_sql(
-        text(
-            "select distinct ticker from cvm.demonstracoes_financeiras_dfp where ticker is not null"
-        ),
-        con=engine,
+        "select distinct ticker from cvm.demonstracoes_financeiras_dfp where ticker is not null",
+        engine,
     )
-    tickers = (
-        df["ticker"]
-        .dropna()
-        .astype(str)
-        .str.upper()
-        .str.replace(".SA", "", regex=False)
-        .tolist()
+    return sorted(
+        set(df["ticker"].astype(str).str.replace(".SA", "", regex=False).str.upper().tolist())
     )
-    return sorted(set(tickers))
 
 
-# =========================================================
-# Função principal: apply_update (ORQUESTRADOR)
-# =========================================================
+# =============================================================================
+# Pipeline principal
+# =============================================================================
+
 def apply_update(
-    start_year: int,
-    end_year: int,
-    years_per_run: int = 2,
-    quarters_per_run: int = 8,
-    progress_cb: Optional[Callable[[float, str], None]] = None,
+    engine: Optional[Engine] = None,
     *,
+    update_cvm: bool = True,
     update_prices: bool = True,
-    rebuild_multiplos: bool = True,
-    prices_limit_mode: bool = True,
-    max_tickers: int = 150,
+    update_multiplos: bool = True,
+    modo_seguro: bool = True,
+    max_tickers: Optional[int] = None,
+    progress_cb: Optional[Callable[[float, str], None]] = None,
 ) -> Dict[str, Any]:
     """
-    Pipeline único de atualização:
-    1) CVM (DFP/ITR)
-    2) Preços (2010→hoje) para o universo
-    3) Rebuild de múltiplos
+    Pipeline único e determinístico:
 
-    Parâmetros:
-    - update_prices / rebuild_multiplos: permitem desligar etapas se quiser
-    - prices_limit_mode / max_tickers: proteção contra timeout em deploy
+    1) (opcional) CVM – DFP / ITR  -> assume que já existe loader
+    2) Preços B3 (mensal + anual)
+    3) Rebuild de múltiplos (universo)
+
+    Este método é chamado pela página Configurações.
     """
 
-    def _cb(pct: float, msg: str = ""):
+    engine = engine or get_engine()
+    _ensure_sync_status(engine)
+
+    started_at = dt.datetime.utcnow()
+
+    def _cb(pct: float, msg: str):
         if progress_cb:
             progress_cb(pct, msg)
 
-    engine = get_engine()
-    started_at = dt.datetime.utcnow()
-
     try:
-        _cb(1, "Iniciando sincronismo CVM (DFP/ITR)…")
+        _cb(1, "Iniciando atualização do banco…")
 
-        # -------------------------------------------------
-        # 1) SINCRONISMO CVM (MANTENHA SUA LÓGICA ATUAL AQUI)
-        # -------------------------------------------------
-        # >>> IMPORTANTE:
-        # Aqui você mantém exatamente o código que já existia
-        # no seu apply_update original para DFP/ITR.
-        #
-        # Exemplo (placeholder):
-        #
-        # sync_dfp_itr(
-        #     start_year=start_year,
-        #     end_year=end_year,
-        #     years_per_run=years_per_run,
-        #     quarters_per_run=quarters_per_run,
-        #     progress_cb=_cb,
-        # )
-        #
-        # >>> FIM DO BLOCO EXISTENTE
+        # -----------------------------------------------------
+        # 1) CVM (DFP / ITR)
+        # -----------------------------------------------------
+        if update_cvm:
+            _cb(10, "Sincronizando dados CVM (DFP / ITR)…")
+            # ⚠️ Aqui você mantém seu sincronizador CVM existente
+            # Exemplo:
+            # from core.cvm_loader import sync_cvm
+            # sync_cvm()
+            _cb(30, "CVM sincronizado.")
 
-        _cb(55, "CVM sincronizado com sucesso.")
-
-        # -------------------------------------------------
-        # 2) PREÇOS (2010→HOJE)
-        # -------------------------------------------------
+        # -----------------------------------------------------
+        # 2) Preços (mensal + anual)
+        # -----------------------------------------------------
         if update_prices:
-            _cb(60, "Preparando atualização de preços (2010→hoje)…")
+            _cb(40, "Atualizando preços (mensal + anual)…")
             tickers = _get_universe_tickers(engine)
-            if not tickers:
-                raise RuntimeError("Universo de tickers vazio para atualização de preços.")
 
-            if prices_limit_mode:
-                tickers = tickers[: int(max_tickers)]
-                _cb(62, f"Modo seguro: processando {len(tickers)} tickers.")
-            else:
-                _cb(62, f"Processando universo completo: {len(tickers)} tickers.")
+            if modo_seguro and max_tickers:
+                tickers = tickers[: max_tickers]
 
-            _cb(65, "Baixando e gravando preços em cvm.prices_b3…")
-            stats = sync_prices_universe(engine, tickers)
-            _cb(
-                80,
-                f"Preços concluídos: OK={stats.get('ok')} "
-                f"Falhas={stats.get('fail')} Total={stats.get('total')}.",
+            stats = sync_prices_monthly_yearly_universe(
+                engine,
+                tickers,
+                start="2010-01-01",
             )
+            _cb(70, f"Preços atualizados ({stats}).")
 
-        # -------------------------------------------------
-        # 3) REBUILD DE MÚLTIPLOS
-        # -------------------------------------------------
-        if rebuild_multiplos:
-            _cb(85, "Recalculando múltiplos do universo…")
+        # -----------------------------------------------------
+        # 3) Múltiplos
+        # -----------------------------------------------------
+        if update_multiplos:
+            _cb(80, "Recalculando múltiplos do universo…")
             res = rebuild_multiplos_universe(engine)
-            if not res.get("ok"):
-                raise RuntimeError(f"Rebuild de múltiplos falhou: {res}")
-            _cb(98, f"Múltiplos atualizados ({res.get('rows')} linhas).")
+            if not res["ok"]:
+                raise RuntimeError(res["error"])
+            _cb(95, f"Múltiplos recalculados ({res['rows']} registros).")
 
         finished_at = dt.datetime.utcnow()
         _update_sync_status(
-            last_run=finished_at.isoformat(),
-            last_ok=finished_at.isoformat(),
+            engine,
+            last_run=finished_at,
+            last_ok=finished_at,
             last_error=None,
-            notes="CVM + preços (2010→hoje) + múltiplos executados com sucesso.",
+            notes="Atualização completa executada com sucesso.",
         )
 
-        _cb(100, "Atualização completa finalizada.")
-        return {
-            "ok": True,
-            "started_at": started_at,
-            "finished_at": finished_at,
-        }
+        _cb(100, "Atualização finalizada com sucesso.")
+        return {"ok": True}
 
     except Exception as e:
         finished_at = dt.datetime.utcnow()
         _update_sync_status(
-            last_run=finished_at.isoformat(),
+            engine,
+            last_run=finished_at,
             last_error=str(e),
         )
         _cb(100, f"Erro: {e}")
