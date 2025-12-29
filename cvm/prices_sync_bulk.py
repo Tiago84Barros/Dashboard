@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import time
-import datetime as dt
 from dataclasses import dataclass
+from typing import Iterable, Optional, Dict, Any, List
 
 import pandas as pd
 import yfinance as yf
@@ -11,157 +11,242 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 
-@dataclass(frozen=True)
-class PricesBulkConfig:
-    start_date: dt.date = dt.date(2010, 1, 1)
-    batch_size: int = 40
-    pause_s: float = 0.5
-    out_table: str = "cvm.prices_b3"
+# -----------------------------
+# Config
+# -----------------------------
+DEFAULT_START = "2010-01-01"
 
 
-def _normalize_ticker(t: str) -> str:
-    return t.strip().upper().replace(".SA", "")
+@dataclass
+class SyncStats:
+    total: int = 0
+    ok: int = 0
+    fail: int = 0
+    empty: int = 0
+    rows_inserted: int = 0
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "total": self.total,
+            "ok": self.ok,
+            "fail": self.fail,
+            "empty": self.empty,
+            "rows_inserted": self.rows_inserted,
+        }
 
 
-def _to_yf(t: str) -> str:
-    return f"{_normalize_ticker(t)}.SA"
+# -----------------------------
+# Helpers
+# -----------------------------
+def _norm_ticker(t: str) -> str:
+    t = (t or "").strip().upper()
+    return t.replace(".SA", "")
 
 
-def _mark_month_year_end(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df["date"] = pd.to_datetime(df["date"])
-    df["year"] = df["date"].dt.year
-    df["month"] = df["date"].dt.month
-
-    df = df.sort_values(["ticker", "date"])
-
-    df["is_month_end"] = False
-    df["is_year_end"] = False
-
-    month_end = (
-        df.groupby(["ticker", "year", "month"], as_index=False)
-        .tail(1)[["ticker", "date"]]
-        .assign(is_month_end=True)
-    )
-
-    year_end = (
-        df.groupby(["ticker", "year"], as_index=False)
-        .tail(1)[["ticker", "date"]]
-        .assign(is_year_end=True)
-    )
-
-    df = df.merge(month_end, on=["ticker", "date"], how="left")
-    df = df.merge(year_end, on=["ticker", "date"], how="left")
-
-    df["is_month_end"] = df["is_month_end"].fillna(False)
-    df["is_year_end"] = df["is_year_end"].fillna(False)
-
-    df["date"] = df["date"].dt.date
-    df["fetched_at"] = pd.Timestamp.utcnow()
-
-    return df[
-        [
-            "ticker",
-            "date",
-            "close",
-            "year",
-            "month",
-            "is_month_end",
-            "is_year_end",
-            "fetched_at",
-        ]
-    ]
-
-
-def _upsert_prices(engine: Engine, df: pd.DataFrame, table: str) -> None:
-    if df.empty:
-        return
-
-    sql = f"""
-    insert into {table} (
-        ticker, date, close, year, month,
-        is_month_end, is_year_end, fetched_at
-    )
-    values (
-        :ticker, :date, :close, :year, :month,
-        :is_month_end, :is_year_end, :fetched_at
-    )
-    on conflict (ticker, date)
-    do update set
-        close = excluded.close,
-        year = excluded.year,
-        month = excluded.month,
-        is_month_end = excluded.is_month_end,
-        is_year_end = excluded.is_year_end,
-        fetched_at = excluded.fetched_at;
+def _ensure_prices_table(engine: Engine, table: str) -> None:
     """
+    Opcional: cria tabela se não existir.
+    Se você já criou a tabela no Supabase, pode manter isso sem problemas.
+    """
+    schema, _, name = table.partition(".")
+    if not name:
+        schema, name = "public", schema  # caso sem schema
 
+    ddl = f"""
+    create table if not exists {schema}.{name} (
+        ticker text not null,
+        date date not null,
+        close double precision,
+        fetched_at timestamptz not null default now(),
+        primary key (ticker, date)
+    );
+    """
     with engine.begin() as conn:
-        conn.execute(text(sql), df.to_dict(orient="records"))
+        conn.execute(text(ddl))
 
 
-def sync_prices_universe(engine: Engine, tickers: list[str]) -> dict:
-    cfg = PricesBulkConfig()
-    tickers = sorted({_normalize_ticker(t) for t in tickers if t})
+def _normalize_prices_df(raw: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normaliza o DataFrame do yfinance para conter:
+    - date (date)
+    - close (float)
+    Lida com:
+    - MultiIndex
+    - colunas 'Close'/'Adj Close' (caso não tenha 'Close')
+    - DataFrame vazio
+    """
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=["date", "close"])
 
-    end = dt.date.today()
-    start = cfg.start_date
+    df = raw.copy()
 
-    stats = {"total": len(tickers), "ok": 0, "fail": 0}
+    # yfinance às vezes devolve MultiIndex
+    if isinstance(df.columns, pd.MultiIndex):
+        # geralmente nível 0 é OHLCV
+        df.columns = df.columns.get_level_values(0)
 
-    for i in range(0, len(tickers), cfg.batch_size):
-        batch = tickers[i : i + cfg.batch_size]
-        yf_list = " ".join(_to_yf(t) for t in batch)
+    # Normaliza nomes
+    df.columns = [str(c).strip().lower() for c in df.columns]
 
+    # Reset index para trazer a data como coluna
+    df = df.reset_index()
+
+    # Nome da coluna de data pode variar: Date / Datetime / index
+    # Após reset_index, normalmente é 'Date' ou o nome do índice
+    cols_lower = [str(c).strip().lower() for c in df.columns]
+    df.columns = cols_lower
+
+    # achar coluna de data
+    date_col = None
+    for candidate in ("date", "datetime", "index"):
+        if candidate in df.columns:
+            date_col = candidate
+            break
+    if date_col is None:
+        # assume primeira coluna é data
+        date_col = df.columns[0]
+
+    # escolher coluna de preço de fechamento
+    if "close" in df.columns:
+        close_col = "close"
+    elif "adj close" in df.columns:
+        # em alguns ativos o Yahoo devolve apenas Adj Close
+        close_col = "adj close"
+    elif "adj_close" in df.columns:
+        close_col = "adj_close"
+    else:
+        # não veio coluna de fechamento em nenhum formato reconhecido
+        raise ValueError("Retorno do Yahoo sem coluna de fechamento (close/adj close).")
+
+    out = df[[date_col, close_col]].rename(columns={date_col: "date", close_col: "close"})
+
+    # converte date
+    out["date"] = pd.to_datetime(out["date"], errors="coerce").dt.date
+    out = out.dropna(subset=["date"])
+
+    # converte close
+    out["close"] = pd.to_numeric(out["close"], errors="coerce")
+    out = out.dropna(subset=["close"])
+
+    return out.reset_index(drop=True)
+
+
+def _download_prices_yf(
+    ticker_sa: str,
+    start: str,
+    end: Optional[str],
+    retries: int,
+    pause_s: float,
+) -> pd.DataFrame:
+    """
+    Download robusto com retry/backoff.
+    """
+    last_err = None
+    for attempt in range(1, retries + 1):
         try:
             raw = yf.download(
-                yf_list,
-                start=str(start),
-                end=str(end),
-                auto_adjust=False,
+                ticker_sa,
+                start=start,
+                end=end,
                 progress=False,
-                actions=False,
-                threads=True,
-                group_by="ticker",
+                auto_adjust=False,
+                threads=False,
+                group_by="column",
             )
+            return _normalize_prices_df(raw)
+        except Exception as e:
+            last_err = e
+            # backoff simples
+            time.sleep(pause_s * attempt)
+    raise last_err  # type: ignore[misc]
+
+
+def _upsert_prices(engine: Engine, table: str, ticker: str, df: pd.DataFrame) -> int:
+    """
+    Faz UPSERT por (ticker, date).
+    Espera tabela com PK (ticker,date) e coluna close.
+    """
+    if df.empty:
+        return 0
+
+    schema, _, name = table.partition(".")
+    if not name:
+        schema, name = "public", schema
+
+    # Monta payload
+    payload = [
+        {"ticker": ticker, "date": r["date"], "close": float(r["close"])}
+        for r in df.to_dict("records")
+    ]
+
+    sql = text(
+        f"""
+        insert into {schema}.{name} (ticker, date, close, fetched_at)
+        values (:ticker, :date, :close, now())
+        on conflict (ticker, date)
+        do update set
+            close = excluded.close,
+            fetched_at = excluded.fetched_at
+        """
+    )
+
+    with engine.begin() as conn:
+        conn.execute(sql, payload)
+
+    return len(payload)
+
+
+# -----------------------------
+# Public API
+# -----------------------------
+def sync_prices_universe(
+    engine: Engine,
+    tickers: Iterable[str],
+    *,
+    start: str = DEFAULT_START,
+    end: Optional[str] = None,
+    table: str = "cvm.prices_b3",
+    retries: int = 3,
+    pause_s: float = 0.7,
+    per_ticker_sleep_s: float = 0.15,
+) -> Dict[str, Any]:
+    """
+    Sincroniza preços (2010→hoje, por padrão) para o universo.
+    - Não aborta o job em caso de falha em um ticker.
+    - Retorna estatísticas.
+    """
+    tickers_list: List[str] = [_norm_ticker(t) for t in tickers if str(t).strip()]
+    tickers_list = sorted(set(tickers_list))
+
+    stats = SyncStats(total=len(tickers_list))
+
+    # garante tabela
+    _ensure_prices_table(engine, table)
+
+    for t in tickers_list:
+        ticker_sa = f"{t}.SA"
+        try:
+            df = _download_prices_yf(
+                ticker_sa=ticker_sa,
+                start=start,
+                end=end,
+                retries=retries,
+                pause_s=pause_s,
+            )
+
+            if df.empty:
+                stats.empty += 1
+                continue
+
+            n = _upsert_prices(engine, table, t, df)
+            stats.rows_inserted += n
+            stats.ok += 1
+
         except Exception:
-            stats["fail"] += len(batch)
-            continue
+            stats.fail += 1
+        finally:
+            # evita rate limit
+            if per_ticker_sleep_s > 0:
+                time.sleep(per_ticker_sleep_s)
 
-        rows = []
-
-        if isinstance(raw.columns, pd.MultiIndex):
-            for t in batch:
-                col = _to_yf(t)
-                if col not in raw.columns.get_level_values(0):
-                    stats["fail"] += 1
-                    continue
-                s = raw[(col, "Close")].dropna()
-                if s.empty:
-                    stats["fail"] += 1
-                    continue
-                tmp = s.reset_index().rename(
-                    columns={"Date": "date", (col, "Close"): "close"}
-                )
-                tmp["ticker"] = t
-                rows.append(tmp[["ticker", "date", "close"]])
-                stats["ok"] += 1
-        else:
-            if "Close" in raw.columns and len(batch) == 1:
-                s = raw["Close"].dropna()
-                if not s.empty:
-                    tmp = s.reset_index().rename(
-                        columns={"Date": "date", "Close": "close"}
-                    )
-                    tmp["ticker"] = batch[0]
-                    rows.append(tmp[["ticker", "date", "close"]])
-                    stats["ok"] += 1
-
-        if rows:
-            df = pd.concat(rows, ignore_index=True)
-            df = _mark_month_year_end(df)
-            _upsert_prices(engine, df, cfg.out_table)
-
-        time.sleep(cfg.pause_s)
-
-    return stats
+    return stats.as_dict()
