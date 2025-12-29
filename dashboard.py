@@ -144,34 +144,6 @@ with st.sidebar:
         index=0,
     )
 
-    st.markdown("---")
-    col_a, col_b = st.columns(2)
-    with col_a:
-        if st.button("Recarregar cache", use_container_width=True):
-            # limpa apenas o que é crítico aqui
-            st.session_state.pop("setores_df", None)
-            st.rerun()
-    with col_b:
-        if st.button("Diagnóstico", use_container_width=True):
-            st.session_state["__show_diag__"] = True
-
-# ───────────────────────── Diagnóstico leve ─────────────────────────
-if st.session_state.get("__show_diag__"):
-    st.session_state["__show_diag__"] = False
-    with st.expander("Diagnóstico do App", expanded=True):
-        st.write("Root dir:", str(ROOT_DIR))
-        st.write("Python path contém root:", str(ROOT_DIR) in sys.path)
-        try:
-            _ensure_setores_df()
-            s = st.session_state.get("setores_df")
-            st.write("setores_df carregado:", (s is not None) and (getattr(s, "empty", True) is False))
-            if s is not None and not getattr(s, "empty", True):
-                st.write("Linhas/Colunas:", s.shape)
-                st.write("Colunas:", list(s.columns))
-        except Exception as e:
-            st.error(f"Falha ao carregar setores_df: {e}")
-
-
 # ───────────────────────── Execução / Roteamento ────────────────────
 try:
     _ensure_setores_df()
@@ -185,3 +157,4 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
