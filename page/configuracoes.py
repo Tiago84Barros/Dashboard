@@ -74,52 +74,36 @@ Depois de salvar os Secrets, reinicie a app."""
     with colA:
         st.subheader("Atualizar agora")
 
-        # manter valores entre reruns
+        # Como o seu apply_update() NÃO aceita start_year/end_year etc,
+        # mantemos estes inputs apenas como referência visual (opcionais).
+        # Se você quiser removê-los, pode.
         default_start_year = int(st.session_state.get("cfg_start_year", 2010))
         default_end_year = int(st.session_state.get("cfg_end_year", dt.datetime.now().year))
-        default_years_per_run = int(st.session_state.get("cfg_years_per_run", 1))
-        default_quarters_per_run = int(st.session_state.get("cfg_quarters_per_run", 1))
 
         start_year = st.number_input(
-            "Ano inicial",
+            "Ano inicial (referência)",
             min_value=2000,
             max_value=2100,
             value=default_start_year,
             step=1,
+            help="Seu apply_update() atual não usa este parâmetro; é apenas informativo.",
         )
         end_year = st.number_input(
-            "Ano final",
+            "Ano final (referência)",
             min_value=2000,
             max_value=2100,
             value=default_end_year,
             step=1,
-        )
-        years_per_run = st.number_input(
-            "DFP por clique (anos)",
-            min_value=1,
-            max_value=10,
-            value=default_years_per_run,
-            step=1,
-        )
-        quarters_per_run = st.number_input(
-            "ITR por clique (trimestres)",
-            min_value=1,
-            max_value=12,
-            value=default_quarters_per_run,
-            step=1,
+            help="Seu apply_update() atual não usa este parâmetro; é apenas informativo.",
         )
 
-        # persistência
         st.session_state["cfg_start_year"] = int(start_year)
         st.session_state["cfg_end_year"] = int(end_year)
-        st.session_state["cfg_years_per_run"] = int(years_per_run)
-        st.session_state["cfg_quarters_per_run"] = int(quarters_per_run)
 
         if int(end_year) < int(start_year):
             st.error("Ano final não pode ser menor que o ano inicial.")
             st.stop()
 
-        # toggle para detalhamento
         show_debug = st.checkbox(
             "Mostrar detalhes técnicos em caso de erro",
             value=True,
@@ -143,13 +127,8 @@ Depois de salvar os Secrets, reinicie a app."""
                     log_box.markdown("\n".join([f"- {x}" for x in logs[-20:]]))
 
             try:
-                apply_update(
-                    start_year=int(start_year),
-                    end_year=int(end_year),
-                    years_per_run=int(years_per_run),
-                    quarters_per_run=int(quarters_per_run),
-                    progress_cb=cb,
-                )
+                # ✅ chamada compatível com o seu core atual
+                apply_update(progress_cb=cb)
 
                 st.success("Atualização concluída.")
                 st.session_state["pagina_atual"] = "Configurações"
@@ -157,10 +136,8 @@ Depois de salvar os Secrets, reinicie a app."""
 
             except Exception as e:
                 st.session_state["pagina_atual"] = "Configurações"
-
                 st.error("Falha ao atualizar banco. Veja detalhes abaixo.")
 
-                # Mostra o erro de forma rica (com causa encadeada, se existir)
                 if show_debug:
                     st.exception(e)
                     tb = traceback.format_exc()
@@ -171,9 +148,6 @@ Depois de salvar os Secrets, reinicie a app."""
                             st.code("\n".join(logs[-200:]))
                 else:
                     st.error(f"Erro: {e}")
-
-                # importante: re-raise opcional
-                # raise
 
     with colB:
         st.subheader("Último log")
