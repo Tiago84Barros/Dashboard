@@ -10,17 +10,11 @@ from core.db_supabase import get_engine
 
 
 # =============================================================================
-# Helpers
+# Utilidades
 # =============================================================================
 
 def _norm_ticker(t: str) -> str:
     return t.replace(".SA", "").upper()
-
-
-def _fmt_pct(x):
-    if x is None or pd.isna(x):
-        return "—"
-    return f"{x*100:.1f}%"
 
 
 def _fmt_num(x):
@@ -29,10 +23,17 @@ def _fmt_num(x):
     return f"{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def _fmt_pct(x):
+    if x is None or pd.isna(x):
+        return "—"
+    return f"{x * 100:.1f}%"
+
+
 def _trend(series: pd.Series) -> str:
-    if series.dropna().shape[0] < 3:
+    s = series.dropna()
+    if len(s) < 3:
         return "inconclusiva"
-    coef = np.polyfit(range(len(series)), series.values, 1)[0]
+    coef = np.polyfit(range(len(s)), s.values, 1)[0]
     if coef > 0:
         return "crescente"
     if coef < 0:
@@ -41,11 +42,11 @@ def _trend(series: pd.Series) -> str:
 
 
 # =============================================================================
-# Loaders
+# LOADERS (cacheados corretamente)
 # =============================================================================
 
-@st.cache_data(show_spinner=False)
-def _load_dfp(engine, ticker: str) -> pd.DataFrame:
+@st.cache_data(ttl=3600, show_spinner=False)
+def _load_dfp(_engine, ticker: str) -> pd.DataFrame:
     return pd.read_sql(
         text(
             """
@@ -60,13 +61,13 @@ def _load_dfp(engine, ticker: str) -> pd.DataFrame:
             order by data
             """
         ),
-        engine,
+        _engine,
         params={"t": ticker},
     )
 
 
-@st.cache_data(show_spinner=False)
-def _load_multiplos(engine, ticker: str) -> pd.DataFrame:
+@st.cache_data(ttl=3600, show_spinner=False)
+def _load_multiplos(_engine, ticker: str) -> pd.DataFrame:
     return pd.read_sql(
         text(
             """
@@ -83,13 +84,13 @@ def _load_multiplos(engine, ticker: str) -> pd.DataFrame:
             order by ano
             """
         ),
-        engine,
+        _engine,
         params={"t": ticker},
     )
 
 
-@st.cache_data(show_spinner=False)
-def _load_prices_monthly(engine, ticker: str) -> pd.DataFrame:
+@st.cache_data(ttl=3600, show_spinner=False)
+def _load_prices_monthly(_engine, ticker: str) -> pd.DataFrame:
     return pd.read_sql(
         text(
             """
@@ -101,7 +102,7 @@ def _load_prices_monthly(engine, ticker: str) -> pd.DataFrame:
             order by month_end
             """
         ),
-        engine,
+        _engine,
         params={"t": ticker},
     )
 
@@ -111,48 +112,59 @@ def _load_prices_monthly(engine, ticker: str) -> pd.DataFrame:
 # =============================================================================
 
 def _executive_summary(dfp: pd.DataFrame, mult: pd.DataFrame) -> list[str]:
-    insights = []
+    insights: list[str] = []
 
     if not dfp.empty:
-        rev_trend = _trend(dfp["receita_liquida"])
-        lucro_trend = _trend(dfp["lucro_liquido"])
-
-        insights.append(f"Receita com tendência **{rev_trend}**.")
-        insights.append(f"Lucro líquido com tendência **{lucro_trend}**.")
+        insights.append(
+            f"Receita apresenta tendência **{_trend(dfp['receita_liquida'])}**."
+        )
+        insights.append(
+            f"Lucro líquido apresenta tendência **{_trend(dfp['lucro_liquido'])}**."
+        )
 
     if not mult.empty:
         roe_med = mult["roe"].dropna().tail(5).mean()
         pl_med = mult["pl"].dropna().tail(5).mean()
         alav = mult["divida_liquida_ebit"].dropna().tail(5).mean()
 
-        if roe_med and roe_med > 0.15:
-            insights.append("ROE médio recente **elevado**, indicando boa eficiência do capital.")
-        elif roe_med:
-            insights.append("ROE médio recente **moderado**.")
+        if roe_med is not None:
+            if roe_med > 0.15:
+                insights.append("ROE médio recente **elevado**, indicando boa eficiência.")
+            elif roe_med > 0:
+                insights.append("ROE médio recente **moderado**.")
+            else:
+                insights.append("ROE médio recente **baixo ou negativo**.")
 
-        if pl_med and pl_med < 12:
-            insights.append("P/L médio **baixo**, possível desconto relativo.")
-        elif pl_med:
-            insights.append("P/L médio **elevado**, mercado precificando crescimento.")
+        if pl_med is not None:
+            if pl_med < 10:
+                insights.append("P/L médio **baixo**, possível desconto relativo.")
+            elif pl_med < 18:
+                insights.append("P/L médio **em faixa razoável**.")
+            else:
+                insights.append("P/L médio **elevado**, crescimento já precificado.")
 
-        if alav and alav > 3:
-            insights.append("Alavancagem **alta**, exige atenção ao risco financeiro.")
-        elif alav:
-            insights.append("Alavancagem sob controle.")
+        if alav is not None:
+            if alav > 4:
+                insights.append("Alavancagem **alta**, exige cautela.")
+            else:
+                insights.append("Alavancagem **sob controle**.")
 
     return insights
 
 
 # =============================================================================
-# Render
+# Render principal
 # =============================================================================
 
 def render_empresa_view(ticker: str) -> None:
     engine = get_engine()
     t = _norm_ticker(ticker)
 
-    st.markdown(f"## {t}")
+    st.markdown(f"## 📊 {t}")
 
+    # ------------------------------
+    # Carregamento de dados
+    # ------------------------------
     dfp = _load_dfp(engine, t)
     mult = _load_multiplos(engine, t)
     prices_m = _load_prices_monthly(engine, t)
@@ -161,22 +173,16 @@ def render_empresa_view(ticker: str) -> None:
         st.warning("Não há dados fundamentais disponíveis para esta empresa.")
         return
 
-    # ---------------------------------------------------------
+    # ------------------------------
     # KPIs principais
-    # ---------------------------------------------------------
+    # ------------------------------
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-        st.metric(
-            "Receita (último ano)",
-            _fmt_num(dfp.iloc[-1]["receita_liquida"]),
-        )
+        st.metric("Receita (último ano)", _fmt_num(dfp.iloc[-1]["receita_liquida"]))
 
     with col2:
-        st.metric(
-            "Lucro Líquido (último ano)",
-            _fmt_num(dfp.iloc[-1]["lucro_liquido"]),
-        )
+        st.metric("Lucro Líquido (último ano)", _fmt_num(dfp.iloc[-1]["lucro_liquido"]))
 
     with col3:
         roe_last = mult["roe"].dropna().iloc[-1] if not mult.empty else None
@@ -188,9 +194,9 @@ def render_empresa_view(ticker: str) -> None:
 
     st.divider()
 
-    # ---------------------------------------------------------
+    # ------------------------------
     # Gráficos fundamentais
-    # ---------------------------------------------------------
+    # ------------------------------
     dfp_plot = dfp.copy()
     dfp_plot["ano"] = pd.to_datetime(dfp_plot["data"]).dt.year
 
@@ -206,15 +212,15 @@ def render_empresa_view(ticker: str) -> None:
     fig2 = px.line(
         dfp_plot,
         x="ano",
-        y=["patrimonio_liquido"],
+        y="patrimonio_liquido",
         title="Evolução do Patrimônio Líquido",
         markers=True,
     )
     st.plotly_chart(fig2, use_container_width=True)
 
-    # ---------------------------------------------------------
-    # Preço mensal (benchmark / backtest)
-    # ---------------------------------------------------------
+    # ------------------------------
+    # Preço mensal (benchmark)
+    # ------------------------------
     if not prices_m.empty:
         fig3 = px.line(
             prices_m,
@@ -224,23 +230,23 @@ def render_empresa_view(ticker: str) -> None:
         )
         st.plotly_chart(fig3, use_container_width=True)
 
-    # ---------------------------------------------------------
-    # Múltiplos
-    # ---------------------------------------------------------
+    # ------------------------------
+    # Indicadores ao longo do tempo
+    # ------------------------------
     if not mult.empty:
         fig4 = px.line(
             mult,
             x="ano",
             y=["roe", "margem_liquida", "margem_ebit"],
-            title="Indicadores de rentabilidade e margem",
+            title="Indicadores de rentabilidade",
             markers=True,
         )
         st.plotly_chart(fig4, use_container_width=True)
 
-    # ---------------------------------------------------------
+    # ------------------------------
     # Relatório Executivo
-    # ---------------------------------------------------------
-    st.subheader("Relatório Executivo")
+    # ------------------------------
+    st.subheader("🧠 Relatório Executivo")
 
     insights = _executive_summary(dfp, mult)
     if insights:
