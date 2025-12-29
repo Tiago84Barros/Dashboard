@@ -31,8 +31,10 @@ def _ensure_multiplos_table(engine: Engine, table: str = "cvm.multiplos") -> Non
         ticker text not null,
         ano int not null,
 
+        -- preço referência (último pregão do ano)
         preco_fim_ano double precision,
 
+        -- valuation / qualidade (determinísticos com dados disponíveis)
         pl double precision,
         roe double precision,
 
@@ -53,7 +55,7 @@ def _ensure_multiplos_table(engine: Engine, table: str = "cvm.multiplos") -> Non
 
 def _safe_div(a: pd.Series, b: pd.Series) -> pd.Series:
     """
-    Divisão segura: retorna NaN quando b==0 ou NaN.
+    Divisão segura: NaN quando b==0 ou NaN.
     """
     out = a / b
     out[(b == 0) | b.isna()] = pd.NA
@@ -62,7 +64,11 @@ def _safe_div(a: pd.Series, b: pd.Series) -> pd.Series:
 
 def _load_dfp(engine: Engine) -> pd.DataFrame:
     """
-    Carrega DFP anual. Assume que 'data' é a data do balanço (geralmente 31/12).
+    Carrega DFP anual. Assume:
+      - ticker
+      - data (data do balanço)
+      - receita_liquida, ebit, lucro_liquido, lpa, patrimonio_liquido
+      - divida_total, divida_liquida (se existirem)
     """
     df = pd.read_sql(
         text(
@@ -74,6 +80,7 @@ def _load_dfp(engine: Engine) -> pd.DataFrame:
                 ebit,
                 lucro_liquido,
                 lpa,
+                ativo_total,
                 patrimonio_liquido,
                 divida_total,
                 divida_liquida
@@ -89,14 +96,16 @@ def _load_dfp(engine: Engine) -> pd.DataFrame:
     df["ticker"] = df["ticker"].astype(str).map(_norm_ticker)
     df["data"] = pd.to_datetime(df["data"], errors="coerce")
     df = df.dropna(subset=["ticker", "data"])
+
     df["ano"] = df["data"].dt.year.astype(int)
 
-    # garante numéricos
+    # numéricos
     for c in [
         "receita_liquida",
         "ebit",
         "lucro_liquido",
         "lpa",
+        "ativo_total",
         "patrimonio_liquido",
         "divida_total",
         "divida_liquida",
@@ -109,52 +118,35 @@ def _load_dfp(engine: Engine) -> pd.DataFrame:
 
 def _load_year_end_prices(engine: Engine) -> pd.DataFrame:
     """
-    Para cada ticker e ano, pega o último pregão do ano (maior 'date').
-    Usa cvm.prices_b3 com colunas: ticker, date, close.
+    Preço do último pregão do ano, já pré-calculado em cvm.prices_b3_yearly:
+      - ticker
+      - ano
+      - close (preço)
     """
-    # Estratégia: pegar (ticker, ano, max(date)) e depois join pra obter close.
-    # Isso funciona bem com índices em (ticker,date), mas mesmo sem, roda.
-    df_last = pd.read_sql(
+    df = pd.read_sql(
         text(
             """
-            with p as (
-                select
-                    ticker,
-                    date,
-                    close,
-                    extract(year from date)::int as ano
-                from cvm.prices_b3
-                where close is not null
-            ),
-            last_day as (
-                select ticker, ano, max(date) as last_date
-                from p
-                group by ticker, ano
-            )
             select
-                p.ticker,
-                p.ano,
-                p.date as data_preco,
-                p.close as preco_fim_ano
-            from p
-            join last_day
-              on p.ticker = last_day.ticker
-             and p.ano = last_day.ano
-             and p.date = last_day.last_date
+                ticker,
+                ano,
+                close as preco_fim_ano
+            from cvm.prices_b3_yearly
+            where close is not null
             """
         ),
         con=engine,
     )
 
-    if df_last.empty:
-        return df_last
+    if df.empty:
+        return df
 
-    df_last["ticker"] = df_last["ticker"].astype(str).map(_norm_ticker)
-    df_last["ano"] = pd.to_numeric(df_last["ano"], errors="coerce").astype("Int64")
-    df_last["preco_fim_ano"] = pd.to_numeric(df_last["preco_fim_ano"], errors="coerce")
-    df_last = df_last.dropna(subset=["ticker", "ano"])
-    df_last["ano"] = df_last["ano"].astype(int)
-    return df_last[["ticker", "ano", "preco_fim_ano"]]
+    df["ticker"] = df["ticker"].astype(str).map(_norm_ticker)
+    df["ano"] = pd.to_numeric(df["ano"], errors="coerce").astype("Int64")
+    df["preco_fim_ano"] = pd.to_numeric(df["preco_fim_ano"], errors="coerce")
+    df = df.dropna(subset=["ticker", "ano"])
+    df["ano"] = df["ano"].astype(int)
+
+    return df[["ticker", "ano", "preco_fim_ano"]]
 
 
 @dataclass
@@ -174,7 +166,7 @@ class RebuildResult:
 def rebuild_multiplos_universe(engine: Engine, *, table: str = "cvm.multiplos") -> Dict[str, Any]:
     """
     Recalcula e grava cvm.multiplos para TODO o universo:
-    - junta DFP anual com preço do último pregão do ano (prices_b3)
+    - junta DFP anual com preço do último pregão do ano (prices_b3_yearly)
     - calcula múltiplos e métricas derivadas disponíveis
     - upsert em (ticker, ano)
 
@@ -189,12 +181,15 @@ def rebuild_multiplos_universe(engine: Engine, *, table: str = "cvm.multiplos") 
 
         prices = _load_year_end_prices(engine)
         if prices.empty:
-            return RebuildResult(ok=False, rows=0, error="Prices vazio: cvm.prices_b3 sem dados para fim de ano.").as_dict()
+            return RebuildResult(ok=False, rows=0, error="Prices vazio: cvm.prices_b3_yearly sem dados. Rode o sync de preços anual.").as_dict()
 
         # join por ticker+ano
         df = dfp.merge(prices, on=["ticker", "ano"], how="left")
 
-        # Calcula indicadores (determinísticos)
+        # -------------------------
+        # Métricas determinísticas
+        # -------------------------
+
         # P/L = preço fim ano / LPA
         if "lpa" in df.columns:
             df["pl"] = _safe_div(df["preco_fim_ano"], df["lpa"])
@@ -212,7 +207,9 @@ def rebuild_multiplos_universe(engine: Engine, *, table: str = "cvm.multiplos") 
         df["divida_liquida_ebit"] = _safe_div(df["divida_liquida"], df["ebit"])
         df["divida_total_patrimonio"] = _safe_div(df["divida_total"], df["patrimonio_liquido"])
 
-        # Seleciona payload
+        # -------------------------
+        # Payload
+        # -------------------------
         out = df[
             [
                 "ticker",
@@ -227,12 +224,10 @@ def rebuild_multiplos_universe(engine: Engine, *, table: str = "cvm.multiplos") 
             ]
         ].copy()
 
-        # Remove linhas sem ano/ticker
         out = out.dropna(subset=["ticker", "ano"])
         out["ticker"] = out["ticker"].astype(str).map(_norm_ticker)
         out["ano"] = out["ano"].astype(int)
 
-        # Upsert
         schema, _, name = table.partition(".")
         if not name:
             schema, name = "public", schema
