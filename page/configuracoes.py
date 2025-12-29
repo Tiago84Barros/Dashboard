@@ -1,125 +1,184 @@
+# page/configuracoes.py
 from __future__ import annotations
 
+import datetime as dt
+import traceback
+from typing import Any, Dict
+from zoneinfo import ZoneInfo  # Python 3.9+
+
 import streamlit as st
-from sqlalchemy.engine import Engine
 
-from core.db_supabase import get_engine
-from core.cvm_sync import apply_update
-from cvm.multiplos_sync_universe import rebuild_multiplos_universe
+from core.cvm_sync import apply_update, get_sync_status
+
+BR_TZ = ZoneInfo("America/Sao_Paulo")
 
 
-# =============================================================================
-# Página de Configurações
-# =============================================================================
+def _fmt_dt(x) -> str:
+    if not x:
+        return "—"
+    try:
+        d = dt.datetime.fromisoformat(str(x).replace("Z", "+00:00"))
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=dt.timezone.utc)
+        return d.astimezone(BR_TZ).strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        return str(x)
+
 
 def render() -> None:
-    st.header("Configurações do Sistema")
+    st.markdown("## Configurações")
+    st.caption("Atualize todas as tabelas do Supabase e acompanhe o status.")
 
-    st.markdown(
-        """
-        Esta seção executa **toda a cadeia de atualização do banco**:
-        
-        1. Demonstrações financeiras (CVM – DFP / ITR)  
-        2. Preços de ações (mensal + último pregão do ano)  
-        3. Recalculo de múltiplos para todo o universo  
+    # garante que a navegação permaneça em Configurações após qualquer rerun
+    st.session_state["pagina_atual"] = "Configurações"
 
-        Use o **Modo Seguro** para evitar sobrecarga.
-        """
-    )
+    try:
+        status: Dict[str, Any] = get_sync_status() or {}
+    except Exception as e:
+        st.error("Banco Supabase não está configurado para esta aplicação.")
+        with st.expander("Como corrigir", expanded=True):
+            st.markdown(
+                """Defina **SUPABASE_DB_URL** em **Secrets** no Streamlit Cloud (recomendado),
+ou alternativamente as variáveis **SUPABASE_DB_USER**, **SUPABASE_DB_PASSWORD**, **SUPABASE_DB_HOST**, **SUPABASE_DB_PORT**, **SUPABASE_DB_NAME**.
 
-    # ──────────────────────────────────────────────────────────
-    # Controles
-    # ──────────────────────────────────────────────────────────
+Depois de salvar os Secrets, reinicie a app."""
+            )
+            st.markdown("**Erro capturado:**")
+            st.exception(e)
+        return
 
-    modo_seguro = st.checkbox(
-        "Modo seguro (limitar tickers por execução)",
-        value=True,
-        help="Recomendado em produção para evitar timeout e rate limit.",
-    )
+    last_year = status.get("last_year")
+    last_run_at = status.get("last_run_at")
+    remote_latest_year = status.get("remote_latest_year")
+    has_updates = status.get("has_updates")
 
-    max_tickers = st.number_input(
-        "Máximo de tickers por execução (modo seguro)",
-        min_value=10,
-        max_value=500,
-        value=150,
-        step=10,
-        disabled=not modo_seguro,
-    )
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("Último ano no banco", value=str(last_year) if last_year else "—")
+    with c2:
+        st.metric("Última atualização", value=_fmt_dt(last_run_at))
+    with c3:
+        st.metric("Ano alvo", value=str(remote_latest_year) if remote_latest_year else "—")
+    with c4:
+        if has_updates is True:
+            st.warning("Há atualizações pendentes")
+        elif has_updates is False:
+            st.success("Base atualizada")
+        else:
+            st.info("Status indisponível")
 
     st.divider()
 
-    # ──────────────────────────────────────────────────────────
-    # Botão principal
-    # ──────────────────────────────────────────────────────────
+    colA, colB = st.columns([1, 1])
 
-    if st.button("Atualizar banco (tudo)", use_container_width=True):
-        engine: Engine = get_engine()
+    with colA:
+        st.subheader("Atualizar agora")
 
-        log_box = st.container()
-        progress = st.progress(0)
+        # manter valores entre reruns
+        default_start_year = int(st.session_state.get("cfg_start_year", 2010))
+        default_end_year = int(st.session_state.get("cfg_end_year", dt.datetime.now().year))
+        default_years_per_run = int(st.session_state.get("cfg_years_per_run", 1))
+        default_quarters_per_run = int(st.session_state.get("cfg_quarters_per_run", 1))
 
-        try:
-            # =====================================================
-            # 1) CVM – DFP / ITR
-            # =====================================================
-            with log_box:
-                st.info("Iniciando sincronismo CVM (DFP / ITR)...")
+        start_year = st.number_input(
+            "Ano inicial",
+            min_value=2000,
+            max_value=2100,
+            value=default_start_year,
+            step=1,
+        )
+        end_year = st.number_input(
+            "Ano final",
+            min_value=2000,
+            max_value=2100,
+            value=default_end_year,
+            step=1,
+        )
+        years_per_run = st.number_input(
+            "DFP por clique (anos)",
+            min_value=1,
+            max_value=10,
+            value=default_years_per_run,
+            step=1,
+        )
+        quarters_per_run = st.number_input(
+            "ITR por clique (trimestres)",
+            min_value=1,
+            max_value=12,
+            value=default_quarters_per_run,
+            step=1,
+        )
 
-            progress.progress(10)
+        # persistência
+        st.session_state["cfg_start_year"] = int(start_year)
+        st.session_state["cfg_end_year"] = int(end_year)
+        st.session_state["cfg_years_per_run"] = int(years_per_run)
+        st.session_state["cfg_quarters_per_run"] = int(quarters_per_run)
 
-            apply_update(
-                engine,
-                update_cvm=True,
-                update_prices=False,
-                update_multiplos=False,
-            )
+        if int(end_year) < int(start_year):
+            st.error("Ano final não pode ser menor que o ano inicial.")
+            st.stop()
 
-            with log_box:
-                st.success("CVM sincronizado com sucesso.")
+        # toggle para detalhamento
+        show_debug = st.checkbox(
+            "Mostrar detalhes técnicos em caso de erro",
+            value=True,
+            help="Exibe stack trace completo no painel ao falhar.",
+        )
 
-            progress.progress(35)
+        run = st.button("Atualizar banco (tudo)", use_container_width=True)
+        progress = st.progress(0, text="Aguardando…")
+        log_box = st.empty()
 
-            # =====================================================
-            # 2) Preços – mensal + anual (2010 → hoje)
-            # =====================================================
-            with log_box:
-                st.info("Atualizando preços (mensal + último pregão do ano)...")
+        if run:
+            st.session_state["pagina_atual"] = "Configurações"
 
-            progress.progress(50)
+            logs: list[str] = []
 
-            apply_update(
-                engine,
-                update_cvm=False,
-                update_prices=True,
-                update_multiplos=False,
-                modo_seguro=modo_seguro,
-                max_tickers=max_tickers if modo_seguro else None,
-            )
+            def cb(pct: float, msg: str = "") -> None:
+                pct = max(0.0, min(100.0, float(pct)))
+                progress.progress(int(pct), text=msg or f"{pct:.0f}%")
+                if msg:
+                    logs.append(msg)
+                    log_box.markdown("\n".join([f"- {x}" for x in logs[-20:]]))
 
-            with log_box:
-                st.success("Preços atualizados com sucesso.")
+            try:
+                apply_update(
+                    start_year=int(start_year),
+                    end_year=int(end_year),
+                    years_per_run=int(years_per_run),
+                    quarters_per_run=int(quarters_per_run),
+                    progress_cb=cb,
+                )
 
-            progress.progress(75)
+                st.success("Atualização concluída.")
+                st.session_state["pagina_atual"] = "Configurações"
+                st.rerun()
 
-            # =====================================================
-            # 3) Múltiplos – universo completo
-            # =====================================================
-            with log_box:
-                st.info("Recalculando múltiplos do universo...")
+            except Exception as e:
+                st.session_state["pagina_atual"] = "Configurações"
 
-            progress.progress(85)
+                st.error("Falha ao atualizar banco. Veja detalhes abaixo.")
 
-            result = rebuild_multiplos_universe(engine)
+                # Mostra o erro de forma rica (com causa encadeada, se existir)
+                if show_debug:
+                    st.exception(e)
+                    tb = traceback.format_exc()
+                    with st.expander("Detalhes técnicos (stack trace completo)", expanded=True):
+                        st.code(tb, language="python")
+                        if logs:
+                            st.markdown("**Logs coletados durante a execução (últimos 200):**")
+                            st.code("\n".join(logs[-200:]))
+                else:
+                    st.error(f"Erro: {e}")
 
-            if not result.get("ok"):
-                raise RuntimeError(result.get("error", "Erro desconhecido ao recalcular múltiplos."))
+                # importante: re-raise opcional
+                # raise
 
-            with log_box:
-                st.success(f"Múltiplos recalculados com sucesso ({result['rows']} registros).")
-
-            progress.progress(100)
-
-            st.success("Atualização completa finalizada com sucesso.")
-
-        except Exception as e:
-            st.error(f"Falha ao atualizar banco: {e}")
+    with colB:
+        st.subheader("Último log")
+        notes = status.get("notes")
+        if notes:
+            st.code(notes)
+        else:
+            st.info("Sem log ainda.")
