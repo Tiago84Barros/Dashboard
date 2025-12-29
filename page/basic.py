@@ -3,95 +3,131 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from analytics.helpers import get_logo_url
-from page.empresa_view import render_empresa_view as exibir_detalhes_empresa
+from core.db_supabase import get_engine
+from core.helpers import get_logo_url
 
-pd.set_option("display.float_format", "{:.2f}".format)
+# ✅ IMPORT CORRETO (Opção A)
+from empresa_view import render_empresa_view as exibir_detalhes_empresa
 
 
-# HTML do bloco de exibição por setor
+# =============================================================================
+# HTML do card de empresa (setor)
+# =============================================================================
+
 def _sector_box_html(row: pd.Series) -> str:
-    ticker = row.get("ticker", "—")
-    subsetor = row.get("SUBSETOR", "—")
-    segmento = row.get("SEGMENTO", "—")
-
     return f"""
-    <div class="sector-box">
-      <div class="sector-info">
-        <strong>{ticker}</strong><br>
-        Subsetor: {subsetor}<br>
-        Segmento: {segmento}
-      </div>
-      <img src="{get_logo_url(ticker)}" class="sector-logo">
+    <div style="
+        border:1px solid #e0e0e0;
+        border-radius:10px;
+        padding:12px;
+        margin-bottom:12px;
+        display:flex;
+        justify-content:space-between;
+        align-items:center;
+        background-color:#fafafa;
+    ">
+        <div>
+            <strong style="font-size:16px;">{row['ticker']}</strong><br>
+            <span style="font-size:13px;">
+                Setor: {row['SETOR']}<br>
+                Subsetor: {row['SUBSETOR']}<br>
+                Segmento: {row['SEGMENTO']}
+            </span>
+        </div>
+        <img src="{get_logo_url(row['ticker'])}"
+             style="width:48px;height:48px;object-fit:contain;">
     </div>
     """
 
 
-def _norm_ticker_input(raw: str) -> str | None:
-    """
-    Normaliza o ticker digitado no formato do seu algoritmo:
-    Entrada: petr4 | PETR4 | PETR4.SA
-    Saída:   PETR4.SA
-    """
-    if not raw:
-        return None
-    t = str(raw).strip().upper()
-    if not t:
-        return None
-    if not t.endswith(".SA"):
-        t += ".SA"
-    return t
-
+# =============================================================================
+# Render principal
+# =============================================================================
 
 def render() -> None:
-    st.header("Análise Básica de Ações")
+    st.header("📌 Análise Básica de Ações")
 
-    # Sidebar (conforme seu algoritmo)
+    engine = get_engine()
+
+    # -------------------------------------------------------------------------
+    # Sidebar — busca por ticker
+    # -------------------------------------------------------------------------
     with st.sidebar:
-        if st.button("Atualizar dados", key="refresh_button"):
-            st.cache_data.clear()
-            st.cache_resource.clear()
-            st.rerun()
+        st.subheader("Buscar empresa")
 
-        ticker_input = st.text_input("Buscar ticker (ex.: PETR4)", key="ticker_box")
+        ticker_input = st.text_input(
+            "Digite o ticker (ex.: PETR4)",
+            key="ticker_input",
+        )
 
-        ticker_norm = _norm_ticker_input(ticker_input)
-        if ticker_norm:
-            st.session_state["ticker"] = ticker_norm
-        elif "ticker" in st.session_state:
-            del st.session_state["ticker"]
+        if ticker_input:
+            ticker = ticker_input.upper().strip()
+            if not ticker.endswith(".SA"):
+                ticker += ".SA"
+            st.session_state["ticker_selecionado"] = ticker
+        else:
+            st.session_state.pop("ticker_selecionado", None)
 
-    ticker = st.session_state.get("ticker", None)
-    setores_df = st.session_state.get("setores_df", None)
+    ticker = st.session_state.get("ticker_selecionado")
 
-    # Se houver ticker, exibe os detalhes da empresa
+    # -------------------------------------------------------------------------
+    # Se houver ticker selecionado → exibir detalhes da empresa
+    # -------------------------------------------------------------------------
     if ticker:
         exibir_detalhes_empresa(ticker)
         return
 
+    # -------------------------------------------------------------------------
+    # Tela inicial — empresas por setor
+    # -------------------------------------------------------------------------
     st.subheader("Empresas distribuídas por setor")
-    if setores_df is None or getattr(setores_df, "empty", True):
-        st.info("Base de setores não carregada.")
+
+    try:
+        setores_df = pd.read_sql(
+            """
+            select
+                ticker,
+                setor as "SETOR",
+                subsetor as "SUBSETOR",
+                segmento as "SEGMENTO"
+            from cvm.setores
+            order by setor, ticker
+            """,
+            engine,
+        )
+    except Exception as e:
+        st.error("Erro ao carregar a base de setores.")
+        st.exception(e)
         return
 
-    df = setores_df.copy()
+    if setores_df.empty:
+        st.warning("Base de setores não encontrada ou vazia.")
+        return
 
-    # Garantias mínimas para não quebrar se alguma coluna faltar
-    for col in ["SETOR", "SUBSETOR", "SEGMENTO", "ticker"]:
-        if col not in df.columns:
-            df[col] = "—"
-
-    df = df.sort_values(["SETOR", "ticker"])
-
-    for setor, grupo in df.groupby("SETOR", dropna=False):
+    # -------------------------------------------------------------------------
+    # Renderização por setor (grid 3 colunas)
+    # -------------------------------------------------------------------------
+    for setor, grupo in setores_df.groupby("SETOR"):
         st.markdown(f"### {setor}")
+
         grupo = grupo.reset_index(drop=True)
 
         for i in range(0, len(grupo), 3):
             cols = st.columns(3, gap="large")
+
             for j in range(3):
-                idx = i + j
-                if idx < len(grupo):
-                    row = grupo.iloc[idx]
+                if i + j < len(grupo):
+                    row = grupo.iloc[i + j]
                     with cols[j]:
-                        st.markdown(_sector_box_html(row), unsafe_allow_html=True)
+                        if st.button(
+                            row["ticker"],
+                            key=f"btn_{row['ticker']}",
+                            use_container_width=True,
+                        ):
+                            st.session_state["ticker_selecionado"] = row["ticker"] + ".SA"
+                            st.rerun()
+
+                        st.markdown(
+                            _sector_box_html(row),
+                            unsafe_allow_html=True,
+                        )
