@@ -1,115 +1,283 @@
-# cvm/multiplos_sync_universe.py
 from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Dict, Optional
 
 import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from cvm.multiplos_builder import compute_multiplos_full
+
+# ============================================================
+# Helpers
+# ============================================================
+
+def _norm_ticker(t: str) -> str:
+    t = (t or "").strip().upper()
+    return t.replace(".SA", "")
 
 
-DFP_TABLE = "cvm.demonstracoes_financeiras_dfp"
-PRICES_TABLE = "cvm.prices_b3"
-OUT_TABLE = "cvm.multiplos"
-
-
-def load_dfp_universe(engine: Engine) -> pd.DataFrame:
-    sql = f"""
-        select
-            ticker,
-            data,
-            extract(year from data)::int as ano,
-            receita_liquida,
-            ebit,
-            lucro_liquido,
-            lpa,
-            ativo_total,
-            ativo_circulante,
-            passivo_circulante,
-            passivo_total,
-            patrimonio_liquido,
-            dividendos,
-            caixa_e_equivalentes,
-            divida_total,
-            divida_liquida
-        from {DFP_TABLE}
-        where ticker is not null
-        order by ticker, data;
+def _ensure_multiplos_table(engine: Engine, table: str = "cvm.multiplos") -> None:
     """
-    return pd.read_sql(text(sql), engine)
-
-
-def load_year_end_prices_universe(engine: Engine) -> pd.DataFrame:
-    sql = f"""
-        select
-            ticker,
-            year as ano,
-            date as ref_date,
-            close as price_close
-        from {PRICES_TABLE}
-        where is_year_end = true
-          and ticker is not null
-        order by ticker, year;
+    Cria a tabela cvm.multiplos se ela não existir.
+    PK: (ticker, ano)
     """
-    return pd.read_sql(text(sql), engine)
+    schema, _, name = table.partition(".")
+    if not name:
+        schema, name = "public", schema
 
+    ddl = f"""
+    create table if not exists {schema}.{name} (
+        ticker text not null,
+        ano int not null,
 
-def upsert_multiplos(engine: Engine, df: pd.DataFrame) -> None:
-    if df.empty:
-        return
+        preco_fim_ano double precision,
 
-    sql = f"""
-    insert into {OUT_TABLE} (
-        ticker, ano, ref_date, price_close,
-        liquidez_corrente, endividamento_total, alavancagem_financeira,
-        margem_operacional, margem_liquida,
-        roe, roa, roic,
-        dy, pl, pvp, payout,
-        shares_est, fetched_at
-    )
-    values (
-        :ticker, :ano, :ref_date, :price_close,
-        :liquidez_corrente, :endividamento_total, :alavancagem_financeira,
-        :margem_operacional, :margem_liquida,
-        :roe, :roa, :roic,
-        :dy, :pl, :pvp, :payout,
-        :shares_est, now()
-    )
-    on conflict (ticker, ano)
-    do update set
-        ref_date = excluded.ref_date,
-        price_close = excluded.price_close,
-        liquidez_corrente = excluded.liquidez_corrente,
-        endividamento_total = excluded.endividamento_total,
-        alavancagem_financeira = excluded.alavancagem_financeira,
-        margem_operacional = excluded.margem_operacional,
-        margem_liquida = excluded.margem_liquida,
-        roe = excluded.roe,
-        roa = excluded.roa,
-        roic = excluded.roic,
-        dy = excluded.dy,
-        pl = excluded.pl,
-        pvp = excluded.pvp,
-        payout = excluded.payout,
-        shares_est = excluded.shares_est,
-        fetched_at = now();
+        pl double precision,
+        roe double precision,
+
+        margem_liquida double precision,
+        margem_ebit double precision,
+
+        divida_liquida_ebit double precision,
+        divida_total_patrimonio double precision,
+
+        fetched_at timestamptz not null default now(),
+
+        primary key (ticker, ano)
+    );
     """
-
     with engine.begin() as conn:
-        conn.execute(text(sql), df.to_dict(orient="records"))
+        conn.execute(text(ddl))
 
 
-def rebuild_multiplos_universe(engine: Engine) -> dict:
-    dfp = load_dfp_universe(engine)
-    prices = load_year_end_prices_universe(engine)
+def _safe_div(a: pd.Series, b: pd.Series) -> pd.Series:
+    """
+    Divisão segura: retorna NaN quando b==0 ou NaN.
+    """
+    out = a / b
+    out[(b == 0) | b.isna()] = pd.NA
+    return out
 
-    if dfp.empty:
-        return {"ok": False, "error": "DFP vazio"}
-    if prices.empty:
-        return {"ok": False, "error": "prices_b3 sem year_end"}
 
-    df = compute_multiplos_full(dfp, prices)
-    df = df.dropna(subset=["ticker", "ano", "price_close"])
+def _load_dfp(engine: Engine) -> pd.DataFrame:
+    """
+    Carrega DFP anual. Assume que 'data' é a data do balanço (geralmente 31/12).
+    """
+    df = pd.read_sql(
+        text(
+            """
+            select
+                ticker,
+                data,
+                receita_liquida,
+                ebit,
+                lucro_liquido,
+                lpa,
+                patrimonio_liquido,
+                divida_total,
+                divida_liquida
+            from cvm.demonstracoes_financeiras_dfp
+            """
+        ),
+        con=engine,
+    )
 
-    upsert_multiplos(engine, df)
-    return {"ok": True, "rows": len(df)}
+    if df.empty:
+        return df
+
+    df["ticker"] = df["ticker"].astype(str).map(_norm_ticker)
+    df["data"] = pd.to_datetime(df["data"], errors="coerce")
+    df = df.dropna(subset=["ticker", "data"])
+    df["ano"] = df["data"].dt.year.astype(int)
+
+    # garante numéricos
+    for c in [
+        "receita_liquida",
+        "ebit",
+        "lucro_liquido",
+        "lpa",
+        "patrimonio_liquido",
+        "divida_total",
+        "divida_liquida",
+    ]:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    return df
+
+
+def _load_year_end_prices(engine: Engine) -> pd.DataFrame:
+    """
+    Para cada ticker e ano, pega o último pregão do ano (maior 'date').
+    Usa cvm.prices_b3 com colunas: ticker, date, close.
+    """
+    # Estratégia: pegar (ticker, ano, max(date)) e depois join pra obter close.
+    # Isso funciona bem com índices em (ticker,date), mas mesmo sem, roda.
+    df_last = pd.read_sql(
+        text(
+            """
+            with p as (
+                select
+                    ticker,
+                    date,
+                    close,
+                    extract(year from date)::int as ano
+                from cvm.prices_b3
+                where close is not null
+            ),
+            last_day as (
+                select ticker, ano, max(date) as last_date
+                from p
+                group by ticker, ano
+            )
+            select
+                p.ticker,
+                p.ano,
+                p.date as data_preco,
+                p.close as preco_fim_ano
+            from p
+            join last_day
+              on p.ticker = last_day.ticker
+             and p.ano = last_day.ano
+             and p.date = last_day.last_date
+            """
+        ),
+        con=engine,
+    )
+
+    if df_last.empty:
+        return df_last
+
+    df_last["ticker"] = df_last["ticker"].astype(str).map(_norm_ticker)
+    df_last["ano"] = pd.to_numeric(df_last["ano"], errors="coerce").astype("Int64")
+    df_last["preco_fim_ano"] = pd.to_numeric(df_last["preco_fim_ano"], errors="coerce")
+    df_last = df_last.dropna(subset=["ticker", "ano"])
+    df_last["ano"] = df_last["ano"].astype(int)
+    return df_last[["ticker", "ano", "preco_fim_ano"]]
+
+
+@dataclass
+class RebuildResult:
+    ok: bool
+    rows: int = 0
+    error: Optional[str] = None
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {"ok": self.ok, "rows": self.rows, "error": self.error}
+
+
+# ============================================================
+# Public API
+# ============================================================
+
+def rebuild_multiplos_universe(engine: Engine, *, table: str = "cvm.multiplos") -> Dict[str, Any]:
+    """
+    Recalcula e grava cvm.multiplos para TODO o universo:
+    - junta DFP anual com preço do último pregão do ano (prices_b3)
+    - calcula múltiplos e métricas derivadas disponíveis
+    - upsert em (ticker, ano)
+
+    Retorna: {"ok": bool, "rows": int, "error": str|None}
+    """
+    try:
+        _ensure_multiplos_table(engine, table=table)
+
+        dfp = _load_dfp(engine)
+        if dfp.empty:
+            return RebuildResult(ok=False, rows=0, error="DFP vazio: cvm.demonstracoes_financeiras_dfp sem dados.").as_dict()
+
+        prices = _load_year_end_prices(engine)
+        if prices.empty:
+            return RebuildResult(ok=False, rows=0, error="Prices vazio: cvm.prices_b3 sem dados para fim de ano.").as_dict()
+
+        # join por ticker+ano
+        df = dfp.merge(prices, on=["ticker", "ano"], how="left")
+
+        # Calcula indicadores (determinísticos)
+        # P/L = preço fim ano / LPA
+        if "lpa" in df.columns:
+            df["pl"] = _safe_div(df["preco_fim_ano"], df["lpa"])
+        else:
+            df["pl"] = pd.NA
+
+        # ROE = lucro líquido / patrimônio líquido
+        df["roe"] = _safe_div(df["lucro_liquido"], df["patrimonio_liquido"])
+
+        # margens
+        df["margem_liquida"] = _safe_div(df["lucro_liquido"], df["receita_liquida"])
+        df["margem_ebit"] = _safe_div(df["ebit"], df["receita_liquida"])
+
+        # alavancagem (quando existir)
+        df["divida_liquida_ebit"] = _safe_div(df["divida_liquida"], df["ebit"])
+        df["divida_total_patrimonio"] = _safe_div(df["divida_total"], df["patrimonio_liquido"])
+
+        # Seleciona payload
+        out = df[
+            [
+                "ticker",
+                "ano",
+                "preco_fim_ano",
+                "pl",
+                "roe",
+                "margem_liquida",
+                "margem_ebit",
+                "divida_liquida_ebit",
+                "divida_total_patrimonio",
+            ]
+        ].copy()
+
+        # Remove linhas sem ano/ticker
+        out = out.dropna(subset=["ticker", "ano"])
+        out["ticker"] = out["ticker"].astype(str).map(_norm_ticker)
+        out["ano"] = out["ano"].astype(int)
+
+        # Upsert
+        schema, _, name = table.partition(".")
+        if not name:
+            schema, name = "public", schema
+
+        sql = text(
+            f"""
+            insert into {schema}.{name} (
+                ticker, ano,
+                preco_fim_ano,
+                pl, roe,
+                margem_liquida, margem_ebit,
+                divida_liquida_ebit,
+                divida_total_patrimonio,
+                fetched_at
+            )
+            values (
+                :ticker, :ano,
+                :preco_fim_ano,
+                :pl, :roe,
+                :margem_liquida, :margem_ebit,
+                :divida_liquida_ebit,
+                :divida_total_patrimonio,
+                now()
+            )
+            on conflict (ticker, ano)
+            do update set
+                preco_fim_ano = excluded.preco_fim_ano,
+                pl = excluded.pl,
+                roe = excluded.roe,
+                margem_liquida = excluded.margem_liquida,
+                margem_ebit = excluded.margem_ebit,
+                divida_liquida_ebit = excluded.divida_liquida_ebit,
+                divida_total_patrimonio = excluded.divida_total_patrimonio,
+                fetched_at = excluded.fetched_at
+            """
+        )
+
+        payload = out.to_dict("records")
+        if not payload:
+            return RebuildResult(ok=True, rows=0).as_dict()
+
+        with engine.begin() as conn:
+            conn.execute(sql, payload)
+
+        return RebuildResult(ok=True, rows=len(payload)).as_dict()
+
+    except Exception as e:
+        return RebuildResult(ok=False, rows=0, error=str(e)).as_dict()
