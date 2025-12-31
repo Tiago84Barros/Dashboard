@@ -141,7 +141,7 @@ with st.sidebar:
     st.markdown("## Análises")
     pagina_escolhida = st.radio(
         "Escolha a seção:",
-        ["Básica", "Avançada", "Criação de Portfólio", "Configurações",
+        ["Básica", "Avançada", "Criação de Portfólio", "Configurações",]
         index=0,
     )
 
@@ -158,6 +158,7 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
 
 
 
