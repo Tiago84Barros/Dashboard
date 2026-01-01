@@ -79,7 +79,6 @@ def coletar_dfp():
     print("[OK] Coleta de dados anuais (DFP) concluída!")
     return df_dict_dfp
 
-
 # =========================
 # CONSOLIDAÇÃO (fiel ao notebook)
 # =========================
@@ -464,6 +463,47 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None
 
     with psycopg2.connect(SUPABASE_DB_URL) as conn:
         with conn.cursor() as cur:
+            # =========================
+            # DIAGNÓSTICO DE OVERFLOW
+            # =========================
+            df_debug = df_filtrado.copy()
+            
+            # garantir tipos numéricos
+            for col in df_debug.columns:
+                if col not in ["Ticker", "Data"]:
+                    df_debug[col] = pd.to_numeric(df_debug[col], errors="coerce")
+            
+            # limite conservador (bem abaixo do erro do Postgres)
+            LIMITE = 1e13  # 10 trilhões
+            
+            numericos = df_debug.drop(columns=["Ticker", "Data"])
+            max_por_coluna = numericos.abs().max().sort_values(ascending=False)
+            
+            print("\n=== DIAGNÓSTICO OVERFLOW ===")
+            print("Top 15 maiores valores absolutos por coluna:")
+            print(max_por_coluna.head(15))
+            
+            colunas_problema = max_por_coluna[max_por_coluna > LIMITE].index.tolist()
+            
+            if colunas_problema:
+                print("\nColunas com valores acima do limite:", colunas_problema)
+            
+                linhas_problema = df_debug[
+                    numericos[colunas_problema].abs().max(axis=1) > LIMITE
+                ]
+            
+                print("\nExemplos de linhas problemáticas:")
+                print(
+                    linhas_problema[
+                        ["Ticker", "Data"] + colunas_problema
+                    ].head(20)
+                )
+            
+                raise ValueError(
+                    "ABORTADO PROPOSITALMENTE: valores financeiros fora de escala detectados. "
+                    "Verifique o log acima."
+                )
+
             execute_values(cur, sql, values, page_size=5000)
         conn.commit()
 
