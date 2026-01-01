@@ -87,7 +87,7 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
     df_consolidado = pd.DataFrame()
 
     for CD_CVM in empresas.index:
-        df_empresa = pd.DataFrame()
+        df_empresa = pd.DataFrame(index=conta_receita["DT_REFER"].unique())
 
         empresa_dre = df_dict_dfp["DRE"][df_dict_dfp["DRE"]["CD_CVM"] == CD_CVM]
         empresa_bpa = df_dict_dfp["BPA"][df_dict_dfp["BPA"]["CD_CVM"] == CD_CVM]
@@ -123,7 +123,7 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
         if "Ativo Circulante" in empresa_bpa[empresa_bpa["CD_CONTA"] == "1.01"]["DS_CONTA"].values:
             conta_ativo_circulante = empresa_bpa[empresa_bpa["CD_CONTA"] == "1.01"]
             conta_ativo_circulante.index = pd.to_datetime(conta_ativo_circulante["DT_REFER"])
-            df_empresa["Ativo Circulante"] = conta_ativo_circulante["VL_CONTA"]
+            df_empresa["Ativo Circulante"] = conta_ativo_circulante["VL_CONTA"].reindex(df_empresa.index)
         else:
             conta_ativo_circulante = empresa_bpa[empresa_bpa["DS_CONTA"].isin([
                 "Caixa e Equivalentes de Caixa",
@@ -142,13 +142,13 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
             ativo_circulante = ativo_circulante.reset_index()
             ativo_circulante.index = pd.to_datetime(ativo_circulante["DT_REFER"])
             ativo_circulante.columns = ["DT_REFER", "VL_CONTA"]
-            df_empresa["Ativo Circulante"] = ativo_circulante["VL_CONTA"]
+            df_empresa["Ativo Circulante"] = ativo_circulante["VL_CONTA"].reindex(df_empresa.index)
 
         # Ativo Não Circulante (calculado, mas não vai para o df final — mantido por fidelidade)
         if "Ativo Não Circulante" in empresa_bpa[empresa_bpa["CD_CONTA"] == "1.02"]["DS_CONTA"].values:
             conta_ativo_nao_circulante = empresa_bpa[empresa_bpa["CD_CONTA"] == "1.02"]
             conta_ativo_nao_circulante.index = pd.to_datetime(conta_ativo_nao_circulante["DT_REFER"])
-            df_empresa["Ativo Não Circulante"] = conta_ativo_nao_circulante["VL_CONTA"]
+            df_empresa["Ativo Não Circulante"] = conta_ativo_nao_circulante["VL_CONTA"].reindex(df_empresa.index)
         else:
             conta_ativo_nao_circulante = empresa_bpa[empresa_bpa["DS_CONTA"].isin([
                 "Depósito Compulsório Banco Central",
@@ -170,7 +170,7 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
             ativo_nao_circulante = ativo_nao_circulante.reset_index()
             ativo_nao_circulante.index = pd.to_datetime(ativo_nao_circulante["DT_REFER"])
             ativo_nao_circulante.columns = ["DT_REFER", "VL_CONTA"]
-            df_empresa["Ativo Não Circulante"] = ativo_nao_circulante["VL_CONTA"]
+            df_empresa["Ativo Não Circulante"] = ativo_nao_circulante["VL_CONTA"].reindex(df_empresa.index)
 
         conta_caixa_e_equivalentes = empresa_bpa[empresa_bpa["DS_CONTA"] == "Caixa e Equivalentes de Caixa"]
         conta_caixa_e_equivalentes = conta_caixa_e_equivalentes[~conta_caixa_e_equivalentes.duplicated(subset=["DT_REFER"], keep="first")]
@@ -180,7 +180,7 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
         if "Passivo Circulante" in empresa_bpp[empresa_bpp["CD_CONTA"] == "2.01"]["DS_CONTA"].values:
             conta_passivo_circulante = empresa_bpp[empresa_bpp["CD_CONTA"] == "2.01"]
             conta_passivo_circulante.index = pd.to_datetime(conta_passivo_circulante["DT_REFER"])
-            df_empresa["Passivo Circulante"] = conta_passivo_circulante["VL_CONTA"]
+            df_empresa["Passivo Circulante"] = conta_passivo_circulante["VL_CONTA"].reindex(df_empresa.index)
         else:
             conta_passivo_circulante = empresa_bpp[empresa_bpp["DS_CONTA"].isin([
                 "Passivos Financeiros Avaliados ao Valor Justo através do Resultado",
@@ -200,13 +200,13 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
             passivo_circulante = passivo_circulante.reset_index()
             passivo_circulante.index = pd.to_datetime(passivo_circulante["DT_REFER"])
             passivo_circulante.columns = ["DT_REFER", "VL_CONTA"]
-            df_empresa["Passivo Circulante"] = passivo_circulante["VL_CONTA"]
+            df_empresa["Passivo Circulante"] = passivo_circulante["VL_CONTA"].reindex(df_empresa.index)
 
         # Passivo Não Circulante (calculado, mas não vai para o df final — mantido por fidelidade)
         if "Passivo Não Circulante" in empresa_bpp[empresa_bpp["CD_CONTA"] == "2.02"]["DS_CONTA"].values:
             conta_passivo_nao_circulante = empresa_bpp[empresa_bpp["CD_CONTA"] == "2.02"]
             conta_passivo_nao_circulante.index = pd.to_datetime(conta_passivo_nao_circulante["DT_REFER"])
-            df_empresa["Passivo Não Circulante"] = conta_passivo_nao_circulante["VL_CONTA"]
+            df_empresa["Passivo Não Circulante"] = conta_passivo_nao_circulante["VL_CONTA"].reindex(df_empresa.index)
         else:
             conta_passivo_nao_circulante = empresa_bpp[empresa_bpp["DS_CONTA"].isin([
                 "Obrigações de Longo Prazo",
@@ -221,7 +221,7 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
             passivo_nao_circulante = passivo_nao_circulante.reset_index()
             passivo_nao_circulante.index = pd.to_datetime(passivo_nao_circulante["DT_REFER"])
             passivo_nao_circulante.columns = ["DT_REFER", "VL_CONTA"]
-            df_empresa["Passivo Não Circulante"] = passivo_nao_circulante["VL_CONTA"]
+            df_empresa["Passivo Não Circulante"] = passivo_nao_circulante["VL_CONTA"].reindex(df_empresa.index)
 
         conta_patrimonio_liquido = empresa_bpp[empresa_bpp["DS_CONTA"].isin(["Patrimônio Líquido Consolidado"])]
         conta_patrimonio_liquido.index = pd.to_datetime(conta_patrimonio_liquido["DT_REFER"])
@@ -278,31 +278,31 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
         conta_FCO = conta_FCO[~conta_FCO.duplicated(subset=["DT_REFER"], keep="first")]
         conta_FCO.index = pd.to_datetime(conta_FCO["DT_REFER"])
 
-        df_empresa["CD_CVM"] = conta_receita["CD_CVM"]
-        df_empresa["Data"] = pd.to_datetime(conta_receita["DT_REFER"])
-        df_empresa["Receita Líquida"] = conta_receita["VL_CONTA"]
-        df_empresa["Ebit"] = conta_ebit["VL_CONTA"]
-        df_empresa["Lucro Líquido"] = conta_lucro_liquido["VL_CONTA"]
-        df_empresa["Lucro por Ação"] = conta_LPA["VL_CONTA"]
-        df_empresa["Ativo Total"] = conta_ativo_total["VL_CONTA"]
-        df_empresa["Caixa e Equivalentes"] = conta_caixa_e_equivalentes["VL_CONTA"]
-        df_empresa["Patrimônio Líquido"] = conta_patrimonio_liquido["VL_CONTA"]
-        df_empresa["Dividendos"] = conta_dividendos["VL_CONTA"]
-        df_empresa["Dividendos Ncontroladores"] = conta_dividendos_Ncontroladores["VL_CONTA"]
-        df_empresa["Caixa Líquido"] = conta_FCO["VL_CONTA"]
+        df_empresa["CD_CVM"] = conta_receita["CD_CVM"].reindex(df_empresa.index)
+        df_empresa["Data"] = pd.to_datetime(conta_receita["DT_REFER"]).reindex(df_empresa.index)
+        df_empresa["Receita Líquida"] = conta_receita["VL_CONTA"].reindex(df_empresa.index)
+        df_empresa["Ebit"] = conta_ebit["VL_CONTA"].reindex(df_empresa.index)
+        df_empresa["Lucro Líquido"] = conta_lucro_liquido["VL_CONTA"].reindex(df_empresa.index)
+        df_empresa["Lucro por Ação"] = conta_LPA["VL_CONTA"].reindex(df_empresa.index)
+        df_empresa["Ativo Total"] = conta_ativo_total["VL_CONTA"].reindex(df_empresa.index)
+        df_empresa["Caixa e Equivalentes"] = conta_caixa_e_equivalentes["VL_CONTA"].reindex(df_empresa.index)
+        df_empresa["Patrimônio Líquido"] = conta_patrimonio_liquido["VL_CONTA"].reindex(df_empresa.index)
+        df_empresa["Dividendos"] = conta_dividendos["VL_CONTA"].reindex(df_empresa.index)
+        df_empresa["Dividendos Ncontroladores"] = conta_dividendos_Ncontroladores["VL_CONTA"].reindex(df_empresa.index)
+        df_empresa["Caixa Líquido"] = conta_FCO["VL_CONTA"].reindex(df_empresa.index)
         df_empresa["Passivo Circulante Financeiro"] = conta_passivo_circulante_financeiro.groupby(level=0)["VL_CONTA"].sum()
         df_empresa["Passivo Não Circulante Financeiro"] = conta_passivo_nao_circulante_financeiro.groupby(level=0)["VL_CONTA"].sum()
 
         # Garantir numérico (fiel ao notebook)
-        df_empresa["Passivo Total"] = pd.to_numeric(conta_passivo_total["VL_CONTA"], errors="coerce")
-        df_empresa["Passivo Circulante"] = pd.to_numeric(df_empresa["Passivo Circulante"], errors="coerce")
-        df_empresa["Passivo Não Circulante"] = pd.to_numeric(df_empresa["Passivo Não Circulante"], errors="coerce")
-        df_empresa["Passivo Circulante Financeiro"] = pd.to_numeric(conta_passivo_circulante_financeiro["VL_CONTA"], errors="coerce")
-        df_empresa["Passivo Não Circulante Financeiro"] = pd.to_numeric(conta_passivo_nao_circulante_financeiro["VL_CONTA"], errors="coerce")
-        df_empresa["Patrimônio Líquido"] = pd.to_numeric(conta_patrimonio_liquido["VL_CONTA"], errors="coerce")
-        df_empresa["Caixa e Equivalentes"] = pd.to_numeric(df_empresa["Caixa e Equivalentes"], errors="coerce")
-        df_empresa["Dividendos"] = pd.to_numeric(df_empresa["Dividendos"], errors="coerce")
-        df_empresa["Dividendos Ncontroladores"] = pd.to_numeric(df_empresa["Dividendos Ncontroladores"], errors="coerce")
+        df_empresa["Passivo Total"] = pd.to_numeric(conta_passivo_total["VL_CONTA"], errors="coerce").reindex(df_empresa.index)
+        df_empresa["Passivo Circulante"] = pd.to_numeric(df_empresa["Passivo Circulante"], errors="coerce").reindex(df_empresa.index)
+        df_empresa["Passivo Não Circulante"] = pd.to_numeric(df_empresa["Passivo Não Circulante"], errors="coerce").reindex(df_empresa.index)
+        df_empresa["Passivo Circulante Financeiro"] = pd.to_numeric(conta_passivo_circulante_financeiro["VL_CONTA"], errors="coerce").reindex(df_empresa.index)
+        df_empresa["Passivo Não Circulante Financeiro"] = pd.to_numeric(conta_passivo_nao_circulante_financeiro["VL_CONTA"], errors="coerce").reindex(df_empresa.index)
+        df_empresa["Patrimônio Líquido"] = pd.to_numeric(conta_patrimonio_liquido["VL_CONTA"], errors="coerce").reindex(df_empresa.index)
+        df_empresa["Caixa e Equivalentes"] = pd.to_numeric(df_empresa["Caixa e Equivalentes"], errors="coerce").reindex(df_empresa.index)
+        df_empresa["Dividendos"] = pd.to_numeric(df_empresa["Dividendos"], errors="coerce").reindex(df_empresa.index)
+        df_empresa["Dividendos Ncontroladores"] = pd.to_numeric(df_empresa["Dividendos Ncontroladores"], errors="coerce").reindex(df_empresa.index)
 
         cols_to_convert = [
             "Passivo Circulante Financeiro", "Passivo Não Circulante Financeiro", "Passivo Total",
@@ -312,9 +312,9 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
         for col in cols_to_convert:
             df_empresa[col] = pd.to_numeric(df_empresa[col], errors="coerce").fillna(0)
 
-        df_empresa["Passivo Total"] = df_empresa["Passivo Total"] - df_empresa["Patrimônio Líquido"]
-        df_empresa["Divida Total"] = df_empresa["Passivo Circulante Financeiro"] + df_empresa["Passivo Não Circulante Financeiro"]
-        df_empresa["Dívida Líquida"] = df_empresa["Divida Total"] - df_empresa["Caixa e Equivalentes"]
+        df_empresa["Passivo Total"] = df_empresa["Passivo Total"] - df_empresa["Patrimônio Líquido"].reindex(df_empresa.index)
+        df_empresa["Divida Total"] = df_empresa["Passivo Circulante Financeiro"] + df_empresa["Passivo Não Circulante Financeiro"].reindex(df_empresa.index)
+        df_empresa["Dívida Líquida"] = df_empresa["Divida Total"] - df_empresa["Caixa e Equivalentes"].reindex(df_empresa.index)
         df_empresa["Dividendos Totais"] = (df_empresa["Dividendos"] + df_empresa["Dividendos Ncontroladores"]).abs()
 
         colunas_desejadas = [
@@ -335,7 +335,12 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
             "Dívida Líquida",
         ]
         colunas_existentes = [col for col in colunas_desejadas if col in df_empresa.columns]
-        df_selecionado = df_empresa[colunas_existentes].fillna(0)
+        df_selecionado = (
+            df_empresa[colunas_existentes]
+                .apply(pd.to_numeric, errors="coerce")
+                .fillna(0)
+        )
+
 
         df_consolidado = pd.concat([df_consolidado, df_selecionado], ignore_index=True)
 
