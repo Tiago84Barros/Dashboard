@@ -81,7 +81,12 @@ def render() -> None:
             err = stderr_buf.getvalue().strip()
 
             if out:
-                log_out.code(out, language="text")
+                st.text_area(
+                    "Saída completa do script (stdout)",
+                    out,
+                    height=400
+                )
+
             else:
                 log_out.info("Nenhum log foi produzido em stdout.")
 
