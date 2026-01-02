@@ -168,7 +168,8 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
             ativo_circulante = ativo_circulante.reset_index()
             ativo_circulante.index = pd.to_datetime(ativo_circulante["DT_REFER"])
             ativo_circulante.columns = ["DT_REFER", "VL_CONTA"]
-            df_empresa["Ativo Circulante"] = ativo_circulante["VL_CONTA"].reindex(df_empresa.index)
+            df_empresa["Ativo Circulante"] = (conta_ativo_circulante.groupby("DT_REFER")["VL_CONTA"].sum().reindex(df_empresa.index))
+
 
         # Ativo Não Circulante (calculado, mas não vai para o df final — mantido por fidelidade)
         if "Ativo Não Circulante" in empresa_bpa[empresa_bpa["CD_CONTA"] == "1.02"]["DS_CONTA"].values:
