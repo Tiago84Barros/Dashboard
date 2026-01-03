@@ -256,7 +256,7 @@ def montar_consolidado(df_dict_itr: dict) -> pd.DataFrame:
             "Dívida Líquida",
         ]
 
-        df_empresa = df_empresa[colunas_desejadas].fillna(0)
+        df_empresa = (df_empresa[colunas_desejadas].fillna(0).infer_objects(copy=False))
         df_consolidado = pd.concat([df_consolidado, df_empresa], ignore_index=True)
 
     return df_consolidado.fillna(0)
