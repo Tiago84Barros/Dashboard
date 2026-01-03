@@ -3,7 +3,7 @@ import os
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-
+import numpy as np
 import pandas as pd
 import requests
 import psycopg2
