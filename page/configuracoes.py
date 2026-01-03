@@ -151,13 +151,13 @@ def render() -> None:
         job_key="job_tri_running",
         button_label="Atualizar Demonstrações Trimestrais (TRI/ITR)",
         info_text=(
-            "Este botão executa o script **pickup/dados_cvm_tri.py** para baixar os ITR consolidados da CVM, "
+            "Este botão executa o script **pickup/dados_cvm_itr.py** para baixar os ITR consolidados da CVM, "
             "consolidar e gravar em **public.Demonstracoes_Financeiras_TRI** no Supabase.\n\n"
             "Requisitos: configurar **SUPABASE_DB_URL** em Secrets/Env Vars e garantir unique key em (Ticker, Data)."
         ),
-        status_label="Executando carga TRI/ITR (pode demorar alguns minutos)...",
-        module_import_path="pickup.dados_cvm_tri",
-        module_attr_name="dados_cvm_tri",
+        status_label="Executando carga ITR (pode demorar alguns minutos)...",
+        module_import_path="pickup.dados_cvm_itr",
+        module_attr_name="dados_cvm_itr",
     )
 
 
