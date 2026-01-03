@@ -9,7 +9,7 @@ import requests
 import psycopg2
 from psycopg2.extras import execute_values
 
-
+pd.set_option("future.no_silent_downcasting", True)
 # ======================
 # CONFIG
 # ======================
