@@ -307,7 +307,7 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
 
         df_empresa["Caixa Líquido"] = _serie_conta(conta_fco, idx)
 
-        # ========= Numérico + fill =========
+       # ========= Numérico =========
         cols_to_convert = [
             "Receita Líquida","Ebit","Lucro Líquido","Lucro por Ação",
             "Ativo Total","Ativo Circulante","Passivo Circulante","Passivo Total",
@@ -315,18 +315,52 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
             "Caixa e Equivalentes","Dividendos","Dividendos Ncontroladores",
             "Patrimônio Líquido","Caixa Líquido"
         ]
+        
+        # converte tudo para numérico (sem fill ainda)
         for col in cols_to_convert:
-            df_empresa[col] = pd.to_numeric(df_empresa[col], errors="coerce").fillna(0)
-
+            df_empresa[col] = pd.to_numeric(df_empresa[col], errors="coerce")
+        
+        
+        # ========= Normalização específica: Lucro por Ação =========
+        def normalizar_lucro_por_acao(s: pd.Series, limite: float = 1e4) -> pd.Series:
+            """
+            Normaliza LPA (EPS) quando vem com escala absurda.
+            Regra: enquanto |valor| > limite, divide por 1000 (até 6 vezes).
+            Se ainda ficar acima do limite, retorna NaN nesses pontos.
+            """
+            s2 = s.astype("float64")
+        
+            for _ in range(6):
+                mask = s2.abs() > limite
+                if not mask.any():
+                    break
+                s2.loc[mask] = s2.loc[mask] / 1000.0
+        
+            s2.loc[s2.abs() > limite] = np.nan
+            return s2
+        
+        
+        df_empresa["Lucro por Ação"] = normalizar_lucro_por_acao(df_empresa["Lucro por Ação"])
+        
+        
+        # ========= Fill final =========
+        for col in cols_to_convert:
+            df_empresa[col] = df_empresa[col].fillna(0)
+        
+        
         # ========= Derivadas (mantidas) =========
-        # Mantém sua interpretação: Passivo Total "exigível" = (CD_CONTA 2) - PL
+        # Passivo exigível = Passivo Total (CD_CONTA 2) - Patrimônio Líquido
         df_empresa["Passivo Total"] = df_empresa["Passivo Total"] - df_empresa["Patrimônio Líquido"]
-
+        
         df_empresa["Divida Total"] = (
             df_empresa["Passivo Circulante Financeiro"] + df_empresa["Passivo Não Circulante Financeiro"]
         )
+        
         df_empresa["Dívida Líquida"] = df_empresa["Divida Total"] - df_empresa["Caixa e Equivalentes"]
-        df_empresa["Dividendos Totais"] = (df_empresa["Dividendos"] + df_empresa["Dividendos Ncontroladores"]).abs()
+        
+        df_empresa["Dividendos Totais"] = (
+            df_empresa["Dividendos"] + df_empresa["Dividendos Ncontroladores"]
+        ).abs()
 
         # ========= Seleção final =========
         colunas_desejadas = [
