@@ -149,7 +149,8 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
         if "Ativo Circulante" in empresa_bpa[empresa_bpa["CD_CONTA"] == "1.01"]["DS_CONTA"].values:
             conta_ativo_circulante = empresa_bpa[empresa_bpa["CD_CONTA"] == "1.01"]
             conta_ativo_circulante.index = pd.to_datetime(conta_ativo_circulante["DT_REFER"])
-            df_empresa["Ativo Circulante"] = conta_ativo_circulante["VL_CONTA"].reindex(df_empresa.index)
+            df_empresa["Ativo Circulante"] = (conta_ativo_circulante.groupby(level=0)["VL_CONTA"].sum().reindex(df_empresa.index))
+
         else:
             conta_ativo_circulante = empresa_bpa[empresa_bpa["DS_CONTA"].isin([
                 "Caixa e Equivalentes de Caixa",
