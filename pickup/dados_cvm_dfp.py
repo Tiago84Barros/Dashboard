@@ -471,7 +471,7 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None
     # Mapeamento fiel ao INSERT do SQLite:
     # (Ticker, Data, Receita_Liquida, EBIT, Lucro_Liquido, LPA, Ativo_Total, Ativo_Circulante, Passivo_Circulante,
     #  Passivo_Total, Divida_Total, Patrimonio_Liquido, Dividendos, Caixa_Liquido, Divida_Liquida)
-    df_db = pd.DataFrame({
+      df_db = pd.DataFrame({
         "Ticker": df_filtrado["Ticker"],
         "Data": df_filtrado["Data"],
         "Receita_Liquida": df_filtrado["Receita Líquida"],
@@ -489,8 +489,24 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None
         "Divida_Liquida": df_filtrado["Dívida Líquida"],
     }).fillna(0)
 
+    # -------------------------
+    # (A) Garantir tipo DATE no Postgres (coluna "Data" é date)
+    # -------------------------
+    df_db["Data"] = pd.to_datetime(df_db["Data"], errors="coerce").dt.date
+
+    # -------------------------
+    # (B) DEDUPE do lote para evitar CardinalityViolation no ON CONFLICT
+    # -------------------------
+    df_db = (
+        df_db
+        .sort_values(["Ticker", "Data"])
+        .drop_duplicates(subset=["Ticker", "Data"], keep="last")
+        .reset_index(drop=True)
+    )
+
     cols = list(df_db.columns)
     values = [tuple(x) for x in df_db.itertuples(index=False, name=None)]
+
 
     sql = f"""
     INSERT INTO public."Demonstracoes_Financeiras"
