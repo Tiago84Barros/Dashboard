@@ -310,6 +310,7 @@ def adicionar_ticker_e_filtrar(df_consolidado: pd.DataFrame) -> pd.DataFrame:
 # LOAD SUPABASE (UPSERT)
 # ======================
 def upsert_supabase(df: pd.DataFrame) -> None:
+
     if not SUPABASE_DB_URL:
         raise RuntimeError("Defina SUPABASE_DB_URL com a connection string Postgres do Supabase.")
 
@@ -331,6 +332,23 @@ def upsert_supabase(df: pd.DataFrame) -> None:
         "Caixa_Liquido": df["Caixa Líquido"],
         "Divida_Liquida": df["Dívida Líquida"],
     }).fillna(0)
+
+    # -------------------------
+    # Deduplicação obrigatória
+    # (evita: CardinalityViolation no ON CONFLICT)
+    # -------------------------
+    df_db["Data"] = pd.to_datetime(df_db["Data"], errors="coerce").dt.date
+
+    df_db = (
+        df_db
+        .sort_values(["Ticker", "Data"])
+        dup = df_db.duplicated(subset=["Ticker", "Data"]).sum()
+        if dup:
+            print(f"[WARN] Encontradas {dup} duplicatas de (Ticker, Data) no lote ITR/TRI. Mantendo a última ocorrência.")
+            .reset_index(drop=True)
+         
+        .drop_duplicates(subset=["Ticker", "Data"], keep="last")
+    )
 
     cols = list(df_db.columns)
     values = [tuple(x) for x in df_db.itertuples(index=False, name=None)]
