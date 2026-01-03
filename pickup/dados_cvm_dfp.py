@@ -471,7 +471,7 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None
     # Mapeamento fiel ao INSERT do SQLite:
     # (Ticker, Data, Receita_Liquida, EBIT, Lucro_Liquido, LPA, Ativo_Total, Ativo_Circulante, Passivo_Circulante,
     #  Passivo_Total, Divida_Total, Patrimonio_Liquido, Dividendos, Caixa_Liquido, Divida_Liquida)
-      df_db = pd.DataFrame({
+    df_db = pd.DataFrame({
         "Ticker": df_filtrado["Ticker"],
         "Data": df_filtrado["Data"],
         "Receita_Liquida": df_filtrado["Receita Líquida"],
