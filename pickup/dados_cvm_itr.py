@@ -335,20 +335,27 @@ def upsert_supabase(df: pd.DataFrame) -> None:
 
     # -------------------------
     # Deduplicação obrigatória
-    # (evita: CardinalityViolation no ON CONFLICT)
     # -------------------------
+    
+    # Normaliza Data
     df_db["Data"] = pd.to_datetime(df_db["Data"], errors="coerce").dt.date
-
+    
+    # Diagnóstico ANTES da deduplicação
+    dup = df_db.duplicated(subset=["Ticker", "Data"]).sum()
+    if dup:
+        print(
+            f"[WARN] Encontradas {dup} duplicatas de (Ticker, Data) "
+            "no lote ITR/TRI. Mantendo a última ocorrência."
+        )
+    
+    # Deduplicação efetiva
     df_db = (
         df_db
         .sort_values(["Ticker", "Data"])
-        dup = df_db.duplicated(subset=["Ticker", "Data"]).sum()
-        if dup:
-            print(f"[WARN] Encontradas {dup} duplicatas de (Ticker, Data) no lote ITR/TRI. Mantendo a última ocorrência.")
-            .reset_index(drop=True)
-         
         .drop_duplicates(subset=["Ticker", "Data"], keep="last")
+        .reset_index(drop=True)
     )
+
 
     cols = list(df_db.columns)
     values = [tuple(x) for x in df_db.itertuples(index=False, name=None)]
