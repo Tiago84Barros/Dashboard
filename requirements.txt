@@ -9,3 +9,4 @@ datetime
 openai
 matplotlib
 psycopg2-binary
+python-bcb
