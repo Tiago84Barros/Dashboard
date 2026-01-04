@@ -116,7 +116,8 @@ def render() -> None:
     st.write(
         "**Ordem recomendada (parcial):**\n"
         "1) Demonstrações completas (DFP/anual)\n"
-        "2) Demonstrações trimestrais (ITR/TRI)"
+        "2) Demonstrações trimestrais (ITR/TRI)\n"
+        "3) Informações econômicas (macro Brasil)"
     )
 
     st.markdown("### Diagnóstico rápido")
@@ -160,64 +161,38 @@ def render() -> None:
         module_attr_name="dados_cvm_itr",
     )
 
+    st.divider()
+
     # =========================
-    # BOTÃO 3: Informações Econômicas
+    # BOTÃO 3: MACRO (INFO ECONÔMICA)
     # =========================
-   
-   st.markdown("## 3. Informações Econômicas (Macro Brasil)")
-   
-   with st.expander("Detalhes / Variáveis de ambiente (recomendado)", expanded=False):
-       st.write("SUPABASE_DB_URL definida?", bool(st.secrets.get("SUPABASE_DB_URL", None)) or bool(os.getenv("SUPABASE_DB_URL")))
-       st.write("ICC_MODE (final|mean):", os.getenv("ICC_MODE", "final"))
-       st.write("MACRO_START_DATE (YYYY-MM-DD):", os.getenv("MACRO_START_DATE", "2010-01-01"))
-       st.write("MACRO_MAX_YEARS_CHUNK:", os.getenv("MACRO_MAX_YEARS_CHUNK", "10"))
-       st.write("MACRO_WRITE_MONTHLY (1 para mensal):", os.getenv("MACRO_WRITE_MONTHLY", "0"))
-   
-   if "job_macro_running" not in st.session_state:
-       st.session_state["job_macro_running"] = False
-   
-   colA, colB = st.columns([1, 2])
-   
-   with colA:
-       run_macro = st.button(
-           "Atualizar Informações Econômicas (BCB)",
-           disabled=st.session_state["job_macro_running"],
-           use_container_width=True,
-       )
-   
-   with colB:
-       st.info(
-           "Este botão executa pickup/dados_macro_brasil.py para coletar séries do BCB/SGS, "
-           "consolidar anual (sempre) e mensal (se MACRO_WRITE_MONTHLY=1), "
-           "e gravar em public.info_economica e opcionalmente public.info_economica_mensal."
-       )
-   
-   if run_macro:
-       st.session_state["job_macro_running"] = True
-       buf_out, buf_err = io.StringIO(), io.StringIO()
-       try:
-           with redirect_stdout(buf_out), redirect_stderr(buf_err):
-               dados_macro_brasil.main()
-   
-           out = buf_out.getvalue().strip()
-           err = buf_err.getvalue().strip()
-   
-           if out:
-               st.success("Macro atualizado com sucesso.")
-               st.code(out)
-           if err:
-               st.warning("Warnings/Logs adicionais:")
-               st.code(err)
-   
-       except Exception as e:
-           st.error(f"Falha ao atualizar Macro: {e}")
-           st.code(buf_out.getvalue())
-           st.code(buf_err.getvalue())
-       finally:
-           st.session_state["job_macro_running"] = False
-   
-   
-   
-   # Compatibilidade com loaders que chamam `configuracoes()`
-   def configuracoes() -> None:
-       render()
+    st.markdown("## 3. Informações Econômicas (Macro Brasil)")
+
+    with st.expander("Detalhes / Variáveis de ambiente (macro)", expanded=False):
+        st.write("ICC_MODE (final|mean):", os.getenv("ICC_MODE", "final"))
+        st.write("MACRO_START_DATE (YYYY-MM-DD):", os.getenv("MACRO_START_DATE", "2010-01-01"))
+        st.write("MACRO_MAX_YEARS_CHUNK:", os.getenv("MACRO_MAX_YEARS_CHUNK", "10"))
+        st.write("MACRO_WRITE_MONTHLY (1 para gravar mensal):", os.getenv("MACRO_WRITE_MONTHLY", "0"))
+        st.caption(
+            "Observação: anual grava em public.info_economica. "
+            "Se MACRO_WRITE_MONTHLY=1, tenta gravar também em public.info_economica_mensal."
+        )
+
+    _run_job(
+        job_key="job_macro_running",
+        button_label="Atualizar Informações Econômicas (BCB/SGS)",
+        info_text=(
+            "Executa **pickup/dados_macro_brasil.py** para coletar séries do BCB/SGS, gerar base **anual** "
+            "para contexto/regime (tabela **public.info_economica**) e, opcionalmente, base **mensal** "
+            "(tabela **public.info_economica_mensal**) quando `MACRO_WRITE_MONTHLY=1`.\n\n"
+            "Requisitos: `SUPABASE_DB_URL` e dependência `python-bcb` no requirements."
+        ),
+        status_label="Executando carga Macro Brasil (BCB/SGS)...",
+        module_import_path="pickup.dados_macro_brasil",
+        module_attr_name="dados_macro_brasil",
+    )
+
+
+# Compatibilidade com loaders que chamam `configuracoes()`
+def configuracoes() -> None:
+    render()
