@@ -5,10 +5,14 @@ import os
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Tuple
+import time
+import requests
 
 import pandas as pd
 from bcb import sgs
 from sqlalchemy import create_engine, text
+
+
 
 
 # ----------------------------
@@ -68,6 +72,46 @@ SERIES: Dict[str, int] = {
 # ----------------------------
 # Fetch helpers
 # ----------------------------
+def _sgs_url(code: int, start: date, end: date) -> str:
+    # API oficial SGS (JSON)
+    di = start.strftime("%d/%m/%Y")
+    df = end.strftime("%d/%m/%Y")
+    return f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{code}/dados?formato=json&dataInicial={di}&dataFinal={df}"
+
+
+def _fetch_sgs_json(code: int, start: date, end: date, timeout: int = 30, max_retries: int = 5) -> list:
+    url = _sgs_url(code, start, end)
+    headers = {"User-Agent": "Mozilla/5.0 (MacroBot/1.0)"}
+
+    last_err = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            r = requests.get(url, headers=headers, timeout=timeout)
+            if r.status_code != 200:
+                raise RuntimeError(f"HTTP {r.status_code} no SGS: {r.text[:200]}")
+
+            txt = (r.text or "").strip()
+            if not txt:
+                raise RuntimeError("Resposta vazia do SGS (body vazio).")
+
+            # O endpoint retorna uma lista JSON: [{"data":"dd/mm/aaaa","valor":"x"}, ...]
+            data = r.json()
+
+            if not isinstance(data, list):
+                raise RuntimeError(f"Resposta SGS não é lista JSON. Início: {txt[:200]}")
+
+            return data
+
+        except Exception as e:
+            last_err = e
+            # backoff exponencial leve
+            sleep_s = min(2 ** attempt, 20)
+            print(f"[WARN] SGS falhou (serie={code}) tentativa {attempt}/{max_retries}: {e} | retry em {sleep_s}s")
+            time.sleep(sleep_s)
+
+    raise RuntimeError(f"Falha definitiva ao coletar SGS serie={code} ({start}..{end}): {last_err}")
+
+
 def fetch_series_chunked(name: str, code: int, start_date: date, end_date: date, max_years: int = 10) -> pd.DataFrame:
     chunks: List[pd.DataFrame] = []
     window = timedelta(days=int(max_years * 365.25))
@@ -75,13 +119,23 @@ def fetch_series_chunked(name: str, code: int, start_date: date, end_date: date,
 
     while cursor <= end_date:
         end_chunk = min(cursor + window, end_date)
-        df_chunk = sgs.get({name: code}, start=cursor, end=end_chunk)
-        df_chunk.columns = [name]
-        chunks.append(df_chunk)
+
+        raw = _fetch_sgs_json(code, cursor, end_chunk)
+        if raw:
+            df_chunk = pd.DataFrame(raw)
+            # normaliza nomes e tipos
+            df_chunk["data"] = pd.to_datetime(df_chunk["data"], format="%d/%m/%Y", errors="coerce")
+            df_chunk["valor"] = pd.to_numeric(df_chunk["valor"].astype(str).str.replace(",", ".", regex=False), errors="coerce")
+            df_chunk = df_chunk.dropna(subset=["data"]).set_index("data")[["valor"]]
+            df_chunk = df_chunk.rename(columns={"valor": name})
+            chunks.append(df_chunk)
+
         cursor = end_chunk + timedelta(days=1)
 
     if not chunks:
-        return pd.DataFrame(columns=[name])
+        out = pd.DataFrame(columns=[name])
+        out.index = pd.to_datetime(out.index)
+        return out
 
     df_full = pd.concat(chunks).sort_index()
     df_full = df_full[~df_full.index.duplicated(keep="first")]
