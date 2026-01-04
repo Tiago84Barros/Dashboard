@@ -37,7 +37,7 @@ def _env_date(name: str, default: str) -> date:
 
 def load_config() -> MacroConfig:
     start = _env_date("MACRO_START_DATE", "2010-01-01")
-    end = datetime.today().date()
+    end = datetime.today().date() - timedelta(days=2)
     max_years = int(os.getenv("MACRO_MAX_YEARS_CHUNK", "10"))
     icc_mode = os.getenv("ICC_MODE", "final").strip().lower()
     if icc_mode not in ("final", "mean"):
@@ -87,8 +87,16 @@ def _fetch_sgs_json(code: int, start: date, end: date, timeout: int = 30, max_re
     for attempt in range(1, max_retries + 1):
         try:
             r = requests.get(url, headers=headers, timeout=timeout)
+            if r.status_code == 404:
+                # SGS retorna 404 quando NÃO HÁ VALORES no intervalo
+                txt = (r.text or "").strip()
+                if "Value(s) not found" in txt:
+                    return []
+                raise RuntimeError(f"HTTP 404 no SGS (não esperado): {txt[:200]}")
+            
             if r.status_code != 200:
                 raise RuntimeError(f"HTTP {r.status_code} no SGS: {r.text[:200]}")
+
 
             txt = (r.text or "").strip()
             if not txt:
