@@ -106,14 +106,18 @@ def _ensure_table(engine, schema: str, table: str) -> None:
 
 def _upsert(engine, schema: str, table: str, df: pd.DataFrame, chunk_size: int = 1000) -> int:
     sql = f"""
-    INSERT INTO {schema}.{table} (ticker, nome_empresa, setor, subsetor, segmento, listagem)
-    VALUES (:ticker, :nome_empresa, :setor, :subsetor, :segmento, :listagem)
+    INSERT INTO {schema}.{table} (
+        ticker, nome_empresa, "SETOR", "SUBSETOR", "SEGMENTO", "LISTAGEM"
+    )
+    VALUES (
+        :ticker, :nome_empresa, :setor, :subsetor, :segmento, :listagem
+    )
     ON CONFLICT (ticker) DO UPDATE SET
         nome_empresa = EXCLUDED.nome_empresa,
-        setor        = EXCLUDED.setor,
-        subsetor     = EXCLUDED.subsetor,
-        segmento     = EXCLUDED.segmento,
-        listagem     = EXCLUDED.listagem;
+        "SETOR"      = EXCLUDED."SETOR",
+        "SUBSETOR"   = EXCLUDED."SUBSETOR",
+        "SEGMENTO"   = EXCLUDED."SEGMENTO",
+        "LISTAGEM"   = EXCLUDED."LISTAGEM";
     """
 
     total = 0
@@ -126,7 +130,6 @@ def _upsert(engine, schema: str, table: str, df: pd.DataFrame, chunk_size: int =
             total += len(batch)
 
     return total
-
 
 def main() -> None:
     supabase_db_url = os.getenv("SUPABASE_DB_URL")
