@@ -117,7 +117,8 @@ def render() -> None:
         "**Ordem recomendada (parcial):**\n"
         "1) Demonstrações completas (DFP/anual)\n"
         "2) Demonstrações trimestrais (ITR/TRI)\n"
-        "3) Informações econômicas (macro Brasil)"
+        "3) Setores/Subsetores/Segmentos (B3)"
+        "4) Informações econômicas (macro Brasil)"
     )
 
     st.markdown("### Diagnóstico rápido")
