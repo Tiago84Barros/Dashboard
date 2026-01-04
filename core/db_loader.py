@@ -13,16 +13,12 @@ from sqlalchemy.engine import Engine
 # Supabase / PostgreSQL
 # ────────────────────────────────────────────────────────────────────────────────
 def _get_supabase_url() -> str:
-    """
-    Obtém a URL de conexão do Postgres (Supabase).
-    Ajuste os nomes das env vars para o padrão do seu projeto.
-    """
-    db_url = os.getenv("DATABASE_URL") or os.getenv("SUPABASE_DB_URL")
+    # padrão do seu projeto (Streamlit Secrets -> env)
+    db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
     if not db_url:
-        raise RuntimeError(
-            "URL do Supabase não encontrada. Defina DATABASE_URL ou SUPABASE_DB_URL."
-        )
+        raise RuntimeError("Defina SUPABASE_DB_URL (ou DATABASE_URL) nas secrets/env vars.")
     return db_url
+
 
 
 @st.cache_resource(show_spinner=False)
