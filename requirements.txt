@@ -5,8 +5,7 @@ requests
 pandas
 plotly
 scikit-learn
-datetime
-openai
 matplotlib
 psycopg2-binary
 python-bcb
+sqlalchemy>=2.0
