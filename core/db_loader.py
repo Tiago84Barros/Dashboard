@@ -31,9 +31,10 @@ def get_supabase_engine() -> Engine:
 
 def _normalize_ticker(ticker: str) -> tuple[str, str]:
     """
-    Aceita PETR4 ou PETR4.SA e retorna (tk1, tk2):
-      tk1 = upper original
-      tk2 = sem sufixo .SA
+    Normaliza ticker para cobrir as duas formas armazenadas:
+      tk1 = com sufixo (ex.: PETR4.SA) OU como vier, em upper
+      tk2 = sem sufixo .SA (ex.: PETR4)
+    Retorna (tk1, tk2) para uso em WHERE Ticker = :tk1 OR :tk2
     """
     tk1 = (ticker or "").strip().upper()
     tk2 = tk1.replace(".SA", "")
@@ -112,6 +113,44 @@ def load_data_from_db(ticker: str) -> Optional[pd.DataFrame]:
         )
     except Exception as e:
         st.error(f"Erro ao carregar DRE (DFP) para {ticker}: {e}")
+        return None
+
+@st.cache_data(show_spinner=False)
+def load_data_tri_from_db(ticker: str) -> pd.DataFrame | None:
+    tk1, tk2 = _normalize_ticker(ticker)
+
+    try:
+        return _read_sql_df(
+            '''
+            SELECT *
+            FROM public."Demonstracoes_Financeiras_TRI"
+            WHERE "Ticker" = :tk1 OR "Ticker" = :tk2
+            ORDER BY "Data" ASC
+            ''',
+            {"tk1": tk1, "tk2": tk2}
+        )
+    except Exception as e:
+        st.error(f"Erro ao carregar TRI para {ticker}: {e}")
+        return None
+
+@st.cache_data(show_spinner=False)
+def load_multiplos_tri_hist_from_db(ticker: str, limite: int = 250) -> pd.DataFrame | None:
+    tk1, tk2 = _normalize_ticker(ticker)
+    try:
+        limite = int(limite)
+        df = _read_sql_df(
+            f"""
+            SELECT *
+            FROM public.multiplos_TRI
+            WHERE "Ticker" = :tk1 OR "Ticker" = :tk2
+            ORDER BY "Data" DESC
+            LIMIT {limite}
+            """,
+            {"tk1": tk1, "tk2": tk2},
+        )
+        return _coerce_sort_by_data(df)
+    except Exception as e:
+        st.error(f"Erro ao carregar histórico de múltiplos TRI para {ticker}: {e}")
         return None
 
 
@@ -199,4 +238,18 @@ def load_macro_summary() -> Optional[pd.DataFrame]:
         )
     except Exception as e:
         st.error(f"Erro ao carregar dados macroeconômicos: {e}")
+        return None
+
+@st.cache_data(show_spinner=False)
+def load_macro_mensal() -> Optional[pd.DataFrame]:
+    try:
+        return _read_sql_df(
+            """
+            SELECT *
+            FROM public.info_economica_mensal
+            ORDER BY "Data" ASC
+            """
+        )
+    except Exception as e:
+        st.error(f"Erro ao carregar macro mensal: {e}")
         return None
