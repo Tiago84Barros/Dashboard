@@ -119,7 +119,7 @@ def render() -> None:
         "2) Demonstrações trimestrais (ITR/TRI)\n"
         "3) Setores/Subsetores/Segmentos (B3)"
         "4) Informações econômicas (macro Brasil)"
-        "5) Multiplos 
+        "5) Multiplos"
     )
 
     st.markdown("### Diagnóstico rápido")
