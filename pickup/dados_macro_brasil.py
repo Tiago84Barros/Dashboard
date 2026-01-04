@@ -162,27 +162,27 @@ def fetch_all(cfg: MacroConfig) -> Dict[str, pd.DataFrame]:
 # Transform: annual
 # ----------------------------
 def _annual_last(df: pd.DataFrame, col: str) -> pd.DataFrame:
-    # Ano calendário, data no fim do ano (A-DEC)
-    out = df.resample("A-DEC").last()
+    # Ano calendário, data no fim do ano (YE-DEC)
+    out = df.resample("YE-DEC").last()
     out.columns = [col]
     return out
 
 
 def _annual_mean(df: pd.DataFrame, col: str) -> pd.DataFrame:
-    out = df.resample("A-DEC").mean()
+    out = df.resample("YE-DEC").mean()
     out.columns = [col]
     return out
 
 
 def _annual_sum(df: pd.DataFrame, col: str) -> pd.DataFrame:
-    out = df.resample("A-DEC").sum()
+    out = df.resample("YE-DEC").sum()
     out.columns = [col]
     return out
 
 
 def _annual_compound_pct(df: pd.DataFrame, col: str) -> pd.DataFrame:
     # Para taxas percentuais mensais (ex: IPCA): acumula no ano
-    out = df.resample("A-DEC").apply(lambda x: (1 + (x / 100.0)).prod() - 1)
+    out = df.resample("YE-DEC").apply(lambda x: (1 + (x / 100.0)).prod() - 1)
     out.columns = [col]
     return out
 
@@ -231,7 +231,7 @@ def build_annual_df(dados: Dict[str, pd.DataFrame], icc_mode: str) -> pd.DataFra
 
     # Juros real ex-ante (aprox): Selic final - IPCA anual
     if "Selic" in df.columns and "IPCA" in df.columns:
-        df["Juros_Real_ExAnte"] = df["Selic"] - (df["IPCA"] * 100.0)  # IPCA está em fração (ex: 0.045); converte para %
+        df["Juros_Real_ExAnte"] = df["Selic"] - df["IPCA"]  # IPCA está em fração (ex: 0.045); converte para %
         # Se você preferir IPCA em %, comente o *100.0 acima e grave IPCA como %.
 
     # Ajuste de tipos/datas
@@ -241,6 +241,10 @@ def build_annual_df(dados: Dict[str, pd.DataFrame], icc_mode: str) -> pd.DataFra
     keep = ["Data", "Selic", "Cambio", "IPCA", "ICC", "ICC_delta", "PIB", "BALANCA_COMERCIAL", "Divida_Publica", "Juros_Real_ExAnte"]
     df = df[[c for c in keep if c in df.columns]]
 
+    # Remove linhas onde todos os indicadores (exceto Data) são NaN
+    value_cols = [c for c in df.columns if c != "Data"]
+    df = df.dropna(subset=value_cols, how="all")
+    
     return df
 
 
