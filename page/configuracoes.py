@@ -222,33 +222,33 @@ def render() -> None:
 
     st.divider()
 
-   # =========================
-   # BOTÃO 5: MÚLTIPLOS (DFP -> yfinance -> Supabase)
-   # =========================
-   st.markdown("## 5. Múltiplos Fundamentalistas (DFP → yfinance → Supabase)")
+    # =========================
+    # BOTÃO 5: MÚLTIPLOS (DFP -> yfinance -> Supabase)
+    # =========================
+    st.markdown("## 5. Múltiplos Fundamentalistas (DFP → yfinance → Supabase)")
    
-   with st.expander("Detalhes / Variáveis de ambiente (múltiplos)", expanded=False):
-       st.write("YF_START:", os.getenv("YF_START", "2010-01-01"))
-       st.write("YF_END:", os.getenv("YF_END", "2023-12-31"))
-       st.write("YF_BATCH_SIZE:", os.getenv("YF_BATCH_SIZE", "50"))
-       st.caption(
-           "Observação: esta rotina lê Demonstracoes_Financeiras no Supabase, "
-           "baixa preços médios anuais via yfinance e grava em public.multiplos via UPSERT."
-       )
+    with st.expander("Detalhes / Variáveis de ambiente (múltiplos)", expanded=False):
+        st.write("YF_START:", os.getenv("YF_START", "2010-01-01"))
+        st.write("YF_END:", os.getenv("YF_END", "2023-12-31"))
+        st.write("YF_BATCH_SIZE:", os.getenv("YF_BATCH_SIZE", "50"))
+        st.caption(
+            "Observação: esta rotina lê Demonstracoes_Financeiras no Supabase, "
+            "baixa preços médios anuais via yfinance e grava em public.multiplos via UPSERT."
+        )
    
-   _run_job(
-       job_key="job_multiplos_running",
-       button_label="Atualizar Múltiplos (DFP → yfinance → Supabase)",
-       info_text=(
-           "Executa **pickup/dados_multiplos_dfp.py** para calcular múltiplos fundamentalistas a partir de "
-           "**public.Demonstracoes_Financeiras**, integrar preço médio anual (yfinance) e gravar via **UPSERT** "
-           "em **public.multiplos**.\n\n"
-           "Requisitos: `SUPABASE_DB_URL` definida. Recomendado: índice unique em (Ticker, Data)."
-       ),
-       status_label="Executando cálculo e carga de Múltiplos (pode demorar)...",
-       module_import_path="pickup.dados_multiplos_dfp",
-       module_attr_name="dados_multiplos_dfp",
-   )
+    _run_job(
+        job_key="job_multiplos_running",
+        button_label="Atualizar Múltiplos (DFP → yfinance → Supabase)",
+        info_text=(
+            "Executa **pickup/dados_multiplos_dfp.py** para calcular múltiplos fundamentalistas a partir de "
+            "**public.Demonstracoes_Financeiras**, integrar preço médio anual (yfinance) e gravar via **UPSERT** "
+            "em **public.multiplos**.\n\n"
+            "Requisitos: `SUPABASE_DB_URL` definida. Recomendado: índice unique em (Ticker, Data)."
+        ),
+        status_label="Executando cálculo e carga de Múltiplos (pode demorar)...",
+        module_import_path="pickup.dados_multiplos_dfp",
+        module_attr_name="dados_multiplos_dfp",
+    )
 
 # Compatibilidade com loaders que chamam `configuracoes()`
 def configuracoes() -> None:
