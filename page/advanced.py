@@ -128,7 +128,7 @@ def render() -> None:
         setores = _clean_df_cols(setores)
         st.session_state["setores_df"] = setores
 
-    # validação mínima de schema
+    # validação mínima de schema (case-sensitive conforme Postgres com colunas entre aspas)
     needed = {"SETOR", "SUBSETOR", "SEGMENTO", "ticker"}
     if not needed.issubset(setores.columns):
         st.error(f"A tabela de setores não contém colunas esperadas: {sorted(needed)}")
@@ -175,20 +175,43 @@ def render() -> None:
         return
 
     # ─────────────────────────────────────────────────────────
+    # (Opcional, não disruptivo) Diagnóstico colapsável
+    # ─────────────────────────────────────────────────────────
+    with st.expander("Diagnóstico (dados do Supabase)", expanded=False):
+        st.caption("Seção apenas informativa. Não altera resultados nem layout principal.")
+        st.write(
+            {
+                "Setor": setor,
+                "Subsetor": subsetor,
+                "Segmento": segmento,
+                "Empresas no segmento (bruto)": int(len(seg_df)),
+                "Linhas setores_df": int(len(setores)),
+                "Macro (linhas)": int(len(dados_macro)),
+                "Macro (data mínima)": str(pd.to_datetime(dados_macro["Data"]).min()) if "Data" in dados_macro.columns else "n/a",
+                "Macro (data máxima)": str(pd.to_datetime(dados_macro["Data"]).max()) if "Data" in dados_macro.columns else "n/a",
+            }
+        )
+
+    # ─────────────────────────────────────────────────────────
     # 1) Filtrar por histórico (<10 / ≥10) com paralelismo (DRE)
     # ─────────────────────────────────────────────────────────
     tickers = seg_df["ticker"].drop_duplicates().tolist()
 
     def _year_check(tk: str) -> Tuple[str, int]:
-        dre = load_data_from_db(_norm_sa(tk))
-        return tk, _count_years_from_dre(dre)
+        try:
+            dre = load_data_from_db(_norm_sa(tk))
+            return tk, _count_years_from_dre(dre)
+        except Exception as e:
+            logger.exception("Falha ao checar anos de DRE para %s: %s", tk, e)
+            return tk, 0
 
     years_map: Dict[str, int] = {}
-    with ThreadPoolExecutor(max_workers=12) as ex:
+    max_workers = min(12, max(2, len(tickers)))
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futs = [ex.submit(_year_check, tk) for tk in tickers]
         for fut in as_completed(futs):
             tk, n = fut.result()
-            years_map[tk] = n
+            years_map[tk] = int(n) if n is not None else 0
 
     def _pass_tipo(tk: str) -> bool:
         n = years_map.get(tk, 0)
@@ -231,10 +254,15 @@ def render() -> None:
     rows = seg_df[["ticker", "nome_empresa"]].drop_duplicates().to_dict("records")
     empresas: List[EmpresaDados] = []
 
-    with ThreadPoolExecutor(max_workers=12) as ex:
+    max_workers = min(12, max(2, len(rows)))
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futs = [ex.submit(_load_empresa_dados, r["ticker"], r["nome_empresa"]) for r in rows]
         for fut in as_completed(futs):
-            item = fut.result()
+            try:
+                item = fut.result()
+            except Exception as e:
+                logger.exception("Falha ao carregar dados de empresa: %s", e)
+                item = None
             if item is not None:
                 empresas.append(item)
 
@@ -350,7 +378,6 @@ def render() -> None:
     num_columns = 3
     cols_cards = st.columns(num_columns, gap="large")
 
-    # itertuples(name=None) => tuplas puras: (Ticker, Valor Final)
     for i, (tk, val) in enumerate(df_final.itertuples(index=False, name=None)):
         tk = str(tk)
         try:
@@ -358,15 +385,14 @@ def render() -> None:
         except Exception:
             continue
 
-        # ícones + bordas especiais
         if tk == "Patrimônio":
             icone_url = "https://cdn-icons-png.flaticon.com/512/1019/1019709.png"
-            border_color = "#DAA520"  # dourado
+            border_color = "#DAA520"
             nome_exibicao = "Estratégia de Aporte"
             lider_texto = ""
         elif tk == "Tesouro Selic":
             icone_url = "https://cdn-icons-png.flaticon.com/512/2331/2331949.png"
-            border_color = "#007bff"  # azul
+            border_color = "#007bff"
             nome_exibicao = "Tesouro Selic"
             lider_texto = ""
         else:
