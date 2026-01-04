@@ -1,56 +1,51 @@
 from __future__ import annotations
 
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Tuple
 
-import matplotlib.pyplot as plt
-import pandas as pd
 import streamlit as st
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import plotly.express as px
 
-from core.db_loader import (
-    load_data_from_db,
-    load_macro_summary,
-    load_multiplos_from_db,
-    load_setores_from_db,
-)
 from core.helpers import (
-    determinar_lideres,
     get_logo_url,
     obter_setor_da_empresa,
+    determinar_lideres,
+    formatar_real,
 )
-from core.portfolio import (
-    calcular_patrimonio_selic_macro,
-    encontrar_proxima_data_valida,
-    gerir_carteira,
-    gerir_carteira_simples,
+from core.db_loader import (
+    load_setores_from_db,
+    load_data_from_db,
+    load_multiplos_from_db,
+    load_macro_summary,
 )
+from core.yf_data import baixar_precos, coletar_dividendos
 from core.scoring import (
     calcular_score_acumulado,
     penalizar_plato,
 )
-from core.weights import get_pesos
-from core.yf_data import (
-    baixar_precos,
-    baixar_precos_ano_corrente,
-    coletar_dividendos,
+from core.portfolio import (
+    gerir_carteira,
+    gerir_carteira_todas_empresas,
+    calcular_patrimonio_selic_macro,
 )
+from core.weights import get_pesos
 
 logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────
-# Utilitários internos (preservando o comportamento do layout)
+# Utilitários internos
 # ─────────────────────────────────────────────────────────────
-def _clean_df_cols(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    out.columns = out.columns.astype(str).str.strip().str.replace("\ufeff", "", regex=False)
-    return out
-
 
 def _norm_sa(ticker: str) -> str:
     t = (ticker or "").strip().upper()
+    if not t:
+        return t
     return t if t.endswith(".SA") else f"{t}.SA"
 
 
@@ -58,11 +53,43 @@ def _strip_sa(ticker: str) -> str:
     return (ticker or "").strip().upper().replace(".SA", "")
 
 
+def _clean_df_cols(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out.columns = out.columns.astype(str).str.strip().str.replace("\ufeff", "", regex=False)
+    return out
+
+
 def _count_years_from_dre(dre: Optional[pd.DataFrame]) -> int:
     if dre is None or dre.empty or "Data" not in dre.columns:
         return 0
     y = pd.to_datetime(dre["Data"], errors="coerce").dt.year
     return int(y.dropna().nunique())
+
+
+def _calc_turnover(lideres_df: pd.DataFrame) -> int:
+    """
+    KPI simples: número de trocas de líder ao longo do tempo.
+    Não altera resultado, apenas informa estabilidade/ruído do segmento.
+    """
+    if lideres_df is None or lideres_df.empty:
+        return 0
+    tmp = lideres_df.copy()
+    if "Ano" not in tmp.columns or "ticker" not in tmp.columns:
+        return 0
+    tmp = tmp.sort_values("Ano")
+    seq = tmp["ticker"].astype(str).tolist()
+    if not seq:
+        return 0
+    changes = 0
+    last = None
+    for tk in seq:
+        if last is None:
+            last = tk
+            continue
+        if tk != last:
+            changes += 1
+            last = tk
+    return int(changes)
 
 
 @dataclass(frozen=True)
@@ -103,6 +130,7 @@ def _safe_macro() -> Optional[pd.DataFrame]:
     if dm is None or dm.empty:
         return None
     dm = _clean_df_cols(dm)
+    # portfolio.calcular_patrimonio_selic_macro aceita Data em coluna ou índice com nome Data
     if "Data" in dm.columns:
         dm["Data"] = pd.to_datetime(dm["Data"], errors="coerce")
         dm = dm.dropna(subset=["Data"]).sort_values("Data")
@@ -112,10 +140,11 @@ def _safe_macro() -> Optional[pd.DataFrame]:
 # ─────────────────────────────────────────────────────────────
 # Render
 # ─────────────────────────────────────────────────────────────
+
 def render() -> None:
     st.markdown("<h1 style='text-align:center'>Análise Avançada de Ações</h1>", unsafe_allow_html=True)
 
-    # ── setores em sessão
+    # ── setores em sessão (preservado)
     setores = st.session_state.get("setores_df")
     if setores is None or getattr(setores, "empty", True):
         setores = load_setores_from_db()
@@ -136,35 +165,65 @@ def render() -> None:
         st.error("Não foi possível carregar os dados macroeconômicos (info_economica).")
         return
 
-    # ── Sidebar filtros (layout preservado)
+    # ── Sidebar filtros (layout preservado) + expanders opcionais
     with st.sidebar:
         setor = st.selectbox("Setor:", sorted(setores["SETOR"].dropna().unique().tolist()))
         subsetores = setores.loc[setores["SETOR"] == setor, "SUBSETOR"].dropna().unique().tolist()
         subsetor = st.selectbox("Subsetor:", sorted(subsetores))
         segmentos = setores.loc[
             (setores["SETOR"] == setor) & (setores["SUBSETOR"] == subsetor),
-            "SEGMENTO",
+            "SEGMENTO"
         ].dropna().unique().tolist()
         segmento = st.selectbox("Segmento:", sorted(segmentos))
-        tipo = st.radio(
-            "Perfil de empresa:",
-            ["Crescimento (<10 anos)", "Estabelecida (≥10 anos)", "Todas"],
-            index=2,
-        )
+        tipo = st.radio("Perfil de empresa:", ["Crescimento (<10 anos)", "Estabelecida (≥10 anos)", "Todas"], index=2)
+
+        # ─────────────────────────────────────────────────────────
+        # NOVO (não disruptivo): Auditoria / execução (defaults neutros)
+        # ─────────────────────────────────────────────────────────
+        with st.expander("Parâmetros de Auditoria (opcional)", expanded=False):
+            st.caption("Defaults = 0 (não altera resultados). Ative apenas se quiser auditoria/realismo.")
+            publication_lag_years = st.number_input(
+                "Defasagem contábil (anos) — anti look-ahead",
+                min_value=0, max_value=3, value=0, step=1
+            )
+            fee_bps = st.number_input(
+                "Custo por operação (bps) — compra/venda",
+                min_value=0, max_value=200, value=0, step=5
+            )
+            slippage_bps = st.number_input(
+                "Slippage (bps) — proxy execução",
+                min_value=0, max_value=200, value=0, step=5
+            )
+
+        with st.expander("Performance (opcional)", expanded=False):
+            st.caption("Ajuste de paralelismo. Default mantém o comportamento atual.")
+            max_workers_sidebar = st.slider("Paralelismo (max_workers)", min_value=4, max_value=24, value=12, step=1)
 
     # ── filtra tickers do segmento
     seg_df = setores[
-        (setores["SETOR"] == setor)
-        & (setores["SUBSETOR"] == subsetor)
-        & (setores["SEGMENTO"] == segmento)
+        (setores["SETOR"] == setor) &
+        (setores["SUBSETOR"] == subsetor) &
+        (setores["SEGMENTO"] == segmento)
     ].copy()
 
     if seg_df.empty:
         st.warning("Nenhuma empresa encontrada para os filtros escolhidos.")
         return
 
+    # normaliza tickers e nomes
+    seg_df["ticker"] = seg_df["ticker"].astype(str).apply(_strip_sa)
+    if "nome_empresa" not in seg_df.columns:
+        seg_df["nome_empresa"] = seg_df["ticker"]
+
+    seg_df = seg_df.dropna(subset=["ticker"])
+    seg_df = seg_df[seg_df["ticker"].astype(str).str.len() > 0]
+
+    if seg_df.empty:
+        st.warning("Nenhuma empresa válida encontrada para os filtros escolhidos.")
+        return
+
     # ─────────────────────────────────────────────────────────
-    # (Opcional, não disruptivo) Diagnóstico colapsável
+    # (Opcional, não disruptivo) Diagnóstico colapsável (já existia)
     # ─────────────────────────────────────────────────────────
     with st.expander("Diagnóstico (dados do Supabase)", expanded=False):
         st.caption("Seção apenas informativa. Não altera resultados nem layout principal.")
@@ -178,6 +237,9 @@ def render() -> None:
                 "Macro (linhas)": int(len(dados_macro)),
                 "Macro (data mínima)": str(pd.to_datetime(dados_macro["Data"]).min()) if "Data" in dados_macro.columns else "n/a",
                 "Macro (data máxima)": str(pd.to_datetime(dados_macro["Data"]).max()) if "Data" in dados_macro.columns else "n/a",
+                "Defasagem contábil (anos)": int(st.session_state.get("publication_lag_years", 0)) if False else int(publication_lag_years),
+                "Fee (bps)": float(fee_bps),
+                "Slippage (bps)": float(slippage_bps),
             }
         )
 
@@ -195,7 +257,8 @@ def render() -> None:
             return tk, 0
 
     years_map: Dict[str, int] = {}
-    max_workers = min(12, max(2, len(tickers)))
+    # usa max_workers atual (preservando default original 12)
+    max_workers = min(int(max_workers_sidebar), max(2, len(tickers)))
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futs = [ex.submit(_year_check, tk) for tk in tickers]
         for fut in as_completed(futs):
@@ -243,7 +306,7 @@ def render() -> None:
     rows = seg_df[["ticker", "nome_empresa"]].drop_duplicates().to_dict("records")
     empresas: List[EmpresaDados] = []
 
-    max_workers = min(12, max(2, len(rows)))
+    max_workers = min(int(max_workers_sidebar), max(2, len(rows)))
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futs = [ex.submit(_load_empresa_dados, r["ticker"], r["nome_empresa"]) for r in rows]
         for fut in as_completed(futs):
@@ -268,7 +331,21 @@ def render() -> None:
     # payload scoring (compatível com scoring.py)
     payload = [{"ticker": e.ticker, "nome": e.nome, "multiplos": e.mult, "dre": e.dre} for e in empresas]
 
-    score = calcular_score_acumulado(payload, setores_empresa, pesos, dados_macro, anos_minimos=4)
+    # ─────────────────────────────────────────────────────────
+    # NOVO: defasagem contábil (anti look-ahead) — compatível por fallback
+    # ─────────────────────────────────────────────────────────
+    try:
+        score = calcular_score_acumulado(
+            payload,
+            setores_empresa,
+            pesos,
+            dados_macro,
+            anos_minimos=4,
+            publication_lag_years=int(publication_lag_years),
+        )
+    except TypeError:
+        score = calcular_score_acumulado(payload, setores_empresa, pesos, dados_macro, anos_minimos=4)
+
     if score is None or score.empty:
         st.warning("Score vazio: não há dados suficientes após os filtros e janela mínima.")
         return
@@ -290,139 +367,306 @@ def render() -> None:
         st.warning("Preços vieram vazios após normalização.")
         return
 
+    # mensal para penalização de platô
     precos_mensal = precos.resample("M").last()
+    score = penalizar_plato(score, precos_mensal, meses=12, penal=0.30)
 
-    # penalidade de platô (mantém regra existente)
-    score = penalizar_plato(score, precos_mensal)
-
-    # dividendos (mantém regra existente)
     dividendos = coletar_dividendos(tickers_yf)
 
     # ─────────────────────────────────────────────────────────
-    # 4) Líderes e visualizações
+    # 4) Liderança + backtest estratégia + backtest todas
     # ─────────────────────────────────────────────────────────
-    st.markdown("### Score por empresa (após penalizações)")
-    st.dataframe(score, use_container_width=True)
-
-    st.markdown("### Empresas líderes por ano (Score_Ajustado)")
-    lideres = determinar_lideres(score, ["Score_Ajustado"])
-    st.dataframe(lideres, use_container_width=True)
-
-    st.markdown("---")
-
-    # ─────────────────────────────────────────────────────────
-    # 5) Carteiras / Backtests (layout preservado)
-    # ─────────────────────────────────────────────────────────
-    st.markdown("## Simulação de Carteira (Aportes Mensais)")
-
-    # datas para simulação
-    ano_ini = int(score["Ano"].min()) if "Ano" in score.columns and not score["Ano"].isna().all() else None
-    ano_fim = int(score["Ano"].max()) if "Ano" in score.columns and not score["Ano"].isna().all() else None
-
-    if ano_ini is None or ano_fim is None:
-        st.warning("Não foi possível inferir intervalo de anos para simulação.")
+    lideres = determinar_lideres(score)
+    if lideres is None or lideres.empty:
+        st.warning("Não foi possível determinar líderes com o score calculado.")
         return
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        aporte = st.number_input("Aporte mensal (R$):", min_value=0.0, value=500.0, step=50.0)
-    with col2:
-        ano_inicio = st.number_input("Ano início:", min_value=ano_ini, max_value=ano_fim, value=ano_ini, step=1)
-    with col3:
-        ano_fim_sel = st.number_input("Ano fim:", min_value=ano_ini, max_value=ano_fim, value=ano_fim, step=1)
-
-    st.markdown("")
-
-    # carteira simples (mantém)
-    if st.button("Rodar simulação (carteira simples)"):
-        try:
-            df_perf, df_pos = gerir_carteira_simples(
-                score_df=score,
-                precos_diarios=precos,
-                dividendos=dividendos,
-                aporte_mensal=float(aporte),
-                ano_inicio=int(ano_inicio),
-                ano_fim=int(ano_fim_sel),
-            )
-            st.success("Simulação concluída.")
-            st.markdown("### Evolução do patrimônio (carteira simples)")
-            st.dataframe(df_perf, use_container_width=True)
-
-            fig = plt.figure()
-            plt.plot(pd.to_datetime(df_perf["Data"]), df_perf["Patrimonio"])
-            plt.xticks(rotation=45)
-            st.pyplot(fig)
-
-            st.markdown("### Posições finais")
-            st.dataframe(df_pos, use_container_width=True)
-        except Exception as e:
-            st.error(f"Erro ao simular carteira simples: {e}")
-
-    st.markdown("---")
-
-    # carteira com regras (mantém)
-    if st.button("Rodar simulação (carteira com regras)"):
-        try:
-            df_perf, df_pos = gerir_carteira(
-                score_df=score,
-                precos_diarios=precos,
-                dividendos=dividendos,
-                aporte_mensal=float(aporte),
-                ano_inicio=int(ano_inicio),
-                ano_fim=int(ano_fim_sel),
-            )
-            st.success("Simulação concluída.")
-            st.markdown("### Evolução do patrimônio (carteira com regras)")
-            st.dataframe(df_perf, use_container_width=True)
-
-            fig = plt.figure()
-            plt.plot(pd.to_datetime(df_perf["Data"]), df_perf["Patrimonio"])
-            plt.xticks(rotation=45)
-            st.pyplot(fig)
-
-            st.markdown("### Posições finais")
-            st.dataframe(df_pos, use_container_width=True)
-        except Exception as e:
-            st.error(f"Erro ao simular carteira com regras: {e}")
-
-    st.markdown("---")
+    # ─────────────────────────────────────────────────────────
+    # NOVO (não disruptivo): KPI estabilidade (apenas informação)
+    # ─────────────────────────────────────────────────────────
+    with st.expander("KPI (opcional): Estabilidade de liderança", expanded=False):
+        turnover = _calc_turnover(lideres)
+        st.write(
+            {
+                "Trocas de líder no período (proxy)": int(turnover),
+                "Observação": "Turnover alto sugere score sensível a ruído; recomenda-se top-2/top-3 e banda de rebalance.",
+            }
+        )
 
     # ─────────────────────────────────────────────────────────
-    # 6) Benchmark Selic (mantém)
+    # NOVO: custos/slippage — compatível por fallback (não altera se 0)
     # ─────────────────────────────────────────────────────────
-    st.markdown("## Benchmark: Tesouro Selic (macro)")
+    try:
+        patrimonio_estrategia, datas_aportes = gerir_carteira(
+            precos,
+            score,
+            lideres,
+            dividendos,
+            fee_bps=float(fee_bps),
+            slippage_bps=float(slippage_bps),
+        )
+    except TypeError:
+        patrimonio_estrategia, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
 
-    if st.button("Calcular patrimônio no Tesouro Selic"):
-        try:
-            df_selic = calcular_patrimonio_selic_macro(
-                dados_macro=dados_macro,
-                aporte_mensal=float(aporte),
-                ano_inicio=int(ano_inicio),
-                ano_fim=int(ano_fim_sel),
-            )
-            st.success("Benchmark calculado.")
-            st.dataframe(df_selic, use_container_width=True)
+    if patrimonio_estrategia is None or patrimonio_estrategia.empty:
+        st.warning("Falha ao simular a carteira da estratégia.")
+        return
+    patrimonio_estrategia = patrimonio_estrategia[["Patrimônio"]]
 
-            fig = plt.figure()
-            plt.plot(pd.to_datetime(df_selic["Data"]), df_selic["Patrimonio"])
-            plt.xticks(rotation=45)
-            st.pyplot(fig)
-        except Exception as e:
-            st.error(f"Erro ao calcular benchmark Selic: {e}")
+    patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aportes)
+    if patrimonio_selic is None or patrimonio_selic.empty:
+        st.warning("Falha ao calcular o benchmark Tesouro Selic.")
+        return
+
+    try:
+        patrimonio_empresas = gerir_carteira_todas_empresas(
+            precos,
+            tickers_scores,
+            datas_aportes,
+            dividendos,
+            fee_bps=float(fee_bps),
+            slippage_bps=float(slippage_bps),
+        )
+    except TypeError:
+        patrimonio_empresas = gerir_carteira_todas_empresas(precos, tickers_scores, datas_aportes, dividendos)
+
+    if patrimonio_empresas is None or patrimonio_empresas.empty:
+        st.warning("Falha ao simular a carteira (todas as empresas).")
+        return
+
+    patrimonio_final = pd.concat([patrimonio_estrategia, patrimonio_empresas, patrimonio_selic], axis=1).sort_index()
+    patrimonio_final = patrimonio_final.apply(pd.to_numeric, errors="coerce").ffill()
+
+    st.markdown("## Evolução do patrimônio (Estratégia vs Empresas vs Selic)")
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    if "Patrimônio" in patrimonio_final.columns:
+        ax.plot(patrimonio_final.index, patrimonio_final["Patrimônio"], label="Estratégia (Líderes)")
+
+    if "Tesouro Selic" in patrimonio_final.columns:
+        ax.plot(patrimonio_final.index, patrimonio_final["Tesouro Selic"], label="Tesouro Selic")
+
+    cols_emp = [c for c in patrimonio_empresas.columns if c in patrimonio_final.columns]
+    if cols_emp:
+        media_emp = patrimonio_final[cols_emp].mean(axis=1, skipna=True)
+        ax.plot(patrimonio_final.index, media_emp, label="Média (Empresas do segmento)")
+
+    ax.set_xlabel("Data")
+    ax.set_ylabel("Patrimônio (R$)")
+    ax.legend()
+    ax.grid(True, linestyle="--", alpha=0.4)
+    st.pyplot(fig)
 
     st.markdown("---")
 
     # ─────────────────────────────────────────────────────────
-    # 7) Ano corrente (mantém)
+    # 5) Cards de patrimônio final por ativo (inclui Estratégia e Selic)
     # ─────────────────────────────────────────────────────────
-    st.markdown("## Ano Corrente (Preços)")
+    st.markdown("## Patrimônio final por ativo")
 
-    if st.button("Baixar preços do ano corrente"):
+    last = patrimonio_final.iloc[-1].dropna()
+    if last.empty:
+        st.warning("Dados insuficientes para exibir patrimônio final.")
+        return
+
+    df_final = last.reset_index()
+    df_final.columns = ["Ticker", "Valor Final"]
+    df_final["Ticker"] = df_final["Ticker"].astype(str)
+    df_final["Valor Final"] = pd.to_numeric(df_final["Valor Final"], errors="coerce")
+    df_final = df_final.dropna(subset=["Valor Final"]).sort_values("Valor Final", ascending=False)
+
+    # contagem de lideranças (mais coerente com “quantas vezes liderou”)
+    contagem_lideres = lideres["ticker"].value_counts().to_dict()
+
+    num_columns = 3
+    cols_cards = st.columns(num_columns, gap="large")
+
+    for i, (tk, val) in enumerate(df_final.itertuples(index=False, name=None)):
+        tk = str(tk)
         try:
-            df_ano_corrente = baixar_precos_ano_corrente(tickers_yf)
-            if df_ano_corrente is None or df_ano_corrente.empty:
-                st.warning("Não foi possível obter preços do ano corrente.")
-            else:
-                st.dataframe(df_ano_corrente, use_container_width=True)
-        except Exception as e:
-            st.error(f"Erro ao baixar preços do ano corrente: {e}")
+            val = float(val)
+        except Exception:
+            continue
+
+        if tk == "Patrimônio":
+            icone_url = "https://cdn-icons-png.flaticon.com/512/1019/1019709.png"
+            border_color = "#DAA520"
+            nome_exibicao = "Estratégia de Aporte"
+            lider_texto = ""
+        elif tk == "Tesouro Selic":
+            icone_url = "https://cdn-icons-png.flaticon.com/512/2331/2331949.png"
+            border_color = "#007bff"
+            nome_exibicao = "Tesouro Selic"
+            lider_texto = ""
+        else:
+            icone_url = get_logo_url(tk)
+            border_color = "#d3d3d3"
+            nome_exibicao = tk
+            vezes_lider = int(contagem_lideres.get(tk, 0))
+            lider_texto = f"🏆 {vezes_lider}x Líder" if vezes_lider > 0 else ""
+
+        patrimonio_formatado = formatar_real(val)
+
+        col = cols_cards[i % num_columns]
+        with col:
+            st.markdown(
+                f"""
+                <div style="
+                    background-color:#ffffff;
+                    border:3px solid {border_color};
+                    border-radius:10px;
+                    padding:15px;
+                    margin:10px 0;
+                    text-align:center;
+                    box-shadow:2px 2px 5px rgba(0,0,0,0.10);
+                    box-sizing:border-box;
+                    width:100%;
+                ">
+                    <img src="{icone_url}" alt="{nome_exibicao}" style="width:50px;height:auto;margin-bottom:6px;">
+                    <div style="margin:0;color:#4a4a4a;font-weight:800;font-size:18px;">{nome_exibicao}</div>
+                    <div style="font-size:18px;margin:6px 0;font-weight:900;color:#2ecc71;">
+                        {patrimonio_formatado}
+                    </div>
+                    <div style="font-size:14px;color:#FFA500;">{lider_texto}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("---")
+
+    # ─────────────────────────────────────────────────────────
+    # 6) Comparação de múltiplos
+    # ─────────────────────────────────────────────────────────
+    st.markdown("### Comparação de Indicadores (Múltiplos) entre Empresas")
+
+    indicadores_disponiveis = [
+        "Margem Líquida",
+        "Margem Operacional",
+        "ROE",
+        "ROIC",
+        "P/L",
+        "P/VP",
+        "DY",
+        "Liquidez Corrente",
+        "Alavancagem Financeira",
+        "Endividamento Total",
+    ]
+
+    nomes_to_col = {
+        "Margem Líquida": "Margem_Liquida",
+        "Margem Operacional": "Margem_Operacional",
+        "ROE": "ROE",
+        "ROIC": "ROIC",
+        "P/L": "P/L",
+        "P/VP": "P/VP",
+        "DY": "DY",
+        "Liquidez Corrente": "Liquidez_Corrente",
+        "Alavancagem Financeira": "Alavancagem_Financeira",
+        "Endividamento Total": "Endividamento_Total",
+    }
+
+    lista_nomes = [e.nome for e in empresas]
+    empresas_selecionadas = st.multiselect(
+        "Selecione as empresas a exibir:",
+        lista_nomes,
+        default=lista_nomes,
+    )
+
+    indicador = st.selectbox("Selecione o indicador:", indicadores_disponiveis, index=0)
+    col_db = nomes_to_col[indicador]
+
+    long_rows: List[dict] = []
+    for e in empresas:
+        if e.nome not in empresas_selecionadas:
+            continue
+        dfm = e.mult.copy()
+        if dfm is None or dfm.empty:
+            continue
+        if "Ano" not in dfm.columns and "Data" in dfm.columns:
+            dfm["Ano"] = pd.to_datetime(dfm["Data"], errors="coerce").dt.year
+        if "Ano" not in dfm.columns or col_db not in dfm.columns:
+            continue
+
+        tmp = dfm[["Ano", col_db]].copy()
+        tmp["Ano"] = pd.to_numeric(tmp["Ano"], errors="coerce")
+        tmp[col_db] = pd.to_numeric(tmp[col_db], errors="coerce")
+        tmp = tmp.dropna(subset=["Ano", col_db])
+        if tmp.empty:
+            continue
+
+        tmp = tmp.groupby("Ano", as_index=False)[col_db].mean()
+        for _, rr in tmp.iterrows():
+            long_rows.append({"Ano": int(rr["Ano"]), "Empresa": e.nome, "Valor": float(rr[col_db])})
+
+    if long_rows:
+        df_long = pd.DataFrame(long_rows).sort_values(["Ano", "Empresa"])
+        fig = px.line(
+            df_long,
+            x="Ano",
+            y="Valor",
+            color="Empresa",
+            markers=True,
+            title=f"{indicador} — comparação por ano (média anual)",
+        )
+        fig.update_layout(xaxis=dict(type="category"))
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.warning("Não há dados suficientes para o indicador selecionado nas empresas escolhidas.")
+
+    st.markdown("---")
+
+    # ─────────────────────────────────────────────────────────
+    # 7) Comparação de Demonstrações Financeiras (DRE)
+    # ─────────────────────────────────────────────────────────
+    st.markdown("### Comparação de Demonstrações Financeiras entre Empresas")
+
+    indicadores_dre = {
+        "Receita Líquida": "Receita_Liquida",
+        "EBIT": "EBIT",
+        "Lucro Líquido": "Lucro_Liquido",
+        "Patrimônio Líquido": "Patrimonio_Liquido",
+        "Dívida Líquida": "Divida_Liquida",
+        "Caixa Líquido": "Caixa_Liquido",
+    }
+
+    indicador_display = st.selectbox("Selecione o item da DRE:", list(indicadores_dre.keys()), index=0)
+    col_dre = indicadores_dre[indicador_display]
+
+    long_dre: List[dict] = []
+    for e in empresas:
+        if e.nome not in empresas_selecionadas:
+            continue
+        dfd = e.dre.copy()
+        if dfd is None or dfd.empty:
+            continue
+        if "Ano" not in dfd.columns and "Data" in dfd.columns:
+            dfd["Ano"] = pd.to_datetime(dfd["Data"], errors="coerce").dt.year
+        if "Ano" not in dfd.columns or col_dre not in dfd.columns:
+            continue
+
+        tmp = dfd[["Ano", col_dre]].copy()
+        tmp["Ano"] = pd.to_numeric(tmp["Ano"], errors="coerce")
+        tmp[col_dre] = pd.to_numeric(tmp[col_dre], errors="coerce")
+        tmp = tmp.dropna(subset=["Ano", col_dre])
+        if tmp.empty:
+            continue
+
+        tmp = tmp.groupby("Ano", as_index=False)[col_dre].sum()
+        for _, rr in tmp.iterrows():
+            long_dre.append({"Ano": int(rr["Ano"]), "Empresa": e.nome, "Valor": float(rr[col_dre])})
+
+    if long_dre:
+        df_dre_long = pd.DataFrame(long_dre).sort_values(["Ano", "Empresa"])
+        fig = px.bar(
+            df_dre_long,
+            x="Ano",
+            y="Valor",
+            color="Empresa",
+            barmode="group",
+            title=f"{indicador_display} — comparação por ano",
+        )
+        fig.update_layout(xaxis=dict(type="category"))
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.warning("Não há dados suficientes para o indicador selecionado entre as empresas escolhidas.")
