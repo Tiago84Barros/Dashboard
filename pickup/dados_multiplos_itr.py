@@ -42,12 +42,23 @@ def log(msg: str) -> None:
 
 def ticker_valido_yf(t: str) -> bool:
     """
-    Regra simples para reduzir spam/erros do Yahoo.
-    Padrão típico B3: 4 letras + 1 dígito (ex: PETR4, VALE3).
-    Você pode relaxar depois se precisar (ex: units, etc.).
+    Aceita padrões comuns B3:
+      - 4 letras + 1 dígito (PETR4)
+      - 4 letras + 2 dígitos (units: BPAC11, KLBN11)
+      - BDRs e tickers com 2 dígitos finais (ex.: NUBR33)
     """
     t = (t or "").strip().upper()
-    return bool(re.fullmatch(r"[A-Z]{4}\d", t))
+    return bool(re.fullmatch(r"[A-Z]{4}\d{1,2}", t))
+
+def cap(x, lo, hi):
+    if x is None:
+        return None
+    try:
+        if np.isnan(x) or np.isinf(x):
+            return None
+    except Exception:
+        pass
+    return float(min(max(x, lo), hi))
 
 
 def to_utc_midnight_timestamptz(d: pd.Timestamp) -> pd.Timestamp:
@@ -226,6 +237,11 @@ def main() -> None:
         log("[WARN] Origem TRI vazia.")
         return
 
+    # =========================================================
+    # NORMALIZAÇÃO CRÍTICA DO TICKER (antes de qualquer lógica)
+    # =========================================================
+    df["Ticker"] = (df["Ticker"].astype(str).str.strip().str.upper())
+
     df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
     df = df.dropna(subset=["Ticker", "Data"]).sort_values(["Ticker", "Data"])
 
@@ -351,6 +367,13 @@ def main() -> None:
                     pvp = market_cap / pl
 
             payout = (div / lucro) if (div is not None and lucro not in (None, 0)) else None
+
+            # =========================
+            # CAP / WINSORIZATION (ANTI-OUTLIER)
+            # =========================
+            dy = cap(dy, 0.0, 0.30)            # 0% a 30% a.a.
+            payout = cap(payout, 0.0, 2.0)     # 0% a 200%
+            pl_mult = cap(pl_mult, -200.0, 200.0)
 
             resultados.append({
                 "Ticker": ticker,
