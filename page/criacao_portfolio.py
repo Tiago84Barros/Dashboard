@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import pandas as pd
 import streamlit as st
@@ -99,9 +99,9 @@ def _carregar_empresa(row: dict) -> Optional[EmpresaCarregada]:
         dre = _clean_columns(dre)
 
         # adiciona Ano quando possível (compatível com scoring)
-        if "Data" in mult.columns:
+        if "Data" in mult.columns and "Ano" not in mult.columns:
             mult["Ano"] = pd.to_datetime(mult["Data"], errors="coerce").dt.year
-        if "Data" in dre.columns:
+        if "Data" in dre.columns and "Ano" not in dre.columns:
             dre["Ano"] = pd.to_datetime(dre["Data"], errors="coerce").dt.year
 
         return EmpresaCarregada(ticker=tk, nome=nome, multiplos=mult, dre=dre)
@@ -124,6 +124,7 @@ def _filtrar_tickers_com_min_anos(tickers: Sequence[str], min_anos: int = 10, ma
         return tk, (_safe_year_count_from_dre(dre) >= min_anos)
 
     ok: List[str] = []
+    max_workers = min(max_workers, max(2, len(tickers)))
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futs = {ex.submit(_check, tk): tk for tk in tickers}
         for fut in as_completed(futs):
@@ -135,6 +136,9 @@ def _filtrar_tickers_com_min_anos(tickers: Sequence[str], min_anos: int = 10, ma
 
 
 def _build_macro() -> Optional[pd.DataFrame]:
+    """
+    Retorna macro com coluna 'Data' (não index), alinhado ao padrão das outras páginas.
+    """
     dados_macro = load_macro_summary()
     if dados_macro is None or dados_macro.empty:
         return None
@@ -144,7 +148,7 @@ def _build_macro() -> Optional[pd.DataFrame]:
         return None
 
     dados_macro["Data"] = pd.to_datetime(dados_macro["Data"], errors="coerce")
-    dados_macro = dados_macro.dropna(subset=["Data"]).set_index("Data").sort_index()
+    dados_macro = dados_macro.dropna(subset=["Data"]).sort_values("Data").reset_index(drop=True)
     return dados_macro
 
 
@@ -228,7 +232,11 @@ def render():
         if len(tickers_validos) <= 1:
             continue
 
-        empresas_validas = empresas_segmento[empresas_segmento["ticker"].astype(str).apply(lambda x: _strip_sa(x) in set(tickers_validos))]
+        tickers_validos_set = set(tickers_validos)
+        empresas_validas = empresas_segmento[
+            empresas_segmento["ticker"].astype(str).apply(lambda x: _strip_sa(x) in tickers_validos_set)
+        ]
+
         if empresas_validas.empty or len(empresas_validas) <= 1:
             continue
 
@@ -279,9 +287,10 @@ def render():
         if score.empty:
             continue
 
-        # dividendos (para tickers do score) + líderes + backtest
+        # dividendos (normaliza para .SA) + líderes + backtest
         tickers_score = [str(t) for t in score["ticker"].dropna().unique().tolist()]
-        dividendos = coletar_dividendos(tickers_score)
+        tickers_score_yf = [_norm_sa(t) for t in tickers_score]
+        dividendos = coletar_dividendos(tickers_score_yf)
 
         lideres = determinar_lideres(score)
         if lideres is None or lideres.empty:
@@ -313,13 +322,17 @@ def render():
         empresas_estrategia = patrimonio_empresas.columns.drop("Patrimônio", errors="ignore")
         colunas_empresas = st.columns(min(3, len(empresas_estrategia)))
 
-        for idx, ticker in enumerate(empresas_estrategia):
+        for idx, ticker_col in enumerate(empresas_estrategia):
             col = colunas_empresas[idx % len(colunas_empresas)]
-            logo_url = get_logo_url(ticker)
-            nome = next((e.nome for e in lista_empresas if e.ticker == ticker), ticker)
-            valor_final = float(patrimonio_empresas[ticker].iloc[-1])
+
+            tk_clean = _strip_sa(str(ticker_col))
+            logo_url = get_logo_url(tk_clean)
+
+            nome = next((e.nome for e in lista_empresas if _strip_sa(e.ticker) == tk_clean), tk_clean)
+            valor_final = float(patrimonio_empresas[ticker_col].iloc[-1])
             perc_part = (valor_final / final_empresas) * 100.0 if final_empresas != 0 else 0.0
-            anos_lider = lideres[lideres["ticker"] == ticker]["Ano"].tolist()
+
+            anos_lider = lideres[lideres["ticker"].astype(str).apply(_strip_sa) == tk_clean]["Ano"].tolist()
             anos_lider_str = f"{len(anos_lider)}x Líder: {', '.join(map(str, anos_lider))}" if anos_lider else ""
 
             col.markdown(
@@ -327,7 +340,7 @@ def render():
                 <div style='border: 1px solid #ccc; border-radius: 8px; padding: 10px; margin-bottom: 10px; text-align: center;'>
                     <img src='{logo_url}' width='40' />
                     <p style='margin: 5px 0 0; font-weight: bold;'>{nome}</p>
-                    <p style='margin: 0; color: #666; font-size: 12px;'>({ticker})</p>
+                    <p style='margin: 0; color: #666; font-size: 12px;'>({tk_clean})</p>
                     <p style='font-size: 12px; color: #999;'>{anos_lider_str}</p>
                     <p style='font-size: 12px; color: #2c3e50;'>Participação: {perc_part:.1f}%</p>
                 </div>
@@ -340,11 +353,11 @@ def render():
         lideres_ano_anterior = lideres[lideres["Ano"] == ultimo_ano]
 
         for _, row in lideres_ano_anterior.iterrows():
-            tk = str(row["ticker"])
+            tk = _strip_sa(str(row["ticker"]))
             empresas_lideres_finais.append(
                 {
                     "ticker": tk,
-                    "nome": next((e.nome for e in lista_empresas if e.ticker == tk), tk),
+                    "nome": next((e.nome for e in lista_empresas if _strip_sa(e.ticker) == tk), tk),
                     "logo_url": get_logo_url(tk),
                     "ano_lider": int(row["Ano"]),
                     "ano_compra": int(row["Ano"]) + 1,
@@ -423,7 +436,7 @@ def render():
             patrimonio_aporte = gerir_carteira_simples(precos, tickers_limpos, datas_aporte, dividendos_dict=dividendos_dict)
 
             # Selic benchmark (no mesmo índice do patrimônio da estratégia)
-            df_selic = calcular_patrimonio_selic_macro(dados_macro.reset_index().rename(columns={"index": "Data"}), datas_aporte)
+            df_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aporte)
             if df_selic is None or df_selic.empty:
                 st.warning("⚠️ Não foi possível calcular o benchmark Selic para o período.")
                 st.stop()
