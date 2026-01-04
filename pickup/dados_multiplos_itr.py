@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
@@ -16,18 +16,33 @@ if not SUPABASE_DB_URL:
 
 ENGINE = sa.create_engine(SUPABASE_DB_URL)
 
-TABELA_ORIGEM = 'public."Demonstracoes_Financeiras_TRI"'
-SCHEMA_DESTINO = "public"
-NOME_TABELA_DESTINO = "multiplos_TRI"  # SQLAlchemy vai emitir "multiplos_TRI" (aspas) por ser MixedCase no DB
+ORIGEM = 'public."Demonstracoes_Financeiras_TRI"'
+DEST_SCHEMA = "public"
+DEST_TABLE = "multiplos_TRI"  # no DB é public."multiplos_TRI"
+
 
 def log(msg: str) -> None:
     print(msg, flush=True)
 
-def rolling_ttm(s: pd.Series) -> pd.Series:
-    return s.rolling(4, min_periods=4).sum()
+
+def to_utc_midnight_ts(d: pd.Timestamp) -> pd.Timestamp:
+    # origem é date -> destino é timestamptz
+    # grava como 00:00:00Z
+    if pd.isna(d):
+        return d
+    dt = pd.Timestamp(d).to_pydatetime()
+    if isinstance(dt, datetime) and dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return pd.Timestamp(dt.astimezone(timezone.utc))
+
+
+def rolling_ttm(df: pd.DataFrame, col: str) -> pd.Series:
+    # TRI já é trimestral isolado -> TTM = soma dos últimos 4 TRI
+    return df[col].rolling(4, min_periods=4).sum()
+
 
 def preco_medio_trimestre(ticker: str, data: pd.Timestamp) -> float | None:
-    # Janela ~3 meses antes até alguns dias depois do fechamento
+    # janela ~3 meses antes até poucos dias após a data de fechamento
     ini = (data - pd.DateOffset(months=3)).date()
     fim = (data + timedelta(days=7)).date()
     try:
@@ -39,130 +54,144 @@ def preco_medio_trimestre(ticker: str, data: pd.Timestamp) -> float | None:
     except Exception:
         return None
 
-def upsert_multiplos_tri(df_out: pd.DataFrame) -> None:
-    if df_out.empty:
-        log("⚠️ df_out vazio — nada para gravar.")
-        return
 
+def shares_outstanding(ticker: str) -> float | None:
+    # para estimar Market Cap -> P/VP = MarketCap / PL
+    # nem sempre disponível
+    try:
+        t = yf.Ticker(f"{ticker}.SA")
+        info = getattr(t, "info", {}) or {}
+        so = info.get("sharesOutstanding")
+        if so and so > 0:
+            return float(so)
+        return None
+    except Exception:
+        return None
+
+
+def upsert(df_out: pd.DataFrame) -> None:
     meta = sa.MetaData()
-    # Reflete a tabela existente com nomes/aspas corretos
-    tabela = sa.Table(
-        NOME_TABELA_DESTINO,
-        meta,
-        schema=SCHEMA_DESTINO,
-        autoload_with=ENGINE,
-    )
+    table = sa.Table(DEST_TABLE, meta, schema=DEST_SCHEMA, autoload_with=ENGINE)
 
-    # Converte Data para timestamptz coerente (UTC)
-    df_out["Data"] = pd.to_datetime(df_out["Data"], utc=True)
+    # ON CONFLICT requer unique index (criamos se não existir)
+    with ENGINE.begin() as conn:
+        conn.execute(sa.text("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_multiplos_tri_ticker_data
+            ON public."multiplos_TRI" ("Ticker","Data");
+        """))
 
-    # Registros
     records = df_out.to_dict(orient="records")
+    stmt = insert(table).values(records)
 
-    stmt = insert(tabela).values(records)
-
-    # Campos que serão atualizados (todos, exceto chave)
-    chave = ["Ticker", "Data"]
-    update_cols = [c.name for c in tabela.columns if c.name not in chave]
+    key_cols = ["Ticker", "Data"]
+    update_cols = [c.name for c in table.columns if c.name not in key_cols]
 
     stmt = stmt.on_conflict_do_update(
-        index_elements=[tabela.c["Ticker"], tabela.c["Data"]],
-        set_={col: getattr(stmt.excluded, col) for col in update_cols},
+        index_elements=[table.c["Ticker"], table.c["Data"]],
+        set_={c: getattr(stmt.excluded, c) for c in update_cols},
     )
 
     with ENGINE.begin() as conn:
         conn.execute(stmt)
 
-    log(f"✅ UPSERT concluído em {SCHEMA_DESTINO}.\"{NOME_TABELA_DESTINO}\" ({len(df_out)} linhas).")
+    log(f"[OK] UPSERT em public.\"multiplos_TRI\": {len(df_out)} linhas.")
+
 
 def main() -> None:
-    log("[INFO] Lendo demonstrações trimestrais do Supabase...")
-    df = pd.read_sql(f"SELECT * FROM {TABELA_ORIGEM}", ENGINE)
+    log("[INFO] Lendo Demonstracoes_Financeiras_TRI do Supabase...")
+    df = pd.read_sql(f"SELECT * FROM {ORIGEM}", ENGINE)
 
     if df.empty:
-        log("[WARN] Nenhum dado retornado de Demonstracoes_Financeiras_TRI.")
+        log("[WARN] Origem vazia.")
         return
 
-    df["Data"] = pd.to_datetime(df["Data"], utc=True, errors="coerce")
+    # Tipos
+    df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
     df = df.dropna(subset=["Ticker", "Data"]).sort_values(["Ticker", "Data"])
 
-    # Valida colunas mínimas (ajuste se seus nomes forem diferentes)
+    # colunas obrigatórias (conforme seu DDL)
     required = [
         "Receita_Liquida", "EBIT", "Lucro_Liquido", "Dividendos", "LPA",
-        "Ativo_Total", "Ativo_Circulante", "Passivo_Total", "Passivo_Circulante",
-        "Patrimonio_Liquido"
+        "Ativo_Total", "Ativo_Circulante", "Passivo_Circulante", "Passivo_Total",
+        "Patrimonio_Liquido", "Divida_Liquida"
     ]
     missing = [c for c in required if c not in df.columns]
     if missing:
-        log(f"[ERROR] Colunas faltando na origem TRI: {missing}")
+        log(f"[ERROR] Colunas faltando na TRI: {missing}")
         return
 
     resultados: list[dict] = []
 
+    # cache simples para sharesOutstanding (não chamar yfinance repetidamente)
+    shares_cache: dict[str, float | None] = {}
+
     for ticker, g in df.groupby("Ticker", sort=False):
         g = g.sort_values("Data").copy()
 
-        # TTM (fluxos)
-        g["Receita_12M"] = rolling_ttm(g["Receita_Liquida"])
-        g["EBIT_12M"] = rolling_ttm(g["EBIT"])
-        g["Lucro_12M"] = rolling_ttm(g["Lucro_Liquido"])
-        g["Dividendos_12M"] = rolling_ttm(g["Dividendos"])
-        g["LPA_12M"] = rolling_ttm(g["LPA"])
+        # TTM fluxos (já isolado)
+        g["Receita_12M"] = rolling_ttm(g, "Receita_Liquida")
+        g["EBIT_12M"] = rolling_ttm(g, "EBIT")
+        g["Lucro_12M"] = rolling_ttm(g, "Lucro_Liquido")
+        g["Dividendos_12M"] = rolling_ttm(g, "Dividendos")
+        g["LPA_12M"] = rolling_ttm(g, "LPA")
 
-        # Apenas datas com TTM completo
         g_ttm = g.dropna(subset=["Receita_12M", "EBIT_12M", "Lucro_12M", "Dividendos_12M", "LPA_12M"])
         if g_ttm.empty:
             continue
 
+        # shares (uma vez por ticker)
+        if ticker not in shares_cache:
+            shares_cache[ticker] = shares_outstanding(ticker)
+
         for _, row in g_ttm.iterrows():
-            data = row["Data"]
+            data = pd.Timestamp(row["Data"])
             px = preco_medio_trimestre(ticker, data)
             if px is None:
                 continue
 
-            # Indicadores (estoques = último TRI da linha; fluxos = TTM)
-            ativo = row["Ativo_Total"]
-            ativo_c = row["Ativo_Circulante"]
-            passivo = row["Passivo_Total"]
-            passivo_c = row["Passivo_Circulante"]
-            pl = row["Patrimonio_Liquido"]
+            # estoques (último TRI)
+            ativo = float(row["Ativo_Total"]) if row["Ativo_Total"] is not None else None
+            ativo_c = float(row["Ativo_Circulante"]) if row["Ativo_Circulante"] is not None else None
+            passivo = float(row["Passivo_Total"]) if row["Passivo_Total"] is not None else None
+            passivo_c = float(row["Passivo_Circulante"]) if row["Passivo_Circulante"] is not None else None
+            pl = float(row["Patrimonio_Liquido"]) if row["Patrimonio_Liquido"] is not None else None
+            divliq = float(row["Divida_Liquida"]) if row["Divida_Liquida"] is not None else None
 
-            receita = row["Receita_12M"]
-            ebit = row["EBIT_12M"]
-            lucro = row["Lucro_12M"]
-            div = row["Dividendos_12M"]
-            lpa = row["LPA_12M"]
+            # fluxos TTM
+            receita = float(row["Receita_12M"]) if row["Receita_12M"] is not None else None
+            ebit = float(row["EBIT_12M"]) if row["EBIT_12M"] is not None else None
+            lucro = float(row["Lucro_12M"]) if row["Lucro_12M"] is not None else None
+            div = float(row["Dividendos_12M"]) if row["Dividendos_12M"] is not None else None
+            lpa = float(row["LPA_12M"]) if row["LPA_12M"] is not None else None
 
-            liquidez = (ativo_c / passivo_c) if passivo_c and passivo_c != 0 else None
-            endiv = (passivo / ativo) if ativo and ativo != 0 else None
+            liquidez = (ativo_c / passivo_c) if (ativo_c is not None and passivo_c not in (None, 0)) else None
+            endiv = (passivo / ativo) if (passivo is not None and ativo not in (None, 0)) else None
+            alav = (divliq / pl) if (divliq is not None and pl not in (None, 0)) else None
 
-            # se existir Divida_Liquida na TRI, usamos; senão, alavancagem fica nula
-            alav = None
-            if "Divida_Liquida" in df.columns and pl and pl != 0:
-                alav = (row["Divida_Liquida"] / pl)
+            margem_op = (ebit / receita) if (ebit is not None and receita not in (None, 0)) else None
+            margem_liq = (lucro / receita) if (lucro is not None and receita not in (None, 0)) else None
 
-            margem_op = (ebit / receita) if receita else None
-            margem_liq = (lucro / receita) if receita else None
-
-            roe = (lucro / pl) if pl else None
-            roa = (lucro / ativo) if ativo else None
+            roe = (lucro / pl) if (lucro is not None and pl not in (None, 0)) else None
+            roa = (lucro / ativo) if (lucro is not None and ativo not in (None, 0)) else None
 
             base_roic = (ativo - passivo_c) if (ativo is not None and passivo_c is not None) else None
-            roic = (ebit / base_roic) if base_roic and base_roic != 0 else None
+            roic = (ebit / base_roic) if (ebit is not None and base_roic not in (None, 0)) else None
 
-            dy = (div / px) if px else None
-            pl_mult = (px / lpa) if lpa and lpa != 0 else None
+            dy = (div / px) if (div is not None and px) else None
+            pl_mult = (px / lpa) if (lpa is not None and lpa != 0) else None
 
-            # P/VP exige VPA ou número de ações. Se tiver VPA na TRI, usamos.
+            # P/VP via MarketCap / PL (quando sharesOutstanding existir)
             pvp = None
-            if "VPA" in df.columns and row.get("VPA") not in (None, 0):
-                pvp = px / row["VPA"]
+            so = shares_cache.get(ticker)
+            if so and pl not in (None, 0):
+                market_cap = px * so
+                pvp = market_cap / pl
 
-            payout = (div / lucro) if lucro and lucro != 0 else None
+            payout = (div / lucro) if (div is not None and lucro not in (None, 0)) else None
 
             resultados.append({
                 "Ticker": ticker,
-                "Data": data,
+                "Data": to_utc_midnight_ts(data),
                 "Liquidez_Corrente": liquidez,
                 "Endividamento_Total": endiv,
                 "Alavancagem_Financeira": alav,
@@ -173,20 +202,4 @@ def main() -> None:
                 "ROIC": roic,
                 "DY": dy,
                 "P/L": pl_mult,
-                "P/VP": pvp,
-                "Payout": payout,
-            })
-
-    df_out = pd.DataFrame(resultados)
-
-    if df_out.empty:
-        log("[WARN] Nenhuma linha gerada (provável falta de preço ou TTM incompleto).")
-        return
-
-    # Sanity check rápido
-    log(f"[INFO] Linhas geradas: {len(df_out)} | Tickers: {df_out['Ticker'].nunique()}")
-    log("[INFO] Gravando via UPSERT (Ticker, Data)...")
-    upsert_multiplos_tri(df_out)
-
-if __name__ == "__main__":
-    main()
+                "P/VP"
