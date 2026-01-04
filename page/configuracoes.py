@@ -238,7 +238,7 @@ def render() -> None:
    
     _run_job(
         job_key="job_multiplos_running",
-        button_label="Atualizar Múltiplos (DFP → yfinance → Supabase)",
+        button_label="Atualizar Múltiplos (DFP)",
         info_text=(
             "Executa **pickup/dados_multiplos_dfp.py** para calcular múltiplos fundamentalistas a partir de "
             "**public.Demonstracoes_Financeiras**, integrar preço médio anual (yfinance) e gravar via **UPSERT** "
