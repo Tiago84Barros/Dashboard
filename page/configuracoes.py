@@ -120,6 +120,7 @@ def render() -> None:
         "3) Setores/Subsetores/Segmentos (B3)\n"
         "4) Informações econômicas (macro Brasil)\n"
         "5) Multiplos (DFP/anual)\n"
+        "6) Multiplos (ITR)\n"
     )
 
     st.markdown("### Diagnóstico rápido")
@@ -249,6 +250,29 @@ def render() -> None:
         module_import_path="pickup.dados_multiplos_dfp",
         module_attr_name="dados_multiplos_dfp",
     )
+
+    st.divider()
+
+    # =========================
+    # BOTÃO 6: MÚLTIPLOS (ITR -> yfinance -> Supabase)
+    # =========================
+   
+    st.markdown("## 6. Múltiplos Fundamentalistas Trimestrais (TRI → yfinance → Supabase)")
+   
+    _run_job(
+        job_key="job_multiplos_tri_running",
+        button_label="Atualizar Múltiplos Trimestrais (TRI)",
+        info_text=(
+            "Executa **pickup/dados_multiplos_itr.py** para calcular múltiplos trimestrais "
+            "usando TTM (4 trimestres) para fluxos e último trimestre para estoques, "
+            "integrando preço médio trimestral via yfinance e gravando via **UPSERT** "
+            "em **public.multiplos_TRI**."
+        ),
+        status_label="Executando cálculo de Múltiplos Trimestrais (TRI)...",
+        module_import_path="pickup.dados_multiplos_itr",
+        module_attr_name="dados_multiplos_itr",
+    )
+
 
 # Compatibilidade com loaders que chamam `configuracoes()`
 def configuracoes() -> None:
