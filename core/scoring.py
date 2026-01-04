@@ -21,13 +21,11 @@ logger = logging.getLogger(__name__)
 
 
 def _to_numeric_series(s: pd.Series) -> pd.Series:
-    """Converte para numérico e troca inf por NaN, preservando índice."""
     out = pd.to_numeric(s, errors="coerce")
     return out.replace([np.inf, -np.inf], np.nan)
 
 
 def z_score_normalize(series: pd.Series, melhor_alto: bool) -> pd.Series:
-    """Normaliza via z-score com guardrails (std==0 -> zeros)."""
     s = _to_numeric_series(series)
     mean = s.mean(skipna=True)
     std = s.std(skipna=True)
@@ -39,10 +37,6 @@ def z_score_normalize(series: pd.Series, melhor_alto: bool) -> pd.Series:
 
 
 def slope_regressao_log(df: pd.DataFrame, col: str, year_col: str = "Ano") -> float:
-    """Regressão robusta de ln(col) vs Ano usando TheilSen.
-
-    Filtra valores <= 0 (ln indefinido). Retorna 0.0 se dados insuficientes.
-    """
     if df is None or df.empty:
         return 0.0
     if year_col not in df.columns or col not in df.columns:
@@ -70,14 +64,12 @@ def slope_regressao_log(df: pd.DataFrame, col: str, year_col: str = "Ano") -> fl
 
 
 def slope_to_growth_percent(slope: float) -> float:
-    """Converte slope log em crescimento aproximado (fração)."""
     if not np.isfinite(slope):
         return 0.0
     return float(np.exp(slope) - 1.0)
 
 
 def calcular_media_e_std(df: pd.DataFrame, col: str) -> Tuple[float, float]:
-    """Média e desvio padrão de uma coluna, saneando NaN/Inf."""
     if df is None or df.empty or col not in df.columns:
         return 0.0, 0.0
     s = _to_numeric_series(df[col]).dropna()
@@ -93,7 +85,6 @@ def calcular_media_e_std(df: pd.DataFrame, col: str) -> Tuple[float, float]:
 
 
 def _ensure_year(df: pd.DataFrame, date_col: str = "Data", year_col: str = "Ano") -> pd.DataFrame:
-    """Garante coluna Ano (year_col) a partir de date_col, retornando cópia."""
     out = df.copy()
     if year_col not in out.columns:
         if date_col in out.columns:
@@ -104,7 +95,6 @@ def _ensure_year(df: pd.DataFrame, date_col: str = "Data", year_col: str = "Ano"
 
 
 def calcular_metricas_historicas_simplificadas(df_mult: pd.DataFrame, df_dre: pd.DataFrame) -> Dict[str, float]:
-    """Calcula métricas de múltiplos (média/std) e DRE (slope/growth)."""
     df_mult2 = _ensure_year(df_mult, date_col="Data", year_col="Ano")
     df_dre2 = _ensure_year(df_dre, date_col="Data", year_col="Ano")
 
@@ -145,7 +135,6 @@ def calc_crowding_penalty(
     floor: float = 0.85,
     ceil: float = 1.50,
 ) -> float:
-    """Fator ∈ [floor, ceil] que aumenta quando dispersão relativa é baixa (crowding alto)."""
     if df_setor is None or df_setor.empty or coluna not in df_setor.columns:
         return 1.0
     s = _to_numeric_series(df_setor[coluna]).dropna()
@@ -166,11 +155,6 @@ def penalizar_plato(
     meses: int = 18,
     penal: float = 0.25,
 ) -> pd.DataFrame:
-    """Penaliza Score_Ajustado quando retorno retrospectivo (meses) < mediana do universo.
-
-    - Usa o último mês disponível de cada ano (sem olhar o futuro).
-    - Não segmenta por setor; para setorial, crie uma versão que receba grupos.
-    """
     if df_scores is None or df_scores.empty:
         return df_scores
     if precos_mensal is None or precos_mensal.empty:
@@ -210,13 +194,11 @@ def penalizar_plato(
 
 
 def calcular_score_ajustado(df: pd.DataFrame, pesos_utilizados: Mapping[str, Mapping[str, Any]]) -> pd.DataFrame:
-    """Calcula Score_Ajustado com z-score e soma ponderada."""
     if df is None or df.empty:
         return df
 
     out = df.copy()
 
-    # Mantém compatibilidade com campos opcionais já existentes no projeto
     for col, cfg in pesos_utilizados.items():
         if col not in out.columns:
             continue
@@ -248,15 +230,17 @@ def calcular_score_acumulado(
     pesos_utilizados: Mapping[str, Mapping[str, Any]],
     dados_macro: Optional[pd.DataFrame] = None,
     anos_minimos: int = 4,
+    publication_lag_years: int = 1,
 ) -> pd.DataFrame:
     """Calcula Score_Ajustado ao longo dos anos.
 
-    `dados_macro` é mantido por compatibilidade, mas não é aplicado aqui.
+    publication_lag_years:
+      - 0 mantém comportamento anterior (usa Ano<=ano).
+      - 1 (default) usa Ano<=ano-1 para simular defasagem anti look-ahead.
     """
     if not lista_empresas:
         return pd.DataFrame(columns=["Ano", "ticker", "Score_Ajustado"])
 
-    # anos disponíveis a partir de multiplos
     anos: List[int] = []
     for emp in lista_empresas:
         dfm = emp.get("multiplos")
@@ -270,11 +254,12 @@ def calcular_score_acumulado(
 
     resultados: List[pd.DataFrame] = []
     anos_lider = collections.defaultdict(int)
+    lag = int(max(publication_lag_years, 0))
 
     for idx in range(anos_minimos, len(anos_disponiveis)):
         ano = int(anos_disponiveis[idx])
+        ano_cutoff = ano - lag
 
-        # Pré-coleta P/VP por setor no ano (evita concat repetitiva)
         setor_to_pvp: Dict[str, List[float]] = collections.defaultdict(list)
         for emp in lista_empresas:
             tk = str(emp.get("ticker", "")).strip()
@@ -282,7 +267,7 @@ def calcular_score_acumulado(
             if not tk or not isinstance(dfm, pd.DataFrame) or dfm.empty:
                 continue
             dfm2 = _ensure_year(dfm, date_col="Data", year_col="Ano")
-            dfm_ano = dfm2[dfm2["Ano"] == ano]
+            dfm_ano = dfm2[dfm2["Ano"] == ano_cutoff] if lag > 0 else dfm2[dfm2["Ano"] == ano]
             if dfm_ano.empty or "P/VP" not in dfm_ano.columns:
                 continue
             setor = setores_empresa.get(tk, "OUTROS")
@@ -302,8 +287,10 @@ def calcular_score_acumulado(
             df_mult2 = _ensure_year(df_mult, date_col="Data", year_col="Ano")
             df_dre2 = _ensure_year(df_dre, date_col="Data", year_col="Ano")
 
-            df_mult_hist = df_mult2[df_mult2["Ano"] <= ano].copy()
-            df_dre_hist = df_dre2[df_dre2["Ano"] <= ano].copy()
+            # cutoff anti look-ahead
+            cut = ano_cutoff if lag > 0 else ano
+            df_mult_hist = df_mult2[df_mult2["Ano"] <= cut].copy()
+            df_dre_hist = df_dre2[df_dre2["Ano"] <= cut].copy()
             if df_mult_hist.empty or df_dre_hist.empty:
                 continue
 
@@ -320,7 +307,6 @@ def calcular_score_acumulado(
 
         df_ano = calcular_score_ajustado(df_ano, pesos_utilizados)
 
-        # Aplica crowding + decay
         df_ano = df_ano.sort_values("Score_Ajustado", ascending=False).reset_index(drop=True)
         lider_ano = str(df_ano.loc[0, "ticker"])
 
