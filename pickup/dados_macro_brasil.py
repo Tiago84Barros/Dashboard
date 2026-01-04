@@ -144,7 +144,9 @@ def build_annual_df(dados: Dict[str, pd.DataFrame], icc_mode: str) -> pd.DataFra
 
     # IPCA -> acumulado anual composto
     if not dados["ipca"].empty:
-        parts.append(_annual_compound_pct(dados["ipca"], "IPCA"))
+        ipca_anual = _annual_compound_pct(dados["ipca"], "IPCA")
+        ipca_anual["IPCA"] = ipca_anual["IPCA"] * 100
+        parts.append(ipca_anual)
 
     # ICC (nível) -> recomendado: último do ano OU média anual
     if not dados["icc"].empty:
