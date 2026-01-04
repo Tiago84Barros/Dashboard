@@ -163,8 +163,6 @@ def render() -> None:
 
     st.divider()
 
-       st.divider()
-
     # =========================
     # BOTÃO 3: SETORES B3 (SQLITE -> SUPABASE)
     # =========================
