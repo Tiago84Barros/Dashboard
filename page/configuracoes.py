@@ -163,10 +163,38 @@ def render() -> None:
 
     st.divider()
 
+       st.divider()
+
     # =========================
-    # BOTÃO 3: MACRO (INFO ECONÔMICA)
+    # BOTÃO 3: SETORES B3 (SQLITE -> SUPABASE)
     # =========================
-    st.markdown("## 3. Informações Econômicas (Macro Brasil)")
+    st.markdown("## 3. Setores / Subsetores / Segmentos (B3)")
+
+    with st.expander("Detalhes / Variáveis de ambiente (setores)", expanded=False):
+        st.write("SQLITE_METADADOS_PATH:", os.getenv("SQLITE_METADADOS_PATH", "data/metadados.db"))
+        st.caption(
+            "Observação: nesta etapa a fonte é o SQLite local (data/metadados.db, tabela setores) "
+            "para migrar e manter o padrão legado do Algoritmo_2."
+        )
+
+    _run_job(
+        job_key="job_setores_running",
+        button_label="Atualizar Setores (SQLite → Supabase)",
+        info_text=(
+            "Executa **pickup/dados_setores_b3.py** para ler a tabela **setores** do SQLite local "
+            "(**data/metadados.db**) e gravar via **UPSERT** em **public.setores** no Supabase.\n\n"
+            "Requisitos: `SUPABASE_DB_URL` definida. Opcional: `SQLITE_METADADOS_PATH`."
+        ),
+        status_label="Executando carga de Setores (SQLite → Supabase)...",
+        module_import_path="pickup.dados_setores_b3",
+        module_attr_name="dados_setores_b3",
+    )
+
+
+    # =========================
+    # BOTÃO 4: MACRO (INFO ECONÔMICA)
+    # =========================
+    st.markdown("## 4. Informações Econômicas (Macro Brasil)")
 
     with st.expander("Detalhes / Variáveis de ambiente (macro)", expanded=False):
         st.write("ICC_MODE (final|mean):", os.getenv("ICC_MODE", "final"))
