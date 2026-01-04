@@ -144,7 +144,7 @@ def baixar_precos_quarter_mean(
         close.index = pd.to_datetime(close.index)
 
         # preço médio por trimestre
-        qmean = close.resample("Q").mean()
+        qmean = close.resample("QE").mean()
 
         # long format
         for sym in qmean.columns:
