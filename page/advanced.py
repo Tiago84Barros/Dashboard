@@ -134,6 +134,22 @@ def render() -> None:
             return
         setores = _clean_df_cols(setores)
         st.session_state["setores_df"] = setores
+    # ─────────────────────────────────────────────────────────────
+    # Mapas ticker -> (SEGMENTO / SUBSETOR / SETOR) para Score v2 fallback
+    # ─────────────────────────────────────────────────────────────
+    _tmp = setores[["ticker", "SEGMENTO", "SUBSETOR", "SETOR"]].copy()
+    
+    # garante ticker sem ".SA" e uppercase
+    _tmp["ticker"] = _tmp["ticker"].astype(str).str.upper().str.replace(".SA", "", regex=False).str.strip()
+    
+    # preenche nulos
+    _tmp["SEGMENTO"] = _tmp["SEGMENTO"].fillna("OUTROS").astype(str)
+    _tmp["SUBSETOR"] = _tmp["SUBSETOR"].fillna("OUTROS").astype(str)
+    _tmp["SETOR"] = _tmp["SETOR"].fillna("OUTROS").astype(str)
+    
+    group_map = dict(zip(_tmp["ticker"], _tmp["SEGMENTO"]))
+    subsetor_map = dict(zip(_tmp["ticker"], _tmp["SUBSETOR"]))
+    setor_map = dict(zip(_tmp["ticker"], _tmp["SETOR"]))
 
     # validação mínima de schema (case-sensitive conforme Postgres com colunas entre aspas)
     needed = {"SETOR", "SUBSETOR", "SEGMENTO", "ticker"}
@@ -309,10 +325,14 @@ def render() -> None:
         score = calcular_score_acumulado_v2(
             lista_empresas=payload,
             group_map=group_map,
+            subsetor_map=subsetor_map,
+            setor_map=setor_map,
             pesos_utilizados=pesos,
             anos_minimos=4,
-            group_col='SEGMENTO',
+            prefer_group_col="SEGMENTO",
+            min_n_group=7,
         )
+
     else:
         score = calcular_score_acumulado(payload, setores_empresa, pesos, dados_macro, anos_minimos=4)
 
