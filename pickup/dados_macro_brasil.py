@@ -63,7 +63,7 @@ SERIES: Dict[str, int] = {
     "ipca": 433,
     "cambio": 1,
     "balanca_comercial": 22707,
-    "icc": 14,
+    "icc": 4393,
     "pib": 4380,
     "divida_publica": 4502,
 }
