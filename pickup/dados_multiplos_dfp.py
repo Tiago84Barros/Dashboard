@@ -7,6 +7,7 @@ import pandas as pd
 import yfinance as yf
 import psycopg2
 from psycopg2.extras import execute_values
+from sqlalchemy import create_engine, text
 
 
 # ======================
@@ -43,20 +44,19 @@ def carregar_demonstracoes() -> pd.DataFrame:
     if not SUPABASE_DB_URL:
         raise RuntimeError("Defina SUPABASE_DB_URL com a connection string Postgres do Supabase.")
 
-    # Se quiser otimizar: selecione só colunas usadas no cálculo
-    sql = 'SELECT * FROM public."Demonstracoes_Financeiras";'
+    engine = create_engine(SUPABASE_DB_URL)
 
-    with psycopg2.connect(SUPABASE_DB_URL) as conn:
+    sql = text('SELECT * FROM public."Demonstracoes_Financeiras";')
+
+    with engine.connect() as conn:
         df = pd.read_sql_query(sql, conn)
 
-    # Compatibilidade com o Algoritmo_4
     if "Dividendos" in df.columns:
         df["Dividendos"] = df["Dividendos"].astype(float)
 
     df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
 
-    # normaliza TZ (tabela é TIMESTAMPTZ)
-    # se vier naive, assume UTC
+    # normaliza TZ
     if df["Data"].dt.tz is None:
         df["Data"] = df["Data"].dt.tz_localize("UTC")
     else:
@@ -65,10 +65,9 @@ def carregar_demonstracoes() -> pd.DataFrame:
     df["Ano"] = df["Data"].dt.year
     df["ticker_yf"] = df["Ticker"].astype(str) + ".SA"
 
-    # filtros defensivos
     df = df[df["Ticker"].notna() & df["Data"].notna()].copy()
-
     return df
+
 
 
 # ======================
