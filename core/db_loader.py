@@ -1,158 +1,306 @@
 from __future__ import annotations
 
 import os
-import logging
-from functools import lru_cache
-from typing import Dict
+from typing import Any, Dict, Tuple
 
 import pandas as pd
-from sqlalchemy import create_engine, text
 import streamlit as st
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
 
-logger = logging.getLogger(__name__)
 
+# ────────────────────────────────────────────────────────────────────────────────
+# Supabase / PostgreSQL
+# ────────────────────────────────────────────────────────────────────────────────
+def _get_supabase_url() -> str:
+    # padrão do seu projeto (Streamlit Secrets -> env)
+    db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+    if not db_url:
+        raise RuntimeError("Defina SUPABASE_DB_URL (ou DATABASE_URL) nas secrets/env vars.")
+    return db_url
 
-# ─────────────────────────────────────────────────────────────
-# Engine / Conexão
-# ─────────────────────────────────────────────────────────────
 
 @st.cache_resource(show_spinner=False)
-def get_engine():
-    db_url = os.getenv("SUPABASE_DB_URL")
-    if not db_url:
-        raise RuntimeError("SUPABASE_DB_URL não configurada.")
-    return create_engine(db_url, pool_pre_ping=True)
+def get_supabase_engine() -> Engine:
+    """
+    Engine singleton em cache (recomendado para Streamlit).
+    """
+    return create_engine(_get_supabase_url(), pool_pre_ping=True)
 
 
-def _read_sql_df(sql: str, params: dict | None = None) -> pd.DataFrame:
-    engine = get_engine()
-    with engine.begin() as conn:
-        return pd.read_sql(text(sql), conn, params=params)
+def _normalize_ticker(ticker: str) -> Tuple[str, str]:
+    """
+    Normaliza ticker para cobrir as duas formas armazenadas:
+      tk1 = como vier (ex.: PETR4 ou PETR4.SA), em upper
+      tk2 = sem sufixo .SA (ex.: PETR4)
+    Retorna (tk1, tk2) para uso em WHERE "Ticker" = :tk1 OR "Ticker" = :tk2
+    """
+    tk1 = (ticker or "").strip().upper()
+    tk2 = tk1.replace(".SA", "")
+    return tk1, tk2
 
 
-# ─────────────────────────────────────────────────────────────
-# Helpers internos
-# ─────────────────────────────────────────────────────────────
+def _read_sql_df(sql: str, params: Dict[str, Any] | None = None) -> pd.DataFrame:
+    """
+    Executa SQL no Supabase e retorna DataFrame.
+    """
+    engine = get_supabase_engine()
+    with engine.connect() as conn:
+        return pd.read_sql_query(text(sql), conn, params=params or {})
 
-def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    out.columns = out.columns.astype(str).str.strip().str.replace("\ufeff", "", regex=False)
-    return out
 
-
-def _coerce_sort_by_data(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty or "Data" not in df.columns:
+def _coerce_sort_by_data(df: pd.DataFrame | None, ascending: bool = True) -> pd.DataFrame | None:
+    """
+    Normaliza a coluna 'Data' para datetime (se existir) e ordena.
+    Mantém comportamento defensivo para DataFrames vazios.
+    """
+    if df is None or df.empty:
         return df
-    df = df.copy()
-    df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
-    df = df.dropna(subset=["Data"]).sort_values("Data").reset_index(drop=True)
+    if "Data" in df.columns:
+        df = df.copy()
+        df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
+        df = df.dropna(subset=["Data"])
+        df = df.sort_values("Data", ascending=ascending)
     return df
 
 
-# ─────────────────────────────────────────────────────────────
-# Loaders básicos (já existentes, mantidos)
-# ─────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════════
+# Loaders (Supabase) – em cache para evitar I/O repetido
+# ════════════════════════════════════════════════════════════════════════════════
 
 @st.cache_data(show_spinner=False)
-def load_setores_from_db() -> pd.DataFrame:
-    sql = """
-        SELECT
-            ticker,
-            nome_empresa,
-            "SETOR",
-            "SUBSETOR",
-            "SEGMENTO",
-            "LISTAGEM"
-        FROM public.setores
-        WHERE ticker IS NOT NULL
-    """
-    return _clean_columns(_read_sql_df(sql))
-
-
-@st.cache_data(show_spinner=False)
-def load_data_from_db(ticker: str) -> pd.DataFrame:
-    sql = """
-        SELECT *
-        FROM public."Demonstracoes_Financeiras"
-        WHERE ticker = :ticker
-        ORDER BY "Data"
-    """
-    return _coerce_sort_by_data(_clean_columns(_read_sql_df(sql, {"ticker": ticker})))
-
-
-@st.cache_data(show_spinner=False)
-def load_multiplos_from_db(ticker: str) -> pd.DataFrame:
-    sql = """
-        SELECT *
-        FROM public.multiplos
-        WHERE ticker = :ticker
-        ORDER BY "Data"
-    """
-    return _coerce_sort_by_data(_clean_columns(_read_sql_df(sql, {"ticker": ticker})))
-
-
-@st.cache_data(show_spinner=False)
-def load_macro_summary() -> pd.DataFrame:
-    sql = """
-        SELECT *
-        FROM public.info_economica_mensal
-        ORDER BY "Data"
-    """
-    return _coerce_sort_by_data(_clean_columns(_read_sql_df(sql)))
-
-
-# ─────────────────────────────────────────────────────────────
-# 🔥 NOVOS LOADERS DE ALTO NÍVEL (PATCH)
-# ─────────────────────────────────────────────────────────────
-
-@st.cache_data(show_spinner=False)
-def load_empresa_completa(ticker: str) -> Dict[str, pd.DataFrame]:
-    """
-    Retorna pacote completo da empresa:
-    - dre
-    - multiplos
-    - anos_hist (int)
-    """
-    dre = load_data_from_db(ticker)
-    multiplos = load_multiplos_from_db(ticker)
-
-    anos_hist = 0
-    if dre is not None and not dre.empty and "Data" in dre.columns:
-        anos_hist = pd.to_datetime(dre["Data"], errors="coerce").dt.year.nunique()
-
-    return {
-        "dre": dre,
-        "multiplos": multiplos,
-        "anos_hist": int(anos_hist),
-    }
-
-
-@st.cache_data(show_spinner=False)
-def load_empresas_segmento(setor: str, subsetor: str, segmento: str) -> pd.DataFrame:
-    sql = """
-        SELECT
-            ticker,
-            nome_empresa
-        FROM public.setores
-        WHERE "SETOR" = :setor
-          AND "SUBSETOR" = :subsetor
-          AND "SEGMENTO" = :segmento
-    """
-    return _clean_columns(
-        _read_sql_df(
-            sql,
-            {
-                "setor": setor,
-                "subsetor": subsetor,
-                "segmento": segmento,
-            },
+def load_setores_from_db() -> pd.DataFrame | None:
+    try:
+        df = _read_sql_df(
+            """
+            SELECT
+                ticker,
+                nome_empresa,
+                "SETOR",
+                "SUBSETOR",
+                "SEGMENTO",
+                "LISTAGEM"
+            FROM public.setores
+            WHERE ticker IS NOT NULL
+            """
         )
-    )
+
+        # normaliza ticker sem .SA
+        df["ticker"] = (
+            df["ticker"]
+            .astype(str)
+            .str.replace(".SA", "", regex=False)
+            .str.strip()
+            .str.upper()
+        )
+
+        # garante colunas esperadas mesmo se houver nulos
+        for c in ["SETOR", "SUBSETOR", "SEGMENTO", "LISTAGEM", "nome_empresa"]:
+            if c not in df.columns:
+                df[c] = ""
+
+        return df
+
+    except Exception as e:
+        st.error(f"Erro ao carregar tabela 'setores' do Supabase: {e}")
+        return None
+
+
+# Alias legado (mantenha se outros módulos importarem esse nome)
+@st.cache_data(show_spinner=False)
+def load_setores_from_supabase() -> pd.DataFrame | None:
+    return load_setores_from_db()
 
 
 @st.cache_data(show_spinner=False)
-def load_macro_clean() -> pd.DataFrame:
+def load_data_from_db(ticker: str) -> pd.DataFrame | None:
     """
-    Retorna macroeconômico mensal já limpo e ordenado.
+    Carrega a tabela Demonstracoes_Financeiras (DFP anual) do Supabase para o ticker informado.
+    Mantém assinatura legado.
     """
-    return load_macro_summary()
+    tk1, tk2 = _normalize_ticker(ticker)
+    try:
+        df = _read_sql_df(
+            """
+            SELECT *
+            FROM public."Demonstracoes_Financeiras"
+            WHERE "Ticker" = :tk1 OR "Ticker" = :tk2
+            ORDER BY "Data" ASC
+            """,
+            {"tk1": tk1, "tk2": tk2},
+        )
+        return _coerce_sort_by_data(df, ascending=True)
+    except Exception as e:
+        st.error(f"Erro ao carregar DRE (DFP) para {ticker}: {e}")
+        return None
+
+
+@st.cache_data(show_spinner=False)
+def load_data_tri_from_db(ticker: str) -> pd.DataFrame | None:
+    """
+    Carrega a tabela Demonstracoes_Financeiras_TRI (TRI/ITR) do Supabase para o ticker informado.
+    """
+    tk1, tk2 = _normalize_ticker(ticker)
+    try:
+        df = _read_sql_df(
+            """
+            SELECT *
+            FROM public."Demonstracoes_Financeiras_TRI"
+            WHERE "Ticker" = :tk1 OR "Ticker" = :tk2
+            ORDER BY "Data" ASC
+            """,
+            {"tk1": tk1, "tk2": tk2},
+        )
+        return _coerce_sort_by_data(df, ascending=True)
+    except Exception as e:
+        st.error(f"Erro ao carregar TRI para {ticker}: {e}")
+        return None
+
+
+@st.cache_data(show_spinner=False)
+def load_multiplos_from_db(ticker: str) -> pd.DataFrame | None:
+    """
+    Carrega a tabela multiplos (anuais) do Supabase para o ticker.
+    """
+    tk1, tk2 = _normalize_ticker(ticker)
+    try:
+        df = _read_sql_df(
+            """
+            SELECT *
+            FROM public.multiplos
+            WHERE "Ticker" = :tk1 OR "Ticker" = :tk2
+            ORDER BY "Data" ASC
+            """,
+            {"tk1": tk1, "tk2": tk2},
+        )
+        return _coerce_sort_by_data(df, ascending=True)
+    except Exception as e:
+        st.error(f"Erro ao carregar múltiplos (anuais) para {ticker}: {e}")
+        return None
+
+
+@st.cache_data(show_spinner=False)
+def load_multiplos_limitado_from_db(ticker: str, limite: int = 250) -> pd.DataFrame | None:
+    """
+    Carrega os últimos `limite` registros da tabela multiplos (anuais) para gráficos leves.
+    Retorna em ordem crescente por Data.
+    """
+    tk1, tk2 = _normalize_ticker(ticker)
+    try:
+        limite = int(limite)
+        df = _read_sql_df(
+            """
+            SELECT *
+            FROM public.multiplos
+            WHERE "Ticker" = :tk1 OR "Ticker" = :tk2
+            ORDER BY "Data" DESC
+            LIMIT :limite
+            """,
+            {"tk1": tk1, "tk2": tk2, "limite": limite},
+        )
+        return _coerce_sort_by_data(df, ascending=True)
+    except Exception as e:
+        st.error(f"Erro ao carregar múltiplos limitados para {ticker}: {e}")
+        return None
+
+
+@st.cache_data(show_spinner=False)
+def load_multiplos_tri_from_db(ticker: str) -> pd.DataFrame | None:
+    """
+    Carrega o registro mais recente de multiplos_TRI (trimestrais, LTM) no Supabase.
+    """
+    tk1, tk2 = _normalize_ticker(ticker)
+    try:
+        df = _read_sql_df(
+            """
+            SELECT *
+            FROM public.multiplos_TRI
+            WHERE "Ticker" = :tk1 OR "Ticker" = :tk2
+            ORDER BY "Data" DESC
+            LIMIT 1
+            """,
+            {"tk1": tk1, "tk2": tk2},
+        )
+        return _coerce_sort_by_data(df, ascending=True)
+    except Exception as e:
+        st.error(f"Erro ao carregar múltiplos TRI para {ticker}: {e}")
+        return None
+
+
+@st.cache_data(show_spinner=False)
+def load_multiplos_tri_hist_from_db(ticker: str, limite: int = 250) -> pd.DataFrame | None:
+    """
+    Carrega histórico (últimos N) de multiplos_TRI para gráficos/inspeção.
+    Retorna em ordem crescente por Data.
+    """
+    tk1, tk2 = _normalize_ticker(ticker)
+    try:
+        limite = int(limite)
+        df = _read_sql_df(
+            """
+            SELECT *
+            FROM public.multiplos_TRI
+            WHERE "Ticker" = :tk1 OR "Ticker" = :tk2
+            ORDER BY "Data" DESC
+            LIMIT :limite
+            """,
+            {"tk1": tk1, "tk2": tk2, "limite": limite},
+        )
+        return _coerce_sort_by_data(df, ascending=True)
+    except Exception as e:
+        st.error(f"Erro ao carregar histórico múltiplos TRI para {ticker}: {e}")
+        return None
+
+
+@st.cache_data(show_spinner=False)
+def load_macro_summary() -> pd.DataFrame | None:
+    """
+    Carrega info_economica (macro anual) do Supabase.
+    Mantém o nome já usado no projeto.
+    """
+    try:
+        df = _read_sql_df(
+            """
+            SELECT *
+            FROM public.info_economica
+            ORDER BY "Data" ASC
+            """
+        )
+        return _coerce_sort_by_data(df, ascending=True)
+    except Exception as e:
+        st.error(f"Erro ao carregar macro (info_economica): {e}")
+        return None
+
+
+@st.cache_data(show_spinner=False)
+def load_macro_mensal() -> pd.DataFrame | None:
+    """
+    Carrega info_economica_mensal (macro mensal) do Supabase.
+    """
+    try:
+        df = _read_sql_df(
+            """
+            SELECT *
+            FROM public.info_economica_mensal
+            ORDER BY "Data" ASC
+            """
+        )
+        return _coerce_sort_by_data(df, ascending=True)
+    except Exception as e:
+        st.error(f"Erro ao carregar macro mensal (info_economica_mensal): {e}")
+        return None
+
+
+__all__ = [
+    "get_supabase_engine",
+    "load_setores_from_db",
+    "load_setores_from_supabase",  # alias legado crítico (basic.py)
+    "load_data_from_db",
+    "load_data_tri_from_db",
+    "load_multiplos_from_db",
+    "load_multiplos_limitado_from_db",
+    "load_multiplos_tri_from_db",
+    "load_multiplos_tri_hist_from_db",
+    "load_macro_summary",
+    "load_macro_mensal",
+]
