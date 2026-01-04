@@ -202,4 +202,6 @@ def main() -> None:
                 "ROIC": roic,
                 "DY": dy,
                 "P/L": pl_mult,
-                "P/VP"
+                "P/VP": pvp,
+                "Payout": payout,
+            })
