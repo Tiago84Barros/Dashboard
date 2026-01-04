@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -10,12 +10,7 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
-# ─────────────────────────────────────────────────────────────
-# Utilitários
-# ─────────────────────────────────────────────────────────────
-
 def _ensure_dt_index(df: pd.DataFrame) -> pd.DataFrame:
-    """Garante índice datetime ordenado."""
     if df is None or df.empty:
         return df
     out = df.copy()
@@ -25,7 +20,6 @@ def _ensure_dt_index(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _get_price(precos: pd.DataFrame, data: pd.Timestamp, ticker: str) -> Optional[float]:
-    """Preço na data para ticker, ou None se inválido."""
     if precos is None or precos.empty:
         return None
     if ticker not in precos.columns:
@@ -43,7 +37,6 @@ def _get_price(precos: pd.DataFrame, data: pd.Timestamp, ticker: str) -> Optiona
 
 
 def _as_div_series(div: Union[pd.Series, pd.DataFrame, None]) -> pd.Series:
-    """Normaliza dividendos para Series com índice datetime."""
     if div is None:
         return pd.Series(dtype="float64")
     if isinstance(div, pd.DataFrame):
@@ -58,18 +51,23 @@ def _as_div_series(div: Union[pd.Series, pd.DataFrame, None]) -> pd.Series:
     return s.astype(float)
 
 
+def _cost_factor(fee_bps: float, slippage_bps: float) -> float:
+    """Retorna fator multiplicativo (1 - custo_total)."""
+    fb = float(fee_bps) / 10000.0
+    sb = float(slippage_bps) / 10000.0
+    total = max(0.0, fb) + max(0.0, sb)
+    # limita custo total para evitar absurdo
+    total = min(total, 0.20)
+    return 1.0 - total
+
+
 def encontrar_proxima_data_valida(data_aporte: pd.Timestamp, precos: pd.DataFrame) -> Optional[pd.Timestamp]:
-    """
-    Encontra a próxima data disponível para aporte no DataFrame de preços.
-    Se a data não existir, pega o próximo dia disponível.
-    """
     if precos is None or precos.empty:
         return None
     data_aporte = pd.Timestamp(data_aporte)
     idx = precos.index
     if data_aporte in idx:
         return data_aporte
-    # próxima data disponível
     prox = idx[idx >= data_aporte]
     if len(prox) == 0:
         return None
@@ -77,10 +75,6 @@ def encontrar_proxima_data_valida(data_aporte: pd.Timestamp, precos: pd.DataFram
 
 
 def _build_monthly_schedule(precos: pd.DataFrame, anos: Sequence[int], start_year_offset: int = 1) -> List[pd.Timestamp]:
-    """
-    Constrói datas de aporte (1º dia de cada mês) e ajusta para o próximo pregão disponível.
-    Por padrão, investe no ano seguinte ao ano dos scores (offset=1).
-    """
     if precos is None or precos.empty or not anos:
         return []
     datas: List[pd.Timestamp] = []
@@ -90,13 +84,8 @@ def _build_monthly_schedule(precos: pd.DataFrame, anos: Sequence[int], start_yea
             d = encontrar_proxima_data_valida(data_nominal, precos)
             if d is not None:
                 datas.append(d)
-    # remove duplicados e ordena
     return sorted(set(datas))
 
-
-# ─────────────────────────────────────────────────────────────
-# Carteira simulada simples (aporte igual para todos)
-# ─────────────────────────────────────────────────────────────
 
 def gerir_carteira_simples(
     precos: pd.DataFrame,
@@ -104,12 +93,9 @@ def gerir_carteira_simples(
     datas_aportes: Sequence[pd.Timestamp],
     dividendos_dict: Optional[Dict[str, Union[pd.Series, pd.DataFrame]]] = None,
     aporte_mensal: float = 1000.0,
+    fee_bps: float = 0.0,
+    slippage_bps: float = 0.0,
 ) -> pd.Series:
-    """
-    Aportes mensais simples em todas as empresas (igualitário),
-    somando dividendos recebidos no mês ao aporte do próprio ticker.
-    Retorna a série do patrimônio total ao longo do tempo.
-    """
     precos = _ensure_dt_index(precos)
     tickers = [t for t in tickers if t in precos.columns]
     if precos.empty or not tickers or not datas_aportes:
@@ -117,6 +103,7 @@ def gerir_carteira_simples(
 
     dividendos_dict = dividendos_dict or {}
     divs = {t: _as_div_series(dividendos_dict.get(t)) for t in tickers}
+    cf = _cost_factor(fee_bps, slippage_bps)
 
     carteira = {t: 0.0 for t in tickers}
     carteira_hist: Dict[pd.Timestamp, Dict[str, float]] = {}
@@ -133,17 +120,15 @@ def gerir_carteira_simples(
             if px is None:
                 continue
 
-            # dividendos recebidos no mês (reinvestidos no mesmo ticker)
             s = divs.get(t, pd.Series(dtype="float64"))
             div_mes = float(s[(s.index.year == data_aporte.year) & (s.index.month == data_aporte.month)].sum()) if not s.empty else 0.0
-            reinvest = div_mes * carteira[t]
+            reinvest = div_mes * carteira[t]  # reinvestimento “sem custo” (aproximação)
 
-            aporte_total = aporte_por_ticker + reinvest
+            aporte_total = (aporte_por_ticker * cf) + reinvest
             carteira[t] += aporte_total / px
 
         carteira_hist[data_aporte] = carteira.copy()
 
-    # série diária do patrimônio com o último snapshot válido até a data
     patrimonio = pd.Series(index=precos.index, dtype="float64")
     datas_hist = sorted(carteira_hist.keys())
 
@@ -169,28 +154,23 @@ def gerir_carteira_simples(
     return patrimonio.ffill()
 
 
-# ─────────────────────────────────────────────────────────────
-# Carteira com aporte por empresa (todas as empresas do segmento)
-# ─────────────────────────────────────────────────────────────
-
 def gerir_carteira_todas_empresas(
     precos: pd.DataFrame,
     tickers: Sequence[str],
     datas_aportes: Sequence[pd.Timestamp],
     dividendos_dict: Dict[str, Union[pd.Series, pd.DataFrame]],
     aporte_mensal: float = 1000.0,
+    fee_bps: float = 0.0,
+    slippage_bps: float = 0.0,
 ) -> pd.DataFrame:
-    """
-    Realiza aportes mensais em todas as empresas e reinveste dividendos pagos no mês no próprio ticker.
-
-    Retorna DataFrame: index datas_aportes (ajustadas) e colunas tickers com patrimônio por ticker.
-    """
     precos = _ensure_dt_index(precos)
     tickers = [t for t in tickers if t in precos.columns]
     if precos.empty or not tickers or not datas_aportes:
         return pd.DataFrame()
 
     divs = {t: _as_div_series(dividendos_dict.get(t)) for t in tickers}
+    cf = _cost_factor(fee_bps, slippage_bps)
+
     carteira = {t: 0.0 for t in tickers}
     patrimonio: Dict[str, Dict[pd.Timestamp, float]] = {t: {} for t in tickers}
 
@@ -208,27 +188,18 @@ def gerir_carteira_todas_empresas(
             div_mes = float(s[(s.index.year == data_aporte.year) & (s.index.month == data_aporte.month)].sum()) if not s.empty else 0.0
             reinvest = div_mes * carteira[t]
 
-            aporte_total = float(aporte_mensal) + reinvest
+            aporte_total = (float(aporte_mensal) * cf) + reinvest
             carteira[t] += aporte_total / px
             patrimonio[t][data_aporte] = carteira[t] * px
 
-    df = pd.DataFrame.from_dict(patrimonio, orient="columns").sort_index()
-    return df
+    return pd.DataFrame.from_dict(patrimonio, orient="columns").sort_index()
 
-
-# ─────────────────────────────────────────────────────────────
-# Tesouro Selic (benchmark macro)
-# ─────────────────────────────────────────────────────────────
 
 def calcular_patrimonio_selic_macro(
     dados_macro: pd.DataFrame,
     datas_aportes: Sequence[pd.Timestamp],
     aporte_mensal: float = 1000.0,
 ) -> pd.DataFrame:
-    """
-    Evolução do patrimônio no Tesouro Selic (aproximação mensal).
-    Considera que a taxa Selic anual (coluna 'Selic') é aplicada com conversão para taxa mensal.
-    """
     if dados_macro is None or dados_macro.empty or not datas_aportes:
         return pd.DataFrame(columns=["Tesouro Selic"])
 
@@ -251,7 +222,6 @@ def calcular_patrimonio_selic_macro(
         ano_ref = int(d.year)
         taxa_ano = dm.loc[dm.index.year == ano_ref, "Selic"]
         if taxa_ano.empty:
-            # fallback: última taxa conhecida antes da data
             prev = dm.loc[dm.index <= d, "Selic"]
             if prev.empty:
                 continue
@@ -266,10 +236,6 @@ def calcular_patrimonio_selic_macro(
     return df_patr.sort_index()
 
 
-# ─────────────────────────────────────────────────────────────
-# Estratégia: líderes por segmento + deterioração de fundamentos
-# ─────────────────────────────────────────────────────────────
-
 def gerir_carteira(
     precos: pd.DataFrame,
     df_scores: pd.DataFrame,
@@ -278,17 +244,9 @@ def gerir_carteira(
     aporte_mensal: float = 1000.0,
     deterioracao_limite: float = 0.0,
     registrar_eventos: bool = False,
+    fee_bps: float = 0.0,
+    slippage_bps: float = 0.0,
 ):
-    """
-    Estratégia:
-    - Em cada ano de investimento (Y), referencia scores do ano (Y-1).
-    - Compra líderes conforme `lideres_por_ano` (Ano=ano_ref).
-    - Reinveste dividendos mensalmente.
-    - Se uma empresa (não líder atual) deteriorar fundamentos além do limite, vende e migra para líder do ano_ref.
-
-    Retorna:
-      - (df_patrimonio, datas_aportes) ou (df_patrimonio, datas_aportes, eventos) se registrar_eventos=True
-    """
     precos = _ensure_dt_index(precos)
 
     if precos is None or precos.empty:
@@ -300,20 +258,17 @@ def gerir_carteira(
     if lideres_por_ano is None or lideres_por_ano.empty:
         return (pd.DataFrame(), []) if not registrar_eventos else (pd.DataFrame(), [], [])
 
-    # Normaliza dividendos
     divs = {t: _as_div_series(dividendos_dict.get(t)) for t in precos.columns}
+    cf = _cost_factor(fee_bps, slippage_bps)
 
-    # anos de score disponíveis
     anos_scores = sorted(int(a) for a in pd.to_numeric(df_scores.get("Ano"), errors="coerce").dropna().unique())
     if not anos_scores:
         return (pd.DataFrame(), []) if not registrar_eventos else (pd.DataFrame(), [], [])
 
-    # agenda mensal (investimento no ano seguinte ao score)
     datas_aportes = _build_monthly_schedule(precos, anos_scores, start_year_offset=1)
     if not datas_aportes:
         return (pd.DataFrame(), []) if not registrar_eventos else (pd.DataFrame(), [], [])
 
-    # leader lookup: ano -> ticker
     lider_map = {}
     for _, r in lideres_por_ano.dropna(subset=["Ano", "ticker"]).iterrows():
         try:
@@ -321,7 +276,6 @@ def gerir_carteira(
         except Exception:
             continue
 
-    # score lookup: (ano, ticker) -> score
     df_scores2 = df_scores.copy()
     df_scores2["Ano"] = pd.to_numeric(df_scores2["Ano"], errors="coerce")
     df_scores2["ticker"] = df_scores2["ticker"].astype(str)
@@ -331,10 +285,9 @@ def gerir_carteira(
     for _, r in df_scores2.dropna(subset=["Ano", "ticker", "Score_Ajustado"]).iterrows():
         score_map[(int(r["Ano"]), str(r["ticker"]))] = float(r["Score_Ajustado"])
 
-    # score inicial (base): primeiro ano disponível (para cálculo de deterioração)
     ano_base = anos_scores[0]
 
-    carteira = defaultdict(float)  # ticker -> quantidade
+    carteira = defaultdict(float)
     aporte_acumulado = 0.0
     registros: List[dict] = []
     eventos = [] if registrar_eventos else None
@@ -343,10 +296,8 @@ def gerir_carteira(
     ano_ref_atual: Optional[int] = None
 
     for data_sinal in datas_aportes:
-        # ano de referência do score para aquele aporte (investimento em Y usa score de Y-1)
         ano_ref = int(data_sinal.year - 1)
 
-        # Atualiza líder do ano_ref (entrada em carteira quando aparece)
         if ano_ref != ano_ref_atual:
             ano_ref_atual = ano_ref
             novo_lider = lider_map.get(ano_ref)
@@ -355,7 +306,7 @@ def gerir_carteira(
                 if registrar_eventos:
                     eventos.append({"data": data_sinal.strftime("%Y-%m"), "tipo": "entrada", "ticker": novo_lider})
 
-        # 1) Reinvestimento de dividendos do mês (por ticker já em carteira)
+        # dividendos (reinvest sem custo)
         for tk in list(carteira.keys()):
             if carteira[tk] <= 0:
                 continue
@@ -371,7 +322,7 @@ def gerir_carteira(
             valor_reinvestido = div_mes * carteira[tk]
             carteira[tk] += valor_reinvestido / px
 
-        # 2) Aporte mensal (com saldo acumulado de meses sem preço)
+        # aporte com custo
         total_a_aportar = float(aporte_mensal) + float(aporte_acumulado)
         aporte_acumulado = 0.0
 
@@ -382,12 +333,11 @@ def gerir_carteira(
                 if px is None:
                     aporte_acumulado += aporte_por_lider
                     continue
-                carteira[lider] += aporte_por_lider / px
+                carteira[lider] += (aporte_por_lider * cf) / px
         else:
-            # sem líderes ainda, acumula
             aporte_acumulado += total_a_aportar
 
-        # 3) Regra de deterioração (vender não-líder e migrar para o líder do ano_ref)
+        # deterioração: venda/compra com custo
         lider_destino = lider_map.get(ano_ref)
         if lider_destino:
             for antiga in list(carteira.keys()):
@@ -396,9 +346,7 @@ def gerir_carteira(
 
                 s_ini = score_map.get((ano_base, antiga))
                 s_atual = score_map.get((ano_ref, antiga))
-                if s_ini is None or s_atual is None:
-                    continue
-                if s_ini == 0:
+                if s_ini is None or s_atual is None or s_ini == 0:
                     continue
 
                 razao = float(s_atual) / float(s_ini)
@@ -408,16 +356,16 @@ def gerir_carteira(
                     if px_venda is None or px_dest is None:
                         continue
 
-                    # vende tudo de 'antiga' e compra 'lider_destino'
-                    valor = carteira[antiga] * px_venda
-                    qtd_nova = valor / px_dest
+                    valor_bruto = carteira[antiga] * px_venda
+                    valor_liquido = valor_bruto * cf  # custo de venda
+                    qtd_nova = (valor_liquido * cf) / px_dest  # custo de compra
+
                     carteira.pop(antiga, None)
                     carteira[lider_destino] += qtd_nova
 
                     if registrar_eventos:
                         eventos.append({"data": data_sinal.strftime("%Y-%m"), "tipo": "saida", "ticker": antiga})
 
-        # 4) Registro do patrimônio no mês
         registro = {"date": data_sinal}
         total = 0.0
         for tk, qtd in carteira.items():
@@ -433,14 +381,8 @@ def gerir_carteira(
     if not registros:
         return (pd.DataFrame(), datas_aportes) if not registrar_eventos else (pd.DataFrame(), datas_aportes, eventos)
 
-    df_patrimonio = (
-        pd.DataFrame(registros)
-        .set_index("date")
-        .sort_index()
-        .ffill()
-    )
+    df_patrimonio = pd.DataFrame(registros).set_index("date").sort_index().ffill()
 
-    # remove linhas onde patrimônio total é zero (ruído inicial)
     if "Patrimônio" in df_patrimonio.columns:
         df_patrimonio = df_patrimonio[df_patrimonio["Patrimônio"].fillna(0) != 0]
 
