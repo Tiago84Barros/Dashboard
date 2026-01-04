@@ -264,17 +264,17 @@ def _month_end_index(df: pd.DataFrame) -> pd.DataFrame:
 
 def build_monthly_df(dados: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     # Selic final e média do mês (nível)
-    selic_final = dados["selic"].resample("M").last().rename(columns={"selic": "Selic_Final"}) if not dados["selic"].empty else None
-    selic_media = dados["selic"].resample("M").mean().rename(columns={"selic": "Selic_Media"}) if not dados["selic"].empty else None
+    selic_final = dados["selic"].resample("ME").last().rename(columns={"selic": "Selic_Final"}) if not dados["selic"].empty else None
+    selic_media = dados["selic"].resample("ME").mean().rename(columns={"selic": "Selic_Media"}) if not dados["selic"].empty else None
 
     # Câmbio final do mês
-    cambio_final = dados["cambio"].resample("M").last().rename(columns={"cambio": "Cambio_Final"}) if not dados["cambio"].empty else None
+    cambio_final = dados["cambio"].resample("ME").last().rename(columns={"cambio": "Cambio_Final"}) if not dados["cambio"].empty else None
 
     # Dívida pública final do mês
-    div_final = dados["divida_publica"].resample("M").last().rename(columns={"divida_publica": "Divida_Publica_Final"}) if not dados["divida_publica"].empty else None
+    div_final = dados["divida_publica"].resample("ME").last().rename(columns={"divida_publica": "Divida_Publica_Final"}) if not dados["divida_publica"].empty else None
 
     # IPCA mensal (MoM) e 12m acumulado (composto)
-    ipca_mom = dados["ipca"].resample("M").last().rename(columns={"ipca": "IPCA_MoM"}) if not dados["ipca"].empty else None
+    ipca_mom = dados["ipca"].resample("ME").last().rename(columns={"ipca": "IPCA_MoM"}) if not dados["ipca"].empty else None
     ipca_12m = None
     if ipca_mom is not None and not ipca_mom.empty:
         # composto 12m: (1+moM/100).rolling(12).prod()-1
@@ -283,14 +283,14 @@ def build_monthly_df(dados: Dict[str, pd.DataFrame]) -> pd.DataFrame:
         ipca_12m["IPCA_12m"] = ipca_12m["IPCA_12m"] * 100.0  # em %
 
     # ICC final e média do mês (nível) + delta 12m (nível)
-    icc_final = dados["icc"].resample("M").last().rename(columns={"icc": "ICC_Final"}) if not dados["icc"].empty else None
-    icc_media = dados["icc"].resample("M").mean().rename(columns={"icc": "ICC_Media"}) if not dados["icc"].empty else None
+    icc_final = dados["icc"].resample("ME").last().rename(columns={"icc": "ICC_Final"}) if not dados["icc"].empty else None
+    icc_media = dados["icc"].resample("ME").mean().rename(columns={"icc": "ICC_Media"}) if not dados["icc"].empty else None
     icc_delta_12m = None
     if icc_final is not None and not icc_final.empty:
         icc_delta_12m = icc_final["ICC_Final"].diff(12).to_frame("ICC_delta_12m")
 
     # Balança comercial (mensal já é mensal; por segurança soma no mês)
-    bal = dados["balanca_comercial"].resample("M").sum().rename(columns={"balanca_comercial": "BALANCA_COMERCIAL"}) if not dados["balanca_comercial"].empty else None
+    bal = dados["balanca_comercial"].resample("ME").sum().rename(columns={"balanca_comercial": "BALANCA_COMERCIAL"}) if not dados["balanca_comercial"].empty else None
 
     parts = [p for p in [selic_final, selic_media, cambio_final, ipca_mom, ipca_12m, icc_final, icc_media, icc_delta_12m, bal, div_final] if p is not None]
 
