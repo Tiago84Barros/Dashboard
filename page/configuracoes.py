@@ -160,7 +160,64 @@ def render() -> None:
         module_attr_name="dados_cvm_itr",
     )
 
-
-# Compatibilidade com loaders que chamam `configuracoes()`
-def configuracoes() -> None:
-    render()
+    # =========================
+    # BOTÃO 3: Informações Econômicas
+    # =========================
+   
+   st.markdown("## 3. Informações Econômicas (Macro Brasil)")
+   
+   with st.expander("Detalhes / Variáveis de ambiente (recomendado)", expanded=False):
+       st.write("SUPABASE_DB_URL definida?", bool(st.secrets.get("SUPABASE_DB_URL", None)) or bool(os.getenv("SUPABASE_DB_URL")))
+       st.write("ICC_MODE (final|mean):", os.getenv("ICC_MODE", "final"))
+       st.write("MACRO_START_DATE (YYYY-MM-DD):", os.getenv("MACRO_START_DATE", "2010-01-01"))
+       st.write("MACRO_MAX_YEARS_CHUNK:", os.getenv("MACRO_MAX_YEARS_CHUNK", "10"))
+       st.write("MACRO_WRITE_MONTHLY (1 para mensal):", os.getenv("MACRO_WRITE_MONTHLY", "0"))
+   
+   if "job_macro_running" not in st.session_state:
+       st.session_state["job_macro_running"] = False
+   
+   colA, colB = st.columns([1, 2])
+   
+   with colA:
+       run_macro = st.button(
+           "Atualizar Informações Econômicas (BCB)",
+           disabled=st.session_state["job_macro_running"],
+           use_container_width=True,
+       )
+   
+   with colB:
+       st.info(
+           "Este botão executa pickup/dados_macro_brasil.py para coletar séries do BCB/SGS, "
+           "consolidar anual (sempre) e mensal (se MACRO_WRITE_MONTHLY=1), "
+           "e gravar em public.info_economica e opcionalmente public.info_economica_mensal."
+       )
+   
+   if run_macro:
+       st.session_state["job_macro_running"] = True
+       buf_out, buf_err = io.StringIO(), io.StringIO()
+       try:
+           with redirect_stdout(buf_out), redirect_stderr(buf_err):
+               dados_macro_brasil.main()
+   
+           out = buf_out.getvalue().strip()
+           err = buf_err.getvalue().strip()
+   
+           if out:
+               st.success("Macro atualizado com sucesso.")
+               st.code(out)
+           if err:
+               st.warning("Warnings/Logs adicionais:")
+               st.code(err)
+   
+       except Exception as e:
+           st.error(f"Falha ao atualizar Macro: {e}")
+           st.code(buf_out.getvalue())
+           st.code(buf_err.getvalue())
+       finally:
+           st.session_state["job_macro_running"] = False
+   
+   
+   
+   # Compatibilidade com loaders que chamam `configuracoes()`
+   def configuracoes() -> None:
+       render()
