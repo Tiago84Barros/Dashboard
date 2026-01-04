@@ -54,36 +54,42 @@ def _read_sql_df(sql: str, params: dict | None = None) -> pd.DataFrame:
 # ════════════════════════════════════════════════════════════════════════════════
 
 @st.cache_data(show_spinner=False)
-def load_setores_from_db() -> Optional[pd.DataFrame]:
-    """
-    Compatibilidade: mantém o nome antigo, mas agora lê do Supabase.
-    Retorna as colunas esperadas pelo basic.py: ticker, SETOR, SUBSETOR, SEGMENTO.
-    """
+def load_setores_from_db() -> pd.DataFrame | None:
     try:
         df = _read_sql_df(
             """
             SELECT
                 ticker,
-                setor     AS "SETOR",
-                subsetor  AS "SUBSETOR",
-                segmento  AS "SEGMENTO"
+                "SETOR",
+                "SUBSETOR",
+                "SEGMENTO",
+                nome_empresa
             FROM public.setores
             WHERE ticker IS NOT NULL
             """
         )
-        # Normalização defensiva
-        df["ticker"] = df["ticker"].astype(str).str.replace(".SA", "", regex=False).str.upper()
+
+        df["ticker"] = (
+            df["ticker"]
+            .astype(str)
+            .str.replace(".SA", "", regex=False)
+            .str.upper()
+        )
+
+        # garante que as colunas existam (defensivo)
+        for c in ["SETOR", "SUBSETOR", "SEGMENTO"]:
+            if c not in df.columns:
+                df[c] = ""
+
         return df
+
     except Exception as e:
         st.error(f"Erro ao carregar tabela 'setores' do Supabase: {e}")
         return None
 
 
 @st.cache_data(show_spinner=False)
-def load_setores_from_supabase() -> Optional[pd.DataFrame]:
-    """
-    Nome explícito (recomendado para novas páginas).
-    """
+def load_setores_from_supabase() -> pd.DataFrame | None:
     return load_setores_from_db()
 
 
