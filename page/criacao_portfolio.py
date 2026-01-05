@@ -4,10 +4,8 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Optional, Sequence, Tuple, Dict, Any
+from typing import List, Optional, Sequence, Tuple
 
-import io
-import numpy as np
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
@@ -27,6 +25,14 @@ from core.scoring import (
     calcular_score_acumulado,
     penalizar_plato,
 )
+
+# >>> PATCH SCORE V2 (import opcional)
+try:
+    from core.scoring_v2 import calcular_score_acumulado_v2
+except Exception:
+    calcular_score_acumulado_v2 = None
+# <<< PATCH SCORE V2
+
 from core.portfolio import (
     calcular_patrimonio_selic_macro,
     gerir_carteira,
@@ -71,35 +77,6 @@ def _safe_year_count_from_dre(dre: pd.DataFrame) -> int:
     return int(years.dropna().nunique())
 
 
-def _calc_turnover_from_lideres(lideres_df: pd.DataFrame) -> int:
-    """
-    Retorna número de trocas de líder ao longo dos anos (proxy de estabilidade).
-    """
-    if lideres_df is None or lideres_df.empty:
-        return 0
-
-    tmp = lideres_df.copy()
-    if "Ano" not in tmp.columns or "ticker" not in tmp.columns:
-        return 0
-
-    tmp["Ano"] = pd.to_numeric(tmp["Ano"], errors="coerce")
-    tmp = tmp.dropna(subset=["Ano", "ticker"]).sort_values("Ano")
-    if tmp.empty:
-        return 0
-
-    leaders = tmp["ticker"].astype(str).tolist()
-    changes = 0
-    last = None
-    for tk in leaders:
-        if last is None:
-            last = tk
-            continue
-        if tk != last:
-            changes += 1
-            last = tk
-    return int(changes)
-
-
 @dataclass(frozen=True)
 class EmpresaCarregada:
     ticker: str     # sem .SA
@@ -141,11 +118,7 @@ def _carregar_empresa(row: dict) -> Optional[EmpresaCarregada]:
         return None
 
 
-def _filtrar_tickers_com_min_anos(
-    tickers: Sequence[str],
-    min_anos: int = 10,
-    max_workers: int = 12,
-) -> List[str]:
+def _filtrar_tickers_com_min_anos(tickers: Sequence[str], min_anos: int = 10, max_workers: int = 12) -> List[str]:
     """
     Filtra tickers que têm pelo menos `min_anos` anos de DRE.
     Usa paralelismo para acelerar.
@@ -159,7 +132,7 @@ def _filtrar_tickers_com_min_anos(
         return tk, (_safe_year_count_from_dre(dre) >= min_anos)
 
     ok: List[str] = []
-    max_workers = min(int(max_workers), max(2, len(tickers)))
+    max_workers = min(max_workers, max(2, len(tickers)))
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futs = {ex.submit(_check, tk): tk for tk in tickers}
         for fut in as_completed(futs):
@@ -194,48 +167,17 @@ def _build_macro() -> Optional[pd.DataFrame]:
 def render():
     st.markdown("<h1 style='text-align: center;'>Criação de Portfólio</h1>", unsafe_allow_html=True)
 
-    # ─────────────────────────────────────────────────────────
-    # Sidebar (layout existente preservado + novos expanders)
-    # ─────────────────────────────────────────────────────────
     with st.sidebar:
         margem_input = st.text_input("% acima do Tesouro Selic para destacar (obrigatório):", value="")
 
-        # Melhoria incremental (não disruptiva): parâmetros de auditoria
-        with st.expander("Parâmetros de Auditoria (opcional)", expanded=False):
-            st.caption("Se você não alterar nada aqui, o comportamento permanece igual ao atual.")
-            publication_lag_years = st.number_input(
-                "Defasagem contábil (anos) — anti look-ahead",
-                min_value=0,
-                max_value=3,
-                value=0,
-                step=1,
-            )
-            fee_bps = st.number_input(
-                "Custo por operação (bps) — compra/venda",
-                min_value=0,
-                max_value=200,
-                value=0,
-                step=5,
-            )
-            slippage_bps = st.number_input(
-                "Slippage (bps) — proxy de execução",
-                min_value=0,
-                max_value=200,
-                value=0,
-                step=5,
-            )
-
-        # Melhoria incremental (não disruptiva): performance/execução
-        with st.expander("Performance / Execução (opcional)", expanded=False):
-            st.caption("Apenas para ajuste de tempo de execução. Padrões seguros mantêm o comportamento.")
-            max_workers = st.slider("Paralelismo (max_workers)", min_value=4, max_value=24, value=12, step=1)
-            limite_tickers = st.number_input(
-                "Limite de tickers por segmento (0 = sem limite)",
-                min_value=0,
-                max_value=200,
-                value=0,
-                step=5,
-            )
+        # >>> PATCH SCORE V2 (controle opcional, não quebra nada)
+        with st.expander("Scoring (opções)", expanded=False):
+            if calcular_score_acumulado_v2 is None:
+                st.caption("Score v2 indisponível (core/scoring_v2.py não encontrado).")
+                use_score_v2 = False
+            else:
+                use_score_v2 = st.checkbox("Usar Score v2 (robusto)", value=True)
+        # <<< PATCH SCORE V2
 
         gerar = st.button("Gerar Portfólio")
 
@@ -252,11 +194,7 @@ def render():
     if not gerar:
         st.stop()
 
-    # ─────────────────────────────────────────────────────────
-    # Estado e bases (Supabase-only)
-    # ─────────────────────────────────────────────────────────
-
-    # setores em sessão (layout preservado)
+    # ── Carrega setores (cache em sessão)
     setores_df = st.session_state.get("setores_df")
     if setores_df is None or getattr(setores_df, "empty", True):
         setores_df = load_setores_from_db()
@@ -266,16 +204,35 @@ def render():
         setores_df = _clean_columns(setores_df)
         st.session_state["setores_df"] = setores_df
 
+    # valida colunas esperadas
     required_cols = {"SETOR", "SUBSETOR", "SEGMENTO", "ticker"}
     if not required_cols.issubset(setores_df.columns):
         st.error(f"Base de setores não contém as colunas esperadas: {sorted(required_cols)}")
         st.stop()
+
+    # >>> PATCH SCORE V2 (mapas ticker -> SEGMENTO/SUBSETOR/SETOR)
+    _tmp = setores_df[["ticker", "SEGMENTO", "SUBSETOR", "SETOR"]].copy()
+    _tmp["ticker"] = (
+        _tmp["ticker"].astype(str)
+        .str.upper()
+        .str.replace(".SA", "", regex=False)
+        .str.strip()
+    )
+    _tmp["SEGMENTO"] = _tmp["SEGMENTO"].fillna("OUTROS").astype(str)
+    _tmp["SUBSETOR"] = _tmp["SUBSETOR"].fillna("OUTROS").astype(str)
+    _tmp["SETOR"] = _tmp["SETOR"].fillna("OUTROS").astype(str)
+
+    group_map = dict(zip(_tmp["ticker"], _tmp["SEGMENTO"]))
+    subsetor_map = dict(zip(_tmp["ticker"], _tmp["SUBSETOR"]))
+    setor_map = dict(zip(_tmp["ticker"], _tmp["SETOR"]))
+    # <<< PATCH SCORE V2
 
     dados_macro = _build_macro()
     if dados_macro is None or dados_macro.empty:
         st.error("Não foi possível carregar/normalizar os dados macroeconômicos.")
         st.stop()
 
+    # grupos únicos por segmento
     setores_unicos = (
         setores_df[["SETOR", "SUBSETOR", "SEGMENTO"]]
         .drop_duplicates()
@@ -284,14 +241,8 @@ def render():
 
     empresas_lideres_finais: List[dict] = []
 
-    # NOVO: acumular ranking de segmentos aprovados (sem mexer no layout existente)
-    segmentos_aprovados: List[Dict[str, Any]] = []
-
-    # NOVO: KPI de estabilidade (turnover) por segmento
-    estabilidade_segmentos: List[Dict[str, Any]] = []
-
     # ─────────────────────────────────────────────────────────
-    # Loop por segmento (pipeline existente + diagnósticos opcionais)
+    # Loop por segmento (pipeline leve)
     # ─────────────────────────────────────────────────────────
     for _, seg in setores_unicos.iterrows():
         setor = str(seg["SETOR"])
@@ -306,32 +257,21 @@ def render():
 
         tickers_segmento = [_strip_sa(t) for t in empresas_segmento["ticker"].astype(str).tolist()]
         tickers_segmento = [t for t in tickers_segmento if t]
-        n_segmento_total = len(set(tickers_segmento))
 
-        if n_segmento_total <= 1:
+        # ignora segmentos com poucos tickers
+        if len(set(tickers_segmento)) <= 1:
             continue
 
-        # opcional: limitar universo por segmento (apenas performance/debug)
-        if int(limite_tickers) > 0 and n_segmento_total > int(limite_tickers):
-            tickers_segmento = tickers_segmento[: int(limite_tickers)]
-            empresas_segmento = empresas_segmento[
-                empresas_segmento["ticker"].astype(str).apply(lambda x: _strip_sa(x) in set(tickers_segmento))
-            ].copy()
-
         # filtro de histórico mínimo (>=10 anos)
-        tickers_validos = _filtrar_tickers_com_min_anos(
-            tickers_segmento,
-            min_anos=10,
-            max_workers=int(max_workers),
-        )
-        n_validos = len(tickers_validos)
-        if n_validos <= 1:
+        tickers_validos = _filtrar_tickers_com_min_anos(tickers_segmento, min_anos=10, max_workers=12)
+        if len(tickers_validos) <= 1:
             continue
 
         tickers_validos_set = set(tickers_validos)
         empresas_validas = empresas_segmento[
             empresas_segmento["ticker"].astype(str).apply(lambda x: _strip_sa(x) in tickers_validos_set)
         ]
+
         if empresas_validas.empty or len(empresas_validas) <= 1:
             continue
 
@@ -339,15 +279,14 @@ def render():
         lista_empresas: List[EmpresaCarregada] = []
         rows = empresas_validas.to_dict("records")
 
-        with ThreadPoolExecutor(max_workers=int(max_workers)) as ex:
+        with ThreadPoolExecutor(max_workers=12) as ex:
             futs = [ex.submit(_carregar_empresa, r) for r in rows]
             for fut in as_completed(futs):
                 item = fut.result()
                 if item is not None:
                     lista_empresas.append(item)
 
-        n_carregadas = len(lista_empresas)
-        if n_carregadas <= 1:
+        if len(lista_empresas) <= 1:
             continue
 
         # mapeia setor por empresa
@@ -356,23 +295,27 @@ def render():
         # pesos por SETOR (regra existente)
         pesos = get_pesos(setor)
 
+        # score acumulado
         payload_empresas = [
             {"ticker": e.ticker, "nome": e.nome, "multiplos": e.multiplos, "dre": e.dre}
             for e in lista_empresas
         ]
 
-        # score acumulado (com defasagem se suportado)
-        try:
-            score = calcular_score_acumulado(
-                payload_empresas,
-                setores_empresa,
-                pesos,
-                dados_macro,
+        # >>> PATCH SCORE V2 (switch v1/v2)
+        if ("use_score_v2" in locals()) and use_score_v2 and (calcular_score_acumulado_v2 is not None):
+            score = calcular_score_acumulado_v2(
+                lista_empresas=payload_empresas,
+                group_map=group_map,
+                subsetor_map=subsetor_map,
+                setor_map=setor_map,
+                pesos_utilizados=pesos,
                 anos_minimos=4,
-                publication_lag_years=int(publication_lag_years),
+                prefer_group_col="SEGMENTO",
+                min_n_group=7,
             )
-        except TypeError:
+        else:
             score = calcular_score_acumulado(payload_empresas, setores_empresa, pesos, dados_macro, anos_minimos=4)
+        # <<< PATCH SCORE V2
 
         if score is None or score.empty:
             continue
@@ -394,7 +337,7 @@ def render():
         if score.empty:
             continue
 
-        # dividendos + líderes + backtest
+        # dividendos (normaliza para .SA) + líderes + backtest
         tickers_score = [str(t) for t in score["ticker"].dropna().unique().tolist()]
         tickers_score_yf = [_norm_sa(t) for t in tickers_score]
         dividendos = coletar_dividendos(tickers_score_yf)
@@ -403,22 +346,7 @@ def render():
         if lideres is None or lideres.empty:
             continue
 
-        # KPI estabilidade (proxy)
-        turnover = _calc_turnover_from_lideres(lideres)
-
-        # backtest com custos se suportado
-        try:
-            patrimonio_empresas, datas_aportes = gerir_carteira(
-                precos,
-                score,
-                lideres,
-                dividendos,
-                fee_bps=float(fee_bps),
-                slippage_bps=float(slippage_bps),
-            )
-        except TypeError:
-            patrimonio_empresas, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
-
+        patrimonio_empresas, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
         if patrimonio_empresas is None or patrimonio_empresas.empty:
             continue
 
@@ -437,9 +365,7 @@ def render():
         if diff < margem_superior:
             continue
 
-        # ─────────────────────────────────────────────────────────
-        # Exibição do segmento destacado (layout original INTACTO)
-        # ─────────────────────────────────────────────────────────
+        # ── Exibição do segmento destacado
         st.markdown(f"### {setor} > {subsetor} > {segmento}")
         st.markdown(f"**Valor final da estratégia:** R$ {final_empresas:,.2f} ({diff:.1f}% acima do Tesouro Selic)")
 
@@ -472,30 +398,6 @@ def render():
                 unsafe_allow_html=True,
             )
 
-        # ─────────────────────────────────────────────────────────
-        # NOVO: Diagnóstico do segmento (não disruptivo)
-        # ─────────────────────────────────────────────────────────
-        with st.expander("Diagnóstico do Segmento (opcional)", expanded=False):
-            ini_bt = str(pd.to_datetime(patrimonio_empresas.index.min()).date()) if not patrimonio_empresas.empty else "-"
-            fim_bt = str(pd.to_datetime(patrimonio_empresas.index.max()).date()) if not patrimonio_empresas.empty else "-"
-            st.markdown(
-                f"""
-                **Cobertura do Segmento**
-                - Empresas no segmento (após limite opcional): **{n_segmento_total}**
-                - Passaram filtro de histórico (>=10 anos): **{n_validos}**
-                - Carregadas com dados completos (DRE + Múltiplos): **{n_carregadas}**
-
-                **Backtest**
-                - Janela (datas): **{ini_bt} → {fim_bt}**
-                - Turnover (trocas de líder): **{turnover}**
-                - Parâmetros de auditoria:
-                  - Defasagem contábil: **{int(publication_lag_years)}**
-                  - Fee (bps): **{float(fee_bps):.0f}**
-                  - Slippage (bps): **{float(slippage_bps):.0f}**
-                """,
-                unsafe_allow_html=True,
-            )
-
         # líderes do último ano de score (para sugerir compra no próximo ano)
         ultimo_ano = int(pd.to_numeric(score["Ano"], errors="coerce").max())
         lideres_ano_anterior = lideres[lideres["Ano"] == ultimo_ano]
@@ -513,40 +415,11 @@ def render():
                 }
             )
 
-        # NOVO: acumular dados para ranking final e KPI
-        segmentos_aprovados.append(
-            {
-                "SETOR": setor,
-                "SUBSETOR": subsetor,
-                "SEGMENTO": segmento,
-                "Empresas_no_segmento": n_segmento_total,
-                "Empresas_validas": n_validos,
-                "Empresas_carregadas": n_carregadas,
-                "Turnover_lider": turnover,
-                "Valor_final_estrategia": final_empresas,
-                "Valor_final_selic": final_selic,
-                "%_acima_selic": diff,
-                "Defasagem": int(publication_lag_years),
-                "Fee_bps": float(fee_bps),
-                "Slippage_bps": float(slippage_bps),
-            }
-        )
-
-        estabilidade_segmentos.append(
-            {
-                "SETOR": setor,
-                "SUBSETOR": subsetor,
-                "SEGMENTO": segmento,
-                "Turnover_lider": turnover,
-                "Score_instabilidade": turnover,  # alias simples (pode evoluir depois)
-            }
-        )
-
     # ─────────────────────────────────────────────────────────
-    # Bloco final: líderes para o próximo ano + distribuição setorial (layout original)
+    # Bloco final: líderes para o próximo ano + distribuição setorial
     # ─────────────────────────────────────────────────────────
     if empresas_lideres_finais:
-        st.markdown("## \U0001F4D1 Empresas líderes para o próximo ano")
+        st.markdown("## 📑 Empresas líderes para o próximo ano")
         colunas_lideres = st.columns(3)
         for idx, emp in enumerate(empresas_lideres_finais):
             col = colunas_lideres[idx % 3]
@@ -562,7 +435,7 @@ def render():
                 unsafe_allow_html=True,
             )
 
-        st.markdown("## \U0001F4CA Distribuição setorial do portfólio sugerido")
+        st.markdown("## 📊 Distribuição setorial do portfólio sugerido")
         setores_portfolio = pd.Series([e["setor"] for e in empresas_lideres_finais]).value_counts()
         fig, ax = plt.subplots()
         ax.pie(
@@ -576,10 +449,10 @@ def render():
         st.pyplot(fig)
 
     # ─────────────────────────────────────────────────────────
-    # Etapa: Desempenho parcial no ano corrente (layout original)
+    # Etapa: Desempenho parcial no ano corrente (líderes do ano)
     # ─────────────────────────────────────────────────────────
     if empresas_lideres_finais:
-        st.markdown("## \U0001F4CA Desempenho parcial das líderes (ano atual)")
+        st.markdown("## 📊 Desempenho parcial das líderes (ano atual)")
 
         ano_corrente = datetime.now().year
         tickers_corrente = [e["ticker"] for e in empresas_lideres_finais if int(e["ano_compra"]) == ano_corrente]
@@ -610,24 +483,9 @@ def render():
                 if data_valida is not None and data_valida in precos.index:
                     datas_aporte.append(data_valida)
 
-            # aporte simples com custos se suportado
-            try:
-                patrimonio_aporte = gerir_carteira_simples(
-                    precos,
-                    tickers_limpos,
-                    datas_aporte,
-                    dividendos_dict=dividendos_dict,
-                    fee_bps=float(fee_bps),
-                    slippage_bps=float(slippage_bps),
-                )
-            except TypeError:
-                patrimonio_aporte = gerir_carteira_simples(
-                    precos,
-                    tickers_limpos,
-                    datas_aporte,
-                    dividendos_dict=dividendos_dict,
-                )
+            patrimonio_aporte = gerir_carteira_simples(precos, tickers_limpos, datas_aporte, dividendos_dict=dividendos_dict)
 
+            # Selic benchmark (no mesmo índice do patrimônio da estratégia)
             df_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aporte)
             if df_selic is None or df_selic.empty:
                 st.warning("⚠️ Não foi possível calcular o benchmark Selic para o período.")
@@ -682,36 +540,5 @@ def render():
                 """,
                 unsafe_allow_html=True,
             )
-
-    # ─────────────────────────────────────────────────────────
-    # NOVO: Ranking dos segmentos aprovados (seção extra, não disruptiva)
-    # ─────────────────────────────────────────────────────────
-    if segmentos_aprovados:
-        st.markdown("## Ranking dos segmentos aprovados (opcional)")
-        df_rank = pd.DataFrame(segmentos_aprovados)
-        df_rank = df_rank.sort_values("%_acima_selic", ascending=False).reset_index(drop=True)
-
-        st.dataframe(df_rank, use_container_width=True)
-
-        # download CSV
-        csv_buf = io.StringIO()
-        df_rank.to_csv(csv_buf, index=False)
-        st.download_button(
-            label="Baixar CSV do ranking",
-            data=csv_buf.getvalue().encode("utf-8"),
-            file_name="ranking_segmentos_aprovados.csv",
-            mime="text/csv",
-        )
-
-    # ─────────────────────────────────────────────────────────
-    # NOVO: KPI Estabilidade/Turnover por segmento (seção extra)
-    # ─────────────────────────────────────────────────────────
-    if estabilidade_segmentos:
-        st.markdown("## KPI: Estabilidade de liderança (turnover) (opcional)")
-        df_stab = pd.DataFrame(estabilidade_segmentos)
-        df_stab = df_stab.sort_values(["Turnover_lider", "SETOR", "SUBSETOR", "SEGMENTO"], ascending=[False, True, True, True]).reset_index(drop=True)
-
-        st.caption("Turnover alto sugere ranking sensível a ruído, segmento instável ou necessidade de top-2/top-3 e banda de rebalance.")
-        st.dataframe(df_stab, use_container_width=True)
 
     st.markdown("<hr>", unsafe_allow_html=True)
