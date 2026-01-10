@@ -1,8 +1,11 @@
+# pickup/dados_cvm_dfp.py
 import io
 import os
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import requests
@@ -15,21 +18,51 @@ from .cvm_quality import normalize_vl_conta, apply_balance_dq
 # =========================
 # CONFIG
 # =========================
-ULTIMO_ANO = int(os.getenv("ULTIMO_ANO", "2025"))
+URL_BASE = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/DFP/DADOS/"
+
+# Ano inicial pode continuar fixo (histórico), mas o último ano será automático por padrão
 ANO_INICIAL = int(os.getenv("ANO_INICIAL", "2010"))
+ULTIMO_ANO = int(os.getenv("ULTIMO_ANO", "0"))  # 0 = modo automático
 MAX_WORKERS = int(os.getenv("MAX_WORKERS", "8"))
 
 # Data Quality
 DQ_TOL_PCT = float(os.getenv("DQ_TOL_PCT", "0.02"))
 DQ_ACCEPT_WARNING = os.getenv("DQ_ACCEPT_WARNING", "0").strip() in ("1", "true", "True", "YES", "yes")
 
-URL_BASE = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/DFP/DADOS/"
-
 # Connection string Postgres do Supabase (psycopg2)
 SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL", "").strip()
 
-# Mapa CVM -> ticker (seu arquivo já existe no projeto)
+# Mapa CVM -> Ticker (mesmo arquivo usado no projeto)
 TICKER_PATH = Path(__file__).resolve().parent / "cvm_to_ticker.csv"
+
+
+# =========================
+# Helpers: Descobrir último ano disponível
+# =========================
+def _ultimo_ano_disponivel(url_base: str, prefix: str, ano_max: int | None = None, max_back: int = 8) -> int:
+    """
+    Descobre o último ano com zip disponível na CVM.
+    prefix: 'dfp_cia_aberta'
+    max_back: quantos anos no máximo tenta voltar (protege contra loops longos).
+    """
+    if ano_max is None:
+        ano_max = datetime.now().year
+
+    for ano in range(ano_max, ano_max - max_back - 1, -1):
+        url = f"{url_base}{prefix}_{ano}.zip"
+        try:
+            r = requests.head(url, timeout=20, allow_redirects=True)
+            if r.status_code == 200:
+                return ano
+        except requests.RequestException:
+            pass
+
+    # fallback conservador
+    return ano_max - max_back
+
+
+if ULTIMO_ANO <= 0:
+    ULTIMO_ANO = _ultimo_ano_disponivel(URL_BASE, "dfp_cia_aberta", ano_max=datetime.now().year, max_back=12)
 
 
 # =========================
@@ -46,22 +79,25 @@ def _ler_csv_do_zip(zbytes: bytes, nome_csv: str) -> pd.DataFrame:
     with zipfile.ZipFile(io.BytesIO(zbytes)) as zf:
         with zf.open(nome_csv) as csvfile:
             df = pd.read_csv(csvfile, sep=";", decimal=",", encoding="ISO-8859-1")
+
     # Normalização determinística de escala (CVM)
     df = normalize_vl_conta(df)
     if "VL_CONTA_NORM" in df.columns:
         df["VL_CONTA"] = df["VL_CONTA_NORM"]
+
+    if "DT_REFER" in df.columns:
+        df["DT_REFER"] = pd.to_datetime(df["DT_REFER"], errors="coerce")
+
     return df
 
 
 def coletar_dfp() -> dict:
     """
     Baixa DFP anual e retorna dict com dataframes por demonstrativo.
-    Mantém a mesma lógica do seu pipeline, mas com VL_CONTA já normalizado por ESCALA_MOEDA.
     """
     anos = list(range(ANO_INICIAL, ULTIMO_ANO + 1))
 
-    # Arquivos que você já usa no seu script (padrão CVM)
-    # Mantive o conjunto mínimo que seu consolidado normalmente utiliza.
+    # Conjunto mínimo usual para seu consolidado (consolidado)
     csvs = {
         "DRE": lambda a: f"dfp_cia_aberta_DRE_con_{a}.csv",
         "BPA": lambda a: f"dfp_cia_aberta_BPA_con_{a}.csv",
@@ -92,21 +128,17 @@ def coletar_dfp() -> dict:
 
 
 # =========================
-# Consolidação (mantém seu padrão)
+# Consolidação (mantém seu padrão de colunas)
 # =========================
 def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
+    if df_dict_dfp.get("DRE") is None or df_dict_dfp["DRE"].empty:
+        return pd.DataFrame()
+
     empresas = (
         df_dict_dfp["DRE"][["DENOM_CIA", "CD_CVM"]]
         .drop_duplicates()
         .set_index("CD_CVM")
     )
-
-    def _to_dt(df: pd.DataFrame) -> pd.DataFrame:
-        if df is None or df.empty:
-            return df
-        df = df.copy()
-        df["DT_REFER"] = pd.to_datetime(df["DT_REFER"], errors="coerce")
-        return df
 
     def _serie_conta(df_conta: pd.DataFrame, idx: pd.DatetimeIndex) -> pd.Series:
         if df_conta is None or df_conta.empty:
@@ -118,38 +150,24 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
         s = dfc.groupby("DT_REFER", dropna=True)["VL_CONTA"].sum()
         return s.reindex(idx)
 
-    def _idx_base(conta_receita: pd.DataFrame,
-                  empresa_bpa: pd.DataFrame,
-                  empresa_dre: pd.DataFrame,
-                  empresa_bpp: pd.DataFrame,
-                  empresa_dfc: pd.DataFrame) -> pd.DatetimeIndex:
-        if conta_receita is not None and not conta_receita.empty:
-            idx = pd.to_datetime(conta_receita["DT_REFER"].unique(), errors="coerce")
-        else:
-            bpa_ativo_total = empresa_bpa[empresa_bpa["CD_CONTA"] == "1"] if empresa_bpa is not None else pd.DataFrame()
-            if bpa_ativo_total is not None and not bpa_ativo_total.empty:
-                idx = pd.to_datetime(bpa_ativo_total["DT_REFER"].unique(), errors="coerce")
-            else:
-                idx = None
-                for _df in [empresa_dre, empresa_bpa, empresa_bpp, empresa_dfc]:
-                    if _df is not None and not _df.empty:
-                        idx = pd.to_datetime(_df["DT_REFER"].unique(), errors="coerce")
-                        break
-                if idx is None:
-                    return pd.DatetimeIndex([])
-        idx = pd.DatetimeIndex(idx).dropna().unique().sort_values()
-        return idx
-
     df_consolidado = pd.DataFrame()
 
     for CD_CVM in empresas.index:
-        empresa_dre = _to_dt(df_dict_dfp["DRE"][df_dict_dfp["DRE"]["CD_CVM"] == CD_CVM])
-        empresa_bpa = _to_dt(df_dict_dfp["BPA"][df_dict_dfp["BPA"]["CD_CVM"] == CD_CVM])
-        empresa_bpp = _to_dt(df_dict_dfp["BPP"][df_dict_dfp["BPP"]["CD_CVM"] == CD_CVM])
-        empresa_dfc = _to_dt(df_dict_dfp["DFC"][df_dict_dfp["DFC"]["CD_CVM"] == CD_CVM])
+        empresa_dre = df_dict_dfp["DRE"][df_dict_dfp["DRE"]["CD_CVM"] == CD_CVM]
+        empresa_bpa = df_dict_dfp["BPA"][df_dict_dfp["BPA"]["CD_CVM"] == CD_CVM] if df_dict_dfp.get("BPA") is not None else pd.DataFrame()
+        empresa_bpp = df_dict_dfp["BPP"][df_dict_dfp["BPP"]["CD_CVM"] == CD_CVM] if df_dict_dfp.get("BPP") is not None else pd.DataFrame()
 
-        conta_receita = empresa_dre[empresa_dre["CD_CONTA"] == "3.01"] if empresa_dre is not None else pd.DataFrame()
-        idx = _idx_base(conta_receita, empresa_bpa, empresa_dre, empresa_bpp, empresa_dfc)
+        # índice base preferencial: receita (3.01) → ativo total (1) → qualquer DT_REFER disponível
+        conta_receita = empresa_dre[empresa_dre["CD_CONTA"] == "3.01"]
+        if not conta_receita.empty:
+            idx = pd.DatetimeIndex(pd.to_datetime(conta_receita["DT_REFER"].unique(), errors="coerce")).dropna().unique().sort_values()
+        else:
+            bpa_ativo_total = empresa_bpa[empresa_bpa["CD_CONTA"] == "1"]
+            if not bpa_ativo_total.empty:
+                idx = pd.DatetimeIndex(pd.to_datetime(bpa_ativo_total["DT_REFER"].unique(), errors="coerce")).dropna().unique().sort_values()
+            else:
+                idx = pd.DatetimeIndex(pd.to_datetime(empresa_dre["DT_REFER"].unique(), errors="coerce")).dropna().unique().sort_values()
+
         if len(idx) == 0:
             continue
 
@@ -158,7 +176,6 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
         ebit = _serie_conta(empresa_dre[empresa_dre["CD_CONTA"] == "3.05"], idx)
 
         lucro = _serie_conta(empresa_dre[empresa_dre["CD_CONTA"] == "3.11"], idx)
-        # fallback leve (se faltar 3.11 em algum ano)
         if lucro.isna().all() and "DS_CONTA" in empresa_dre.columns:
             sel = empresa_dre[empresa_dre["DS_CONTA"].astype(str).str.contains(r"Lucro|Preju[ií]zo", case=False, na=False)]
             lucro = _serie_conta(sel, idx)
@@ -175,7 +192,7 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
         passivo_circ = _serie_conta(empresa_bpp[empresa_bpp["CD_CONTA"] == "2.01"], idx)
         pl = _serie_conta(empresa_bpp[empresa_bpp["CD_CONTA"] == "2.03"], idx)
 
-        # Dívida (ainda depende de estrutura fina; mantive seu padrão básico com DS_CONTA, mas sem inventar zeros)
+        # Dívida (fallback por texto; sem imputar 0)
         div_total = pd.Series(index=idx, dtype="float64")
         if empresa_bpp is not None and not empresa_bpp.empty and "DS_CONTA" in empresa_bpp.columns:
             sel = empresa_bpp[empresa_bpp["DS_CONTA"].astype(str).str.contains("emprést|financi", case=False, na=False)]
@@ -198,7 +215,7 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
             "Passivo Total": passivo_total.values,
             "Divida Total": div_total.values,
             "Patrimônio Líquido": pl.values,
-            "Dividendos Totais": np.nan,  # (se você já calculava via DVA/DFC, mantenha aqui a sua lógica)
+            "Dividendos Totais": np.nan,
             "Caixa Líquido": caixa_liq.values,
             "Dívida Líquida": div_liq.values,
         })
@@ -211,9 +228,13 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
 def adicionar_ticker(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return df
+
     mapa = pd.read_csv(TICKER_PATH, sep=",", encoding="utf-8")
     mapa["CD_CVM"] = pd.to_numeric(mapa["CD_CVM"], errors="coerce")
-    out = df.merge(mapa[["CD_CVM", "Ticker"]], on="CD_CVM", how="left")
+
+    out = df.copy()
+    out["CD_CVM"] = pd.to_numeric(out["CD_CVM"], errors="coerce")
+    out = out.merge(mapa[["CD_CVM", "Ticker"]], on="CD_CVM", how="left")
     return out
 
 
@@ -308,6 +329,9 @@ def upsert_supabase_dq(df_dq: pd.DataFrame) -> None:
 
 
 def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None:
+    if df_filtrado is None or df_filtrado.empty:
+        print("[WARN] Nenhuma linha DFP para gravar (após filtros/DQ).")
+        return
     if not SUPABASE_DB_URL:
         raise RuntimeError("Defina SUPABASE_DB_URL (connection string Postgres do Supabase).")
 
@@ -330,7 +354,6 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None
     })
 
     df_db["Data"] = pd.to_datetime(df_db["Data"], errors="coerce").dt.date
-
     df_db = (
         df_db.sort_values(["Ticker", "Data"])
              .drop_duplicates(subset=["Ticker", "Data"], keep="last")
@@ -366,7 +389,7 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None
             execute_values(cur, sql, values, page_size=5000)
         conn.commit()
 
-    print(f"[OK] Gravado no Supabase (DFP): {len(df_db)} linhas")
+    print(f"[OK] Gravado no Supabase (DFP): {len(df_db)} linhas (até {ULTIMO_ANO})")
 
 
 def main():
@@ -376,8 +399,8 @@ def main():
     df_filtrado = filtrar_empresas(df_consolidado)
 
     # DQ gate + auditoria
-    df_filtrado, df_dq = aplicar_dq_e_filtrar(df_filtrado)
+    df_ok, df_dq = aplicar_dq_e_filtrar(df_filtrado)
     upsert_supabase_dq(df_dq)
 
     # grava somente OK (ou OK+WARNING se DQ_ACCEPT_WARNING=1)
-    upsert_supabase_demonstracoes_financeiras(df_filtrado)
+    upsert_supabase_demonstracoes_financeiras(df_ok)
