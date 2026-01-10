@@ -1,7 +1,7 @@
 """
 Core CVM ETL utilities focused on:
 - Deterministic value normalization using ESCALA_MOEDA
-- Account extraction by CD_CONTA anchors and prefix trees (no DS_CONTA heuristics by default)
+- Account extraction by CD_CONTA anchors and prefix trees
 - Data Quality (DQ) gates to prevent incoherent rows from contaminating curated tables
 """
 from __future__ import annotations
@@ -95,160 +95,41 @@ class BalanceMapping:
 
 BALANCE = BalanceMapping()
 
-def build_balance_snapshot(bpa: pd.DataFrame, bpp: pd.DataFrame) -> pd.DataFrame:
-    ativo_total, src_at = pick_anchor_or_prefix(bpa, BALANCE.ativo_total, BALANCE.ativo_total)
-    ativo_circ, src_ac = pick_anchor_or_prefix(bpa, BALANCE.ativo_circulante, BALANCE.ativo_circulante)
-    caixa, src_cx = pick_anchor_or_prefix(bpa, BALANCE.caixa_prefix, BALANCE.caixa_prefix)
-    anc, src_anc = pick_anchor_or_prefix(bpa, BALANCE.ativo_nao_circulante, BALANCE.ativo_nao_circulante)
-
-    passivo_total, src_pt = pick_anchor_or_prefix(bpp, BALANCE.passivo_total, BALANCE.passivo_total)
-    pc, src_pc = pick_anchor_or_prefix(bpp, BALANCE.passivo_circulante, BALANCE.passivo_circulante)
-    pnc, src_pnc = pick_anchor_or_prefix(bpp, BALANCE.passivo_nao_circulante, BALANCE.passivo_nao_circulante)
-    pl, src_pl = pick_anchor_or_prefix(bpp, BALANCE.patrimonio_liquido, BALANCE.patrimonio_liquido)
-
-    idx = pd.DatetimeIndex(sorted(set(ativo_total.index) | set(ativo_circ.index) | set(caixa.index) | set(anc.index) |
-                                  set(passivo_total.index) | set(pc.index) | set(pnc.index) | set(pl.index)))
-    if len(idx) == 0:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(index=idx)
-    df.index.name = "DT_REFER"
-
-    df["Ativo_Total"] = ativo_total.reindex(idx)
-    df["Ativo_Circulante"] = ativo_circ.reindex(idx)
-    df["Caixa"] = caixa.reindex(idx)
-    df["Ativo_Nao_Circulante"] = anc.reindex(idx)
-
-    df["Passivo_Total"] = passivo_total.reindex(idx)
-    df["Passivo_Circulante"] = pc.reindex(idx)
-    df["Passivo_Nao_Circulante"] = pnc.reindex(idx)
-    df["Patrimonio_Liquido"] = pl.reindex(idx)
-
-    df["_src_Ativo_Total"] = src_at
-    df["_src_Ativo_Circulante"] = src_ac
-    df["_src_Caixa"] = src_cx
-    df["_src_Ativo_Nao_Circulante"] = src_anc
-    df["_src_Passivo_Total"] = src_pt
-    df["_src_Passivo_Circulante"] = src_pc
-    df["_src_Passivo_Nao_Circulante"] = src_pnc
-    df["_src_Patrimonio_Liquido"] = src_pl
-    return df
-
-@dataclass(frozen=True)
-class DREMapping:
-    receita_liquida: str = "3.01"
-    ebit: str = "3.05"
-    lucro_liquido_anchor: str = "3.11"
-    lpa: str = "3.99.01.01"
-
-DRE = DREMapping()
-
-def build_dre_snapshot(dre: pd.DataFrame) -> pd.DataFrame:
-    if dre is None or dre.empty:
-        return pd.DataFrame()
-
-    receita, src_r = pick_anchor_or_prefix(dre, DRE.receita_liquida, DRE.receita_liquida)
-    ebit, src_e = pick_anchor_or_prefix(dre, DRE.ebit, DRE.ebit)
-    lpa, src_lpa = pick_anchor_or_prefix(dre, DRE.lpa, DRE.lpa)
-
-    lucro = sum_by_anchor(dre, DRE.lucro_liquido_anchor)
-    src_ll = "ANCHOR"
-    if lucro.empty:
-        dfx = _prefer_fixed(dre)
-        ds = dfx.get("DS_CONTA")
-        if ds is not None:
-            sel = dfx[ds.astype(str).str.contains(r"Lucro|Preju[ií]zo", case=False, na=False)]
-            sel = sel[sel["CD_CONTA"].astype(str).str.startswith("3.")]
-            if not sel.empty:
-                lucro = sel.groupby("DT_REFER", dropna=True)["VL_CONTA_NORM"].sum()
-                src_ll = "TEXT_FALLBACK"
-            else:
-                src_ll = "MISSING"
-        else:
-            src_ll = "MISSING"
-
-    idx = pd.DatetimeIndex(sorted(set(receita.index) | set(ebit.index) | set(lucro.index) | set(lpa.index)))
-    if len(idx) == 0:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(index=idx)
-    df.index.name = "DT_REFER"
-    df["Receita_Liquida"] = receita.reindex(idx)
-    df["EBIT"] = ebit.reindex(idx)
-    df["Lucro_Liquido"] = lucro.reindex(idx)
-    df["LPA"] = lpa.reindex(idx)
-
-    df["_src_Receita_Liquida"] = src_r
-    df["_src_EBIT"] = src_e
-    df["_src_Lucro_Liquido"] = src_ll
-    df["_src_LPA"] = src_lpa
-    return df
-
-@dataclass(frozen=True)
-class DFCMapping:
-    cfo_prefix: str = "6.01"
-    cfi_prefix: str = "6.02"
-    cff_prefix: str = "6.03"
-    capex_keywords: tuple[str, ...] = ("aquisi", "imobiliz", "intang", "capex")
-
-DFC = DFCMapping()
-
-def build_dfc_snapshot(dfc: pd.DataFrame) -> pd.DataFrame:
-    if dfc is None or dfc.empty:
-        return pd.DataFrame()
-
-    cfo, src_cfo = pick_anchor_or_prefix(dfc, DFC.cfo_prefix, DFC.cfo_prefix)
-    cfi, src_cfi = pick_anchor_or_prefix(dfc, DFC.cfi_prefix, DFC.cfi_prefix)
-    cff, src_cff = pick_anchor_or_prefix(dfc, DFC.cff_prefix, DFC.cff_prefix)
-
-    capex = pd.Series(dtype="float64")
-    src_capex = "MISSING"
-    dfx = _prefer_fixed(dfc)
-    cd = dfx["CD_CONTA"].astype(str)
-    mask_cfi = (cd == DFC.cfi_prefix) | cd.str.startswith(DFC.cfi_prefix + ".")
-    sel = dfx[mask_cfi]
-    if not sel.empty and "DS_CONTA" in sel.columns:
-        ds = sel["DS_CONTA"].astype(str).str.lower()
-        mask = np.zeros(len(sel), dtype=bool)
-        for kw in DFC.capex_keywords:
-            mask |= ds.str.contains(kw, na=False)
-        sel2 = sel[mask]
-        if not sel2.empty:
-            capex = sel2.groupby("DT_REFER", dropna=True)["VL_CONTA_NORM"].sum()
-            src_capex = "TEXT_WITHIN_CFI"
-
-    idx = pd.DatetimeIndex(sorted(set(cfo.index) | set(cfi.index) | set(cff.index) | set(capex.index)))
-    if len(idx) == 0:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(index=idx)
-    df.index.name = "DT_REFER"
-    df["CFO"] = cfo.reindex(idx)
-    df["CFI"] = cfi.reindex(idx)
-    df["CFF"] = cff.reindex(idx)
-    df["CAPEX"] = capex.reindex(idx)
-    df["FCF"] = df["CFO"] - df["CAPEX"]
-
-    df["_src_CFO"] = src_cfo
-    df["_src_CFI"] = src_cfi
-    df["_src_CFF"] = src_cff
-    df["_src_CAPEX"] = src_capex
-    return df
-
 def apply_balance_dq(df_bal: pd.DataFrame, tol_pct: float = 0.02) -> pd.DataFrame:
+    """
+    df_bal index must be datetime-like and named DT_REFER.
+    Required columns:
+      Ativo_Total, Passivo_Total, Patrimonio_Liquido
+    Optional columns:
+      Ativo_Circulante, Passivo_Circulante
+    """
     if df_bal is None or df_bal.empty:
         return df_bal
     out = df_bal.copy()
-    a = out["Ativo_Total"]
-    rhs = out["Passivo_Total"] + out["Patrimonio_Liquido"]
+
+    a = pd.to_numeric(out.get("Ativo_Total"), errors="coerce")
+    p = pd.to_numeric(out.get("Passivo_Total"), errors="coerce")
+    pl = pd.to_numeric(out.get("Patrimonio_Liquido"), errors="coerce")
+
+    rhs = p + pl
     diff = a - rhs
 
     out["dq_balance_diff"] = diff
     out["dq_balance_diff_pct"] = (diff.abs() / a.abs()).replace([np.inf, -np.inf], np.nan)
-    out["dq_balance_ok"] = out["dq_balance_diff_pct"].fillna(np.nan) <= tol_pct
+    out["dq_balance_ok"] = out["dq_balance_diff_pct"] <= tol_pct
 
-    out["dq_ac_le_ativo"] = (out["Ativo_Circulante"].abs() <= out["Ativo_Total"].abs()) | out["Ativo_Circulante"].isna() | out["Ativo_Total"].isna()
-    out["dq_pc_le_passivo"] = (out["Passivo_Circulante"].abs() <= out["Passivo_Total"].abs()) | out["Passivo_Circulante"].isna() | out["Passivo_Total"].isna()
+    # Optional sanity checks
+    if "Ativo_Circulante" in out.columns:
+        ac = pd.to_numeric(out.get("Ativo_Circulante"), errors="coerce")
+        out["dq_ac_le_ativo"] = (ac.abs() <= a.abs()) | ac.isna() | a.isna()
+    else:
+        out["dq_ac_le_ativo"] = True
+
+    if "Passivo_Circulante" in out.columns:
+        pc = pd.to_numeric(out.get("Passivo_Circulante"), errors="coerce")
+        out["dq_pc_le_passivo"] = (pc.abs() <= p.abs()) | pc.isna() | p.isna()
+    else:
+        out["dq_pc_le_passivo"] = True
 
     flags = []
     status = []
@@ -260,9 +141,11 @@ def apply_balance_dq(df_bal: pd.DataFrame, tol_pct: float = 0.02) -> pd.DataFram
             f.append("AC_GT_ATIVO")
         if pd.notna(row.get("dq_pc_le_passivo")) and row.get("dq_pc_le_passivo") is False:
             f.append("PC_GT_PASSIVO")
+
         for col in ["Ativo_Total", "Passivo_Total", "Patrimonio_Liquido"]:
             if pd.isna(row.get(col)):
                 f.append(f"MISSING_{col.upper()}")
+
         flags.append(f)
 
         if "BALANCE_IDENTITY_FAIL" in f:
