@@ -1,7 +1,10 @@
+# pickup/dados_cvm_itr.py
 import io
 import os
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
 import pandas as pd
 import requests
 import psycopg2
@@ -24,10 +27,15 @@ MAX_WORKERS = int(os.getenv("MAX_WORKERS", "8"))
 DQ_TOL_PCT = float(os.getenv("DQ_TOL_PCT", "0.02"))
 DQ_ACCEPT_WARNING = os.getenv("DQ_ACCEPT_WARNING", "0").strip() in ("1", "true", "True", "YES", "yes")
 
+# Supabase Postgres connection string
 SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL", "").strip()
 
+# Mesmo arquivo do DFP
+TICKER_PATH = Path(__file__).resolve().parent / "cvm_to_ticker.csv"
+
+
 # ======================
-# Util
+# Download / Leitura CVM
 # ======================
 def _baixar_zip_itr(ano: int) -> bytes:
     url = f"{URL_BASE}itr_cia_aberta_{ano}.zip"
@@ -40,9 +48,16 @@ def _ler_csv_do_zip(zbytes: bytes, nome_csv: str) -> pd.DataFrame:
     with zipfile.ZipFile(io.BytesIO(zbytes)) as zf:
         with zf.open(nome_csv) as csvfile:
             df = pd.read_csv(csvfile, sep=";", decimal=",", encoding="ISO-8859-1")
+
+    # Normalização determinística de escala (CVM)
     df = normalize_vl_conta(df)
     if "VL_CONTA_NORM" in df.columns:
         df["VL_CONTA"] = df["VL_CONTA_NORM"]
+
+    # Normaliza DT_REFER (se existir)
+    if "DT_REFER" in df.columns:
+        df["DT_REFER"] = pd.to_datetime(df["DT_REFER"], errors="coerce")
+
     return df
 
 
@@ -77,23 +92,24 @@ def coletar_itr() -> dict:
     return {k: (pd.concat(v, ignore_index=True) if v else pd.DataFrame()) for k, v in bucket.items()}
 
 
+# ======================
+# Consolidação ITR (mantém seu padrão de colunas)
+# ======================
 def montar_df_consolidado(df_dict_itr: dict) -> pd.DataFrame:
+    # Usa BPA como base para lista de empresas (mais estável em ITR)
+    if df_dict_itr.get("BPA") is None or df_dict_itr["BPA"].empty:
+        return pd.DataFrame()
+
     empresas = (
         df_dict_itr["BPA"][["DENOM_CIA", "CD_CVM"]]
         .drop_duplicates()
         .set_index("CD_CVM")
     )
 
-    def _to_dt(df: pd.DataFrame) -> pd.DataFrame:
-        if df is None or df.empty:
-            return df
-        df = df.copy()
-        df["DT_REFER"] = pd.to_datetime(df["DT_REFER"], errors="coerce")
-        return df
-
     def _serie_conta(df_conta: pd.DataFrame, idx: pd.DatetimeIndex) -> pd.Series:
         if df_conta is None or df_conta.empty:
             return pd.Series(index=idx, dtype="float64")
+
         dfc = df_conta[["DT_REFER", "VL_CONTA"]].copy()
         dfc["DT_REFER"] = pd.to_datetime(dfc["DT_REFER"], errors="coerce")
         dfc["VL_CONTA"] = pd.to_numeric(dfc["VL_CONTA"], errors="coerce")
@@ -103,30 +119,33 @@ def montar_df_consolidado(df_dict_itr: dict) -> pd.DataFrame:
     df_out = []
 
     for CD_CVM in empresas.index:
-        empresa_dre = _to_dt(df_dict_itr["DRE"][df_dict_itr["DRE"]["CD_CVM"] == CD_CVM])
-        empresa_bpa = _to_dt(df_dict_itr["BPA"][df_dict_itr["BPA"]["CD_CVM"] == CD_CVM])
-        empresa_bpp = _to_dt(df_dict_itr["BPP"][df_dict_itr["BPP"]["CD_CVM"] == CD_CVM])
+        empresa_dre = df_dict_itr["DRE"][df_dict_itr["DRE"]["CD_CVM"] == CD_CVM] if df_dict_itr.get("DRE") is not None else pd.DataFrame()
+        empresa_bpa = df_dict_itr["BPA"][df_dict_itr["BPA"]["CD_CVM"] == CD_CVM] if df_dict_itr.get("BPA") is not None else pd.DataFrame()
+        empresa_bpp = df_dict_itr["BPP"][df_dict_itr["BPP"]["CD_CVM"] == CD_CVM] if df_dict_itr.get("BPP") is not None else pd.DataFrame()
+
+        if empresa_bpa is None or empresa_bpa.empty:
+            continue
 
         idx = pd.DatetimeIndex(pd.to_datetime(empresa_bpa["DT_REFER"].unique(), errors="coerce")).dropna().unique().sort_values()
         if len(idx) == 0:
             continue
 
         # DRE (trimestral)
-        receita = _serie_conta(empresa_dre[empresa_dre["CD_CONTA"] == "3.01"], idx)
-        ebit = _serie_conta(empresa_dre[empresa_dre["CD_CONTA"] == "3.05"], idx)
-        lucro = _serie_conta(empresa_dre[empresa_dre["CD_CONTA"] == "3.11"], idx)
-        lpa = _serie_conta(empresa_dre[empresa_dre["CD_CONTA"] == "3.99.01.01"], idx)
+        receita = _serie_conta(empresa_dre[empresa_dre["CD_CONTA"] == "3.01"], idx) if empresa_dre is not None else pd.Series(index=idx, dtype="float64")
+        ebit = _serie_conta(empresa_dre[empresa_dre["CD_CONTA"] == "3.05"], idx) if empresa_dre is not None else pd.Series(index=idx, dtype="float64")
+        lucro = _serie_conta(empresa_dre[empresa_dre["CD_CONTA"] == "3.11"], idx) if empresa_dre is not None else pd.Series(index=idx, dtype="float64")
+        lpa = _serie_conta(empresa_dre[empresa_dre["CD_CONTA"] == "3.99.01.01"], idx) if empresa_dre is not None else pd.Series(index=idx, dtype="float64")
 
-        # BPA/BPP
+        # BPA/BPP (snapshots)
         ativo_total = _serie_conta(empresa_bpa[empresa_bpa["CD_CONTA"] == "1"], idx)
         ativo_circ = _serie_conta(empresa_bpa[empresa_bpa["CD_CONTA"] == "1.01"], idx)
         caixa = _serie_conta(empresa_bpa[empresa_bpa["CD_CONTA"] == "1.01.01"], idx)
 
-        passivo_total = _serie_conta(empresa_bpp[empresa_bpp["CD_CONTA"] == "2"], idx)
-        passivo_circ = _serie_conta(empresa_bpp[empresa_bpp["CD_CONTA"] == "2.01"], idx)
-        pl = _serie_conta(empresa_bpp[empresa_bpp["CD_CONTA"] == "2.03"], idx)
+        passivo_total = _serie_conta(empresa_bpp[empresa_bpp["CD_CONTA"] == "2"], idx) if empresa_bpp is not None else pd.Series(index=idx, dtype="float64")
+        passivo_circ = _serie_conta(empresa_bpp[empresa_bpp["CD_CONTA"] == "2.01"], idx) if empresa_bpp is not None else pd.Series(index=idx, dtype="float64")
+        pl = _serie_conta(empresa_bpp[empresa_bpp["CD_CONTA"] == "2.03"], idx) if empresa_bpp is not None else pd.Series(index=idx, dtype="float64")
 
-        # Dívida (mantém fallback por DS_CONTA, mas sem inventar zero)
+        # Dívida (fallback por texto; sem imputar 0)
         div_total = pd.Series(index=idx, dtype="float64")
         if empresa_bpp is not None and not empresa_bpp.empty and "DS_CONTA" in empresa_bpp.columns:
             sel = empresa_bpp[empresa_bpp["DS_CONTA"].astype(str).str.contains("emprést|financi", case=False, na=False)]
@@ -159,21 +178,38 @@ def montar_df_consolidado(df_dict_itr: dict) -> pd.DataFrame:
     return pd.concat(df_out, ignore_index=True) if df_out else pd.DataFrame()
 
 
+# ======================
+# Mapeamento CD_CVM -> Ticker (mesmo do DFP)
+# ======================
 def adicionar_ticker(df: pd.DataFrame) -> pd.DataFrame:
-    # No seu projeto, normalmente você já junta via setores/setores.
-    # Mantive o padrão de depender de mapeamento CVM->Ticker se existir em outro lugar.
-    # Se você já tem função central no core, recomendo substituir aqui.
-    return df
+    if df is None or df.empty:
+        return df
+    if "CD_CVM" not in df.columns:
+        raise ValueError("Coluna CD_CVM não encontrada no dataframe do ITR.")
+
+    mapa = pd.read_csv(TICKER_PATH, sep=",", encoding="utf-8")
+    mapa["CD_CVM"] = pd.to_numeric(mapa["CD_CVM"], errors="coerce")
+
+    out = df.copy()
+    out["CD_CVM"] = pd.to_numeric(out["CD_CVM"], errors="coerce")
+
+    out = out.merge(mapa[["CD_CVM", "Ticker"]], on="CD_CVM", how="left")
+    return out
 
 
 def filtrar_empresas(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return df
     out = df.copy()
-    out = out[out["Ticker"].notna()].reset_index(drop=True) if "Ticker" in out.columns else out
+    if "Ticker" not in out.columns:
+        raise ValueError("Coluna Ticker não encontrada. Verifique adicionar_ticker().")
+    out = out[out["Ticker"].notna()].reset_index(drop=True)
     return out
 
 
+# ======================
+# DQ gate (Balanço) + Auditoria
+# ======================
 def aplicar_dq_e_filtrar(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     if df is None or df.empty:
         return df, pd.DataFrame()
@@ -193,7 +229,7 @@ def aplicar_dq_e_filtrar(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     bal_dq = apply_balance_dq(bal, tol_pct=DQ_TOL_PCT)
 
     df_dq = pd.DataFrame({
-        "Ticker": tmp.get("Ticker", pd.Series([""] * len(tmp))).astype(str),
+        "Ticker": tmp["Ticker"].astype(str),
         "Data": tmp["Data"].dt.date,
         "dq_status": bal_dq["dq_status"].values,
         "dq_flags": bal_dq["dq_flags"].values,
@@ -256,7 +292,13 @@ def upsert_supabase_dq(df_dq: pd.DataFrame) -> None:
         conn.commit()
 
 
+# ======================
+# UPSERT curated TRI
+# ======================
 def upsert_supabase(df: pd.DataFrame) -> None:
+    if df is None or df.empty:
+        print("[WARN] Nenhuma linha ITR para gravar (após filtros/DQ).")
+        return
     if not SUPABASE_DB_URL:
         raise RuntimeError("Defina SUPABASE_DB_URL com a connection string Postgres do Supabase.")
 
@@ -317,11 +359,22 @@ def upsert_supabase(df: pd.DataFrame) -> None:
     print(f"[OK] Gravado no Supabase (ITR): {len(df_db)} linhas")
 
 
+# ======================
+# Entry point para botão Streamlit
+# ======================
 def main():
     df_dict_itr = coletar_itr()
     df = montar_df_consolidado(df_dict_itr)
+
+    # Mapeia CD_CVM -> Ticker (mesmo arquivo do DFP)
+    df = adicionar_ticker(df)
+
+    # Mantém somente empresas com ticker válido
     df = filtrar_empresas(df)
 
-    df, df_dq = aplicar_dq_e_filtrar(df)
+    # DQ gate + auditoria
+    df_ok, df_dq = aplicar_dq_e_filtrar(df)
     upsert_supabase_dq(df_dq)
-    upsert_supabase(df)
+
+    # Grava somente OK (ou OK+WARNING conforme env)
+    upsert_supabase(df_ok)
