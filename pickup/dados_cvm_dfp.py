@@ -14,7 +14,7 @@ from psycopg2.extras import execute_values
 
 
 # =========================
-# CONFIG (baseado no script que funciona)
+# CONFIG
 # =========================
 URL_BASE_DFP = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/DFP/DADOS/"
 
@@ -23,22 +23,23 @@ ANO_INICIAL = int(os.getenv("ANO_INICIAL", "2010"))
 
 # Se ULTIMO_ANO for definido no ambiente, respeita. Se não, descobre automaticamente.
 ULTIMO_ANO = int(os.getenv("ULTIMO_ANO", "0"))  # 0 => auto
-ULTIMO_ANO_DISPONIVEL = int(os.getenv("ULTIMO_ANO_DISPONIVEL", "2023"))  # usado no filtro original
+
+# usado no filtro original (mantido)
+ULTIMO_ANO_DISPONIVEL = int(os.getenv("ULTIMO_ANO_DISPONIVEL", "2023"))
 
 SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL", "").strip()  # obrigatório
 
 BASE_DIR = Path(__file__).resolve().parent
 TICKER_PATH = Path(os.getenv("TICKER_PATH", str(BASE_DIR / "cvm_to_ticker.csv")))
 
+# Limites de segurança para evitar overflow do Postgres numeric(20,6): |x| < 1e14
+LPA_ABS_MAX_DB = 1e14 - 1  # margem
+
 
 # =========================
 # UTIL: descobrir último ano disponível na CVM (robusto)
 # =========================
 def _ultimo_ano_disponivel(prefix: str, ano_max: int | None = None, max_back: int = 12) -> int:
-    """
-    Descobre o último ano cujo zip existe na CVM via HEAD.
-    prefix: 'dfp_cia_aberta'
-    """
     if ano_max is None:
         ano_max = datetime.now().year
 
@@ -51,7 +52,6 @@ def _ultimo_ano_disponivel(prefix: str, ano_max: int | None = None, max_back: in
         except requests.RequestException:
             pass
 
-    # fallback conservador
     return ano_max - max_back
 
 
@@ -60,12 +60,15 @@ if ULTIMO_ANO <= 0:
 
 
 # =========================
-# NORMALIZAÇÃO DE ESCALA (CVM)
+# NORMALIZAÇÃO DE ESCALA (CVM) — COM EXCEÇÃO PARA CONTAS POR AÇÃO
 # =========================
 def _normalizar_vl_conta_por_escala(df: pd.DataFrame) -> pd.DataFrame:
     """
     Normaliza VL_CONTA usando ESCALA_MOEDA quando disponível.
-    Não altera comportamento se colunas não existirem.
+
+    CRÍTICO:
+    - NÃO aplica multiplicador em contas por ação (ex.: CD_CONTA começando com '3.99'),
+      pois isso gera distorções e pode causar overflow em LPA.
     """
     if df is None or df.empty:
         return df
@@ -76,14 +79,48 @@ def _normalizar_vl_conta_por_escala(df: pd.DataFrame) -> pd.DataFrame:
     out["VL_CONTA"] = pd.to_numeric(out["VL_CONTA"], errors="coerce")
 
     escala = out["ESCALA_MOEDA"].astype(str).str.strip().str.upper()
-    fatores = pd.Series(1.0, index=out.index)
 
+    fatores = pd.Series(1.0, index=out.index)
     fatores.loc[escala.isin(["MIL", "MILHAR", "MILHARES"])] = 1_000.0
     fatores.loc[escala.isin(["MILHAO", "MILHÃO", "MILHOES", "MILHÕES"])] = 1_000_000.0
     fatores.loc[escala.isin(["BILHAO", "BILHÃO", "BILHOES", "BILHÕES"])] = 1_000_000_000.0
 
+    # Exceção: contas por ação (3.99.*) NÃO devem ser escaladas
+    if "CD_CONTA" in out.columns:
+        cd = out["CD_CONTA"].astype(str)
+        mask_por_acao = cd.str.startswith("3.99", na=False)
+        fatores.loc[mask_por_acao] = 1.0
+
     out["VL_CONTA"] = out["VL_CONTA"] * fatores
     return out
+
+
+# =========================
+# NORMALIZAÇÃO LPA (para evitar overflow e distorções)
+# =========================
+def _normalizar_lpa_series(s: pd.Series) -> pd.Series:
+    """
+    Traz LPA para uma faixa plausível e garante que não estoure o numeric(20,6).
+
+    Estratégia:
+    - converte para float
+    - divide por 1000 sucessivamente enquanto |x| for muito grande
+    - se ainda for absurdo (>= 1e14), zera (mais seguro que abortar o pipeline)
+    """
+    s2 = pd.to_numeric(s, errors="coerce").astype("float64")
+
+    # primeiro: reduzir casos obviamente fora de escala
+    # se passar de 1e6 por ação, é quase certamente escala errada
+    for _ in range(8):
+        mask = s2.abs() > 1e6
+        if not mask.any():
+            break
+        s2.loc[mask] = s2.loc[mask] / 1000.0
+
+    # segundo: proteger o banco (numeric(20,6) exige < 1e14)
+    s2.loc[s2.abs() >= LPA_ABS_MAX_DB] = np.nan
+
+    return s2.fillna(0).round(6)
 
 
 # =========================
@@ -106,11 +143,11 @@ def processar_ano_dfp(ano: int):
                     try:
                         df_temp = pd.read_csv(csvfile, sep=";", decimal=",", encoding="ISO-8859-1")
 
-                        # preserva seu filtro original
+                        # seu filtro original
                         if "ORDEM_EXERC" in df_temp.columns:
                             df_temp = df_temp[df_temp["ORDEM_EXERC"] == "ÚLTIMO"]
 
-                        # normaliza escala se existir
+                        # escala CVM com exceção para 3.99*
                         df_temp = _normalizar_vl_conta_por_escala(df_temp)
 
                         up = arquivo.upper()
@@ -176,7 +213,6 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
     def _serie_conta(df_conta: pd.DataFrame, idx: pd.DatetimeIndex) -> pd.Series:
         if df_conta is None or df_conta.empty:
             return pd.Series(index=idx, dtype="float64")
-
         dfc = df_conta[["DT_REFER", "VL_CONTA"]].copy()
         dfc["DT_REFER"] = pd.to_datetime(dfc["DT_REFER"], errors="coerce")
         dfc["VL_CONTA"] = pd.to_numeric(dfc["VL_CONTA"], errors="coerce")
@@ -295,7 +331,10 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
         df_empresa["Receita Líquida"] = _serie_conta(conta_receita, idx)
         df_empresa["Ebit"] = _serie_conta(conta_ebit, idx)
         df_empresa["Lucro Líquido"] = _serie_conta(conta_lucro_liquido, idx)
+
+        # LPA: série + normalização robusta
         df_empresa["Lucro por Ação"] = _serie_conta(conta_lpa, idx)
+        df_empresa["Lucro por Ação"] = _normalizar_lpa_series(df_empresa["Lucro por Ação"])
 
         df_empresa["Ativo Total"] = _serie_conta(conta_ativo_total, idx)
         df_empresa["Ativo Circulante"] = _serie_conta(conta_ativo_circulante, idx)
@@ -303,8 +342,8 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
         df_empresa["Caixa e Equivalentes"] = _serie_conta(conta_caixa_e_equivalentes, idx)
 
         df_empresa["Passivo Circulante"] = _serie_conta(conta_passivo_circulante, idx)
-
         df_empresa["Patrimônio Líquido"] = _serie_conta(conta_patrimonio_liquido, idx)
+
         df_empresa["Passivo Total"] = _serie_conta(conta_passivo_total, idx)
 
         df_empresa["Passivo Circulante Financeiro"] = _serie_conta(conta_passivo_circulante_financeiro, idx)
@@ -315,8 +354,9 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
 
         df_empresa["Caixa Líquido"] = _serie_conta(conta_fco, idx)
 
+        # Converte numéricos (exceto LPA já tratado)
         cols_to_convert = [
-            "Receita Líquida", "Ebit", "Lucro Líquido", "Lucro por Ação",
+            "Receita Líquida", "Ebit", "Lucro Líquido",
             "Ativo Total", "Ativo Circulante", "Passivo Circulante", "Passivo Total",
             "Passivo Circulante Financeiro", "Passivo Não Circulante Financeiro",
             "Caixa e Equivalentes", "Dividendos", "Dividendos Ncontroladores",
@@ -325,7 +365,7 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
         for col in cols_to_convert:
             df_empresa[col] = pd.to_numeric(df_empresa[col], errors="coerce").fillna(0)
 
-        # Derivadas (preservando seu comportamento)
+        # Derivadas (preservando comportamento)
         df_empresa["Passivo Total"] = df_empresa["Passivo Total"] - df_empresa["Patrimônio Líquido"]
         df_empresa["Divida Total"] = df_empresa["Passivo Circulante Financeiro"] + df_empresa["Passivo Não Circulante Financeiro"]
         df_empresa["Dívida Líquida"] = df_empresa["Divida Total"] - df_empresa["Caixa e Equivalentes"]
@@ -343,7 +383,7 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
 
 
 # =========================
-# TICKER + REORDENAÇÃO (mantém seu padrão original)
+# TICKER + REORDENAÇÃO (mantém padrão)
 # =========================
 def adicionar_ticker(df_consolidado: pd.DataFrame) -> pd.DataFrame:
     if not TICKER_PATH.exists():
@@ -351,7 +391,6 @@ def adicionar_ticker(df_consolidado: pd.DataFrame) -> pd.DataFrame:
 
     cvm_to_ticker = pd.read_csv(TICKER_PATH, sep=",", encoding="utf-8")
 
-    # mantém exatamente seu merge tradicional: left CD_CVM, right CVM
     df = pd.merge(df_consolidado, cvm_to_ticker, left_on="CD_CVM", right_on="CVM")
     df = df.drop(columns=["CD_CVM", "CVM"])
 
@@ -366,7 +405,7 @@ def adicionar_ticker(df_consolidado: pd.DataFrame) -> pd.DataFrame:
 
 
 # =========================
-# FILTRO (mantém seu padrão)
+# FILTRO (mantém padrão)
 # =========================
 def filtrar_empresas(df_consolidado: pd.DataFrame) -> pd.DataFrame:
     colunas_essenciais = ["Receita Líquida"]
@@ -405,7 +444,6 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None
     if not SUPABASE_DB_URL:
         raise RuntimeError("Defina SUPABASE_DB_URL (connection string Postgres do Supabase).")
 
-    # Monta exatamente conforme schema do Supabase (sem acentos nos nomes)
     df_db = pd.DataFrame({
         "Ticker": df_filtrado["Ticker"],
         "Data": df_filtrado["Data"],
@@ -424,7 +462,6 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None
         "Divida_Liquida": df_filtrado["Dívida Líquida"],
     })
 
-    # Tipos / arredondamento compatíveis com numeric(20,2) e LPA numeric(20,6)
     df_db["Data"] = pd.to_datetime(df_db["Data"], errors="coerce").dt.date
 
     money_cols = [
@@ -435,7 +472,8 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None
     for c in money_cols:
         df_db[c] = pd.to_numeric(df_db[c], errors="coerce").round(2)
 
-    df_db["LPA"] = pd.to_numeric(df_db["LPA"], errors="coerce").round(6)
+    # LPA protegido contra overflow (numeric(20,6))
+    df_db["LPA"] = _normalizar_lpa_series(df_db["LPA"])
 
     df_db = df_db.fillna(0)
 
@@ -444,6 +482,11 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None
              .drop_duplicates(subset=["Ticker", "Data"], keep="last")
              .reset_index(drop=True)
     )
+
+    # Diagnóstico rápido (se ainda houver outliers)
+    max_lpa = float(pd.to_numeric(df_db["LPA"], errors="coerce").abs().max())
+    if max_lpa >= LPA_ABS_MAX_DB:
+        raise ValueError(f"LPA ainda fora do limite do banco (max abs={max_lpa}). Abortando para proteção.")
 
     cols = list(df_db.columns)
     values = [tuple(x) for x in df_db.itertuples(index=False, name=None)]
