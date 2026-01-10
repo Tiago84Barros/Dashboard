@@ -117,7 +117,7 @@ def coletar_dfp() -> dict:
 
 
 # =========================
-# Consolidação (mantém seu padrão de colunas)
+# Consolidação
 # =========================
 def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
     if df_dict_dfp.get("DRE") is None or df_dict_dfp["DRE"].empty:
@@ -127,8 +127,7 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
     if "DT_REFER" in dre_all.columns:
         dre_all["DT_REFER"] = pd.to_datetime(dre_all["DT_REFER"], errors="coerce")
 
-    # IMPORTANTÍSSIMO: garantir 1 nome por CD_CVM (evita Series no .loc)
-    # Pega o último nome observado ao longo do tempo.
+    # 1 nome por CD_CVM (último observado)
     empresas = (
         dre_all[["CD_CVM", "DENOM_CIA", "DT_REFER"]]
         .dropna(subset=["CD_CVM"])
@@ -155,7 +154,7 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
         empresa_bpa = df_dict_dfp["BPA"][df_dict_dfp["BPA"]["CD_CVM"] == CD_CVM] if df_dict_dfp.get("BPA") is not None else pd.DataFrame()
         empresa_bpp = df_dict_dfp["BPP"][df_dict_dfp["BPP"]["CD_CVM"] == CD_CVM] if df_dict_dfp.get("BPP") is not None else pd.DataFrame()
 
-        # índice base preferencial: receita (3.01) → ativo total (1) → DT_REFER do DRE
+        # índice base: receita (3.01) -> ativo total (1) -> DT_REFER do DRE
         conta_receita = empresa_dre[empresa_dre["CD_CONTA"] == "3.01"]
         if not conta_receita.empty:
             idx = pd.DatetimeIndex(pd.to_datetime(conta_receita["DT_REFER"].unique(), errors="coerce")).dropna().unique().sort_values()
@@ -190,7 +189,7 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
         passivo_circ = _serie_conta(empresa_bpp[empresa_bpp["CD_CONTA"] == "2.01"], idx)
         pl = _serie_conta(empresa_bpp[empresa_bpp["CD_CONTA"] == "2.03"], idx)
 
-        # Dívida (fallback por texto; sem imputar 0)
+        # Dívida (fallback por texto)
         div_total = pd.Series(index=idx, dtype="float64")
         if empresa_bpp is not None and not empresa_bpp.empty and "DS_CONTA" in empresa_bpp.columns:
             sel = empresa_bpp[empresa_bpp["DS_CONTA"].astype(str).str.contains("emprést|financi", case=False, na=False)]
@@ -199,7 +198,7 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
         caixa_liq = caixa
         div_liq = div_total - caixa_liq
 
-        nome = empresas.at[CD_CVM, "DENOM_CIA"]  # agora é sempre scalar
+        nome = empresas.at[CD_CVM, "DENOM_CIA"]
 
         df_empresa = pd.DataFrame({
             "CD_CVM": CD_CVM,
@@ -225,12 +224,85 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
     return pd.concat(df_consolidado, ignore_index=True) if df_consolidado else pd.DataFrame()
 
 
+# =========================
+# Mapeamento robusto CVM -> Ticker
+# =========================
+def _read_cvm_to_ticker_csv(path: Path) -> pd.DataFrame:
+    """
+    Lê cvm_to_ticker.csv de forma robusta (separador e cabeçalhos variáveis).
+    Retorna DataFrame com colunas normalizadas: CD_CVM (int/float coerente) e Ticker (str).
+    """
+    # tenta separadores comuns
+    last_err = None
+    for sep in [",", ";", "\t", "|"]:
+        try:
+            df = pd.read_csv(path, sep=sep, encoding="utf-8-sig")
+            if df.shape[1] >= 2:
+                break
+        except Exception as e:
+            last_err = e
+            df = None
+    if df is None:
+        raise RuntimeError(f"Falha ao ler {path}. Erro: {last_err}")
+
+    # normaliza nomes
+    cols = {c: str(c).strip().replace("\ufeff", "") for c in df.columns}
+    df = df.rename(columns=cols)
+
+    # candidatos a CD_CVM
+    cvm_candidates = [
+        "CD_CVM", "cd_cvm", "CVM", "cvm", "Codigo_CVM", "codigo_cvm", "COD_CVM", "cod_cvm"
+    ]
+    # candidatos a Ticker
+    ticker_candidates = [
+        "Ticker", "ticker", "TICKER", "codigo", "CODIGO", "Codigo", "codigo_negociacao", "CODIGO_NEGOCIACAO"
+    ]
+
+    def pick_col(cands):
+        for c in cands:
+            if c in df.columns:
+                return c
+        # tentativa por contains
+        low = {c: c.lower() for c in df.columns}
+        for c in df.columns:
+            if "cvm" in low[c]:
+                return c if cands is cvm_candidates else None
+        return None
+
+    cvm_col = pick_col(cvm_candidates)
+    tick_col = None
+    for c in ticker_candidates:
+        if c in df.columns:
+            tick_col = c
+            break
+
+    if cvm_col is None:
+        raise KeyError(f"cvm_to_ticker.csv sem coluna de CVM reconhecível. Colunas: {list(df.columns)}")
+    if tick_col is None:
+        # tenta achar alguma coluna com "tick" ou "ticker"
+        for c in df.columns:
+            cl = c.lower()
+            if "tick" in cl:
+                tick_col = c
+                break
+    if tick_col is None:
+        raise KeyError(f"cvm_to_ticker.csv sem coluna de Ticker reconhecível. Colunas: {list(df.columns)}")
+
+    out = df[[cvm_col, tick_col]].copy()
+    out = out.rename(columns={cvm_col: "CD_CVM", tick_col: "Ticker"})
+
+    out["CD_CVM"] = pd.to_numeric(out["CD_CVM"], errors="coerce")
+    out["Ticker"] = out["Ticker"].astype(str).str.strip().replace({"": np.nan, "nan": np.nan, "None": np.nan})
+
+    out = out.dropna(subset=["CD_CVM", "Ticker"]).drop_duplicates(subset=["CD_CVM"], keep="last")
+    return out
+
+
 def adicionar_ticker(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return df
 
-    mapa = pd.read_csv(TICKER_PATH, sep=",", encoding="utf-8")
-    mapa["CD_CVM"] = pd.to_numeric(mapa["CD_CVM"], errors="coerce")
+    mapa = _read_cvm_to_ticker_csv(TICKER_PATH)
 
     out = df.copy()
     out["CD_CVM"] = pd.to_numeric(out["CD_CVM"], errors="coerce")
@@ -246,6 +318,9 @@ def filtrar_empresas(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+# =========================
+# DQ gate + Auditoria
+# =========================
 def aplicar_dq_e_filtrar(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     if df is None or df.empty:
         return df, pd.DataFrame()
@@ -377,7 +452,7 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None
       "Passivo_Circulante" = EXCLUDED."Passivo_Circulante",
       "Passivo_Total" = EXCLUDED."Passivo_Total",
       "Divida_Total" = EXCLUDED."Divida_Total",
-      "Patrimonio_Liquido" = EXCLUDED."Patrimônio_Liquido",
+      "Patrimonio_Liquido" = EXCLUDED."Patrimonio_Liquido",
       "Dividendos" = EXCLUDED."Dividendos",
       "Caixa_Liquido" = EXCLUDED."Caixa_Liquido",
       "Divida_Liquida" = EXCLUDED."Divida_Liquida"
@@ -402,5 +477,5 @@ def main():
     df_ok, df_dq = aplicar_dq_e_filtrar(df_filtrado)
     upsert_supabase_dq(df_dq)
 
-    # grava somente OK (ou OK+WARNING se DQ_ACCEPT_WARNING=1)
+    # grava somente OK (ou OK+WARNING conforme env)
     upsert_supabase_demonstracoes_financeiras(df_ok)
