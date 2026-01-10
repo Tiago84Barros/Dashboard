@@ -20,7 +20,6 @@ from .cvm_quality import normalize_vl_conta, apply_balance_dq
 # =========================
 URL_BASE = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/DFP/DADOS/"
 
-# Ano inicial pode continuar fixo (histórico), mas o último ano será automático por padrão
 ANO_INICIAL = int(os.getenv("ANO_INICIAL", "2010"))
 ULTIMO_ANO = int(os.getenv("ULTIMO_ANO", "0"))  # 0 = modo automático
 MAX_WORKERS = int(os.getenv("MAX_WORKERS", "8"))
@@ -29,10 +28,10 @@ MAX_WORKERS = int(os.getenv("MAX_WORKERS", "8"))
 DQ_TOL_PCT = float(os.getenv("DQ_TOL_PCT", "0.02"))
 DQ_ACCEPT_WARNING = os.getenv("DQ_ACCEPT_WARNING", "0").strip() in ("1", "true", "True", "YES", "yes")
 
-# Connection string Postgres do Supabase (psycopg2)
+# Supabase Postgres connection string
 SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL", "").strip()
 
-# Mapa CVM -> Ticker (mesmo arquivo usado no projeto)
+# Mapa CVM -> Ticker
 TICKER_PATH = Path(__file__).resolve().parent / "cvm_to_ticker.csv"
 
 
@@ -40,11 +39,6 @@ TICKER_PATH = Path(__file__).resolve().parent / "cvm_to_ticker.csv"
 # Helpers: Descobrir último ano disponível
 # =========================
 def _ultimo_ano_disponivel(url_base: str, prefix: str, ano_max: int | None = None, max_back: int = 8) -> int:
-    """
-    Descobre o último ano com zip disponível na CVM.
-    prefix: 'dfp_cia_aberta'
-    max_back: quantos anos no máximo tenta voltar (protege contra loops longos).
-    """
     if ano_max is None:
         ano_max = datetime.now().year
 
@@ -57,7 +51,6 @@ def _ultimo_ano_disponivel(url_base: str, prefix: str, ano_max: int | None = Non
         except requests.RequestException:
             pass
 
-    # fallback conservador
     return ano_max - max_back
 
 
@@ -92,12 +85,8 @@ def _ler_csv_do_zip(zbytes: bytes, nome_csv: str) -> pd.DataFrame:
 
 
 def coletar_dfp() -> dict:
-    """
-    Baixa DFP anual e retorna dict com dataframes por demonstrativo.
-    """
     anos = list(range(ANO_INICIAL, ULTIMO_ANO + 1))
 
-    # Conjunto mínimo usual para seu consolidado (consolidado)
     csvs = {
         "DRE": lambda a: f"dfp_cia_aberta_DRE_con_{a}.csv",
         "BPA": lambda a: f"dfp_cia_aberta_BPA_con_{a}.csv",
@@ -134,10 +123,19 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
     if df_dict_dfp.get("DRE") is None or df_dict_dfp["DRE"].empty:
         return pd.DataFrame()
 
+    dre_all = df_dict_dfp["DRE"].copy()
+    if "DT_REFER" in dre_all.columns:
+        dre_all["DT_REFER"] = pd.to_datetime(dre_all["DT_REFER"], errors="coerce")
+
+    # IMPORTANTÍSSIMO: garantir 1 nome por CD_CVM (evita Series no .loc)
+    # Pega o último nome observado ao longo do tempo.
     empresas = (
-        df_dict_dfp["DRE"][["DENOM_CIA", "CD_CVM"]]
-        .drop_duplicates()
-        .set_index("CD_CVM")
+        dre_all[["CD_CVM", "DENOM_CIA", "DT_REFER"]]
+        .dropna(subset=["CD_CVM"])
+        .sort_values("DT_REFER", kind="mergesort")
+        .groupby("CD_CVM", as_index=True)["DENOM_CIA"]
+        .last()
+        .to_frame()
     )
 
     def _serie_conta(df_conta: pd.DataFrame, idx: pd.DatetimeIndex) -> pd.Series:
@@ -150,20 +148,20 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
         s = dfc.groupby("DT_REFER", dropna=True)["VL_CONTA"].sum()
         return s.reindex(idx)
 
-    df_consolidado = pd.DataFrame()
+    df_consolidado = []
 
     for CD_CVM in empresas.index:
-        empresa_dre = df_dict_dfp["DRE"][df_dict_dfp["DRE"]["CD_CVM"] == CD_CVM]
+        empresa_dre = dre_all[dre_all["CD_CVM"] == CD_CVM]
         empresa_bpa = df_dict_dfp["BPA"][df_dict_dfp["BPA"]["CD_CVM"] == CD_CVM] if df_dict_dfp.get("BPA") is not None else pd.DataFrame()
         empresa_bpp = df_dict_dfp["BPP"][df_dict_dfp["BPP"]["CD_CVM"] == CD_CVM] if df_dict_dfp.get("BPP") is not None else pd.DataFrame()
 
-        # índice base preferencial: receita (3.01) → ativo total (1) → qualquer DT_REFER disponível
+        # índice base preferencial: receita (3.01) → ativo total (1) → DT_REFER do DRE
         conta_receita = empresa_dre[empresa_dre["CD_CONTA"] == "3.01"]
         if not conta_receita.empty:
             idx = pd.DatetimeIndex(pd.to_datetime(conta_receita["DT_REFER"].unique(), errors="coerce")).dropna().unique().sort_values()
         else:
-            bpa_ativo_total = empresa_bpa[empresa_bpa["CD_CONTA"] == "1"]
-            if not bpa_ativo_total.empty:
+            bpa_ativo_total = empresa_bpa[empresa_bpa["CD_CONTA"] == "1"] if empresa_bpa is not None else pd.DataFrame()
+            if bpa_ativo_total is not None and not bpa_ativo_total.empty:
                 idx = pd.DatetimeIndex(pd.to_datetime(bpa_ativo_total["DT_REFER"].unique(), errors="coerce")).dropna().unique().sort_values()
             else:
                 idx = pd.DatetimeIndex(pd.to_datetime(empresa_dre["DT_REFER"].unique(), errors="coerce")).dropna().unique().sort_values()
@@ -201,9 +199,11 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
         caixa_liq = caixa
         div_liq = div_total - caixa_liq
 
+        nome = empresas.at[CD_CVM, "DENOM_CIA"]  # agora é sempre scalar
+
         df_empresa = pd.DataFrame({
             "CD_CVM": CD_CVM,
-            "Nome": empresas.loc[CD_CVM, "DENOM_CIA"],
+            "Nome": nome,
             "Data": idx,
             "Receita Líquida": receita.values,
             "Ebit": ebit.values,
@@ -220,9 +220,9 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
             "Dívida Líquida": div_liq.values,
         })
 
-        df_consolidado = pd.concat([df_consolidado, df_empresa], ignore_index=True)
+        df_consolidado.append(df_empresa)
 
-    return df_consolidado
+    return pd.concat(df_consolidado, ignore_index=True) if df_consolidado else pd.DataFrame()
 
 
 def adicionar_ticker(df: pd.DataFrame) -> pd.DataFrame:
@@ -377,7 +377,7 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None
       "Passivo_Circulante" = EXCLUDED."Passivo_Circulante",
       "Passivo_Total" = EXCLUDED."Passivo_Total",
       "Divida_Total" = EXCLUDED."Divida_Total",
-      "Patrimonio_Liquido" = EXCLUDED."Patrimonio_Liquido",
+      "Patrimonio_Liquido" = EXCLUDED."Patrimônio_Liquido",
       "Dividendos" = EXCLUDED."Dividendos",
       "Caixa_Liquido" = EXCLUDED."Caixa_Liquido",
       "Divida_Liquida" = EXCLUDED."Divida_Liquida"
