@@ -3,6 +3,7 @@ import io
 import os
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -20,18 +21,45 @@ pd.set_option("future.no_silent_downcasting", True)
 URL_BASE = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/ITR/DADOS/"
 
 ANO_INICIAL = int(os.getenv("ANO_INICIAL", "2010"))
-ULTIMO_ANO = int(os.getenv("ULTIMO_ANO", "2025"))
+ULTIMO_ANO = int(os.getenv("ULTIMO_ANO", "0"))  # 0 = modo automático
 MAX_WORKERS = int(os.getenv("MAX_WORKERS", "8"))
 
 # DQ
 DQ_TOL_PCT = float(os.getenv("DQ_TOL_PCT", "0.02"))
 DQ_ACCEPT_WARNING = os.getenv("DQ_ACCEPT_WARNING", "0").strip() in ("1", "true", "True", "YES", "yes")
 
-# Supabase Postgres connection string
 SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL", "").strip()
 
 # Mesmo arquivo do DFP
 TICKER_PATH = Path(__file__).resolve().parent / "cvm_to_ticker.csv"
+
+
+# ======================
+# Helpers: Descobrir último ano disponível
+# ======================
+def _ultimo_ano_disponivel(url_base: str, prefix: str, ano_max: int | None = None, max_back: int = 8) -> int:
+    """
+    Descobre o último ano com zip disponível na CVM.
+    prefix: 'itr_cia_aberta'
+    max_back: quantos anos no máximo tenta voltar (protege contra loops longos).
+    """
+    if ano_max is None:
+        ano_max = datetime.now().year
+
+    for ano in range(ano_max, ano_max - max_back - 1, -1):
+        url = f"{url_base}{prefix}_{ano}.zip"
+        try:
+            r = requests.head(url, timeout=20, allow_redirects=True)
+            if r.status_code == 200:
+                return ano
+        except requests.RequestException:
+            pass
+
+    return ano_max - max_back
+
+
+if ULTIMO_ANO <= 0:
+    ULTIMO_ANO = _ultimo_ano_disponivel(URL_BASE, "itr_cia_aberta", ano_max=datetime.now().year, max_back=12)
 
 
 # ======================
@@ -49,12 +77,10 @@ def _ler_csv_do_zip(zbytes: bytes, nome_csv: str) -> pd.DataFrame:
         with zf.open(nome_csv) as csvfile:
             df = pd.read_csv(csvfile, sep=";", decimal=",", encoding="ISO-8859-1")
 
-    # Normalização determinística de escala (CVM)
     df = normalize_vl_conta(df)
     if "VL_CONTA_NORM" in df.columns:
         df["VL_CONTA"] = df["VL_CONTA_NORM"]
 
-    # Normaliza DT_REFER (se existir)
     if "DT_REFER" in df.columns:
         df["DT_REFER"] = pd.to_datetime(df["DT_REFER"], errors="coerce")
 
@@ -96,7 +122,6 @@ def coletar_itr() -> dict:
 # Consolidação ITR (mantém seu padrão de colunas)
 # ======================
 def montar_df_consolidado(df_dict_itr: dict) -> pd.DataFrame:
-    # Usa BPA como base para lista de empresas (mais estável em ITR)
     if df_dict_itr.get("BPA") is None or df_dict_itr["BPA"].empty:
         return pd.DataFrame()
 
@@ -120,7 +145,7 @@ def montar_df_consolidado(df_dict_itr: dict) -> pd.DataFrame:
 
     for CD_CVM in empresas.index:
         empresa_dre = df_dict_itr["DRE"][df_dict_itr["DRE"]["CD_CVM"] == CD_CVM] if df_dict_itr.get("DRE") is not None else pd.DataFrame()
-        empresa_bpa = df_dict_itr["BPA"][df_dict_itr["BPA"]["CD_CVM"] == CD_CVM] if df_dict_itr.get("BPA") is not None else pd.DataFrame()
+        empresa_bpa = df_dict_itr["BPA"][df_dict_itr["BPA"]["CD_CVM"] == CD_CVM]
         empresa_bpp = df_dict_itr["BPP"][df_dict_itr["BPP"]["CD_CVM"] == CD_CVM] if df_dict_itr.get("BPP") is not None else pd.DataFrame()
 
         if empresa_bpa is None or empresa_bpa.empty:
@@ -356,7 +381,7 @@ def upsert_supabase(df: pd.DataFrame) -> None:
             execute_values(cur, sql, values, page_size=5000)
         conn.commit()
 
-    print(f"[OK] Gravado no Supabase (ITR): {len(df_db)} linhas")
+    print(f"[OK] Gravado no Supabase (ITR): {len(df_db)} linhas (até {ULTIMO_ANO})")
 
 
 # ======================
