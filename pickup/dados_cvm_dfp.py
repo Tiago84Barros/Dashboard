@@ -21,13 +21,11 @@ URL_BASE_DFP = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/DFP/DADOS/"
 MAX_WORKERS = int(os.getenv("MAX_WORKERS", "8"))
 ANO_INICIAL = int(os.getenv("ANO_INICIAL", "2010"))
 
-# Se ULTIMO_ANO for definido, respeita. Se não, descobre automaticamente.
+# Se ULTIMO_ANO for definido no ambiente, respeita. Se não, descobre automaticamente.
 ULTIMO_ANO = int(os.getenv("ULTIMO_ANO", "0"))  # 0 => auto
+ULTIMO_ANO_DISPONIVEL = int(os.getenv("ULTIMO_ANO_DISPONIVEL", "2023"))  # usado no filtro original
 
-# usado no filtro (seu comportamento original)
-ULTIMO_ANO_DISPONIVEL = int(os.getenv("ULTIMO_ANO_DISPONIVEL", "2023"))
-
-SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL")  # obrigatório
+SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL", "").strip()  # obrigatório
 
 BASE_DIR = Path(__file__).resolve().parent
 TICKER_PATH = Path(os.getenv("TICKER_PATH", str(BASE_DIR / "cvm_to_ticker.csv")))
@@ -38,7 +36,7 @@ TICKER_PATH = Path(os.getenv("TICKER_PATH", str(BASE_DIR / "cvm_to_ticker.csv"))
 # =========================
 def _ultimo_ano_disponivel(prefix: str, ano_max: int | None = None, max_back: int = 12) -> int:
     """
-    Descobre o último ano cujo zip existe na CVM.
+    Descobre o último ano cujo zip existe na CVM via HEAD.
     prefix: 'dfp_cia_aberta'
     """
     if ano_max is None:
@@ -66,38 +64,30 @@ if ULTIMO_ANO <= 0:
 # =========================
 def _normalizar_vl_conta_por_escala(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Normaliza VL_CONTA com base em ESCALA_MOEDA quando disponível.
-    Não altera o comportamento se colunas não existirem.
+    Normaliza VL_CONTA usando ESCALA_MOEDA quando disponível.
+    Não altera comportamento se colunas não existirem.
     """
     if df is None or df.empty:
         return df
-
-    if "VL_CONTA" not in df.columns:
-        return df
-
-    if "ESCALA_MOEDA" not in df.columns:
+    if "VL_CONTA" not in df.columns or "ESCALA_MOEDA" not in df.columns:
         return df
 
     out = df.copy()
     out["VL_CONTA"] = pd.to_numeric(out["VL_CONTA"], errors="coerce")
 
     escala = out["ESCALA_MOEDA"].astype(str).str.strip().str.upper()
-
-    # CVM tipicamente usa: UNIDADE / MIL / MILHAR(ES) / MILHÃO / BILHÃO (variações)
     fatores = pd.Series(1.0, index=out.index)
 
     fatores.loc[escala.isin(["MIL", "MILHAR", "MILHARES"])] = 1_000.0
     fatores.loc[escala.isin(["MILHAO", "MILHÃO", "MILHOES", "MILHÕES"])] = 1_000_000.0
     fatores.loc[escala.isin(["BILHAO", "BILHÃO", "BILHOES", "BILHÕES"])] = 1_000_000_000.0
-    # UNIDADE, REAL, etc ficam 1.0
 
-    # Regra: se já estiver em unidade, não mexe; caso seja MIL/MILHÃO/BILHÃO, multiplica.
     out["VL_CONTA"] = out["VL_CONTA"] * fatores
     return out
 
 
 # =========================
-# COLETA DFP (PARALELISMO) — preserva sua lógica
+# COLETA DFP (PARALELISMO)
 # =========================
 def processar_ano_dfp(ano: int):
     url = URL_BASE_DFP + f"dfp_cia_aberta_{ano}.zip"
@@ -116,20 +106,21 @@ def processar_ano_dfp(ano: int):
                     try:
                         df_temp = pd.read_csv(csvfile, sep=";", decimal=",", encoding="ISO-8859-1")
 
-                        # preserva filtro original
+                        # preserva seu filtro original
                         if "ORDEM_EXERC" in df_temp.columns:
                             df_temp = df_temp[df_temp["ORDEM_EXERC"] == "ÚLTIMO"]
 
-                        # normaliza escala (se existir)
+                        # normaliza escala se existir
                         df_temp = _normalizar_vl_conta_por_escala(df_temp)
 
-                        if "DRE" in arquivo.upper():
+                        up = arquivo.upper()
+                        if "DRE" in up:
                             df_temp_dict["DRE"].append(df_temp)
-                        elif "BPA" in arquivo.upper():
+                        elif "BPA" in up:
                             df_temp_dict["BPA"].append(df_temp)
-                        elif "BPP" in arquivo.upper():
+                        elif "BPP" in up:
                             df_temp_dict["BPP"].append(df_temp)
-                        elif "DFC" in arquivo.upper():
+                        elif "DFC" in up:
                             df_temp_dict["DFC_MI"].append(df_temp)
 
                     except Exception as e:
@@ -141,8 +132,7 @@ def processar_ano_dfp(ano: int):
 def coletar_dfp():
     df_dict_dfp = {"DRE": pd.DataFrame(), "BPA": pd.DataFrame(), "BPP": pd.DataFrame(), "DFC_MI": pd.DataFrame()}
 
-    # comportamento original: range(ANO_INICIAL, ULTIMO_ANO)
-    # Nota: mantendo seu padrão (ULTIMO_ANO não incluso). Se quiser incluir, mude para ULTIMO_ANO+1.
+    # mantém seu padrão original: ULTIMO_ANO não incluso
     anos = list(range(ANO_INICIAL, ULTIMO_ANO))
     if not anos:
         print("[WARN] Intervalo de anos vazio. Verifique ANO_INICIAL/ULTIMO_ANO.")
@@ -163,9 +153,12 @@ def coletar_dfp():
 
 
 # =========================
-# CONSOLIDAÇÃO (fiel ao seu notebook/script)
+# CONSOLIDAÇÃO (fiel ao seu script)
 # =========================
 def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
+    if df_dict_dfp["DRE"] is None or df_dict_dfp["DRE"].empty:
+        return pd.DataFrame()
+
     empresas = (
         df_dict_dfp["DRE"][["DENOM_CIA", "CD_CVM"]]
         .drop_duplicates()
@@ -221,7 +214,6 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
         empresa_dfc = _to_dt(df_dict_dfp["DFC_MI"][df_dict_dfp["DFC_MI"]["CD_CVM"] == CD_CVM])
 
         conta_receita = empresa_dre[empresa_dre["CD_CONTA"] == "3.01"] if empresa_dre is not None else pd.DataFrame()
-
         idx = _idx_base(conta_receita, empresa_bpa, empresa_dre, empresa_bpp, empresa_dfc)
         if len(idx) == 0:
             continue
@@ -242,7 +234,6 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
         # ========= BPA =========
         conta_ativo_total = empresa_bpa[empresa_bpa["CD_CONTA"] == "1"]
 
-        # Ativo Circulante
         bpa_101 = empresa_bpa[empresa_bpa["CD_CONTA"] == "1.01"]
         if (bpa_101 is not None) and (not bpa_101.empty) and ("Ativo Circulante" in bpa_101["DS_CONTA"].values):
             conta_ativo_circulante = bpa_101
@@ -257,26 +248,6 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
                 "Aplicações no Mercado Aberto",
                 "Derivativos",
                 "Imposto de Renda e Contribuição Social - Correntes"
-            ])]
-
-        # Ativo Não Circulante
-        bpa_102 = empresa_bpa[empresa_bpa["CD_CONTA"] == "1.02"]
-        if (bpa_102 is not None) and (not bpa_102.empty) and ("Ativo Não Circulante" in bpa_102["DS_CONTA"].values):
-            conta_ativo_nao_circulante = bpa_102
-        else:
-            conta_ativo_nao_circulante = empresa_bpa[empresa_bpa["DS_CONTA"].isin([
-                "Depósito Compulsório Banco Central",
-                "Imposto de Renda e Contribuição Social - Diferidos",
-                "Ativos Não Correntes a Venda",
-                "Ativos de Operações Descontinuadas",
-                "Investimentos",
-                "Participações em Coligadas",
-                "Propriedades para Investimento",
-                "Imobilizado",
-                "Intangível",
-                "Goodwill",
-                "Depreciação Acumulada",
-                "Amortização Acumulada"
             ])]
 
         conta_caixa_e_equivalentes = empresa_bpa[empresa_bpa["DS_CONTA"] == "Caixa e Equivalentes de Caixa"]
@@ -299,47 +270,18 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
                 "Provisões trabalhistas, fiscais e cíveis"
             ])]
 
-        bpp_202 = empresa_bpp[empresa_bpp["CD_CONTA"] == "2.02"]
-        if (bpp_202 is not None) and (not bpp_202.empty) and ("Passivo Não Circulante" in bpp_202["DS_CONTA"].values):
-            conta_passivo_nao_circulante = bpp_202
-        else:
-            conta_passivo_nao_circulante = empresa_bpp[empresa_bpp["DS_CONTA"].isin([
-                "Obrigações de Longo Prazo",
-                "Provisões",
-                "Passivos por Impostos Diferidos",
-                "Passivos por Contrato de Seguros e Previdência Complementar",
-                "Outros Passivos"
-            ])]
-
         conta_patrimonio_liquido = empresa_bpp[empresa_bpp["DS_CONTA"].isin(["Patrimônio Líquido Consolidado"])]
-
         conta_passivo_circulante_financeiro = empresa_bpp[empresa_bpp["CD_CONTA"].astype(str).str.startswith("2.01.04", na=False)]
         conta_passivo_nao_circulante_financeiro = empresa_bpp[empresa_bpp["CD_CONTA"].astype(str).str.startswith("2.02.01", na=False)]
-
         conta_passivo_total = empresa_bpp[empresa_bpp["CD_CONTA"] == "2"]
 
         # ========= DFC =========
         conta_dividendos = empresa_dfc[empresa_dfc["DS_CONTA"].isin([
-            "Dividendos",
-            "Dividendos pagos",
-            "Dividendos Pagos",
-            "Pagamento de Dividendos",
-            "Pagamento de Dividendos e JCP",
-            "Pagamentos de Dividendos e JCP",
-            "Pagamento de dividendos e JCP",
-            "Dividendos Pagos a Acionistas",
-            "Dividendos/JCP Pagos a Acionistas",
-            "JCP e dividendos pagos e acionistas",
-            "Dividendos e Juros s/Capital Próprio",
-            "Pgto de Dividendos/Juros s/ Capital Próprio",
+            "Dividendos", "Dividendos pagos", "Dividendos Pagos", "Pagamento de Dividendos",
+            "Pagamento de Dividendos e JCP", "Pagamentos de Dividendos e JCP",
+            "Dividendos Pagos a Acionistas", "Dividendos/JCP Pagos a Acionistas",
+            "JCP e dividendos pagos e acionistas", "Dividendos e Juros s/Capital Próprio",
             "Dividendos e Juros sobre o Capital Próprio Pagos",
-            "Dividendos e juros sobre o capital próprio pagos",
-            "Dividendos e Juros Sobre Capital Próprios Pagos",
-            "Dividendos ou Juros sobre Capital Próprio Pagos",
-            "Pagamento de Dividendos e juros sobre capital próprio",
-            "Pagamento de Dividendos e Juros s/Capital Próprio",
-            "Pagamento de dividendos e juros sobre o capital próprio",
-            "Dividendos ou juros sobre o capital próprio pagos aos acionistas controladores"
         ])]
         conta_dividendos_nctrl = empresa_dfc[
             empresa_dfc["DS_CONTA"].isin(["Dividendos ou juros sobre o capital próprio pagos aos acionistas não controladores"])
@@ -357,15 +299,12 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
 
         df_empresa["Ativo Total"] = _serie_conta(conta_ativo_total, idx)
         df_empresa["Ativo Circulante"] = _serie_conta(conta_ativo_circulante, idx)
-        df_empresa["Ativo Não Circulante"] = _serie_conta(conta_ativo_nao_circulante, idx)
 
         df_empresa["Caixa e Equivalentes"] = _serie_conta(conta_caixa_e_equivalentes, idx)
 
         df_empresa["Passivo Circulante"] = _serie_conta(conta_passivo_circulante, idx)
-        df_empresa["Passivo Não Circulante"] = _serie_conta(conta_passivo_nao_circulante, idx)
 
         df_empresa["Patrimônio Líquido"] = _serie_conta(conta_patrimonio_liquido, idx)
-
         df_empresa["Passivo Total"] = _serie_conta(conta_passivo_total, idx)
 
         df_empresa["Passivo Circulante Financeiro"] = _serie_conta(conta_passivo_circulante_financeiro, idx)
@@ -376,7 +315,6 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
 
         df_empresa["Caixa Líquido"] = _serie_conta(conta_fco, idx)
 
-        # ========= Numérico =========
         cols_to_convert = [
             "Receita Líquida", "Ebit", "Lucro Líquido", "Lucro por Ação",
             "Ativo Total", "Ativo Circulante", "Passivo Circulante", "Passivo Total",
@@ -384,67 +322,21 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
             "Caixa e Equivalentes", "Dividendos", "Dividendos Ncontroladores",
             "Patrimônio Líquido", "Caixa Líquido"
         ]
-
         for col in cols_to_convert:
-            df_empresa[col] = pd.to_numeric(df_empresa[col], errors="coerce")
+            df_empresa[col] = pd.to_numeric(df_empresa[col], errors="coerce").fillna(0)
 
-        # ========= Normalização específica: Lucro por Ação =========
-        def normalizar_lucro_por_acao(s: pd.Series, limite: float = 1e4) -> pd.Series:
-            s2 = s.astype("float64")
-            for _ in range(6):
-                mask = s2.abs() > limite
-                if not mask.any():
-                    break
-                s2.loc[mask] = s2.loc[mask] / 1000.0
-            s2.loc[s2.abs() > limite] = np.nan
-            return s2
-
-        df_empresa["Lucro por Ação"] = normalizar_lucro_por_acao(df_empresa["Lucro por Ação"])
-
-        # ========= Fill final =========
-        for col in cols_to_convert:
-            df_empresa[col] = df_empresa[col].fillna(0)
-
-        # ========= Derivadas =========
+        # Derivadas (preservando seu comportamento)
         df_empresa["Passivo Total"] = df_empresa["Passivo Total"] - df_empresa["Patrimônio Líquido"]
-
-        df_empresa["Divida Total"] = (
-            df_empresa["Passivo Circulante Financeiro"] + df_empresa["Passivo Não Circulante Financeiro"]
-        )
-
+        df_empresa["Divida Total"] = df_empresa["Passivo Circulante Financeiro"] + df_empresa["Passivo Não Circulante Financeiro"]
         df_empresa["Dívida Líquida"] = df_empresa["Divida Total"] - df_empresa["Caixa e Equivalentes"]
+        df_empresa["Dividendos Totais"] = (df_empresa["Dividendos"] + df_empresa["Dividendos Ncontroladores"]).abs()
 
-        df_empresa["Dividendos Totais"] = (
-            df_empresa["Dividendos"] + df_empresa["Dividendos Ncontroladores"]
-        ).abs()
-
-        # ========= Seleção final =========
         colunas_desejadas = [
-            "CD_CVM",
-            "Data",
-            "Receita Líquida",
-            "Ebit",
-            "Lucro Líquido",
-            "Lucro por Ação",
-            "Ativo Total",
-            "Ativo Circulante",
-            "Passivo Circulante",
-            "Passivo Total",
-            "Divida Total",
-            "Patrimônio Líquido",
-            "Dividendos Totais",
-            "Caixa Líquido",
-            "Dívida Líquida",
+            "CD_CVM", "Data", "Receita Líquida", "Ebit", "Lucro Líquido", "Lucro por Ação",
+            "Ativo Total", "Ativo Circulante", "Passivo Circulante", "Passivo Total",
+            "Divida Total", "Patrimônio Líquido", "Dividendos Totais", "Caixa Líquido", "Dívida Líquida",
         ]
-        colunas_existentes = [c for c in colunas_desejadas if c in df_empresa.columns]
-
-        df_selecionado = (
-            df_empresa[colunas_existentes]
-            .apply(pd.to_numeric, errors="coerce")
-            .fillna(0)
-            .reset_index(drop=True)
-        )
-
+        df_selecionado = df_empresa[colunas_desejadas].reset_index(drop=True)
         df_consolidado = pd.concat([df_consolidado, df_selecionado], ignore_index=True)
 
     return df_consolidado.fillna(0)
@@ -459,11 +351,11 @@ def adicionar_ticker(df_consolidado: pd.DataFrame) -> pd.DataFrame:
 
     cvm_to_ticker = pd.read_csv(TICKER_PATH, sep=",", encoding="utf-8")
 
-    # merge fiel ao seu script: left CD_CVM, right CVM
+    # mantém exatamente seu merge tradicional: left CD_CVM, right CVM
     df = pd.merge(df_consolidado, cvm_to_ticker, left_on="CD_CVM", right_on="CVM")
     df = df.drop(columns=["CD_CVM", "CVM"])
 
-    df["Data"] = pd.to_datetime(df["Data"]).dt.strftime("%Y-%m-%d")
+    df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.strftime("%Y-%m-%d")
 
     colunas = [
         "Ticker", "Data", "Receita Líquida", "Ebit", "Lucro Líquido", "Lucro por Ação",
@@ -474,7 +366,7 @@ def adicionar_ticker(df_consolidado: pd.DataFrame) -> pd.DataFrame:
 
 
 # =========================
-# FILTRO DE EMPRESAS (mantém seu padrão)
+# FILTRO (mantém seu padrão)
 # =========================
 def filtrar_empresas(df_consolidado: pd.DataFrame) -> pd.DataFrame:
     colunas_essenciais = ["Receita Líquida"]
@@ -483,7 +375,7 @@ def filtrar_empresas(df_consolidado: pd.DataFrame) -> pd.DataFrame:
     for ticker in df_consolidado["Ticker"].unique():
         df_empresa = df_consolidado[df_consolidado["Ticker"] == ticker]
 
-        anos_disponiveis = sorted(pd.to_datetime(df_empresa["Data"]).dt.year.unique())
+        anos_disponiveis = sorted(pd.to_datetime(df_empresa["Data"], errors="coerce").dt.year.dropna().unique())
         if not anos_disponiveis:
             continue
 
@@ -491,18 +383,10 @@ def filtrar_empresas(df_consolidado: pd.DataFrame) -> pd.DataFrame:
         ultimo_ano = anos_disponiveis[-1]
         anos_esperados = list(range(primeiro_ano, ultimo_ano + 1))
 
-        print(f"\n🔎 Analisando {ticker}")
-        print(f"  - Anos disponíveis: {anos_disponiveis}")
-        print(f"  - Anos esperados: {anos_esperados}")
-        print(f"  - Dados contínuos? {anos_disponiveis == anos_esperados}")
-
         dados_continuos = anos_disponiveis == anos_esperados
         termina_no_ultimo_ano = ultimo_ano >= ULTIMO_ANO_DISPONIVEL
 
-        print(f"  - Termina no último ano? {termina_no_ultimo_ano}")
-
         colunas_com_faltas = df_empresa[colunas_essenciais].isna().sum().sum()
-        print(f"  - Valores ausentes nas colunas essenciais: {colunas_com_faltas}")
 
         if dados_continuos and termina_no_ultimo_ano and (colunas_com_faltas / df_empresa.shape[0] <= 0.1):
             tickers_aprovados.append(ticker)
@@ -511,7 +395,7 @@ def filtrar_empresas(df_consolidado: pd.DataFrame) -> pd.DataFrame:
 
 
 # =========================
-# GRAVAÇÃO NO SUPABASE (mantém seu padrão)
+# GRAVAÇÃO NO SUPABASE (alinhado ao schema)
 # =========================
 def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None:
     if df_filtrado is None or df_filtrado.empty:
@@ -521,6 +405,7 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None
     if not SUPABASE_DB_URL:
         raise RuntimeError("Defina SUPABASE_DB_URL (connection string Postgres do Supabase).")
 
+    # Monta exatamente conforme schema do Supabase (sem acentos nos nomes)
     df_db = pd.DataFrame({
         "Ticker": df_filtrado["Ticker"],
         "Data": df_filtrado["Data"],
@@ -537,15 +422,27 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None
         "Dividendos": df_filtrado["Dividendos Totais"],
         "Caixa_Liquido": df_filtrado["Caixa Líquido"],
         "Divida_Liquida": df_filtrado["Dívida Líquida"],
-    }).fillna(0)
+    })
 
+    # Tipos / arredondamento compatíveis com numeric(20,2) e LPA numeric(20,6)
     df_db["Data"] = pd.to_datetime(df_db["Data"], errors="coerce").dt.date
 
+    money_cols = [
+        "Receita_Liquida", "EBIT", "Lucro_Liquido", "Ativo_Total", "Ativo_Circulante",
+        "Passivo_Circulante", "Passivo_Total", "Divida_Total", "Patrimonio_Liquido",
+        "Dividendos", "Caixa_Liquido", "Divida_Liquida"
+    ]
+    for c in money_cols:
+        df_db[c] = pd.to_numeric(df_db[c], errors="coerce").round(2)
+
+    df_db["LPA"] = pd.to_numeric(df_db["LPA"], errors="coerce").round(6)
+
+    df_db = df_db.fillna(0)
+
     df_db = (
-        df_db
-        .sort_values(["Ticker", "Data"])
-        .drop_duplicates(subset=["Ticker", "Data"], keep="last")
-        .reset_index(drop=True)
+        df_db.sort_values(["Ticker", "Data"])
+             .drop_duplicates(subset=["Ticker", "Data"], keep="last")
+             .reset_index(drop=True)
     )
 
     cols = list(df_db.columns)
@@ -565,7 +462,7 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None
       "Passivo_Circulante" = EXCLUDED."Passivo_Circulante",
       "Passivo_Total" = EXCLUDED."Passivo_Total",
       "Divida_Total" = EXCLUDED."Divida_Total",
-      "Patrimonio_Liquido" = EXCLUDED."Patrimônio_Liquido",
+      "Patrimonio_Liquido" = EXCLUDED."Patrimonio_Liquido",
       "Dividendos" = EXCLUDED."Dividendos",
       "Caixa_Liquido" = EXCLUDED."Caixa_Liquido",
       "Divida_Liquida" = EXCLUDED."Divida_Liquida"
@@ -574,37 +471,6 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None
 
     with psycopg2.connect(SUPABASE_DB_URL) as conn:
         with conn.cursor() as cur:
-            # Diagnóstico de overflow (mantido)
-            df_debug = df_filtrado.copy()
-            for col in df_debug.columns:
-                if col not in ["Ticker", "Data"]:
-                    df_debug[col] = pd.to_numeric(df_debug[col], errors="coerce")
-
-            LIMITE = 1e13  # 10 trilhões
-            numericos = df_debug.drop(columns=["Ticker", "Data"])
-            max_por_coluna = numericos.abs().max().sort_values(ascending=False)
-
-            print("\n=== DIAGNÓSTICO OVERFLOW ===")
-            print("Top 15 maiores valores absolutos por coluna:")
-            print(max_por_coluna.head(15))
-
-            colunas_problema = max_por_coluna[max_por_coluna > LIMITE].index.tolist()
-
-            if colunas_problema:
-                print("\nColunas com valores acima do limite:", colunas_problema)
-
-                linhas_problema = df_debug[
-                    numericos[colunas_problema].abs().max(axis=1) > LIMITE
-                ]
-
-                print("\nExemplos de linhas problemáticas:")
-                print(linhas_problema[["Ticker", "Data"] + colunas_problema].head(20))
-
-                raise ValueError(
-                    "ABORTADO PROPOSITALMENTE: valores financeiros fora de escala detectados. "
-                    "Verifique o log acima."
-                )
-
             execute_values(cur, sql, values, page_size=5000)
         conn.commit()
 
