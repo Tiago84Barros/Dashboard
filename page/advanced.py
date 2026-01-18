@@ -183,6 +183,53 @@ def render() -> None:
                 use_score_v2 = st.checkbox("Usar Score v2 (robusto)", value=True)
         # <<< PATCH SCORE V2
 
+# teste temporário -----------------------------------------------------------------------------------------
+        with st.expander("Diagnóstico (anomalias da simulação)", expanded=False):
+            diag_aporte_mensal = st.number_input(
+                "Aporte mensal por ação (R$) — usado no diagnóstico",
+                min_value=0.0,
+                value=1000.0,
+                step=100.0,
+                format="%.2f",
+            )
+            diag_fee_bps = st.number_input(
+                "Custo (fee) em bps (diagnóstico)",
+                min_value=0.0,
+                value=0.0,
+                step=1.0,
+                format="%.2f",
+            )
+            diag_slip_bps = st.number_input(
+                "Slippage em bps (diagnóstico)",
+                min_value=0.0,
+                value=0.0,
+                step=1.0,
+                format="%.2f",
+            )
+            diag_min_preco = st.number_input(
+                "Preço mínimo aceitável (R$)",
+                min_value=0.0,
+                value=0.10,
+                step=0.05,
+                format="%.2f",
+            )
+            diag_max_div = st.number_input(
+                "Dividendo máximo por ação no mês (R$)",
+                min_value=0.0,
+                value=50.0,
+                step=1.0,
+                format="%.2f",
+            )
+            diag_max_mult = st.number_input(
+                "Multiplicador máximo Patrimônio/Aportado",
+                min_value=1.0,
+                value=300.0,
+                step=10.0,
+                format="%.2f",
+            )
+
+    # teste temporário em cima -----------------------------------------------------------------------
+
     # ── filtra tickers do segmento
     seg_df = setores[
         (setores["SETOR"] == setor) &
@@ -381,6 +428,57 @@ def render() -> None:
     patrimonio_final = pd.concat([patrimonio_estrategia, patrimonio_empresas, patrimonio_selic], axis=1).sort_index()
     patrimonio_final = patrimonio_final.apply(pd.to_numeric, errors="coerce").ffill()
 
+    # Teste temporário ----------------------------------------------------------------
+
+        st.markdown("---")
+    st.subheader("Diagnóstico de anomalias (preço/dividendo/escala)")
+
+    st.caption(
+        "Este diagnóstico procura: (1) preços fora de escala (ex.: muito baixos), "
+        "(2) dividendos com unidade possivelmente incorreta e "
+        "(3) explosões irreais do multiplicador Patrimônio/Aportado."
+    )
+
+    if st.button("Executar diagnóstico de anomalias", key="btn_diag_anomalias"):
+        with st.spinner("Executando diagnóstico..."):
+            df_anomalias = diagnosticar_anomalias_simulacao(
+                precos=precos,
+                tickers=tickers_scores,
+                datas_aportes=datas_aportes,
+                dividendos_dict=dividendos,
+                aporte_mensal=float(diag_aporte_mensal),
+                fee_bps=float(diag_fee_bps),
+                slippage_bps=float(diag_slip_bps),
+                min_preco_aceitavel=float(diag_min_preco),
+                max_div_por_acao_mes=float(diag_max_div),
+                max_multiplicador_patrimonio=float(diag_max_mult),
+            )
+
+        if df_anomalias is None or df_anomalias.empty:
+            st.success("Nenhuma anomalia detectada com os parâmetros atuais.")
+        else:
+            st.error(f"Foram detectadas {len(df_anomalias)} anomalias.")
+            # filtro rápido por ticker (útil para SYNE3)
+            tk_opts = ["Todos"] + sorted(df_anomalias["ticker"].astype(str).unique().tolist())
+            tk_sel = st.selectbox("Filtrar por ticker", tk_opts, index=0, key="diag_ticker_sel")
+
+            if tk_sel != "Todos":
+                df_view = df_anomalias[df_anomalias["ticker"].astype(str) == tk_sel].copy()
+            else:
+                df_view = df_anomalias.copy()
+
+            st.dataframe(df_view, use_container_width=True)
+
+            st.caption(
+                "Interpretação rápida: "
+                "flag_preco=True normalmente indica split/ajuste errado ou dado corrompido; "
+                "flag_div=True indica dividendo em unidade errada (total vs por ação); "
+                "flag_mult=True indica explosão do multiplicador e merece inspeção do mês."
+            )
+
+
+    # Teste temporário acima ----------------------------------------------------------
+    
     st.markdown("## Evolução do patrimônio (Estratégia vs Empresas vs Selic)")
 
     fig, ax = plt.subplots(figsize=(12, 6))
