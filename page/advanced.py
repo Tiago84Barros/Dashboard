@@ -28,18 +28,24 @@ from core.scoring import (
     calcular_score_acumulado,
     penalizar_plato,
 )
+
 # >>> PATCH SCORE V2 (import opcional)
 try:
     from core.scoring_v2 import calcular_score_acumulado_v2
 except Exception:
     calcular_score_acumulado_v2 = None
 # <<< PATCH SCORE V2
+
 from core.portfolio import (
     gerir_carteira,
     gerir_carteira_todas_empresas,
     calcular_patrimonio_selic_macro,
 )
 from core.weights import get_pesos
+
+# >>> DIAGNÓSTICO (módulo já criado por você)
+from core.diagnostico_anomalias_simulacao import diagnosticar_anomalias_simulacao
+# <<< DIAGNÓSTICO
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +116,6 @@ def _safe_macro() -> Optional[pd.DataFrame]:
     if dm is None or dm.empty:
         return None
     dm = _clean_df_cols(dm)
-    # portfolio.calcular_patrimonio_selic_macro aceita Data em coluna ou índice com nome Data
     if "Data" in dm.columns:
         dm["Data"] = pd.to_datetime(dm["Data"], errors="coerce")
         dm = dm.dropna(subset=["Data"]).sort_values("Data")
@@ -134,7 +139,6 @@ def render() -> None:
         setores = _clean_df_cols(setores)
         st.session_state["setores_df"] = setores
 
-    # validação mínima de schema (case-sensitive conforme Postgres com colunas entre aspas)
     needed = {"SETOR", "SUBSETOR", "SEGMENTO", "ticker"}
     if not needed.issubset(setores.columns):
         st.error(f"A tabela de setores não contém colunas esperadas: {sorted(needed)}")
@@ -174,7 +178,7 @@ def render() -> None:
         segmento = st.selectbox("Segmento:", sorted(segmentos))
         tipo = st.radio("Perfil de empresa:", ["Crescimento (<10 anos)", "Estabelecida (≥10 anos)", "Todas"], index=2)
 
-        # >>> PATCH SCORE V2 (controle na sidebar, sem alterar layout existente)
+        # >>> PATCH SCORE V2
         with st.expander("Scoring (opções)", expanded=False):
             if calcular_score_acumulado_v2 is None:
                 st.caption("Score v2 indisponível (core/scoring_v2.py não encontrado).")
@@ -183,24 +187,24 @@ def render() -> None:
                 use_score_v2 = st.checkbox("Usar Score v2 (robusto)", value=True)
         # <<< PATCH SCORE V2
 
-# teste temporário -----------------------------------------------------------------------------------------
+        # >>> DIAGNÓSTICO (parâmetros)
         with st.expander("Diagnóstico (anomalias da simulação)", expanded=False):
             diag_aporte_mensal = st.number_input(
-                "Aporte mensal por ação (R$) — usado no diagnóstico",
+                "Aporte mensal por ação (R$)",
                 min_value=0.0,
                 value=1000.0,
                 step=100.0,
                 format="%.2f",
             )
             diag_fee_bps = st.number_input(
-                "Custo (fee) em bps (diagnóstico)",
+                "Fee (bps)",
                 min_value=0.0,
                 value=0.0,
                 step=1.0,
                 format="%.2f",
             )
             diag_slip_bps = st.number_input(
-                "Slippage em bps (diagnóstico)",
+                "Slippage (bps)",
                 min_value=0.0,
                 value=0.0,
                 step=1.0,
@@ -227,8 +231,7 @@ def render() -> None:
                 step=10.0,
                 format="%.2f",
             )
-
-    # teste temporário em cima -----------------------------------------------------------------------
+        # <<< DIAGNÓSTICO
 
     # ── filtra tickers do segmento
     seg_df = setores[
@@ -241,7 +244,6 @@ def render() -> None:
         st.warning("Nenhuma empresa encontrada para os filtros escolhidos.")
         return
 
-    # normaliza tickers e nomes
     seg_df["ticker"] = seg_df["ticker"].astype(str).apply(_strip_sa)
     if "nome_empresa" not in seg_df.columns:
         seg_df["nome_empresa"] = seg_df["ticker"]
@@ -254,7 +256,7 @@ def render() -> None:
         return
 
     # ─────────────────────────────────────────────────────────
-    # (Opcional, não disruptivo) Diagnóstico colapsável
+    # (Opcional) Diagnóstico colapsável
     # ─────────────────────────────────────────────────────────
     with st.expander("Diagnóstico (dados do Supabase)", expanded=False):
         st.caption("Seção apenas informativa. Não altera resultados nem layout principal.")
@@ -349,16 +351,11 @@ def render() -> None:
         st.warning("Não há dados suficientes (DRE/Múltiplos) para pelo menos 2 empresas do segmento.")
         return
 
-    # setores_empresa (por ticker sem .SA)
     setores_empresa = {e.ticker: obter_setor_da_empresa(e.ticker, setores) for e in empresas}
-
-    # pesos por setor (regra existente)
     pesos = get_pesos(setor)
-
-    # payload scoring (compatível com scoring.py)
     payload = [{"ticker": e.ticker, "nome": e.nome, "multiplos": e.mult, "dre": e.dre} for e in empresas]
 
-    # >>> PATCH SCORE V2 (switch v1/v2 sem alterar layout)
+    # >>> SCORE v1/v2
     if ("use_score_v2" in locals()) and use_score_v2 and (calcular_score_acumulado_v2 is not None):
         score = calcular_score_acumulado_v2(
             lista_empresas=payload,
@@ -372,7 +369,7 @@ def render() -> None:
         )
     else:
         score = calcular_score_acumulado(payload, setores_empresa, pesos, dados_macro, anos_minimos=4)
-    # <<< PATCH SCORE V2
+    # <<< SCORE
 
     if score is None or score.empty:
         st.warning("Score vazio: não há dados suficientes após os filtros e janela mínima.")
@@ -395,7 +392,6 @@ def render() -> None:
         st.warning("Preços vieram vazios após normalização.")
         return
 
-    # mensal para penalização de platô
     precos_mensal = precos.resample("M").last()
     score = penalizar_plato(score, precos_mensal, meses=12, penal=0.30)
 
@@ -428,57 +424,6 @@ def render() -> None:
     patrimonio_final = pd.concat([patrimonio_estrategia, patrimonio_empresas, patrimonio_selic], axis=1).sort_index()
     patrimonio_final = patrimonio_final.apply(pd.to_numeric, errors="coerce").ffill()
 
-    # Teste temporário ----------------------------------------------------------------
-
-        st.markdown("---")
-    st.subheader("Diagnóstico de anomalias (preço/dividendo/escala)")
-
-    st.caption(
-        "Este diagnóstico procura: (1) preços fora de escala (ex.: muito baixos), "
-        "(2) dividendos com unidade possivelmente incorreta e "
-        "(3) explosões irreais do multiplicador Patrimônio/Aportado."
-    )
-
-    if st.button("Executar diagnóstico de anomalias", key="btn_diag_anomalias"):
-        with st.spinner("Executando diagnóstico..."):
-            df_anomalias = diagnosticar_anomalias_simulacao(
-                precos=precos,
-                tickers=tickers_scores,
-                datas_aportes=datas_aportes,
-                dividendos_dict=dividendos,
-                aporte_mensal=float(diag_aporte_mensal),
-                fee_bps=float(diag_fee_bps),
-                slippage_bps=float(diag_slip_bps),
-                min_preco_aceitavel=float(diag_min_preco),
-                max_div_por_acao_mes=float(diag_max_div),
-                max_multiplicador_patrimonio=float(diag_max_mult),
-            )
-
-        if df_anomalias is None or df_anomalias.empty:
-            st.success("Nenhuma anomalia detectada com os parâmetros atuais.")
-        else:
-            st.error(f"Foram detectadas {len(df_anomalias)} anomalias.")
-            # filtro rápido por ticker (útil para SYNE3)
-            tk_opts = ["Todos"] + sorted(df_anomalias["ticker"].astype(str).unique().tolist())
-            tk_sel = st.selectbox("Filtrar por ticker", tk_opts, index=0, key="diag_ticker_sel")
-
-            if tk_sel != "Todos":
-                df_view = df_anomalias[df_anomalias["ticker"].astype(str) == tk_sel].copy()
-            else:
-                df_view = df_anomalias.copy()
-
-            st.dataframe(df_view, use_container_width=True)
-
-            st.caption(
-                "Interpretação rápida: "
-                "flag_preco=True normalmente indica split/ajuste errado ou dado corrompido; "
-                "flag_div=True indica dividendo em unidade errada (total vs por ação); "
-                "flag_mult=True indica explosão do multiplicador e merece inspeção do mês."
-            )
-
-
-    # Teste temporário acima ----------------------------------------------------------
-    
     st.markdown("## Evolução do patrimônio (Estratégia vs Empresas vs Selic)")
 
     fig, ax = plt.subplots(figsize=(12, 6))
@@ -499,10 +444,66 @@ def render() -> None:
     ax.grid(True, linestyle="--", alpha=0.4)
     st.pyplot(fig)
 
+    # ─────────────────────────────────────────────────────────
+    # DIAGNÓSTICO (BOTÃO) — colocado aqui, com indentação correta
+    # ─────────────────────────────────────────────────────────
+    st.markdown("---")
+    st.subheader("Diagnóstico de anomalias da simulação")
+
+    st.caption(
+        "Executa verificações para identificar distorções que normalmente geram números irreais "
+        "(ex.: preço fora de escala, dividendo em unidade errada e explosões do multiplicador)."
+    )
+
+    # Normaliza colunas de preços e chaves de dividendos para o diagnóstico (sem alterar seus backtests)
+    precos_diag = precos.copy()
+    precos_diag.columns = [_strip_sa(c) for c in precos_diag.columns]
+
+    dividendos_diag = {}
+    if isinstance(dividendos, dict):
+        for k, v in dividendos.items():
+            dividendos_diag[_strip_sa(str(k))] = v
+
+    if st.button("Executar diagnóstico de anomalias", key="btn_diag_anomalias"):
+        with st.spinner("Executando diagnóstico..."):
+            df_anomalias = diagnosticar_anomalias_simulacao(
+                precos=precos_diag,
+                tickers=tickers_scores,            # tickers sem .SA
+                datas_aportes=datas_aportes,
+                dividendos_dict=dividendos_diag,   # chaves sem .SA
+                aporte_mensal=float(diag_aporte_mensal),
+                fee_bps=float(diag_fee_bps),
+                slippage_bps=float(diag_slip_bps),
+                min_preco_aceitavel=float(diag_min_preco),
+                max_div_por_acao_mes=float(diag_max_div),
+                max_multiplicador_patrimonio=float(diag_max_mult),
+            )
+
+        if df_anomalias is None or df_anomalias.empty:
+            st.success("Nenhuma anomalia detectada com os parâmetros atuais.")
+        else:
+            st.error(f"Foram detectadas {len(df_anomalias)} anomalias.")
+
+            tk_opts = ["Todos"] + sorted(df_anomalias["ticker"].astype(str).unique().tolist())
+            tk_sel = st.selectbox("Filtrar por ticker", tk_opts, index=0, key="diag_ticker_sel")
+
+            df_view = df_anomalias.copy()
+            if tk_sel != "Todos":
+                df_view = df_view[df_view["ticker"].astype(str) == tk_sel]
+
+            st.dataframe(df_view, use_container_width=True)
+
+            st.caption(
+                "Interpretação: "
+                "flag_preco=True sugere preço fora de escala (split/ajuste/coluna errada); "
+                "flag_div=True sugere unidade errada de dividendos (total vs por ação); "
+                "flag_mult=True indica explosão do multiplicador e merece inspeção do mês exato."
+            )
+
     st.markdown("---")
 
     # ─────────────────────────────────────────────────────────
-    # 5) Cards de patrimônio final por ativo (inclui Estratégia e Selic)
+    # 5) Cards de patrimônio final por ativo
     # ─────────────────────────────────────────────────────────
     st.markdown("## Patrimônio final por ativo")
 
@@ -517,7 +518,6 @@ def render() -> None:
     df_final["Valor Final"] = pd.to_numeric(df_final["Valor Final"], errors="coerce")
     df_final = df_final.dropna(subset=["Valor Final"]).sort_values("Valor Final", ascending=False)
 
-    # contagem de lideranças (mais coerente com “quantas vezes liderou”)
     contagem_lideres = lideres["ticker"].value_counts().to_dict()
 
     num_columns = 3
