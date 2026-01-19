@@ -542,3 +542,84 @@ def render():
             )
 
     st.markdown("<hr>", unsafe_allow_html=True)
+
+    # ─────────────────────────────────────────────────────────────
+    # PATCH 1 — RÉGUA DE CONVICÇÃO FUNDAMENTAL
+    # ─────────────────────────────────────────────────────────────
+    
+    st.markdown("## 🧭 Régua de Convicção Fundamental")
+    
+    st.caption(
+        "Este painel mostra **por que** cada empresa foi selecionada, "
+        "decompondo o score fundamentalista em seus principais pilares."
+    )
+    
+    # Proteção: só exibe se houver líderes e score carregado
+    if empresas_lideres_finais and "score" in locals() and score is not None and not score.empty:
+    
+        # Normalização do score total para escala 0–100
+        score_norm = score.copy()
+        score_norm["score_norm"] = (
+            (score_norm["score"] - score_norm["score"].min()) /
+            (score_norm["score"].max() - score_norm["score"].min() + 1e-9)
+        ) * 100
+    
+        # Colunas esperadas de componentes (existentes no score)
+        pilares_possiveis = {
+            "qualidade": "Qualidade",
+            "valuation": "Valuation",
+            "crescimento": "Crescimento",
+            "renda": "Renda"
+        }
+    
+        penal_cols = [c for c in score_norm.columns if "penal" in c.lower()]
+    
+        # Exibe apenas empresas líderes finais
+        tickers_lideres = {e["ticker"] for e in empresas_lideres_finais}
+    
+        for _, row in score_norm.iterrows():
+            ticker = str(row["ticker"]).upper()
+            if ticker not in tickers_lideres:
+                continue
+    
+            nome = next(
+                (e["nome"] for e in empresas_lideres_finais if e["ticker"] == ticker),
+                ticker
+            )
+    
+            with st.expander(f"📊 {nome} ({ticker}) — Score {row['score_norm']:.1f}/100", expanded=False):
+    
+                st.markdown("**Composição do Score Fundamentalista**")
+    
+                # Exibe pilares
+                for col, label in pilares_possiveis.items():
+                    if col in score_norm.columns:
+                        valor = row.get(col, None)
+                        if pd.notna(valor):
+                            st.markdown(f"{label}")
+                            st.progress(min(max(float(valor), 0.0), 1.0))
+    
+                # Penalizações (se houver)
+                if penal_cols:
+                    penal_total = sum(
+                        float(row[c]) for c in penal_cols
+                        if pd.notna(row[c]) and float(row[c]) < 0
+                    )
+    
+                    if penal_total < 0:
+                        st.markdown("**Penalizações aplicadas**")
+                        st.markdown(f"- Impacto total no score: **{penal_total:.2f}**")
+    
+                        for c in penal_cols:
+                            val = row.get(c, 0)
+                            if pd.notna(val) and val < 0:
+                                st.markdown(f"• {c.replace('_', ' ').title()}: {val:.2f}")
+    
+                st.caption(
+                    "Scores próximos de 1 indicam desempenho relativo superior "
+                    "no pilar dentro do próprio segmento."
+                )
+    
+    else:
+        st.info("ℹ️ Régua de convicção indisponível para esta execução.")
+    
