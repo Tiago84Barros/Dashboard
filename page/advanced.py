@@ -77,6 +77,138 @@ def _count_years_from_dre(dre: Optional[pd.DataFrame]) -> int:
     y = pd.to_datetime(dre["Data"], errors="coerce").dt.year
     return int(y.dropna().nunique())
 
+# ─────────────────────────────────────────────────────────────
+# Modo Decisório — utilitários (reduz carga visual)
+# ─────────────────────────────────────────────────────────────
+
+def _last_n_years_df(df: pd.DataFrame, n: int, year_col: str = "Ano") -> pd.DataFrame:
+    if df is None or df.empty or year_col not in df.columns:
+        return df
+    mx = pd.to_numeric(df[year_col], errors="coerce").max()
+    if not np.isfinite(mx):
+        return df
+    mx = int(mx)
+    return df[pd.to_numeric(df[year_col], errors="coerce") >= (mx - int(n) + 1)].copy()
+
+
+def _zscore_by_year(df: pd.DataFrame, value_col: str = "Valor", year_col: str = "Ano") -> pd.DataFrame:
+    """
+    Z-score por ano: compara empresa contra o "contexto" do mesmo ano.
+    """
+    out = df.copy()
+    out[year_col] = pd.to_numeric(out[year_col], errors="coerce")
+    out[value_col] = pd.to_numeric(out[value_col], errors="coerce")
+    out = out.dropna(subset=[year_col, value_col])
+
+    g = out.groupby(year_col)[value_col]
+    mu = g.transform("mean")
+    sd = g.transform("std").replace(0, np.nan)
+    out["Z"] = ((out[value_col] - mu) / sd).fillna(0.0).clip(-4.0, 4.0)
+    return out
+
+
+def _summary_level_vs_vol(df: pd.DataFrame, entity_col: str = "Ticker", value_col: str = "Valor") -> pd.DataFrame:
+    """
+    Retorna Nível (média) e Consistência (volatilidade) no recorte já filtrado.
+    """
+    x = df.copy()
+    x[value_col] = pd.to_numeric(x[value_col], errors="coerce")
+    x = x.dropna(subset=[entity_col, value_col])
+    agg = (x.groupby(entity_col)[value_col]
+             .agg(media="mean", volatilidade="std", minimo="min", maximo="max", n="count")
+             .reset_index())
+    agg["cv"] = agg["volatilidade"] / agg["media"].replace(0, np.nan)
+    return agg
+
+
+def _diagnostics_simple(df: pd.DataFrame, indicator_name: str, entity_col="Ticker", year_col="Ano", value_col="Valor") -> List[Tuple[str, str]]:
+    """
+    Alertas simples e úteis para decisão (sem ML).
+    """
+    msgs: List[Tuple[str, str]] = []
+    if df is None or df.empty:
+        return msgs
+
+    x = df.copy()
+    x[year_col] = pd.to_numeric(x[year_col], errors="coerce")
+    x[value_col] = pd.to_numeric(x[value_col], errors="coerce")
+    x = x.dropna(subset=[entity_col, year_col, value_col]).sort_values([entity_col, year_col])
+
+    if x.empty:
+        return msgs
+
+    med = x.groupby(year_col)[value_col].median().rename("mediana_ano")
+    x = x.join(med, on=year_col)
+    x["acima_mediana"] = x[value_col] >= x["mediana_ano"]
+
+    # Volatilidade de referência do segmento (no recorte)
+    seg_std = float(x[value_col].std(ddof=0)) if np.isfinite(x[value_col].std(ddof=0)) else 0.0
+
+    for tk, g in x.groupby(entity_col):
+        g = g.dropna(subset=[value_col])
+        if g.empty:
+            continue
+
+        # (1) Abaixo da mediana por 3 anos seguidos
+        streak = (~g["acima_mediana"]).astype(int).values
+        run = 0
+        max_run = 0
+        for v in streak:
+            run = run + 1 if v == 1 else 0
+            max_run = max(max_run, run)
+        if max_run >= 3:
+            msgs.append((tk, f"⚠ {indicator_name}: abaixo da mediana por {max_run} anos seguidos."))
+
+        # (2) Tendência recente (slope linear)
+        if len(g) >= 5:
+            y = g[value_col].values.astype(float)
+            xx = np.arange(len(y))
+            slope = float(np.polyfit(xx, y, 1)[0])
+            if slope > 0:
+                msgs.append((tk, f"✅ {indicator_name}: tendência de melhora no período recente."))
+            elif slope < 0:
+                msgs.append((tk, f"⚠ {indicator_name}: tendência de piora no período recente."))
+
+        # (3) Volatilidade alta (outlier simples)
+        if seg_std > 0 and float(g[value_col].std(ddof=0)) > (seg_std * 1.5):
+            msgs.append((tk, f"⚠ {indicator_name}: volatilidade acima do padrão do segmento."))
+
+    return msgs
+
+
+def _plot_ranking_bar(df_rank: pd.DataFrame, x_col: str, y_col: str, title: str):
+    fig = px.bar(df_rank, x=x_col, y=y_col, orientation="h", title=title)
+    fig.update_layout(height=350, yaxis_title="", xaxis_title="")
+    fig.update_traces(texttemplate="%{x:.2f}", textposition="outside", cliponaxis=False)
+    return fig
+
+
+def _plot_zscore_diverging(df_z_last: pd.DataFrame, title: str):
+    df_plot = df_z_last.sort_values("Z")
+    fig = px.bar(df_plot, x="Z", y="Ticker", orientation="h", title=title)
+    fig.update_layout(height=450, yaxis_title="", xaxis_title="Z-score (vs segmento no ano)")
+    return fig
+
+
+def _plot_level_vs_consistency(df_lv: pd.DataFrame, title: str, use_cv: bool = False):
+    y = "cv" if use_cv else "volatilidade"
+    fig = px.scatter(
+        df_lv, x="media", y=y, text="Ticker",
+        hover_data=["media", "volatilidade", "cv", "minimo", "maximo", "n"],
+        title=title
+    )
+    fig.update_traces(textposition="top center")
+    fig.update_layout(height=520, xaxis_title="Nível (média)", yaxis_title="Risco (volatilidade)")
+    return fig
+
+
+def _plot_heatmap(df_z: pd.DataFrame, title: str):
+    piv = df_z.pivot_table(index="Ticker", columns="Ano", values="Z", aggfunc="mean")
+    fig = px.imshow(piv, aspect="auto", title=title)
+    fig.update_layout(height=600, xaxis_title="Ano", yaxis_title="")
+    return fig
+
+
 
 @dataclass(frozen=True)
 class EmpresaDados:
@@ -578,9 +710,47 @@ def render() -> None:
     st.markdown("---")
 
     # ─────────────────────────────────────────────────────────
-    # 6) Comparação de múltiplos
+    # 6) Modo Decisório — Comparação útil para decisão
     # ─────────────────────────────────────────────────────────
-    st.markdown("### Comparação de Indicadores (Múltiplos) entre Empresas")
+    st.markdown("## Comparação decisória (menos ruído, mais decisão)")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        top_n = st.slider("Top N (líderes para foco)", 3, 10, 5)
+    with col2:
+        janela_anos = st.slider("Janela (anos)", 3, 10, 5)
+    with col3:
+        use_cv = st.checkbox("Volatilidade relativa (CV)", value=False)
+
+    # Mapeia nome->ticker (evita legenda gigante e reduz confusão)
+    nome_to_ticker = {e.nome: e.ticker for e in empresas}
+    ticker_to_nome = {e.ticker: e.nome for e in empresas}
+
+    # Controle de seleção: por padrão, focar no Top N do score (último ano)
+    try:
+        ano_score_max = int(pd.to_numeric(score["Ano"], errors="coerce").max())
+        score_last = score[pd.to_numeric(score["Ano"], errors="coerce") == ano_score_max].copy()
+        score_last["Score_Ajustado"] = pd.to_numeric(score_last["Score_Ajustado"], errors="coerce")
+        score_last = score_last.dropna(subset=["ticker", "Score_Ajustado"]).sort_values("Score_Ajustado", ascending=False)
+        tickers_focus_default = score_last["ticker"].head(top_n).astype(str).tolist()
+    except Exception:
+        tickers_focus_default = [e.ticker for e in empresas[:top_n]]
+
+    # Seleção manual opcional (mas incentiva foco)
+    nomes_default = [ticker_to_nome.get(tk, tk) for tk in tickers_focus_default]
+    empresas_foco_nomes = st.multiselect(
+        "Empresas em foco (recomendado: Top N do score)",
+        options=[e.nome for e in empresas],
+        default=nomes_default,
+    )
+    tickers_foco = [nome_to_ticker[nm] for nm in empresas_foco_nomes if nm in nome_to_ticker]
+
+    st.markdown("---")
+
+    # ─────────────────────────────────────────────────────────
+    # 6A) Indicadores (Múltiplos) — decisório
+    # ─────────────────────────────────────────────────────────
+    st.markdown("### Indicadores (Múltiplos) — visão decisória")
 
     indicadores_disponiveis = [
         "Margem Líquida",
@@ -608,19 +778,13 @@ def render() -> None:
         "Endividamento Total": "Endividamento_Total",
     }
 
-    lista_nomes = [e.nome for e in empresas]
-    empresas_selecionadas = st.multiselect(
-        "Selecione as empresas a exibir:",
-        lista_nomes,
-        default=lista_nomes,
-    )
-
-    indicador = st.selectbox("Selecione o indicador:", indicadores_disponiveis, index=0)
+    indicador = st.selectbox("Selecione o indicador (Múltiplos):", indicadores_disponiveis, index=0)
     col_db = nomes_to_col[indicador]
 
+    # Monta DF longo apenas com empresas em foco (reduz ruído)
     long_rows: List[dict] = []
     for e in empresas:
-        if e.nome not in empresas_selecionadas:
+        if tickers_foco and e.ticker not in tickers_foco:
             continue
         dfm = e.mult.copy()
         if dfm is None or dfm.empty:
@@ -639,29 +803,75 @@ def render() -> None:
 
         tmp = tmp.groupby("Ano", as_index=False)[col_db].mean()
         for _, rr in tmp.iterrows():
-            long_rows.append({"Ano": int(rr["Ano"]), "Empresa": e.nome, "Valor": float(rr[col_db])})
+            long_rows.append({"Ano": int(rr["Ano"]), "Ticker": e.ticker, "Valor": float(rr[col_db])})
 
     if long_rows:
-        df_long = pd.DataFrame(long_rows).sort_values(["Ano", "Empresa"])
-        fig = px.line(
-            df_long,
-            x="Ano",
-            y="Valor",
-            color="Empresa",
-            markers=True,
-            title=f"{indicador} — comparação por ano (média anual)",
+        df_long = pd.DataFrame(long_rows).sort_values(["Ano", "Ticker"])
+        df_long = _last_n_years_df(df_long, n=janela_anos, year_col="Ano")
+
+        # (1) Ranking no recorte (média do Z-score)
+        df_z = _zscore_by_year(df_long, value_col="Valor", year_col="Ano")
+        rank = df_z.groupby("Ticker")["Z"].mean().rename("Z_medio").reset_index()
+        top_rank = rank.sort_values("Z_medio", ascending=False).head(top_n)
+        st.plotly_chart(
+            _plot_ranking_bar(top_rank.sort_values("Z_medio"), "Z_medio", "Ticker",
+                              f"Ranking (média do Z-score) — {indicador} — últimos {janela_anos} anos"),
+            use_container_width=True
         )
-        fig.update_layout(xaxis=dict(type="category"))
-        st.plotly_chart(fig, use_container_width=True)
+
+        # (2) Distância da mediana (Z) no último ano
+        last_year = int(df_z["Ano"].max())
+        df_last = df_z[df_z["Ano"] == last_year][["Ticker", "Z"]].dropna()
+        df_last = df_last.sort_values("Z", ascending=False).head(max(top_n * 2, 10))
+        st.plotly_chart(
+            _plot_zscore_diverging(df_last, f"Distância da mediana — {indicador} — {last_year} (Z-score)"),
+            use_container_width=True
+        )
+
+        # (3) Nível x Consistência
+        lv = _summary_level_vs_vol(df_long, entity_col="Ticker", value_col="Valor")
+        lv_show = lv.sort_values("media", ascending=False).head(max(top_n * 3, 15))
+        st.plotly_chart(
+            _plot_level_vs_consistency(lv_show, f"Nível x Consistência — {indicador} — últimos {janela_anos} anos", use_cv=use_cv),
+            use_container_width=True
+        )
+
+        # (4) Heatmap Top N
+        tickers_heat = top_rank["Ticker"].astype(str).tolist()
+        df_heat = df_z[df_z["Ticker"].isin(tickers_heat)]
+        st.plotly_chart(
+            _plot_heatmap(df_heat, f"Heatmap (Z-score) — Top {len(tickers_heat)} — {indicador}"),
+            use_container_width=True
+        )
+
+        # (5) Diagnóstico
+        st.markdown("#### Diagnóstico automático (indicador selecionado)")
+        msgs = _diagnostics_simple(df_long, indicator_name=indicador, entity_col="Ticker", year_col="Ano", value_col="Valor")
+        if not msgs:
+            st.info("Nenhum alerta relevante no recorte selecionado.")
+        else:
+            # Prioriza empresas em foco
+            foco_order = tickers_foco if tickers_foco else tickers_heat
+            seen = set()
+            for tk in foco_order + [t for t, _ in msgs if t not in foco_order]:
+                if tk in seen:
+                    continue
+                seen.add(tk)
+                t_msgs = [m for tt, m in msgs if tt == tk]
+                if t_msgs:
+                    with st.expander(f"{tk} — diagnósticos", expanded=(tk in foco_order[:max(1, top_n)])):
+                        for m in t_msgs[:8]:
+                            st.write(m)
+
     else:
-        st.warning("Não há dados suficientes para o indicador selecionado nas empresas escolhidas.")
+        st.warning("Sem dados suficientes do indicador para as empresas em foco.")
 
     st.markdown("---")
 
     # ─────────────────────────────────────────────────────────
-    # 7) Comparação de Demonstrações Financeiras (DRE)
+    # 6B) DRE — decisório (mesma lógica, sem gráfico denso)
     # ─────────────────────────────────────────────────────────
-    st.markdown("### Comparação de Demonstrações Financeiras entre Empresas")
+    st.markdown("### Demonstrações (DRE) — visão decisória")
 
     indicadores_dre = {
         "Receita Líquida": "Receita_Liquida",
@@ -677,7 +887,7 @@ def render() -> None:
 
     long_dre: List[dict] = []
     for e in empresas:
-        if e.nome not in empresas_selecionadas:
+        if tickers_foco and e.ticker not in tickers_foco:
             continue
         dfd = e.dre.copy()
         if dfd is None or dfd.empty:
@@ -694,21 +904,148 @@ def render() -> None:
         if tmp.empty:
             continue
 
+        # DRE: soma anual
         tmp = tmp.groupby("Ano", as_index=False)[col_dre].sum()
         for _, rr in tmp.iterrows():
-            long_dre.append({"Ano": int(rr["Ano"]), "Empresa": e.nome, "Valor": float(rr[col_dre])})
+            long_dre.append({"Ano": int(rr["Ano"]), "Ticker": e.ticker, "Valor": float(rr[col_dre])})
 
     if long_dre:
-        df_dre_long = pd.DataFrame(long_dre).sort_values(["Ano", "Empresa"])
-        fig = px.bar(
-            df_dre_long,
-            x="Ano",
-            y="Valor",
-            color="Empresa",
-            barmode="group",
-            title=f"{indicador_display} — comparação por ano",
+        df_dre_long = pd.DataFrame(long_dre).sort_values(["Ano", "Ticker"])
+        df_dre_long = _last_n_years_df(df_dre_long, n=janela_anos, year_col="Ano")
+
+        dfz = _zscore_by_year(df_dre_long, value_col="Valor", year_col="Ano")
+        rank = dfz.groupby("Ticker")["Z"].mean().rename("Z_medio").reset_index()
+        top_rank = rank.sort_values("Z_medio", ascending=False).head(top_n)
+
+        st.plotly_chart(
+            _plot_ranking_bar(top_rank.sort_values("Z_medio"), "Z_medio", "Ticker",
+                              f"Ranking (média do Z-score) — {indicador_display} — últimos {janela_anos} anos"),
+            use_container_width=True
         )
-        fig.update_layout(xaxis=dict(type="category"))
-        st.plotly_chart(fig, use_container_width=True)
+
+        last_year = int(dfz["Ano"].max())
+        df_last = dfz[dfz["Ano"] == last_year][["Ticker", "Z"]].dropna()
+        df_last = df_last.sort_values("Z", ascending=False).head(max(top_n * 2, 10))
+        st.plotly_chart(
+            _plot_zscore_diverging(df_last, f"Distância da mediana — {indicador_display} — {last_year} (Z-score)"),
+            use_container_width=True
+        )
+
+        lv = _summary_level_vs_vol(df_dre_long, entity_col="Ticker", value_col="Valor")
+        lv_show = lv.sort_values("media", ascending=False).head(max(top_n * 3, 15))
+        st.plotly_chart(
+            _plot_level_vs_consistency(lv_show, f"Nível x Consistência — {indicador_display} — últimos {janela_anos} anos", use_cv=use_cv),
+            use_container_width=True
+        )
+
+        tickers_heat = top_rank["Ticker"].astype(str).tolist()
+        df_heat = dfz[dfz["Ticker"].isin(tickers_heat)]
+        st.plotly_chart(
+            _plot_heatmap(df_heat, f"Heatmap (Z-score) — Top {len(tickers_heat)} — {indicador_display}"),
+            use_container_width=True
+        )
+
+        st.markdown("#### Diagnóstico automático (DRE selecionada)")
+        msgs = _diagnostics_simple(df_dre_long, indicator_name=indicador_display, entity_col="Ticker", year_col="Ano", value_col="Valor")
+        if not msgs:
+            st.info("Nenhum alerta relevante no recorte selecionado.")
+        else:
+            foco_order = tickers_foco if tickers_foco else tickers_heat
+            seen = set()
+            for tk in foco_order + [t for t, _ in msgs if t not in foco_order]:
+                if tk in seen:
+                    continue
+                seen.add(tk)
+                t_msgs = [m for tt, m in msgs if tt == tk]
+                if t_msgs:
+                    with st.expander(f"{tk} — diagnósticos", expanded=(tk in foco_order[:max(1, top_n)])):
+                        for m in t_msgs[:8]:
+                            st.write(m)
+
     else:
-        st.warning("Não há dados suficientes para o indicador selecionado entre as empresas escolhidas.")
+        st.warning("Não há dados suficientes para o item da DRE selecionado nas empresas em foco.")
+
+    st.markdown("---")
+
+    # ─────────────────────────────────────────────────────────
+    # 6C) Modo Exploratório (antigos gráficos densos) — opcional
+    # ─────────────────────────────────────────────────────────
+    with st.expander("Exploração (comparativos densos – opcional)", expanded=False):
+        st.caption("Use apenas para auditoria/estudo. Para decisão, prefira os gráficos acima.")
+
+        # Reabilita seleção ampla (como antes)
+        lista_nomes = [e.nome for e in empresas]
+        empresas_selecionadas = st.multiselect(
+            "Selecione as empresas a exibir (exploração):",
+            lista_nomes,
+            default=lista_nomes,
+            key="exploracao_empresas_multi",
+        )
+
+        # Gráfico antigo de múltiplos (linha)
+        long_rows_exp: List[dict] = []
+        for e in empresas:
+            if e.nome not in empresas_selecionadas:
+                continue
+            dfm = e.mult.copy()
+            if dfm is None or dfm.empty:
+                continue
+            if "Ano" not in dfm.columns and "Data" in dfm.columns:
+                dfm["Ano"] = pd.to_datetime(dfm["Data"], errors="coerce").dt.year
+            if "Ano" not in dfm.columns or col_db not in dfm.columns:
+                continue
+
+            tmp = dfm[["Ano", col_db]].copy()
+            tmp["Ano"] = pd.to_numeric(tmp["Ano"], errors="coerce")
+            tmp[col_db] = pd.to_numeric(tmp[col_db], errors="coerce")
+            tmp = tmp.dropna(subset=["Ano", col_db])
+            if tmp.empty:
+                continue
+
+            tmp = tmp.groupby("Ano", as_index=False)[col_db].mean()
+            for _, rr in tmp.iterrows():
+                long_rows_exp.append({"Ano": int(rr["Ano"]), "Empresa": e.nome, "Valor": float(rr[col_db])})
+
+        if long_rows_exp:
+            df_long_exp = pd.DataFrame(long_rows_exp).sort_values(["Ano", "Empresa"])
+            fig = px.line(
+                df_long_exp,
+                x="Ano", y="Valor", color="Empresa", markers=True,
+                title=f"[Exploração] {indicador} — comparação por ano (média anual)",
+            )
+            fig.update_layout(xaxis=dict(type="category"))
+            st.plotly_chart(fig, use_container_width=True)
+
+        # Gráfico antigo de DRE (barras)
+        long_dre_exp: List[dict] = []
+        for e in empresas:
+            if e.nome not in empresas_selecionadas:
+                continue
+            dfd = e.dre.copy()
+            if dfd is None or dfd.empty:
+                continue
+            if "Ano" not in dfd.columns and "Data" in dfd.columns:
+                dfd["Ano"] = pd.to_datetime(dfd["Data"], errors="coerce").dt.year
+            if "Ano" not in dfd.columns or col_dre not in dfd.columns:
+                continue
+
+            tmp = dfd[["Ano", col_dre]].copy()
+            tmp["Ano"] = pd.to_numeric(tmp["Ano"], errors="coerce")
+            tmp[col_dre] = pd.to_numeric(tmp[col_dre], errors="coerce")
+            tmp = tmp.dropna(subset=["Ano", col_dre])
+            if tmp.empty:
+                continue
+
+            tmp = tmp.groupby("Ano", as_index=False)[col_dre].sum()
+            for _, rr in tmp.iterrows():
+                long_dre_exp.append({"Ano": int(rr["Ano"]), "Empresa": e.nome, "Valor": float(rr[col_dre])})
+
+        if long_dre_exp:
+            df_dre_exp = pd.DataFrame(long_dre_exp).sort_values(["Ano", "Empresa"])
+            fig = px.bar(
+                df_dre_exp,
+                x="Ano", y="Valor", color="Empresa", barmode="group",
+                title=f"[Exploração] {indicador_display} — comparação por ano",
+            )
+            fig.update_layout(xaxis=dict(type="category"))
+            st.plotly_chart(fig, use_container_width=True)
