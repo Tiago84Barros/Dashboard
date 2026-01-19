@@ -4,7 +4,8 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 
-from db_loader import load_empresas, load_scores
+from core.db_loader import load_empresas, load_scores
+
 
 
 # ============================================================
