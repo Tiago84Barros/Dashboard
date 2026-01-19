@@ -1,486 +1,616 @@
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, List, Optional, Tuple
 
-import numpy as np
+import streamlit as st
 import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import plotly.express as px
+
+from core.helpers import (
+    get_logo_url,
+    obter_setor_da_empresa,
+    determinar_lideres,
+    formatar_real,
+)
+from core.db_loader import (
+    load_setores_from_db,
+    load_data_from_db,
+    load_multiplos_from_db,
+    load_macro_summary,
+)
+from core.yf_data import baixar_precos, coletar_dividendos
+from core.scoring import (
+    calcular_score_acumulado,
+    penalizar_plato,
+)
+# >>> PATCH SCORE V2 (import opcional)
+try:
+    from core.scoring_v2 import calcular_score_acumulado_v2
+except Exception:
+    calcular_score_acumulado_v2 = None
+# <<< PATCH SCORE V2
+from core.portfolio import (
+    gerir_carteira,
+    gerir_carteira_todas_empresas,
+    calcular_patrimonio_selic_macro,
+)
+from core.weights import get_pesos
 
 logger = logging.getLogger(__name__)
 
-# Limite defensivo para dividendos POR AÇÃO (R$/ação) em um mês.
-# Se uma fonte retornar "Dividendos totais" (CVM/DFC) por engano,
-# isso evita explosões irreais no backtest.
-DIV_POR_ACAO_MAX = 20.0
+
+# ─────────────────────────────────────────────────────────────
+# Utilitários internos
+# ─────────────────────────────────────────────────────────────
+
+def _norm_sa(ticker: str) -> str:
+    t = (ticker or "").strip().upper()
+    if not t:
+        return t
+    return t if t.endswith(".SA") else f"{t}.SA"
 
 
-def _ensure_dt_index(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return df
+def _strip_sa(ticker: str) -> str:
+    return (ticker or "").strip().upper().replace(".SA", "")
+
+
+def _clean_df_cols(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
-    out.index = pd.to_datetime(out.index, errors="coerce")
-    out = out[~out.index.isna()].sort_index()
+    out.columns = out.columns.astype(str).str.strip().str.replace("\ufeff", "", regex=False)
     return out
 
 
-def _get_price(precos: pd.DataFrame, data: pd.Timestamp, ticker: str) -> Optional[float]:
-    if precos is None or precos.empty:
+def _count_years_from_dre(dre: Optional[pd.DataFrame]) -> int:
+    if dre is None or dre.empty or "Data" not in dre.columns:
+        return 0
+    y = pd.to_datetime(dre["Data"], errors="coerce").dt.year
+    return int(y.dropna().nunique())
+
+
+@dataclass(frozen=True)
+class EmpresaDados:
+    ticker: str  # sem .SA
+    nome: str
+    dre: pd.DataFrame
+    mult: pd.DataFrame
+
+
+def _load_empresa_dados(ticker: str, nome: str) -> Optional[EmpresaDados]:
+    """Carrega DRE + múltiplos para um ticker (B3), retornando estrutura padronizada."""
+    tk = _strip_sa(ticker)
+    if not tk:
         return None
-    if ticker not in precos.columns:
+    tk_sa = _norm_sa(tk)
+
+    dre = load_data_from_db(tk_sa)
+    mult = load_multiplos_from_db(tk_sa)
+
+    if dre is None or mult is None or dre.empty or mult.empty:
         return None
-    if data not in precos.index:
+
+    dre = _clean_df_cols(dre)
+    mult = _clean_df_cols(mult)
+
+    # adiciona Ano quando existir Data
+    if "Data" in dre.columns and "Ano" not in dre.columns:
+        dre["Ano"] = pd.to_datetime(dre["Data"], errors="coerce").dt.year
+    if "Data" in mult.columns and "Ano" not in mult.columns:
+        mult["Ano"] = pd.to_datetime(mult["Data"], errors="coerce").dt.year
+
+    return EmpresaDados(ticker=tk, nome=nome, dre=dre, mult=mult)
+
+
+def _safe_macro() -> Optional[pd.DataFrame]:
+    dm = load_macro_summary()
+    if dm is None or dm.empty:
         return None
-    v = precos.loc[data, ticker]
-    try:
-        v = float(v)
-    except Exception:
-        return None
-    if not np.isfinite(v) or v <= 0:
-        return None
-    return v
+    dm = _clean_df_cols(dm)
+    # portfolio.calcular_patrimonio_selic_macro aceita Data em coluna ou índice com nome Data
+    if "Data" in dm.columns:
+        dm["Data"] = pd.to_datetime(dm["Data"], errors="coerce")
+        dm = dm.dropna(subset=["Data"]).sort_values("Data")
+    return dm
 
 
-def _as_div_series(div: Union[pd.Series, pd.DataFrame, None]) -> pd.Series:
-    """
-    Converte dividendos em Series indexada por datetime, com valores numéricos.
-    IMPORTANTE: este motor assume que o valor é DIVIDENDO POR AÇÃO (R$/ação).
-    """
-    if div is None:
-        return pd.Series(dtype="float64")
-    if isinstance(div, pd.DataFrame):
-        if div.shape[1] == 0:
-            return pd.Series(dtype="float64")
-        s = div.iloc[:, 0]
-    else:
-        s = div
+# ─────────────────────────────────────────────────────────────
+# Render
+# ─────────────────────────────────────────────────────────────
 
-    s = pd.to_numeric(s, errors="coerce")
-    s.index = pd.to_datetime(s.index, errors="coerce")
-    s = s.dropna()
-    return s.astype(float)
+def render() -> None:
+    st.markdown("<h1 style='text-align:center'>Análise Avançada de Ações</h1>", unsafe_allow_html=True)
 
+    # ── setores em sessão
+    setores = st.session_state.get("setores_df")
+    if setores is None or getattr(setores, "empty", True):
+        setores = load_setores_from_db()
+        if setores is None or setores.empty:
+            st.error("Não foi possível carregar a base de setores do banco.")
+            return
+        setores = _clean_df_cols(setores)
+        st.session_state["setores_df"] = setores
 
-def _cost_factor(fee_bps: float, slippage_bps: float) -> float:
-    """Retorna fator multiplicativo (1 - custo_total)."""
-    fb = float(fee_bps) / 10000.0
-    sb = float(slippage_bps) / 10000.0
-    total = max(0.0, fb) + max(0.0, sb)
-    # limita custo total para evitar absurdo
-    total = min(total, 0.20)
-    return 1.0 - total
+    # validação mínima de schema (case-sensitive conforme Postgres com colunas entre aspas)
+    needed = {"SETOR", "SUBSETOR", "SEGMENTO", "ticker"}
+    if not needed.issubset(setores.columns):
+        st.error(f"A tabela de setores não contém colunas esperadas: {sorted(needed)}")
+        return
 
+    # >>> PATCH SCORE V2 (mapas p/ fallback SEGMENTO -> SUBSETOR -> SETOR)
+    _tmp = setores[["ticker", "SEGMENTO", "SUBSETOR", "SETOR"]].copy()
+    _tmp["ticker"] = (
+        _tmp["ticker"].astype(str)
+        .str.upper()
+        .str.replace(".SA", "", regex=False)
+        .str.strip()
+    )
+    _tmp["SEGMENTO"] = _tmp["SEGMENTO"].fillna("OUTROS").astype(str)
+    _tmp["SUBSETOR"] = _tmp["SUBSETOR"].fillna("OUTROS").astype(str)
+    _tmp["SETOR"] = _tmp["SETOR"].fillna("OUTROS").astype(str)
 
-def _div_mes_por_acao_sanitizado(
-    s: pd.Series,
-    ano: int,
-    mes: int,
-    ticker: str,
-    px_ref: Optional[float] = None,
-    hard_max: float = DIV_POR_ACAO_MAX,
-) -> float:
-    """
-    Retorna o dividendo mensal POR AÇÃO (R$/ação) e rejeita valores com cara de "total contábil".
+    group_map = dict(zip(_tmp["ticker"], _tmp["SEGMENTO"]))
+    subsetor_map = dict(zip(_tmp["ticker"], _tmp["SUBSETOR"]))
+    setor_map = dict(zip(_tmp["ticker"], _tmp["SETOR"]))
+    # <<< PATCH SCORE V2
 
-    Regras:
-    - Trava absoluta: div_mes > hard_max => zera.
-    - Regra auxiliar: se div_mes > 50% do preço do mês, zera (sinal forte de unidade errada).
-    """
-    if s is None or s.empty:
-        return 0.0
+    dados_macro = _safe_macro()
+    if dados_macro is None or dados_macro.empty:
+        st.error("Não foi possível carregar os dados macroeconômicos (info_economica).")
+        return
 
-    div_mes = float(s[(s.index.year == ano) & (s.index.month == mes)].sum())
-    if not np.isfinite(div_mes) or div_mes <= 0:
-        return 0.0
+    # ── Sidebar filtros
+    with st.sidebar:
+        setor = st.selectbox("Setor:", sorted(setores["SETOR"].dropna().unique().tolist()))
+        subsetores = setores.loc[setores["SETOR"] == setor, "SUBSETOR"].dropna().unique().tolist()
+        subsetor = st.selectbox("Subsetor:", sorted(subsetores))
+        segmentos = setores.loc[
+            (setores["SETOR"] == setor) & (setores["SUBSETOR"] == subsetor),
+            "SEGMENTO"
+        ].dropna().unique().tolist()
+        segmento = st.selectbox("Segmento:", sorted(segmentos))
+        tipo = st.radio("Perfil de empresa:", ["Crescimento (<10 anos)", "Estabelecida (≥10 anos)", "Todas"], index=2)
 
-    # trava absoluta
-    if div_mes > hard_max:
-        logger.warning(
-            "Dividendos suspeitos (provável TOTAL e não por ação) | ticker=%s ano=%s mes=%s div_mes=%.6f (zerado)",
-            ticker, ano, mes, div_mes
+        # >>> PATCH SCORE V2 (controle na sidebar, sem alterar layout existente)
+        with st.expander("Scoring (opções)", expanded=False):
+            if calcular_score_acumulado_v2 is None:
+                st.caption("Score v2 indisponível (core/scoring_v2.py não encontrado).")
+                use_score_v2 = False
+            else:
+                use_score_v2 = st.checkbox("Usar Score v2 (robusto)", value=True)
+        # <<< PATCH SCORE V2
+
+    # ── filtra tickers do segmento
+    seg_df = setores[
+        (setores["SETOR"] == setor) &
+        (setores["SUBSETOR"] == subsetor) &
+        (setores["SEGMENTO"] == segmento)
+    ].copy()
+
+    if seg_df.empty:
+        st.warning("Nenhuma empresa encontrada para os filtros escolhidos.")
+        return
+
+    # normaliza tickers e nomes
+    seg_df["ticker"] = seg_df["ticker"].astype(str).apply(_strip_sa)
+    if "nome_empresa" not in seg_df.columns:
+        seg_df["nome_empresa"] = seg_df["ticker"]
+
+    seg_df = seg_df.dropna(subset=["ticker"])
+    seg_df = seg_df[seg_df["ticker"].astype(str).str.len() > 0]
+
+    if seg_df.empty:
+        st.warning("Nenhuma empresa válida encontrada para os filtros escolhidos.")
+        return
+
+    # ─────────────────────────────────────────────────────────
+    # (Opcional, não disruptivo) Diagnóstico colapsável
+    # ─────────────────────────────────────────────────────────
+    with st.expander("Diagnóstico (dados do Supabase)", expanded=False):
+        st.caption("Seção apenas informativa. Não altera resultados nem layout principal.")
+        st.write(
+            {
+                "Setor": setor,
+                "Subsetor": subsetor,
+                "Segmento": segmento,
+                "Empresas no segmento (bruto)": int(len(seg_df)),
+                "Linhas setores_df": int(len(setores)),
+                "Macro (linhas)": int(len(dados_macro)),
+                "Macro (data mínima)": str(pd.to_datetime(dados_macro["Data"]).min()) if "Data" in dados_macro.columns else "n/a",
+                "Macro (data máxima)": str(pd.to_datetime(dados_macro["Data"]).max()) if "Data" in dados_macro.columns else "n/a",
+            }
         )
-        return 0.0
 
-    # regra auxiliar vs preço
-    if px_ref is not None and np.isfinite(px_ref) and px_ref > 0:
-        if div_mes > 0.5 * px_ref:
-            logger.warning(
-                "Dividendos fora de escala vs preço | ticker=%s ano=%s mes=%s div_mes=%.6f px=%.6f (zerado)",
-                ticker, ano, mes, div_mes, px_ref
-            )
-            return 0.0
+    # ─────────────────────────────────────────────────────────
+    # 1) Filtrar por histórico (<10 / ≥10) com paralelismo (DRE)
+    # ─────────────────────────────────────────────────────────
+    tickers = seg_df["ticker"].drop_duplicates().tolist()
 
-    return div_mes
-
-
-def encontrar_proxima_data_valida(data_aporte: pd.Timestamp, precos: pd.DataFrame) -> Optional[pd.Timestamp]:
-    if precos is None or precos.empty:
-        return None
-    data_aporte = pd.Timestamp(data_aporte)
-    idx = precos.index
-    if data_aporte in idx:
-        return data_aporte
-    prox = idx[idx >= data_aporte]
-    if len(prox) == 0:
-        return None
-    return prox[0]
-
-
-def _build_monthly_schedule(precos: pd.DataFrame, anos: Sequence[int], start_year_offset: int = 1) -> List[pd.Timestamp]:
-    if precos is None or precos.empty or not anos:
-        return []
-    datas: List[pd.Timestamp] = []
-    for ano in sorted(set(int(a) for a in anos)):
-        for mes in range(1, 13):
-            data_nominal = pd.Timestamp(f"{ano + start_year_offset}-{mes:02d}-01")
-            d = encontrar_proxima_data_valida(data_nominal, precos)
-            if d is not None:
-                datas.append(d)
-    return sorted(set(datas))
-
-
-def gerir_carteira_simples(
-    precos: pd.DataFrame,
-    tickers: Sequence[str],
-    datas_aportes: Sequence[pd.Timestamp],
-    dividendos_dict: Optional[Dict[str, Union[pd.Series, pd.DataFrame]]] = None,
-    aporte_mensal: float = 1000.0,
-    fee_bps: float = 0.0,
-    slippage_bps: float = 0.0,
-) -> pd.Series:
-    """
-    Carteira simples: aporta mensalmente distribuindo igualmente entre tickers.
-    Reinvestimento: dividendos POR AÇÃO do mês (R$/ação), com sanitização.
-    """
-    precos = _ensure_dt_index(precos)
-    tickers = [t for t in tickers if t in precos.columns]
-    if precos.empty or not tickers or not datas_aportes:
-        return pd.Series(dtype="float64")
-
-    dividendos_dict = dividendos_dict or {}
-    divs = {t: _as_div_series(dividendos_dict.get(t)) for t in tickers}
-    cf = _cost_factor(fee_bps, slippage_bps)
-
-    carteira = {t: 0.0 for t in tickers}
-    carteira_hist: Dict[pd.Timestamp, Dict[str, float]] = {}
-
-    for data0 in datas_aportes:
-        data_aporte = encontrar_proxima_data_valida(pd.Timestamp(data0), precos)
-        if data_aporte is None:
-            continue
-
-        aporte_por_ticker = float(aporte_mensal) / len(tickers)
-
-        for t in tickers:
-            px = _get_price(precos, data_aporte, t)
-            if px is None:
-                continue
-
-            s = divs.get(t, pd.Series(dtype="float64"))
-            div_mes = _div_mes_por_acao_sanitizado(
-                s=s,
-                ano=int(data_aporte.year),
-                mes=int(data_aporte.month),
-                ticker=t,
-                px_ref=px,
-            )
-
-            reinvest = div_mes * carteira[t]  # reinvest sem custo (aproximação)
-            aporte_total = (aporte_por_ticker * cf) + reinvest
-            carteira[t] += aporte_total / px
-
-        carteira_hist[data_aporte] = carteira.copy()
-
-    patrimonio = pd.Series(index=precos.index, dtype="float64")
-    datas_hist = sorted(carteira_hist.keys())
-
-    if not datas_hist:
-        return patrimonio
-
-    last_snapshot: Optional[Dict[str, float]] = None
-    snap_i = 0
-
-    for d in precos.index:
-        while snap_i < len(datas_hist) and datas_hist[snap_i] <= d:
-            last_snapshot = carteira_hist[datas_hist[snap_i]]
-            snap_i += 1
-
-        if last_snapshot:
-            total = 0.0
-            for t in tickers:
-                px = _get_price(precos, d, t)
-                if px is not None:
-                    total += last_snapshot.get(t, 0.0) * px
-            patrimonio.loc[d] = total
-
-    return patrimonio.ffill()
-
-
-def gerir_carteira_todas_empresas(
-    precos: pd.DataFrame,
-    tickers: Sequence[str],
-    datas_aportes: Sequence[pd.Timestamp],
-    dividendos_dict: Dict[str, Union[pd.Series, pd.DataFrame]],
-    aporte_mensal: float = 1000.0,
-    fee_bps: float = 0.0,
-    slippage_bps: float = 0.0,
-) -> pd.DataFrame:
-    """
-    Simula aporte mensal POR AÇÃO (cada ticker recebe aporte_mensal).
-    Reinvestimento: dividendos POR AÇÃO do mês (R$/ação), com sanitização.
-    """
-    precos = _ensure_dt_index(precos)
-    tickers = [t for t in tickers if t in precos.columns]
-    if precos.empty or not tickers or not datas_aportes:
-        return pd.DataFrame()
-
-    divs = {t: _as_div_series(dividendos_dict.get(t)) for t in tickers}
-    cf = _cost_factor(fee_bps, slippage_bps)
-
-    carteira = {t: 0.0 for t in tickers}
-    patrimonio: Dict[str, Dict[pd.Timestamp, float]] = {t: {} for t in tickers}
-
-    for data0 in datas_aportes:
-        data_aporte = encontrar_proxima_data_valida(pd.Timestamp(data0), precos)
-        if data_aporte is None:
-            continue
-
-        for t in tickers:
-            px = _get_price(precos, data_aporte, t)
-            if px is None:
-                continue
-
-            s = divs.get(t, pd.Series(dtype="float64"))
-            div_mes = _div_mes_por_acao_sanitizado(
-                s=s,
-                ano=int(data_aporte.year),
-                mes=int(data_aporte.month),
-                ticker=t,
-                px_ref=px,
-            )
-
-            reinvest = div_mes * carteira[t]
-            aporte_total = (float(aporte_mensal) * cf) + reinvest
-            carteira[t] += aporte_total / px
-            patrimonio[t][data_aporte] = carteira[t] * px
-
-    return pd.DataFrame.from_dict(patrimonio, orient="columns").sort_index()
-
-
-def calcular_patrimonio_selic_macro(
-    dados_macro: pd.DataFrame,
-    datas_aportes: Sequence[pd.Timestamp],
-    aporte_mensal: float = 1000.0,
-) -> pd.DataFrame:
-    if dados_macro is None or dados_macro.empty or not datas_aportes:
-        return pd.DataFrame(columns=["Tesouro Selic"])
-
-    dm = dados_macro.copy()
-    if "Data" not in dm.columns and dm.index.name == "Data":
-        dm = dm.reset_index()
-
-    dm["Data"] = pd.to_datetime(dm["Data"], errors="coerce")
-    dm = dm.dropna(subset=["Data"])
-    dm = dm.set_index("Data").sort_index()
-
-    if "Selic" not in dm.columns:
-        return pd.DataFrame(columns=["Tesouro Selic"])
-
-    datas = sorted(pd.to_datetime(list(datas_aportes)))
-    df_patr = pd.DataFrame(index=datas, columns=["Tesouro Selic"], dtype="float64")
-
-    saldo = 0.0
-    for d in datas:
-        ano_ref = int(d.year)
-        taxa_ano = dm.loc[dm.index.year == ano_ref, "Selic"]
-        if taxa_ano.empty:
-            prev = dm.loc[dm.index <= d, "Selic"]
-            if prev.empty:
-                continue
-            taxa = float(prev.iloc[-1]) / 100.0
-        else:
-            taxa = float(taxa_ano.iloc[0]) / 100.0
-
-        taxa_mensal = (1.0 + taxa) ** (1.0 / 12.0) - 1.0
-        saldo = (saldo + float(aporte_mensal)) * (1.0 + taxa_mensal)
-        df_patr.loc[d, "Tesouro Selic"] = saldo
-
-    return df_patr.sort_index()
-
-
-def gerir_carteira(
-    precos: pd.DataFrame,
-    df_scores: pd.DataFrame,
-    lideres_por_ano: pd.DataFrame,
-    dividendos_dict: Dict[str, Union[pd.Series, pd.DataFrame]],
-    aporte_mensal: float = 1000.0,
-    deterioracao_limite: float = 0.0,
-    registrar_eventos: bool = False,
-    fee_bps: float = 0.0,
-    slippage_bps: float = 0.0,
-):
-    """
-    Estratégia de líderes: adiciona líder do ano (ano_ref = ano atual - 1),
-    aporta mensalmente entre líderes atuais e reinveste dividendos POR AÇÃO (R$/ação) com sanitização.
-    """
-    precos = _ensure_dt_index(precos)
-
-    if precos is None or precos.empty:
-        return (pd.DataFrame(), []) if not registrar_eventos else (pd.DataFrame(), [], [])
-
-    if df_scores is None or df_scores.empty:
-        return (pd.DataFrame(), []) if not registrar_eventos else (pd.DataFrame(), [], [])
-
-    if lideres_por_ano is None or lideres_por_ano.empty:
-        return (pd.DataFrame(), []) if not registrar_eventos else (pd.DataFrame(), [], [])
-
-    divs = {t: _as_div_series(dividendos_dict.get(t)) for t in precos.columns}
-    cf = _cost_factor(fee_bps, slippage_bps)
-
-    anos_scores = sorted(int(a) for a in pd.to_numeric(df_scores.get("Ano"), errors="coerce").dropna().unique())
-    if not anos_scores:
-        return (pd.DataFrame(), []) if not registrar_eventos else (pd.DataFrame(), [], [])
-
-    datas_aportes = _build_monthly_schedule(precos, anos_scores, start_year_offset=1)
-    if not datas_aportes:
-        return (pd.DataFrame(), []) if not registrar_eventos else (pd.DataFrame(), [], [])
-
-    lider_map = {}
-    for _, r in lideres_por_ano.dropna(subset=["Ano", "ticker"]).iterrows():
+    def _year_check(tk: str) -> Tuple[str, int]:
         try:
-            lider_map[int(r["Ano"])] = str(r["ticker"])
+            dre = load_data_from_db(_norm_sa(tk))
+            return tk, _count_years_from_dre(dre)
+        except Exception as e:
+            logger.exception("Falha ao checar anos de DRE para %s: %s", tk, e)
+            return tk, 0
+
+    years_map: Dict[str, int] = {}
+    max_workers = min(12, max(2, len(tickers)))
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futs = [ex.submit(_year_check, tk) for tk in tickers]
+        for fut in as_completed(futs):
+            tk, n = fut.result()
+            years_map[tk] = int(n) if n is not None else 0
+
+    def _pass_tipo(tk: str) -> bool:
+        n = years_map.get(tk, 0)
+        if tipo == "Crescimento (<10 anos)":
+            return n < 10 and n > 0
+        if tipo == "Estabelecida (≥10 anos)":
+            return n >= 10
+        return n > 0
+
+    seg_df = seg_df[seg_df["ticker"].apply(_pass_tipo)]
+    if seg_df.empty:
+        st.warning("Nenhuma empresa atende ao filtro de histórico escolhido.")
+        return
+
+    # ── exibição cards empresas
+    st.markdown("### Empresas no filtro")
+    cols = st.columns(3, gap="large")
+    for i, row in enumerate(seg_df.itertuples(index=False)):
+        c = cols[i % 3]
+        tk = str(row.ticker)
+        nm = str(getattr(row, "nome_empresa", tk))
+        logo_url = get_logo_url(tk)
+        anos_hist = years_map.get(tk, 0)
+        c.markdown(
+            f"""
+            <div style="border:2px solid #ddd;border-radius:10px;padding:12px;margin:8px;background:#f9f9f9;text-align:center;box-sizing:border-box;width:100%;">
+                <img src="{logo_url}" style="width:45px;height:45px;margin-bottom:8px;">
+                <div style="font-weight:700;color:#333;">{nm} ({tk})</div>
+                <div style="font-size:12px;color:#666;">Histórico DRE: {anos_hist} ano(s)</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("---")
+
+    # ─────────────────────────────────────────────────────────
+    # 2) Carregar dados completos (múltiplos + DRE) em paralelo
+    # ─────────────────────────────────────────────────────────
+    rows = seg_df[["ticker", "nome_empresa"]].drop_duplicates().to_dict("records")
+    empresas: List[EmpresaDados] = []
+
+    max_workers = min(12, max(2, len(rows)))
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futs = [ex.submit(_load_empresa_dados, r["ticker"], r["nome_empresa"]) for r in rows]
+        for fut in as_completed(futs):
+            try:
+                item = fut.result()
+            except Exception as e:
+                logger.exception("Falha ao carregar dados de empresa: %s", e)
+                item = None
+            if item is not None:
+                empresas.append(item)
+
+    if len(empresas) < 2:
+        st.warning("Não há dados suficientes (DRE/Múltiplos) para pelo menos 2 empresas do segmento.")
+        return
+
+    # setores_empresa (por ticker sem .SA)
+    setores_empresa = {e.ticker: obter_setor_da_empresa(e.ticker, setores) for e in empresas}
+
+    # pesos por setor (regra existente)
+    pesos = get_pesos(setor)
+
+    # payload scoring (compatível com scoring.py)
+    payload = [{"ticker": e.ticker, "nome": e.nome, "multiplos": e.mult, "dre": e.dre} for e in empresas]
+
+    # >>> PATCH SCORE V2 (switch v1/v2 sem alterar layout)
+    if ("use_score_v2" in locals()) and use_score_v2 and (calcular_score_acumulado_v2 is not None):
+        score = calcular_score_acumulado_v2(
+            lista_empresas=payload,
+            group_map=group_map,
+            subsetor_map=subsetor_map,
+            setor_map=setor_map,
+            pesos_utilizados=pesos,
+            anos_minimos=4,
+            prefer_group_col="SEGMENTO",
+            min_n_group=7,
+        )
+    else:
+        score = calcular_score_acumulado(payload, setores_empresa, pesos, dados_macro, anos_minimos=4)
+    # <<< PATCH SCORE V2
+
+    if score is None or score.empty:
+        st.warning("Score vazio: não há dados suficientes após os filtros e janela mínima.")
+        return
+
+    # ─────────────────────────────────────────────────────────
+    # 3) Preços + penalização de platô + dividendos
+    # ─────────────────────────────────────────────────────────
+    tickers_scores = sorted(score["ticker"].dropna().astype(str).unique().tolist())
+    tickers_yf = [_norm_sa(tk) for tk in tickers_scores]
+
+    precos = baixar_precos(tickers_yf)
+    if precos is None or precos.empty:
+        st.warning("Não foi possível baixar preços para o segmento selecionado.")
+        return
+
+    precos.index = pd.to_datetime(precos.index, errors="coerce")
+    precos = precos.dropna(how="all")
+    if precos.empty:
+        st.warning("Preços vieram vazios após normalização.")
+        return
+
+    # mensal para penalização de platô
+    precos_mensal = precos.resample("M").last()
+    score = penalizar_plato(score, precos_mensal, meses=12, penal=0.30)
+
+    dividendos = coletar_dividendos(tickers_yf)
+
+    # ─────────────────────────────────────────────────────────
+    # 4) Liderança + backtest estratégia + backtest todas
+    # ─────────────────────────────────────────────────────────
+    lideres = determinar_lideres(score)
+    if lideres is None or lideres.empty:
+        st.warning("Não foi possível determinar líderes com o score calculado.")
+        return
+
+    patrimonio_estrategia, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
+    if patrimonio_estrategia is None or patrimonio_estrategia.empty:
+        st.warning("Falha ao simular a carteira da estratégia.")
+        return
+    patrimonio_estrategia = patrimonio_estrategia[["Patrimônio"]]
+
+    patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aportes)
+    if patrimonio_selic is None or patrimonio_selic.empty:
+        st.warning("Falha ao calcular o benchmark Tesouro Selic.")
+        return
+
+    patrimonio_empresas = gerir_carteira_todas_empresas(precos, tickers_scores, datas_aportes, dividendos)
+    if patrimonio_empresas is None or patrimonio_empresas.empty:
+        st.warning("Falha ao simular a carteira (todas as empresas).")
+        return
+
+    patrimonio_final = pd.concat([patrimonio_estrategia, patrimonio_empresas, patrimonio_selic], axis=1).sort_index()
+    patrimonio_final = patrimonio_final.apply(pd.to_numeric, errors="coerce").ffill()
+
+    st.markdown("## Evolução do patrimônio (Estratégia vs Empresas vs Selic)")
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    if "Patrimônio" in patrimonio_final.columns:
+        ax.plot(patrimonio_final.index, patrimonio_final["Patrimônio"], label="Estratégia (Líderes)")
+
+    if "Tesouro Selic" in patrimonio_final.columns:
+        ax.plot(patrimonio_final.index, patrimonio_final["Tesouro Selic"], label="Tesouro Selic")
+
+    cols_emp = [c for c in patrimonio_empresas.columns if c in patrimonio_final.columns]
+    if cols_emp:
+        media_emp = patrimonio_final[cols_emp].mean(axis=1, skipna=True)
+        ax.plot(patrimonio_final.index, media_emp, label="Média (Empresas do segmento)")
+
+    ax.set_xlabel("Data")
+    ax.set_ylabel("Patrimônio (R$)")
+    ax.legend()
+    ax.grid(True, linestyle="--", alpha=0.4)
+    st.pyplot(fig)
+
+    st.markdown("---")
+
+    # ─────────────────────────────────────────────────────────
+    # 5) Cards de patrimônio final por ativo (inclui Estratégia e Selic)
+    # ─────────────────────────────────────────────────────────
+    st.markdown("## Patrimônio final por ativo")
+
+    last = patrimonio_final.iloc[-1].dropna()
+    if last.empty:
+        st.warning("Dados insuficientes para exibir patrimônio final.")
+        return
+
+    df_final = last.reset_index()
+    df_final.columns = ["Ticker", "Valor Final"]
+    df_final["Ticker"] = df_final["Ticker"].astype(str)
+    df_final["Valor Final"] = pd.to_numeric(df_final["Valor Final"], errors="coerce")
+    df_final = df_final.dropna(subset=["Valor Final"]).sort_values("Valor Final", ascending=False)
+
+    # contagem de lideranças (mais coerente com “quantas vezes liderou”)
+    contagem_lideres = lideres["ticker"].value_counts().to_dict()
+
+    num_columns = 3
+    cols_cards = st.columns(num_columns, gap="large")
+
+    for i, (tk, val) in enumerate(df_final.itertuples(index=False, name=None)):
+        tk = str(tk)
+        try:
+            val = float(val)
         except Exception:
             continue
 
-    df_scores2 = df_scores.copy()
-    df_scores2["Ano"] = pd.to_numeric(df_scores2["Ano"], errors="coerce")
-    df_scores2["ticker"] = df_scores2["ticker"].astype(str)
-    df_scores2["Score_Ajustado"] = pd.to_numeric(df_scores2["Score_Ajustado"], errors="coerce")
-
-    score_map: Dict[Tuple[int, str], float] = {}
-    for _, r in df_scores2.dropna(subset=["Ano", "ticker", "Score_Ajustado"]).iterrows():
-        score_map[(int(r["Ano"]), str(r["ticker"]))] = float(r["Score_Ajustado"])
-
-    ano_base = anos_scores[0]
-
-    carteira = defaultdict(float)
-    aporte_acumulado = 0.0
-    registros: List[dict] = []
-    eventos = [] if registrar_eventos else None
-
-    lideres_atuais: List[str] = []
-    ano_ref_atual: Optional[int] = None
-
-    for data_sinal in datas_aportes:
-        ano_ref = int(data_sinal.year - 1)
-
-        if ano_ref != ano_ref_atual:
-            ano_ref_atual = ano_ref
-            novo_lider = lider_map.get(ano_ref)
-            if novo_lider and (novo_lider not in lideres_atuais):
-                lideres_atuais.append(novo_lider)
-                if registrar_eventos:
-                    eventos.append({"data": data_sinal.strftime("%Y-%m"), "tipo": "entrada", "ticker": novo_lider})
-
-        # Reinvestimento de dividendos (POR AÇÃO), sanitizado
-        for tk in list(carteira.keys()):
-            if carteira[tk] <= 0:
-                continue
-            s = divs.get(tk, pd.Series(dtype="float64"))
-            if s.empty:
-                continue
-
-            px = _get_price(precos, data_sinal, tk)
-            if px is None:
-                continue
-
-            div_mes = _div_mes_por_acao_sanitizado(
-                s=s,
-                ano=int(data_sinal.year),
-                mes=int(data_sinal.month),
-                ticker=tk,
-                px_ref=px,
-            )
-            if div_mes <= 0:
-                continue
-
-            valor_reinvestido = div_mes * carteira[tk]
-            carteira[tk] += valor_reinvestido / px
-
-        # aporte com custo
-        total_a_aportar = float(aporte_mensal) + float(aporte_acumulado)
-        aporte_acumulado = 0.0
-
-        if lideres_atuais:
-            aporte_por_lider = total_a_aportar / len(lideres_atuais)
-            for lider in lideres_atuais:
-                px = _get_price(precos, data_sinal, lider)
-                if px is None:
-                    aporte_acumulado += aporte_por_lider
-                    continue
-                carteira[lider] += (aporte_por_lider * cf) / px
+        if tk == "Patrimônio":
+            icone_url = "https://cdn-icons-png.flaticon.com/512/1019/1019709.png"
+            border_color = "#DAA520"
+            nome_exibicao = "Estratégia de Aporte"
+            lider_texto = ""
+        elif tk == "Tesouro Selic":
+            icone_url = "https://cdn-icons-png.flaticon.com/512/2331/2331949.png"
+            border_color = "#007bff"
+            nome_exibicao = "Tesouro Selic"
+            lider_texto = ""
         else:
-            aporte_acumulado += total_a_aportar
+            icone_url = get_logo_url(tk)
+            border_color = "#d3d3d3"
+            nome_exibicao = tk
+            vezes_lider = int(contagem_lideres.get(tk, 0))
+            lider_texto = f"🏆 {vezes_lider}x Líder" if vezes_lider > 0 else ""
 
-        # deterioração: venda/compra com custo
-        lider_destino = lider_map.get(ano_ref)
-        if lider_destino:
-            for antiga in list(carteira.keys()):
-                if antiga in lideres_atuais:
-                    continue
+        patrimonio_formatado = formatar_real(val)
 
-                s_ini = score_map.get((ano_base, antiga))
-                s_atual = score_map.get((ano_ref, antiga))
-                if s_ini is None or s_atual is None or s_ini == 0:
-                    continue
+        col = cols_cards[i % num_columns]
+        with col:
+            st.markdown(
+                f"""
+                <div style="
+                    background-color:#ffffff;
+                    border:3px solid {border_color};
+                    border-radius:10px;
+                    padding:15px;
+                    margin:10px 0;
+                    text-align:center;
+                    box-shadow:2px 2px 5px rgba(0,0,0,0.10);
+                    box-sizing:border-box;
+                    width:100%;
+                ">
+                    <img src="{icone_url}" alt="{nome_exibicao}" style="width:50px;height:auto;margin-bottom:6px;">
+                    <div style="margin:0;color:#4a4a4a;font-weight:800;font-size:18px;">{nome_exibicao}</div>
+                    <div style="font-size:18px;margin:6px 0;font-weight:900;color:#2ecc71;">
+                        {patrimonio_formatado}
+                    </div>
+                    <div style="font-size:14px;color:#FFA500;">{lider_texto}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
-                razao = float(s_atual) / float(s_ini)
-                if razao < float(deterioracao_limite):
-                    px_venda = _get_price(precos, data_sinal, antiga)
-                    px_dest = _get_price(precos, data_sinal, lider_destino)
-                    if px_venda is None or px_dest is None:
-                        continue
+    st.markdown("---")
 
-                    valor_bruto = carteira[antiga] * px_venda
-                    valor_liquido = valor_bruto * cf  # custo de venda
-                    qtd_nova = (valor_liquido * cf) / px_dest  # custo de compra
+    # ─────────────────────────────────────────────────────────
+    # 6) Comparação de múltiplos
+    # ─────────────────────────────────────────────────────────
+    st.markdown("### Comparação de Indicadores (Múltiplos) entre Empresas")
 
-                    carteira.pop(antiga, None)
-                    carteira[lider_destino] += qtd_nova
+    indicadores_disponiveis = [
+        "Margem Líquida",
+        "Margem Operacional",
+        "ROE",
+        "ROIC",
+        "P/L",
+        "P/VP",
+        "DY",
+        "Liquidez Corrente",
+        "Alavancagem Financeira",
+        "Endividamento Total",
+    ]
 
-                    if registrar_eventos:
-                        eventos.append({"data": data_sinal.strftime("%Y-%m"), "tipo": "saida", "ticker": antiga})
+    nomes_to_col = {
+        "Margem Líquida": "Margem_Liquida",
+        "Margem Operacional": "Margem_Operacional",
+        "ROE": "ROE",
+        "ROIC": "ROIC",
+        "P/L": "P/L",
+        "P/VP": "P/VP",
+        "DY": "DY",
+        "Liquidez Corrente": "Liquidez_Corrente",
+        "Alavancagem Financeira": "Alavancagem_Financeira",
+        "Endividamento Total": "Endividamento_Total",
+    }
 
-        registro = {"date": data_sinal}
-        total = 0.0
-        for tk, qtd in carteira.items():
-            px = _get_price(precos, data_sinal, tk)
-            if px is None:
-                continue
-            val = qtd * px
-            registro[tk] = val
-            total += val
-        registro["Patrimônio"] = total
-        registros.append(registro)
+    lista_nomes = [e.nome for e in empresas]
+    empresas_selecionadas = st.multiselect(
+        "Selecione as empresas a exibir:",
+        lista_nomes,
+        default=lista_nomes,
+    )
 
-    if not registros:
-        return (pd.DataFrame(), datas_aportes) if not registrar_eventos else (pd.DataFrame(), datas_aportes, eventos)
+    indicador = st.selectbox("Selecione o indicador:", indicadores_disponiveis, index=0)
+    col_db = nomes_to_col[indicador]
 
-    df_patrimonio = pd.DataFrame(registros).set_index("date").sort_index().ffill()
+    long_rows: List[dict] = []
+    for e in empresas:
+        if e.nome not in empresas_selecionadas:
+            continue
+        dfm = e.mult.copy()
+        if dfm is None or dfm.empty:
+            continue
+        if "Ano" not in dfm.columns and "Data" in dfm.columns:
+            dfm["Ano"] = pd.to_datetime(dfm["Data"], errors="coerce").dt.year
+        if "Ano" not in dfm.columns or col_db not in dfm.columns:
+            continue
 
-    if "Patrimônio" in df_patrimonio.columns:
-        df_patrimonio = df_patrimonio[df_patrimonio["Patrimônio"].fillna(0) != 0]
+        tmp = dfm[["Ano", col_db]].copy()
+        tmp["Ano"] = pd.to_numeric(tmp["Ano"], errors="coerce")
+        tmp[col_db] = pd.to_numeric(tmp[col_db], errors="coerce")
+        tmp = tmp.dropna(subset=["Ano", col_db])
+        if tmp.empty:
+            continue
 
-    if registrar_eventos:
-        return df_patrimonio, datas_aportes, eventos
+        tmp = tmp.groupby("Ano", as_index=False)[col_db].mean()
+        for _, rr in tmp.iterrows():
+            long_rows.append({"Ano": int(rr["Ano"]), "Empresa": e.nome, "Valor": float(rr[col_db])})
 
-    return df_patrimonio, datas_aportes
+    if long_rows:
+        df_long = pd.DataFrame(long_rows).sort_values(["Ano", "Empresa"])
+        fig = px.line(
+            df_long,
+            x="Ano",
+            y="Valor",
+            color="Empresa",
+            markers=True,
+            title=f"{indicador} — comparação por ano (média anual)",
+        )
+        fig.update_layout(xaxis=dict(type="category"))
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.warning("Não há dados suficientes para o indicador selecionado nas empresas escolhidas.")
 
+    st.markdown("---")
 
-__all__ = [
-    "encontrar_proxima_data_valida",
-    "gerir_carteira_simples",
-    "gerir_carteira_todas_empresas",
-    "calcular_patrimonio_selic_macro",
-    "gerir_carteira",
-]
+    # ─────────────────────────────────────────────────────────
+    # 7) Comparação de Demonstrações Financeiras (DRE)
+    # ─────────────────────────────────────────────────────────
+    st.markdown("### Comparação de Demonstrações Financeiras entre Empresas")
+
+    indicadores_dre = {
+        "Receita Líquida": "Receita_Liquida",
+        "EBIT": "EBIT",
+        "Lucro Líquido": "Lucro_Liquido",
+        "Patrimônio Líquido": "Patrimonio_Liquido",
+        "Dívida Líquida": "Divida_Liquida",
+        "Caixa Líquido": "Caixa_Liquido",
+    }
+
+    indicador_display = st.selectbox("Selecione o item da DRE:", list(indicadores_dre.keys()), index=0)
+    col_dre = indicadores_dre[indicador_display]
+
+    long_dre: List[dict] = []
+    for e in empresas:
+        if e.nome not in empresas_selecionadas:
+            continue
+        dfd = e.dre.copy()
+        if dfd is None or dfd.empty:
+            continue
+        if "Ano" not in dfd.columns and "Data" in dfd.columns:
+            dfd["Ano"] = pd.to_datetime(dfd["Data"], errors="coerce").dt.year
+        if "Ano" not in dfd.columns or col_dre not in dfd.columns:
+            continue
+
+        tmp = dfd[["Ano", col_dre]].copy()
+        tmp["Ano"] = pd.to_numeric(tmp["Ano"], errors="coerce")
+        tmp[col_dre] = pd.to_numeric(tmp[col_dre], errors="coerce")
+        tmp = tmp.dropna(subset=["Ano", col_dre])
+        if tmp.empty:
+            continue
+
+        tmp = tmp.groupby("Ano", as_index=False)[col_dre].sum()
+        for _, rr in tmp.iterrows():
+            long_dre.append({"Ano": int(rr["Ano"]), "Empresa": e.nome, "Valor": float(rr[col_dre])})
+
+    if long_dre:
+        df_dre_long = pd.DataFrame(long_dre).sort_values(["Ano", "Empresa"])
+        fig = px.bar(
+            df_dre_long,
+            x="Ano",
+            y="Valor",
+            color="Empresa",
+            barmode="group",
+            title=f"{indicador_display} — comparação por ano",
+        )
+        fig.update_layout(xaxis=dict(type="category"))
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.warning("Não há dados suficientes para o indicador selecionado entre as empresas escolhidas.")
