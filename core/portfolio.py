@@ -9,6 +9,11 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+# Limite defensivo para dividendos POR AÇÃO (R$/ação) em um mês.
+# Se uma fonte retornar "Dividendos totais" (CVM/DFC) por engano,
+# isso evita explosões irreais no backtest.
+DIV_POR_ACAO_MAX = 20.0
+
 
 def _ensure_dt_index(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
@@ -37,6 +42,10 @@ def _get_price(precos: pd.DataFrame, data: pd.Timestamp, ticker: str) -> Optiona
 
 
 def _as_div_series(div: Union[pd.Series, pd.DataFrame, None]) -> pd.Series:
+    """
+    Converte dividendos em Series indexada por datetime, com valores numéricos.
+    IMPORTANTE: este motor assume que o valor é DIVIDENDO POR AÇÃO (R$/ação).
+    """
     if div is None:
         return pd.Series(dtype="float64")
     if isinstance(div, pd.DataFrame):
@@ -45,6 +54,7 @@ def _as_div_series(div: Union[pd.Series, pd.DataFrame, None]) -> pd.Series:
         s = div.iloc[:, 0]
     else:
         s = div
+
     s = pd.to_numeric(s, errors="coerce")
     s.index = pd.to_datetime(s.index, errors="coerce")
     s = s.dropna()
@@ -59,6 +69,48 @@ def _cost_factor(fee_bps: float, slippage_bps: float) -> float:
     # limita custo total para evitar absurdo
     total = min(total, 0.20)
     return 1.0 - total
+
+
+def _div_mes_por_acao_sanitizado(
+    s: pd.Series,
+    ano: int,
+    mes: int,
+    ticker: str,
+    px_ref: Optional[float] = None,
+    hard_max: float = DIV_POR_ACAO_MAX,
+) -> float:
+    """
+    Retorna o dividendo mensal POR AÇÃO (R$/ação) e rejeita valores com cara de "total contábil".
+
+    Regras:
+    - Trava absoluta: div_mes > hard_max => zera.
+    - Regra auxiliar: se div_mes > 50% do preço do mês, zera (sinal forte de unidade errada).
+    """
+    if s is None or s.empty:
+        return 0.0
+
+    div_mes = float(s[(s.index.year == ano) & (s.index.month == mes)].sum())
+    if not np.isfinite(div_mes) or div_mes <= 0:
+        return 0.0
+
+    # trava absoluta
+    if div_mes > hard_max:
+        logger.warning(
+            "Dividendos suspeitos (provável TOTAL e não por ação) | ticker=%s ano=%s mes=%s div_mes=%.6f (zerado)",
+            ticker, ano, mes, div_mes
+        )
+        return 0.0
+
+    # regra auxiliar vs preço
+    if px_ref is not None and np.isfinite(px_ref) and px_ref > 0:
+        if div_mes > 0.5 * px_ref:
+            logger.warning(
+                "Dividendos fora de escala vs preço | ticker=%s ano=%s mes=%s div_mes=%.6f px=%.6f (zerado)",
+                ticker, ano, mes, div_mes, px_ref
+            )
+            return 0.0
+
+    return div_mes
 
 
 def encontrar_proxima_data_valida(data_aporte: pd.Timestamp, precos: pd.DataFrame) -> Optional[pd.Timestamp]:
@@ -96,6 +148,10 @@ def gerir_carteira_simples(
     fee_bps: float = 0.0,
     slippage_bps: float = 0.0,
 ) -> pd.Series:
+    """
+    Carteira simples: aporta mensalmente distribuindo igualmente entre tickers.
+    Reinvestimento: dividendos POR AÇÃO do mês (R$/ação), com sanitização.
+    """
     precos = _ensure_dt_index(precos)
     tickers = [t for t in tickers if t in precos.columns]
     if precos.empty or not tickers or not datas_aportes:
@@ -121,9 +177,15 @@ def gerir_carteira_simples(
                 continue
 
             s = divs.get(t, pd.Series(dtype="float64"))
-            div_mes = float(s[(s.index.year == data_aporte.year) & (s.index.month == data_aporte.month)].sum()) if not s.empty else 0.0
-            reinvest = div_mes * carteira[t]  # reinvestimento “sem custo” (aproximação)
+            div_mes = _div_mes_por_acao_sanitizado(
+                s=s,
+                ano=int(data_aporte.year),
+                mes=int(data_aporte.month),
+                ticker=t,
+                px_ref=px,
+            )
 
+            reinvest = div_mes * carteira[t]  # reinvest sem custo (aproximação)
             aporte_total = (aporte_por_ticker * cf) + reinvest
             carteira[t] += aporte_total / px
 
@@ -163,6 +225,10 @@ def gerir_carteira_todas_empresas(
     fee_bps: float = 0.0,
     slippage_bps: float = 0.0,
 ) -> pd.DataFrame:
+    """
+    Simula aporte mensal POR AÇÃO (cada ticker recebe aporte_mensal).
+    Reinvestimento: dividendos POR AÇÃO do mês (R$/ação), com sanitização.
+    """
     precos = _ensure_dt_index(precos)
     tickers = [t for t in tickers if t in precos.columns]
     if precos.empty or not tickers or not datas_aportes:
@@ -185,9 +251,15 @@ def gerir_carteira_todas_empresas(
                 continue
 
             s = divs.get(t, pd.Series(dtype="float64"))
-            div_mes = float(s[(s.index.year == data_aporte.year) & (s.index.month == data_aporte.month)].sum()) if not s.empty else 0.0
-            reinvest = div_mes * carteira[t]
+            div_mes = _div_mes_por_acao_sanitizado(
+                s=s,
+                ano=int(data_aporte.year),
+                mes=int(data_aporte.month),
+                ticker=t,
+                px_ref=px,
+            )
 
+            reinvest = div_mes * carteira[t]
             aporte_total = (float(aporte_mensal) * cf) + reinvest
             carteira[t] += aporte_total / px
             patrimonio[t][data_aporte] = carteira[t] * px
@@ -247,6 +319,10 @@ def gerir_carteira(
     fee_bps: float = 0.0,
     slippage_bps: float = 0.0,
 ):
+    """
+    Estratégia de líderes: adiciona líder do ano (ano_ref = ano atual - 1),
+    aporta mensalmente entre líderes atuais e reinveste dividendos POR AÇÃO (R$/ação) com sanitização.
+    """
     precos = _ensure_dt_index(precos)
 
     if precos is None or precos.empty:
@@ -306,19 +382,28 @@ def gerir_carteira(
                 if registrar_eventos:
                     eventos.append({"data": data_sinal.strftime("%Y-%m"), "tipo": "entrada", "ticker": novo_lider})
 
-        # dividendos (reinvest sem custo)
+        # Reinvestimento de dividendos (POR AÇÃO), sanitizado
         for tk in list(carteira.keys()):
             if carteira[tk] <= 0:
                 continue
             s = divs.get(tk, pd.Series(dtype="float64"))
             if s.empty:
                 continue
-            div_mes = float(s[(s.index.year == data_sinal.year) & (s.index.month == data_sinal.month)].sum())
-            if div_mes <= 0:
-                continue
+
             px = _get_price(precos, data_sinal, tk)
             if px is None:
                 continue
+
+            div_mes = _div_mes_por_acao_sanitizado(
+                s=s,
+                ano=int(data_sinal.year),
+                mes=int(data_sinal.month),
+                ticker=tk,
+                px_ref=px,
+            )
+            if div_mes <= 0:
+                continue
+
             valor_reinvestido = div_mes * carteira[tk]
             carteira[tk] += valor_reinvestido / px
 
