@@ -12,6 +12,9 @@ import requests
 import psycopg2
 from psycopg2.extras import execute_values
 
+# ATENÇÃO:
+# 'Dividendos' aqui representam valores CONTÁBEIS TOTAIS (DFP/CVM).
+# NÃO são dividendos por ação e NÃO devem ser usados em backtests de reinvestimento.
 
 # =========================
 # CONFIG
