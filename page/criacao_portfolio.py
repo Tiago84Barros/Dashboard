@@ -658,4 +658,4 @@ def render():
     render_patch2_dominancia(score_global, lideres_global, empresas_lideres_finais)
     render_patch3_stress_test(score_global, lideres_global, empresas_lideres_finais)
     render_patch4_diversificacao(empresas_lideres_finais, contrib_globais)
-    render_patch5_contribuicao_marginal(contrib_globais)
+
