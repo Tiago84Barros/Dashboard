@@ -634,3 +634,110 @@ def render():
                         "O Score_Ajustado incorpora qualidade, valuation, crescimento, "
                         "renda, crowding e penalizações dinâmicas."
                     )
+
+    # ─────────────────────────────────────────────────────────────
+    # PATCH 2 — MAPA DE DOMINÂNCIA NO SEGMENTO
+    # Baseado em Score_Ajustado + histórico de liderança
+    # ─────────────────────────────────────────────────────────────
+    
+    st.markdown("## 🏆 Mapa de Dominância no Segmento")
+    
+    st.caption(
+        "Este painel mostra se a empresa é líder **estrutural**, **recorrente** "
+        "ou apenas um destaque **pontual**, com base no histórico completo do score."
+    )
+    
+    # Proteção
+    if (
+        "score" not in locals()
+        or score is None
+        or score.empty
+        or "Score_Ajustado" not in score.columns
+        or not empresas_lideres_finais
+    ):
+        st.info("ℹ️ Mapa de dominância indisponível para esta execução.")
+    else:
+        df = score.copy()
+    
+        # Apenas tickers que entraram no portfólio final
+        tickers_finais = {e["ticker"] for e in empresas_lideres_finais}
+        df = df[df["ticker"].astype(str).isin(tickers_finais)].copy()
+    
+        if df.empty:
+            st.info("ℹ️ Não há histórico suficiente para os ativos selecionados.")
+        else:
+            # Métricas históricas por empresa
+            resumo = (
+                df.groupby("ticker")
+                .agg(
+                    anos_no_ranking=("Ano", "nunique"),
+                    score_medio=("Score_Ajustado", "mean"),
+                    ultimo_ano=("Ano", "max"),
+                    score_ultimo=("Score_Ajustado", lambda x: x.iloc[-1]),
+                )
+                .reset_index()
+            )
+    
+            # Anos em que foi líder
+            lider_counts = (
+                lideres[lideres["ticker"].astype(str).isin(tickers_finais)]
+                .groupby("ticker")["Ano"]
+                .nunique()
+                .rename("anos_lider")
+                .reset_index()
+            )
+    
+            resumo = resumo.merge(lider_counts, on="ticker", how="left")
+            resumo["anos_lider"] = resumo["anos_lider"].fillna(0).astype(int)
+    
+            # Percentual de liderança
+            resumo["pct_lideranca"] = resumo["anos_lider"] / resumo["anos_no_ranking"]
+    
+            # Classificação qualitativa
+            def classificar(row):
+                if row["anos_lider"] >= 4 and row["pct_lideranca"] >= 0.5:
+                    return "🟢 Líder estrutural"
+                if row["anos_lider"] >= 2:
+                    return "🟡 Líder recorrente"
+                if row["anos_lider"] == 1:
+                    return "🔵 Líder emergente"
+                return "⚪ Oportunidade pontual"
+    
+            resumo["classificacao"] = resumo.apply(classificar, axis=1)
+    
+            # Nome da empresa
+            resumo["empresa"] = resumo["ticker"].apply(
+                lambda t: next(
+                    (e["nome"] for e in empresas_lideres_finais if e["ticker"] == t),
+                    t,
+                )
+            )
+    
+            # Ordenação: dominância primeiro
+            resumo = resumo.sort_values(
+                ["anos_lider", "score_medio"],
+                ascending=[False, False],
+            )
+    
+            # Exibição
+            st.dataframe(
+                resumo[
+                    [
+                        "empresa",
+                        "ticker",
+                        "anos_no_ranking",
+                        "anos_lider",
+                        "pct_lideranca",
+                        "score_medio",
+                        "score_ultimo",
+                        "classificacao",
+                    ]
+                ],
+                use_container_width=True,
+            )
+    
+            st.caption(
+                "Classificação baseada em recorrência histórica de liderança e "
+                "consistência do Score_Ajustado."
+            )
+                    
