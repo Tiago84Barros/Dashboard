@@ -241,6 +241,10 @@ def render():
 
     empresas_lideres_finais: List[dict] = []
 
+    # ── NOVO: acumuladores globais para explicar todas as empresas no final
+    scores_globais: List[pd.DataFrame] = []
+    lideres_globais: List[pd.DataFrame] = []
+
     # ─────────────────────────────────────────────────────────
     # Loop por segmento (pipeline leve)
     # ─────────────────────────────────────────────────────────
@@ -346,6 +350,26 @@ def render():
         if lideres is None or lideres.empty:
             continue
 
+        # ── NOVO: acumula score e líderes do segmento (para patches globais ao final)
+        try:
+            score_tmp = score.copy()
+            score_tmp["SETOR"] = setor
+            score_tmp["SUBSETOR"] = subsetor
+            score_tmp["SEGMENTO"] = segmento
+            if {"Ano", "ticker", "Score_Ajustado"}.issubset(score_tmp.columns):
+                scores_globais.append(score_tmp[["Ano", "ticker", "Score_Ajustado", "SETOR", "SUBSETOR", "SEGMENTO"]])
+        except Exception:
+            pass
+
+        try:
+            lideres_tmp = lideres.copy()
+            lideres_tmp["SETOR"] = setor
+            lideres_tmp["SUBSETOR"] = subsetor
+            lideres_tmp["SEGMENTO"] = segmento
+            lideres_globais.append(lideres_tmp)
+        except Exception:
+            pass
+
         patrimonio_empresas, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
         if patrimonio_empresas is None or patrimonio_empresas.empty:
             continue
@@ -416,6 +440,12 @@ def render():
             )
 
     # ─────────────────────────────────────────────────────────
+    # Consolidação global (scores e líderes) para patches finais
+    # ─────────────────────────────────────────────────────────
+    score_global = pd.concat(scores_globais, ignore_index=True) if scores_globais else pd.DataFrame()
+    lideres_global = pd.concat(lideres_globais, ignore_index=True) if lideres_globais else pd.DataFrame()
+
+    # ─────────────────────────────────────────────────────────
     # Bloco final: líderes para o próximo ano + distribuição setorial
     # ─────────────────────────────────────────────────────────
     if empresas_lideres_finais:
@@ -462,7 +492,7 @@ def render():
 
             precos = baixar_precos_ano_corrente(tickers_corrente_yf)
             if precos is None or precos.empty:
-                st.warning("⚠️ Dados de preço indisponíveis para as ações escolhidas no ano atual.")
+                st.warning("Dados de preço indisponíveis para as ações escolhidas no ano atual.")
                 st.stop()
 
             precos.index = pd.to_datetime(precos.index, errors="coerce")
@@ -470,7 +500,7 @@ def render():
             precos = precos.resample("B").last().ffill()
 
             if precos.empty:
-                st.warning("⚠️ Dados de preço indisponíveis para as ações escolhidas no ano atual.")
+                st.warning("Dados de preço indisponíveis para as ações escolhidas no ano atual.")
                 st.stop()
 
             tickers_limpos = [_strip_sa(tk) for tk in tickers_corrente_yf]
@@ -488,7 +518,7 @@ def render():
             # Selic benchmark (no mesmo índice do patrimônio da estratégia)
             df_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aporte)
             if df_selic is None or df_selic.empty:
-                st.warning("⚠️ Não foi possível calcular o benchmark Selic para o período.")
+                st.warning("Não foi possível calcular o benchmark Selic para o período.")
                 st.stop()
 
             df_selic = df_selic.reindex(patrimonio_aporte.index).ffill()
@@ -502,7 +532,7 @@ def render():
             ).dropna()
 
             if df_final.empty or df_final["Tesouro Selic"].isna().all():
-                st.warning("⚠️ Não foi possível construir gráfico com os dados disponíveis.")
+                st.warning("Não foi possível construir gráfico com os dados disponíveis.")
                 st.stop()
 
             st.markdown(f"### Comparativo de desempenho parcial em {ano_corrente}")
@@ -532,7 +562,7 @@ def render():
             st.markdown(
                 f"""
                 <div style="margin-top: 20px; padding: 15px; border-radius: 8px; background-color: #f9f9f9; border-left: 5px solid {cor};">
-                    <h4 style="margin: 0;">📊 Resultado Comparativo</h4>
+                    <h4 style="margin: 0;">Resultado Comparativo</h4>
                     <p style="font-size: 16px; color: #333;">{mensagem}</p>
                     <p style="font-size: 14px; color: #666;">Retorno total da estratégia sobre o capital aportado no ano: <strong>{retorno_estrategia:.2f}%</strong></p>
                     <p style="font-size: 14px; color: #999;">Baseado nas empresas líderes selecionadas com score fundamentalista ajustado.</p>
@@ -541,185 +571,157 @@ def render():
                 unsafe_allow_html=True,
             )
 
-    st.markdown("<hr>", unsafe_allow_html=True)
-
     # ─────────────────────────────────────────────────────────────
-    # PATCH 1 — RÉGUA DE CONVICÇÃO (ALINHADA AO SCORING REAL)
-    # Baseada em Score_Ajustado (contrato oficial do core)
+    # PATCH 1 — RÉGUA DE CONVICÇÃO FUNDAMENTAL (GLOBAL, CONTRATO REAL)
+    # Usa Score_Ajustado de score_global
     # ─────────────────────────────────────────────────────────────
-    
     st.markdown("## 🧭 Régua de Convicção Fundamental")
-    
     st.caption(
-        "Este painel mostra a **força relativa** de cada empresa selecionada "
-        "com base no Score_Ajustado produzido pelo motor fundamentalista."
+        "Este painel mostra a força relativa de cada empresa selecionada "
+        "com base no Score_Ajustado do motor fundamentalista."
     )
-    
-    # Proteção
+
     if (
-        "score" not in locals()
-        or score is None
-        or score.empty
-        or "Score_Ajustado" not in score.columns
+        score_global is None
+        or score_global.empty
+        or "Score_Ajustado" not in score_global.columns
         or not empresas_lideres_finais
     ):
-        st.info("ℹ️ Régua de convicção indisponível para esta execução.")
+        st.info("Régua de convicção indisponível para esta execução.")
     else:
-        df = score.copy()
-    
-        # Último ano disponível no score
-        ultimo_ano = int(df["Ano"].max())
-        df_ano = df[df["Ano"] == ultimo_ano].copy()
-    
+        df = score_global.copy()
+
+        ultimo_ano_global = int(pd.to_numeric(df["Ano"], errors="coerce").max())
+        df_ano = df[df["Ano"] == ultimo_ano_global].copy()
+
         if df_ano.empty:
-            st.info("ℹ️ Não há dados de score para o último ano.")
+            st.info("Não há dados de score para o último ano.")
         else:
-            # Ranking no ano
             df_ano = df_ano.sort_values("Score_Ajustado", ascending=False).reset_index(drop=True)
             df_ano["rank"] = df_ano.index + 1
-    
-            # Normaliza score para visual (0–100)
+
             smin = df_ano["Score_Ajustado"].min()
             smax = df_ano["Score_Ajustado"].max()
-            df_ano["score_norm"] = (
-                (df_ano["Score_Ajustado"] - smin) / ((smax - smin) + 1e-9)
-            ) * 100.0
-    
-            tickers_lideres = {e["ticker"] for e in empresas_lideres_finais}
-    
+            df_ano["score_norm"] = ((df_ano["Score_Ajustado"] - smin) / ((smax - smin) + 1e-9)) * 100.0
+
+            tickers_lideres = {str(e["ticker"]).upper() for e in empresas_lideres_finais}
+
             for _, row in df_ano.iterrows():
-                ticker = str(row["ticker"]).upper()
-                if ticker not in tickers_lideres:
+                ticker = str(row.get("ticker", "")).upper().replace(".SA", "").strip()
+                if not ticker or ticker not in tickers_lideres:
                     continue
-    
+
                 nome = next(
-                    (e["nome"] for e in empresas_lideres_finais if e["ticker"] == ticker),
+                    (e["nome"] for e in empresas_lideres_finais if str(e["ticker"]).upper() == ticker),
                     ticker,
                 )
-    
+
                 with st.expander(
-                    f"📊 {nome} ({ticker}) — Rank #{int(row['rank'])} | Score {row['score_norm']:.1f}/100",
+                    f"{nome} ({ticker}) — Rank #{int(row['rank'])} | Score {float(row['score_norm']):.1f}/100",
                     expanded=False,
                 ):
-                    st.markdown("**Força relativa no segmento (ano mais recente)**")
-    
-                    # Barra de convicção (score relativo)
-                    st.progress(min(max(row["score_norm"] / 100.0, 0.0), 1.0))
-    
-                    # Distância para o segundo colocado
-                    if len(df_ano) > 1 and row["rank"] == 1:
-                        segundo = df_ano.iloc[1]["Score_Ajustado"]
-                        gap = row["Score_Ajustado"] - segundo
-                        st.markdown(
-                            f"• Vantagem sobre o 2º colocado: **{gap:.4f} pontos de score**"
+                    st.markdown("**Força relativa no universo selecionado (último ano do score)**")
+                    st.progress(min(max(float(row["score_norm"]) / 100.0, 0.0), 1.0))
+
+                    # Gap vs 2º colocado (apenas se for o #1)
+                    if len(df_ano) > 1 and int(row["rank"]) == 1:
+                        segundo = float(df_ano.iloc[1]["Score_Ajustado"])
+                        gap = float(row["Score_Ajustado"]) - segundo
+                        st.markdown(f"• Vantagem sobre o 2º colocado: **{gap:.4f} pontos**")
+
+                    # Histórico de liderança (global)
+                    if lideres_global is not None and not lideres_global.empty:
+                        anos_lider = (
+                            lideres_global[lideres_global["ticker"].astype(str).str.upper() == ticker]["Ano"]
+                            .dropna()
+                            .astype(int)
+                            .tolist()
                         )
-    
-                    # Histórico de liderança
-                    anos_lider = (
-                        lideres[lideres["ticker"].astype(str) == ticker]["Ano"]
-                        .dropna()
-                        .astype(int)
-                        .tolist()
-                    )
-    
-                    if anos_lider:
-                        st.markdown(
-                            f"• Anos como líder no histórico: **{len(anos_lider)}** "
-                            f"({', '.join(map(str, anos_lider))})"
-                        )
+                        if anos_lider:
+                            st.markdown(f"• Anos como líder: **{len(anos_lider)}** ({', '.join(map(str, anos_lider))})")
+                        else:
+                            st.markdown("• Líder emergente (sem histórico de liderança anterior)")
                     else:
-                        st.markdown("• Empresa líder emergente (primeira ocorrência)")
-    
-                    st.caption(
-                        "O Score_Ajustado incorpora qualidade, valuation, crescimento, "
-                        "renda, crowding e penalizações dinâmicas."
-                    )
+                        st.markdown("• Histórico de liderança indisponível nesta execução")
+
+                    st.caption("Score_Ajustado já incorpora crowding, decay e demais ajustes aplicados no core.")
 
     # ─────────────────────────────────────────────────────────────
-    # PATCH 2 — MAPA DE DOMINÂNCIA NO SEGMENTO
+    # PATCH 2 — MAPA DE DOMINÂNCIA NO SEGMENTO (GLOBAL)
     # Baseado em Score_Ajustado + histórico de liderança
     # ─────────────────────────────────────────────────────────────
-    
     st.markdown("## 🏆 Mapa de Dominância no Segmento")
-    
     st.caption(
-        "Este painel mostra se a empresa é líder **estrutural**, **recorrente** "
-        "ou apenas um destaque **pontual**, com base no histórico completo do score."
+        "Este painel mostra se a empresa é líder estrutural, recorrente ou pontual "
+        "com base no histórico completo do Score_Ajustado."
     )
-    
-    # Proteção
+
     if (
-        "score" not in locals()
-        or score is None
-        or score.empty
-        or "Score_Ajustado" not in score.columns
+        score_global is None
+        or score_global.empty
+        or "Score_Ajustado" not in score_global.columns
         or not empresas_lideres_finais
     ):
-        st.info("ℹ️ Mapa de dominância indisponível para esta execução.")
+        st.info("Mapa de dominância indisponível para esta execução.")
     else:
-        df = score.copy()
-    
-        # Apenas tickers que entraram no portfólio final
-        tickers_finais = {e["ticker"] for e in empresas_lideres_finais}
-        df = df[df["ticker"].astype(str).isin(tickers_finais)].copy()
-    
+        df = score_global.copy()
+        tickers_finais = {str(e["ticker"]).upper() for e in empresas_lideres_finais}
+        df["ticker"] = df["ticker"].astype(str).str.upper()
+        df = df[df["ticker"].isin(tickers_finais)].copy()
+
         if df.empty:
-            st.info("ℹ️ Não há histórico suficiente para os ativos selecionados.")
+            st.info("Não há histórico suficiente para os ativos selecionados.")
         else:
-            # Métricas históricas por empresa
+            df = df.sort_values(["ticker", "Ano"])
+
             resumo = (
                 df.groupby("ticker")
                 .agg(
                     anos_no_ranking=("Ano", "nunique"),
                     score_medio=("Score_Ajustado", "mean"),
                     ultimo_ano=("Ano", "max"),
-                    score_ultimo=("Score_Ajustado", lambda x: x.iloc[-1]),
+                    score_ultimo=("Score_Ajustado", "last"),
                 )
                 .reset_index()
             )
-    
-            # Anos em que foi líder
-            lider_counts = (
-                lideres[lideres["ticker"].astype(str).isin(tickers_finais)]
-                .groupby("ticker")["Ano"]
-                .nunique()
-                .rename("anos_lider")
-                .reset_index()
-            )
-    
-            resumo = resumo.merge(lider_counts, on="ticker", how="left")
+
+            if lideres_global is not None and not lideres_global.empty:
+                lg = lideres_global.copy()
+                lg["ticker"] = lg["ticker"].astype(str).str.upper()
+                lider_counts = (
+                    lg[lg["ticker"].isin(tickers_finais)]
+                    .groupby("ticker")["Ano"]
+                    .nunique()
+                    .rename("anos_lider")
+                    .reset_index()
+                )
+                resumo = resumo.merge(lider_counts, on="ticker", how="left")
+            else:
+                resumo["anos_lider"] = 0
+
             resumo["anos_lider"] = resumo["anos_lider"].fillna(0).astype(int)
-    
-            # Percentual de liderança
-            resumo["pct_lideranca"] = resumo["anos_lider"] / resumo["anos_no_ranking"]
-    
-            # Classificação qualitativa
+            resumo["pct_lideranca"] = (resumo["anos_lider"] / resumo["anos_no_ranking"]).fillna(0.0)
+
             def classificar(row):
-                if row["anos_lider"] >= 4 and row["pct_lideranca"] >= 0.5:
-                    return "🟢 Líder estrutural"
-                if row["anos_lider"] >= 2:
-                    return "🟡 Líder recorrente"
-                if row["anos_lider"] == 1:
-                    return "🔵 Líder emergente"
-                return "⚪ Oportunidade pontual"
-    
+                if int(row["anos_lider"]) >= 4 and float(row["pct_lideranca"]) >= 0.5:
+                    return "Líder estrutural"
+                if int(row["anos_lider"]) >= 2:
+                    return "Líder recorrente"
+                if int(row["anos_lider"]) == 1:
+                    return "Líder emergente"
+                return "Oportunidade pontual"
+
             resumo["classificacao"] = resumo.apply(classificar, axis=1)
-    
-            # Nome da empresa
+
             resumo["empresa"] = resumo["ticker"].apply(
                 lambda t: next(
-                    (e["nome"] for e in empresas_lideres_finais if e["ticker"] == t),
+                    (e["nome"] for e in empresas_lideres_finais if str(e["ticker"]).upper() == t),
                     t,
                 )
             )
-    
-            # Ordenação: dominância primeiro
-            resumo = resumo.sort_values(
-                ["anos_lider", "score_medio"],
-                ascending=[False, False],
-            )
-    
-            # Exibição
+
+            resumo = resumo.sort_values(["anos_lider", "score_medio"], ascending=[False, False])
+
             st.dataframe(
                 resumo[
                     [
@@ -735,9 +737,10 @@ def render():
                 ],
                 use_container_width=True,
             )
-    
+
             st.caption(
-                "Classificação baseada em recorrência histórica de liderança e "
-                "consistência do Score_Ajustado."
+                "Interpretação: líderes estruturais tendem a repetir liderança ao longo do ciclo; "
+                "líderes emergentes aparecem com força recente; oportunidades pontuais exigem checagens adicionais."
             )
-                    
+
+    st.markdown("<hr>", unsafe_allow_html=True)
