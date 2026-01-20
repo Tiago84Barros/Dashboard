@@ -544,82 +544,93 @@ def render():
     st.markdown("<hr>", unsafe_allow_html=True)
 
     # ─────────────────────────────────────────────────────────────
-    # PATCH 1 — RÉGUA DE CONVICÇÃO FUNDAMENTAL
+    # PATCH 1 — RÉGUA DE CONVICÇÃO (ALINHADA AO SCORING REAL)
+    # Baseada em Score_Ajustado (contrato oficial do core)
     # ─────────────────────────────────────────────────────────────
     
     st.markdown("## 🧭 Régua de Convicção Fundamental")
     
     st.caption(
-        "Este painel mostra **por que** cada empresa foi selecionada, "
-        "decompondo o score fundamentalista em seus principais pilares."
+        "Este painel mostra a **força relativa** de cada empresa selecionada "
+        "com base no Score_Ajustado produzido pelo motor fundamentalista."
     )
     
-    # Proteção: só exibe se houver líderes e score carregado
-    if empresas_lideres_finais and "score" in locals() and score is not None and not score.empty:
+    # Proteção
+    if (
+        "score" not in locals()
+        or score is None
+        or score.empty
+        or "Score_Ajustado" not in score.columns
+        or not empresas_lideres_finais
+    ):
+        st.info("ℹ️ Régua de convicção indisponível para esta execução.")
+    else:
+        df = score.copy()
     
-        # Normalização do score total para escala 0–100
-        score_norm = score.copy()
-        score_norm["score_norm"] = (
-            (score_norm["score"] - score_norm["score"].min()) /
-            (score_norm["score"].max() - score_norm["score"].min() + 1e-9)
-        ) * 100
+        # Último ano disponível no score
+        ultimo_ano = int(df["Ano"].max())
+        df_ano = df[df["Ano"] == ultimo_ano].copy()
     
-        # Colunas esperadas de componentes (existentes no score)
-        pilares_possiveis = {
-            "qualidade": "Qualidade",
-            "valuation": "Valuation",
-            "crescimento": "Crescimento",
-            "renda": "Renda"
-        }
+        if df_ano.empty:
+            st.info("ℹ️ Não há dados de score para o último ano.")
+        else:
+            # Ranking no ano
+            df_ano = df_ano.sort_values("Score_Ajustado", ascending=False).reset_index(drop=True)
+            df_ano["rank"] = df_ano.index + 1
     
-        penal_cols = [c for c in score_norm.columns if "penal" in c.lower()]
+            # Normaliza score para visual (0–100)
+            smin = df_ano["Score_Ajustado"].min()
+            smax = df_ano["Score_Ajustado"].max()
+            df_ano["score_norm"] = (
+                (df_ano["Score_Ajustado"] - smin) / ((smax - smin) + 1e-9)
+            ) * 100.0
     
-        # Exibe apenas empresas líderes finais
-        tickers_lideres = {e["ticker"] for e in empresas_lideres_finais}
+            tickers_lideres = {e["ticker"] for e in empresas_lideres_finais}
     
-        for _, row in score_norm.iterrows():
-            ticker = str(row["ticker"]).upper()
-            if ticker not in tickers_lideres:
-                continue
+            for _, row in df_ano.iterrows():
+                ticker = str(row["ticker"]).upper()
+                if ticker not in tickers_lideres:
+                    continue
     
-            nome = next(
-                (e["nome"] for e in empresas_lideres_finais if e["ticker"] == ticker),
-                ticker
-            )
-    
-            with st.expander(f"📊 {nome} ({ticker}) — Score {row['score_norm']:.1f}/100", expanded=False):
-    
-                st.markdown("**Composição do Score Fundamentalista**")
-    
-                # Exibe pilares
-                for col, label in pilares_possiveis.items():
-                    if col in score_norm.columns:
-                        valor = row.get(col, None)
-                        if pd.notna(valor):
-                            st.markdown(f"{label}")
-                            st.progress(min(max(float(valor), 0.0), 1.0))
-    
-                # Penalizações (se houver)
-                if penal_cols:
-                    penal_total = sum(
-                        float(row[c]) for c in penal_cols
-                        if pd.notna(row[c]) and float(row[c]) < 0
-                    )
-    
-                    if penal_total < 0:
-                        st.markdown("**Penalizações aplicadas**")
-                        st.markdown(f"- Impacto total no score: **{penal_total:.2f}**")
-    
-                        for c in penal_cols:
-                            val = row.get(c, 0)
-                            if pd.notna(val) and val < 0:
-                                st.markdown(f"• {c.replace('_', ' ').title()}: {val:.2f}")
-    
-                st.caption(
-                    "Scores próximos de 1 indicam desempenho relativo superior "
-                    "no pilar dentro do próprio segmento."
+                nome = next(
+                    (e["nome"] for e in empresas_lideres_finais if e["ticker"] == ticker),
+                    ticker,
                 )
     
-    else:
-        st.info("ℹ️ Régua de convicção indisponível para esta execução.")
+                with st.expander(
+                    f"📊 {nome} ({ticker}) — Rank #{int(row['rank'])} | Score {row['score_norm']:.1f}/100",
+                    expanded=False,
+                ):
+                    st.markdown("**Força relativa no segmento (ano mais recente)**")
     
+                    # Barra de convicção (score relativo)
+                    st.progress(min(max(row["score_norm"] / 100.0, 0.0), 1.0))
+    
+                    # Distância para o segundo colocado
+                    if len(df_ano) > 1 and row["rank"] == 1:
+                        segundo = df_ano.iloc[1]["Score_Ajustado"]
+                        gap = row["Score_Ajustado"] - segundo
+                        st.markdown(
+                            f"• Vantagem sobre o 2º colocado: **{gap:.4f} pontos de score**"
+                        )
+    
+                    # Histórico de liderança
+                    anos_lider = (
+                        lideres[lideres["ticker"].astype(str) == ticker]["Ano"]
+                        .dropna()
+                        .astype(int)
+                        .tolist()
+                    )
+    
+                    if anos_lider:
+                        st.markdown(
+                            f"• Anos como líder no histórico: **{len(anos_lider)}** "
+                            f"({', '.join(map(str, anos_lider))})"
+                        )
+                    else:
+                        st.markdown("• Empresa líder emergente (primeira ocorrência)")
+    
+                    st.caption(
+                        "O Score_Ajustado incorpora qualidade, valuation, crescimento, "
+                        "renda, crowding e penalizações dinâmicas."
+                    )
