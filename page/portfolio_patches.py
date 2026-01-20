@@ -210,7 +210,6 @@ def render_patch2_dominancia(
         "baixa frequência pode indicar caso cíclico/pontual."
     )
 
-
 # ─────────────────────────────────────────────────────────────
 # PATCH 3 — Stress Test de Robustez
 # ─────────────────────────────────────────────────────────────
