@@ -244,6 +244,8 @@ def render():
     # ── NOVO: acumuladores globais para explicar todas as empresas no final
     scores_globais: List[pd.DataFrame] = []
     lideres_globais: List[pd.DataFrame] = []
+    # ── Acumulador global para o PATCH 5 (contribuição marginal)
+    contrib_globais = []
 
     # ─────────────────────────────────────────────────────────
     # Loop por segmento (pipeline leve)
@@ -376,6 +378,41 @@ def render():
 
         patrimonio_empresas = patrimonio_empresas.apply(pd.to_numeric, errors="coerce")
         final_empresas = float(patrimonio_empresas.iloc[-1].drop("Patrimônio", errors="ignore").sum())
+
+        # ── PATCH 5: capturar contribuições por ticker (por segmento aprovado)
+        try:
+            cols_tick = patrimonio_empresas.columns.drop("Patrimônio", errors="ignore").tolist()
+            if cols_tick:
+                ini = patrimonio_empresas.iloc[0][cols_tick].astype(float)
+                fim = patrimonio_empresas.iloc[-1][cols_tick].astype(float)
+        
+                total_fim = float(fim.sum()) if float(fim.sum()) != 0 else 1.0
+        
+                for tk_col in cols_tick:
+                    tk_clean = _strip_sa(str(tk_col))
+                    v_ini = float(ini.get(tk_col, 0.0))
+                    v_fim = float(fim.get(tk_col, 0.0))
+                    ret = (v_fim / (v_ini + 1e-9)) - 1.0  # retorno simples aproximado
+                    peso_final = v_fim / (total_fim + 1e-9)
+        
+                    contrib_globais.append({
+                        "SETOR": setor,
+                        "SUBSETOR": subsetor,
+                        "SEGMENTO": segmento,
+                        "ticker": tk_clean,
+                        "nome": next((e.nome for e in lista_empresas if _strip_sa(e.ticker) == tk_clean), tk_clean),
+                        "valor_inicial": v_ini,
+                        "valor_final": v_fim,
+                        "peso_final": peso_final,
+                        "retorno_periodo": ret,
+                        "final_segmento": total_fim,
+                        "diff_vs_selic_pct": diff,  # já calculado no seu fluxo
+                    })
+        except Exception:
+            pass
+#-----------------------------------------------------------------------------------------------------------------
+
+        patrimonio_empresas, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
 
         patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aportes)
         if patrimonio_selic is None or patrimonio_selic.empty:
@@ -822,114 +859,211 @@ def render():
     
         df_jaccard = pd.DataFrame(jaccard_rows)
     
-        # ─────────────────────────────────────────
-        # 2) Consistência: presença histórica dos tickers finais no conjunto de líderes
-        # ─────────────────────────────────────────
-        pres_rows = []
-        for tk in sorted(tickers_finais):
-            anos_lider = sorted(lg.loc[lg["ticker"] == tk, "Ano"].dropna().astype(int).unique().tolist())
-            pres_rows.append(
-                {
-                    "ticker": tk,
-                    "anos_como_lider": len(anos_lider),
-                    "anos": ", ".join(map(str, anos_lider)) if anos_lider else "",
-                }
-            )
-    
-        df_pres = pd.DataFrame(pres_rows)
-    
-        # Métrica agregada: % de tickers finais que já foram líderes pelo menos 1 vez
-        pct_com_hist = float((df_pres["anos_como_lider"] > 0).mean()) if not df_pres.empty else 0.0
-    
-        # ─────────────────────────────────────────
-        # 3) Stress de suavização (anti-ruído):
-        #   - cria score_suavizado (rolling 3 anos por ticker)
-        #   - refaz líderes do último ano por SEGMENTO, se SEGMENTO existir
-        #   - compara overlap com líderes originais do último ano
-        # ─────────────────────────────────────────
-        sg2 = sg.sort_values(["ticker", "Ano"]).copy()
-        sg2["Score_Suavizado_3y"] = (
-            sg2.groupby("ticker")["Score_Ajustado"]
-            .transform(lambda s: s.rolling(window=3, min_periods=2).mean())
+    # ─────────────────────────────────────────
+    # 2) Consistência: presença histórica dos tickers finais no conjunto de líderes
+    # ─────────────────────────────────────────
+    pres_rows = []
+    for tk in sorted(tickers_finais):
+        anos_lider = sorted(lg.loc[lg["ticker"] == tk, "Ano"].dropna().astype(int).unique().tolist())
+        pres_rows.append(
+            {
+                "ticker": tk,
+                "anos_como_lider": len(anos_lider),
+                "anos": ", ".join(map(str, anos_lider)) if anos_lider else "",
+            }
         )
-    
-        # Função para pegar líderes no ano, por grupo
-        def _lideres_por_grupo(df_ano: pd.DataFrame, grupo_col: str, score_col: str) -> set:
-            out = set()
-            if df_ano.empty or grupo_col not in df_ano.columns:
-                return out
-            for _, g in df_ano.groupby(grupo_col):
-                g2 = g.dropna(subset=[score_col])
-                if g2.empty:
-                    continue
-                tk = str(g2.sort_values(score_col, ascending=False).iloc[0]["ticker"])
-                if tk:
-                    out.add(tk)
+
+    df_pres = pd.DataFrame(pres_rows)
+
+    # Métrica agregada: % de tickers finais que já foram líderes pelo menos 1 vez
+    pct_com_hist = float((df_pres["anos_como_lider"] > 0).mean()) if not df_pres.empty else 0.0
+
+    # ─────────────────────────────────────────
+    # 3) Stress de suavização (anti-ruído):
+    #   - cria score_suavizado (rolling 3 anos por ticker)
+    #   - refaz líderes do último ano por SEGMENTO, se SEGMENTO existir
+    #   - compara overlap com líderes originais do último ano
+    # ─────────────────────────────────────────
+    sg2 = sg.sort_values(["ticker", "Ano"]).copy()
+    sg2["Score_Suavizado_3y"] = (
+        sg2.groupby("ticker")["Score_Ajustado"]
+        .transform(lambda s: s.rolling(window=3, min_periods=2).mean())
+    )
+
+    # Função para pegar líderes no ano, por grupo
+    def _lideres_por_grupo(df_ano: pd.DataFrame, grupo_col: str, score_col: str) -> set:
+        out = set()
+        if df_ano.empty or grupo_col not in df_ano.columns:
             return out
-    
-        # Seleciona coluna de grupo efetiva (se não existir SEGMENTO, cai para SETOR, senão universo único)
-        grupo_col = None
-        for cand in ["SEGMENTO", "SUBSETOR", "SETOR"]:
-            if cand in sg2.columns:
-                grupo_col = cand
-                break
-    
-        orig_last = lideres_por_ano.get(ultimo_ano, set())
-    
-        if grupo_col is None:
-            # Fallback: líderes suavizados = top N do universo (mesmo tamanho do conjunto original)
-            df_last = sg2[sg2["Ano"] == ultimo_ano].copy()
-            df_last = df_last.dropna(subset=["Score_Suavizado_3y"]).sort_values("Score_Suavizado_3y", ascending=False)
-            suav_last = set(df_last["ticker"].head(len(orig_last)).tolist()) if not df_last.empty else set()
+        for _, g in df_ano.groupby(grupo_col):
+            g2 = g.dropna(subset=[score_col])
+            if g2.empty:
+                continue
+            tk = str(g2.sort_values(score_col, ascending=False).iloc[0]["ticker"])
+            if tk:
+                out.add(tk)
+        return out
+
+    # Seleciona coluna de grupo efetiva (se não existir SEGMENTO, cai para SETOR, senão universo único)
+    grupo_col = None
+    for cand in ["SEGMENTO", "SUBSETOR", "SETOR"]:
+        if cand in sg2.columns:
+            grupo_col = cand
+            break
+
+    orig_last = lideres_por_ano.get(ultimo_ano, set())
+
+    if grupo_col is None:
+        # Fallback: líderes suavizados = top N do universo (mesmo tamanho do conjunto original)
+        df_last = sg2[sg2["Ano"] == ultimo_ano].copy()
+        df_last = df_last.dropna(subset=["Score_Suavizado_3y"]).sort_values("Score_Suavizado_3y", ascending=False)
+        suav_last = set(df_last["ticker"].head(len(orig_last)).tolist()) if not df_last.empty else set()
+    else:
+        df_last = sg2[sg2["Ano"] == ultimo_ano].copy()
+        suav_last = _lideres_por_grupo(df_last, grupo_col, "Score_Suavizado_3y")
+
+    un = orig_last.union(suav_last)
+    inter = orig_last.intersection(suav_last)
+    jacc_suav = (len(inter) / (len(un) + 1e-9)) if un else 0.0
+
+    # ─────────────────────────────────────────
+    # Saída na UI
+    # ─────────────────────────────────────────
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        if not df_jaccard.empty:
+            st.metric("Estabilidade média (Jaccard)", f"{df_jaccard['Jaccard_lideres'].mean()*100:.1f}%")
         else:
-            df_last = sg2[sg2["Ano"] == ultimo_ano].copy()
-            suav_last = _lideres_por_grupo(df_last, grupo_col, "Score_Suavizado_3y")
-    
-        un = orig_last.union(suav_last)
-        inter = orig_last.intersection(suav_last)
-        jacc_suav = (len(inter) / (len(un) + 1e-9)) if un else 0.0
-    
-        # ─────────────────────────────────────────
-        # Saída na UI
-        # ─────────────────────────────────────────
-        c1, c2, c3 = st.columns(3)
-    
-        with c1:
-            if not df_jaccard.empty:
-                st.metric("Estabilidade média (Jaccard)", f"{df_jaccard['Jaccard_lideres'].mean()*100:.1f}%")
-            else:
-                st.metric("Estabilidade média (Jaccard)", "—")
-    
-        with c2:
-            st.metric("Tickers finais com histórico de liderança", f"{pct_com_hist*100:.1f}%")
-    
-        with c3:
-            st.metric("Robustez à suavização (3y)", f"{jacc_suav*100:.1f}%")
-    
-        with st.expander("📌 Detalhes: Estabilidade ano a ano (Jaccard)", expanded=False):
-            if df_jaccard.empty:
-                st.info("Histórico insuficiente para calcular Jaccard ano a ano.")
-            else:
-                st.dataframe(df_jaccard, use_container_width=True)
-                st.caption(
-                    "Jaccard mede similaridade entre conjuntos de líderes. "
-                    "Quanto mais alto, mais estável é o motor ao longo do tempo."
-                )
-    
-        with st.expander("📌 Detalhes: Consistência histórica dos tickers escolhidos", expanded=False):
-            df_pres_show = df_pres.copy()
-            # adiciona nome (se disponível)
-            df_pres_show["empresa"] = df_pres_show["ticker"].apply(
-                lambda t: next((e["nome"] for e in empresas_lideres_finais if str(e["ticker"]).upper() == t), t)
-            )
-            st.dataframe(df_pres_show[["empresa", "ticker", "anos_como_lider", "anos"]], use_container_width=True)
-    
-        with st.expander("📌 Detalhes: Overlap líderes originais vs líderes suavizados (último ano)", expanded=False):
-            st.write(f"Último ano do score: **{ultimo_ano}**")
-            st.write(f"Coluna de grupo usada: **{grupo_col if grupo_col else 'UNIVERSO'}**")
-            st.write(f"Líderes originais (n={len(orig_last)}): {', '.join(sorted(orig_last)) if orig_last else '—'}")
-            st.write(f"Líderes suavizados 3y (n={len(suav_last)}): {', '.join(sorted(suav_last)) if suav_last else '—'}")
+            st.metric("Estabilidade média (Jaccard)", "—")
+
+    with c2:
+        st.metric("Tickers finais com histórico de liderança", f"{pct_com_hist*100:.1f}%")
+
+    with c3:
+        st.metric("Robustez à suavização (3y)", f"{jacc_suav*100:.1f}%")
+
+    with st.expander("📌 Detalhes: Estabilidade ano a ano (Jaccard)", expanded=False):
+        if df_jaccard.empty:
+            st.info("Histórico insuficiente para calcular Jaccard ano a ano.")
+        else:
+            st.dataframe(df_jaccard, use_container_width=True)
             st.caption(
-                "Se o overlap com suavização for alto, a seleção é menos dependente de ruídos de um único ano."
+                "Jaccard mede similaridade entre conjuntos de líderes. "
+                "Quanto mais alto, mais estável é o motor ao longo do tempo."
             )
+
+    with st.expander("📌 Detalhes: Consistência histórica dos tickers escolhidos", expanded=False):
+        df_pres_show = df_pres.copy()
+        # adiciona nome (se disponível)
+        df_pres_show["empresa"] = df_pres_show["ticker"].apply(
+            lambda t: next((e["nome"] for e in empresas_lideres_finais if str(e["ticker"]).upper() == t), t)
+        )
+        st.dataframe(df_pres_show[["empresa", "ticker", "anos_como_lider", "anos"]], use_container_width=True)
+
+    with st.expander("📌 Detalhes: Overlap líderes originais vs líderes suavizados (último ano)", expanded=False):
+        st.write(f"Último ano do score: **{ultimo_ano}**")
+        st.write(f"Coluna de grupo usada: **{grupo_col if grupo_col else 'UNIVERSO'}**")
+        st.write(f"Líderes originais (n={len(orig_last)}): {', '.join(sorted(orig_last)) if orig_last else '—'}")
+        st.write(f"Líderes suavizados 3y (n={len(suav_last)}): {', '.join(sorted(suav_last)) if suav_last else '—'}")
+        st.caption(
+            "Se o overlap com suavização for alto, a seleção é menos dependente de ruídos de um único ano."
+        )
+
+    # ─────────────────────────────────────────────────────────────
+    # PATCH 5 — CONTRIBUIÇÃO MARGINAL AO RETORNO (GLOBAL)
+    # ─────────────────────────────────────────────────────────────
     
+    st.markdown("## 🧩 Contribuição Marginal ao Retorno (por Segmento)")
+    st.caption(
+        "Este painel mostra quem realmente carregou o resultado: "
+        "peso no patrimônio final e retorno no período, por segmento aprovado."
+    )
+    
+    if "contrib_globais" not in locals() or not contrib_globais:
+        st.info("Contribuição marginal indisponível: nada foi acumulado nesta execução.")
+    else:
+        dfc = pd.DataFrame(contrib_globais)
+    
+        # Normalizações defensivas
+        for c in ["valor_inicial", "valor_final", "peso_final", "retorno_periodo", "final_segmento", "diff_vs_selic_pct"]:
+            if c in dfc.columns:
+                dfc[c] = pd.to_numeric(dfc[c], errors="coerce").fillna(0.0)
+    
+        dfc["id_segmento"] = dfc["SETOR"].astype(str) + " > " + dfc["SUBSETOR"].astype(str) + " > " + dfc["SEGMENTO"].astype(str)
+    
+        # Seletor de segmento
+        segmentos = sorted(dfc["id_segmento"].unique().tolist())
+        seg_escolhido = st.selectbox("Escolha o segmento para inspecionar:", segmentos)
+    
+        df_seg = dfc[dfc["id_segmento"] == seg_escolhido].copy()
+        if df_seg.empty:
+            st.info("Sem dados para o segmento escolhido.")
+            st.stop()
+    
+        # Ordena por contribuição (valor final)
+        df_seg = df_seg.sort_values("valor_final", ascending=False).reset_index(drop=True)
+    
+        # Métricas de topo
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Patrimônio final (segmento)", f"R$ {df_seg['final_segmento'].iloc[0]:,.2f}")
+        with col2:
+            st.metric("Diferença vs Selic (segmento)", f"{df_seg['diff_vs_selic_pct'].iloc[0]:.1f}%")
+        with col3:
+            top1 = df_seg.iloc[0]
+            st.metric("Maior contribuinte", f"{top1['ticker']} ({top1['peso_final']*100:.1f}%)")
+    
+        # Tabela principal
+        df_show = df_seg.copy()
+        df_show["peso_final_%"] = df_show["peso_final"] * 100.0
+        df_show["retorno_periodo_%"] = df_show["retorno_periodo"] * 100.0
+    
+        colunas = [
+            "nome", "ticker",
+            "valor_inicial", "valor_final",
+            "peso_final_%", "retorno_periodo_%",
+        ]
+        colunas = [c for c in colunas if c in df_show.columns]
+    
+        st.dataframe(df_show[colunas], use_container_width=True)
+    
+        # Gráfico: contribuição por valor final
+        with st.expander("📊 Gráfico: contribuição por valor final", expanded=False):
+            import matplotlib.pyplot as plt
+    
+            topn = min(10, len(df_seg))
+            dplot = df_seg.head(topn).copy()
+    
+            fig, ax = plt.subplots(figsize=(10, 4))
+            ax.bar(dplot["ticker"].astype(str), dplot["valor_final"].astype(float))
+            ax.set_ylabel("Valor final (R$)")
+            ax.set_xlabel("Ticker")
+            ax.set_title("Top contribuintes do segmento (valor final)")
+            ax.grid(True, linestyle="--", alpha=0.4)
+            st.pyplot(fig)
+    
+        # Agregação global (todos os segmentos)
+        with st.expander("🌐 Visão agregada (todos os segmentos aprovados)", expanded=False):
+            agg = (
+                dfc.groupby(["ticker", "nome"], as_index=False)
+                .agg(
+                    valor_final=("valor_final", "sum"),
+                    valor_inicial=("valor_inicial", "sum"),
+                    peso_final=("peso_final", "sum"),
+                    segmentos=("id_segmento", "nunique"),
+                )
+            )
+            agg["retorno_periodo"] = (agg["valor_final"] / (agg["valor_inicial"] + 1e-9)) - 1.0
+            agg["peso_final_%"] = (agg["valor_final"] / (agg["valor_final"].sum() + 1e-9)) * 100.0
+            agg["retorno_periodo_%"] = agg["retorno_periodo"] * 100.0
+    
+            agg = agg.sort_values("valor_final", ascending=False).reset_index(drop=True)
+    
+            st.dataframe(
+                agg[["nome", "ticker", "segmentos", "valor_inicial", "valor_final", "peso_final_%", "retorno_periodo_%"]],
+                use_container_width=True,
+            )
+            st.caption("Interpretação: aqui o 'peso_final_%' reflete contribuição agregada entre segmentos aprovados.")
+    
+            
