@@ -700,16 +700,17 @@ def render():
                 resumo["anos_lider"] = 0
 
             resumo["anos_lider"] = resumo["anos_lider"].fillna(0).astype(int)
-            resumo["pct_lideranca"] = (resumo["anos_lider"] / resumo["anos_no_ranking"]).fillna(0.0)
+            resumo["frequencia_lideranca"] = (resumo["anos_lider"] / resumo["anos_no_ranking"]).fillna(0.0)
 
             def classificar(row):
-                if int(row["anos_lider"]) >= 4 and float(row["pct_lideranca"]) >= 0.5:
+                if row["anos_lider"] >= 4 and row["frequencia_lideranca"] >= 0.5:
                     return "Líder estrutural"
-                if int(row["anos_lider"]) >= 2:
+                if row["anos_lider"] >= 2:
                     return "Líder recorrente"
-                if int(row["anos_lider"]) == 1:
+                if row["anos_lider"] == 1:
                     return "Líder emergente"
                 return "Oportunidade pontual"
+
 
             resumo["classificacao"] = resumo.apply(classificar, axis=1)
 
@@ -725,15 +726,16 @@ def render():
             st.dataframe(
                 resumo[
                     [
-                        "empresa",
-                        "ticker",
-                        "anos_no_ranking",
-                        "anos_lider",
-                        "pct_lideranca",
-                        "score_medio",
-                        "score_ultimo",
-                        "classificacao",
-                    ]
+                       [
+                            "empresa",
+                            "ticker",
+                            "anos_no_ranking",
+                            "anos_lider",
+                            "frequencia_lideranca",
+                            "score_medio",
+                            "score_ultimo",
+                            "classificacao",
+                      ]
                 ],
                 use_container_width=True,
             )
