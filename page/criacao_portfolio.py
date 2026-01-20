@@ -723,22 +723,23 @@ def render():
 
             resumo = resumo.sort_values(["anos_lider", "score_medio"], ascending=[False, False])
 
-            st.dataframe(
-                resumo[
-                    [
-                       [
-                            "empresa",
-                            "ticker",
-                            "anos_no_ranking",
-                            "anos_lider",
-                            "frequencia_lideranca",
-                            "score_medio",
-                            "score_ultimo",
-                            "classificacao",
-                      ]
-                ],
-                use_container_width=True,
-            )
+            # colunas para exibição (evita erro de colchetes)
+            colunas_exibicao = [
+                "empresa",
+                "ticker",
+                "anos_no_ranking",
+                "anos_lider",
+                "frequencia_lideranca",  # ou pct_lideranca, se você ainda não renomeou
+                "score_medio",
+                "score_ultimo",
+                "classificacao",
+            ]
+            
+            # garante que só use colunas existentes (robustez extra)
+            colunas_exibicao = [c for c in colunas_exibicao if c in resumo.columns]
+            
+            st.dataframe(resumo[colunas_exibicao], use_container_width=True)
+
 
             st.caption(
                 "Interpretação: líderes estruturais tendem a repetir liderança ao longo do ciclo; "
