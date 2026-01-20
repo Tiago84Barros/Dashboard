@@ -52,7 +52,6 @@ from page.portfolio_patches import (
     render_patch2_dominancia,
     render_patch3_stress_test,
     render_patch4_diversificacao,
-    render_patch5_contribuicao_marginal,
 )
 # <<<
 
