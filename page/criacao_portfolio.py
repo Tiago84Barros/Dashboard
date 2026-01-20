@@ -747,3 +747,189 @@ def render():
             )
 
     st.markdown("<hr>", unsafe_allow_html=True)
+
+    # ─────────────────────────────────────────────────────────────
+    # PATCH 3 — STRESS TEST DE ROBUSTEZ (GLOBAL)
+    # Mede estabilidade temporal e sensibilidade a ruído
+    # ─────────────────────────────────────────────────────────────
+    
+    st.markdown("## 🧪 Stress Test de Robustez")
+    st.caption(
+        "Este painel mede a robustez da seleção: estabilidade ao longo do tempo, "
+        "consistência histórica das líderes e sensibilidade do conjunto a suavização do score."
+    )
+    
+    # Proteções
+    if (
+        score_global is None
+        or score_global.empty
+        or "Score_Ajustado" not in score_global.columns
+        or lideres_global is None
+        or lideres_global.empty
+        or not empresas_lideres_finais
+    ):
+        st.info("Stress test indisponível para esta execução.")
+    else:
+        # Normalizações
+        sg = score_global.copy()
+        lg = lideres_global.copy()
+    
+        sg["ticker"] = sg["ticker"].astype(str).str.upper().str.replace(".SA", "", regex=False).str.strip()
+        lg["ticker"] = lg["ticker"].astype(str).str.upper().str.replace(".SA", "", regex=False).str.strip()
+    
+        # Garantir Ano como int
+        sg["Ano"] = pd.to_numeric(sg["Ano"], errors="coerce").astype("Int64")
+        lg["Ano"] = pd.to_numeric(lg["Ano"], errors="coerce").astype("Int64")
+    
+        sg = sg.dropna(subset=["Ano", "ticker"])
+        lg = lg.dropna(subset=["Ano", "ticker"])
+    
+        if sg.empty or lg.empty:
+            st.info("Stress test indisponível: histórico vazio após normalização.")
+            st.stop()
+    
+        # Tickers do portfólio final (os escolhidos para compra)
+        tickers_finais = {str(e["ticker"]).upper().replace(".SA", "").strip() for e in empresas_lideres_finais}
+        if not tickers_finais:
+            st.info("Stress test indisponível: portfólio final vazio.")
+            st.stop()
+    
+        anos_disp = sorted(set(sg["Ano"].dropna().astype(int).tolist()))
+        if len(anos_disp) < 3:
+            st.info("Stress test requer pelo menos 3 anos de histórico no score.")
+            st.stop()
+    
+        ultimo_ano = int(max(anos_disp))
+    
+        # ─────────────────────────────────────────
+        # 1) Estabilidade temporal do conjunto de líderes (Jaccard ano a ano)
+        # Liderança global por ano = união dos líderes por segmento naquele ano
+        # ─────────────────────────────────────────
+        lideres_por_ano = (
+            lg.groupby("Ano")["ticker"]
+            .apply(lambda s: set(s.dropna().astype(str).tolist()))
+            .to_dict()
+        )
+    
+        jaccard_rows = []
+        for a1, a2 in zip(anos_disp[:-1], anos_disp[1:]):
+            s1 = lideres_por_ano.get(int(a1), set())
+            s2 = lideres_por_ano.get(int(a2), set())
+            un = s1.union(s2)
+            inter = s1.intersection(s2)
+            jac = (len(inter) / (len(un) + 1e-9)) if un else 0.0
+            jaccard_rows.append({"Ano_t": int(a1), "Ano_t+1": int(a2), "Jaccard_lideres": float(jac)})
+    
+        df_jaccard = pd.DataFrame(jaccard_rows)
+    
+        # ─────────────────────────────────────────
+        # 2) Consistência: presença histórica dos tickers finais no conjunto de líderes
+        # ─────────────────────────────────────────
+        pres_rows = []
+        for tk in sorted(tickers_finais):
+            anos_lider = sorted(lg.loc[lg["ticker"] == tk, "Ano"].dropna().astype(int).unique().tolist())
+            pres_rows.append(
+                {
+                    "ticker": tk,
+                    "anos_como_lider": len(anos_lider),
+                    "anos": ", ".join(map(str, anos_lider)) if anos_lider else "",
+                }
+            )
+    
+        df_pres = pd.DataFrame(pres_rows)
+    
+        # Métrica agregada: % de tickers finais que já foram líderes pelo menos 1 vez
+        pct_com_hist = float((df_pres["anos_como_lider"] > 0).mean()) if not df_pres.empty else 0.0
+    
+        # ─────────────────────────────────────────
+        # 3) Stress de suavização (anti-ruído):
+        #   - cria score_suavizado (rolling 3 anos por ticker)
+        #   - refaz líderes do último ano por SEGMENTO, se SEGMENTO existir
+        #   - compara overlap com líderes originais do último ano
+        # ─────────────────────────────────────────
+        sg2 = sg.sort_values(["ticker", "Ano"]).copy()
+        sg2["Score_Suavizado_3y"] = (
+            sg2.groupby("ticker")["Score_Ajustado"]
+            .transform(lambda s: s.rolling(window=3, min_periods=2).mean())
+        )
+    
+        # Função para pegar líderes no ano, por grupo
+        def _lideres_por_grupo(df_ano: pd.DataFrame, grupo_col: str, score_col: str) -> set:
+            out = set()
+            if df_ano.empty or grupo_col not in df_ano.columns:
+                return out
+            for _, g in df_ano.groupby(grupo_col):
+                g2 = g.dropna(subset=[score_col])
+                if g2.empty:
+                    continue
+                tk = str(g2.sort_values(score_col, ascending=False).iloc[0]["ticker"])
+                if tk:
+                    out.add(tk)
+            return out
+    
+        # Seleciona coluna de grupo efetiva (se não existir SEGMENTO, cai para SETOR, senão universo único)
+        grupo_col = None
+        for cand in ["SEGMENTO", "SUBSETOR", "SETOR"]:
+            if cand in sg2.columns:
+                grupo_col = cand
+                break
+    
+        orig_last = lideres_por_ano.get(ultimo_ano, set())
+    
+        if grupo_col is None:
+            # Fallback: líderes suavizados = top N do universo (mesmo tamanho do conjunto original)
+            df_last = sg2[sg2["Ano"] == ultimo_ano].copy()
+            df_last = df_last.dropna(subset=["Score_Suavizado_3y"]).sort_values("Score_Suavizado_3y", ascending=False)
+            suav_last = set(df_last["ticker"].head(len(orig_last)).tolist()) if not df_last.empty else set()
+        else:
+            df_last = sg2[sg2["Ano"] == ultimo_ano].copy()
+            suav_last = _lideres_por_grupo(df_last, grupo_col, "Score_Suavizado_3y")
+    
+        un = orig_last.union(suav_last)
+        inter = orig_last.intersection(suav_last)
+        jacc_suav = (len(inter) / (len(un) + 1e-9)) if un else 0.0
+    
+        # ─────────────────────────────────────────
+        # Saída na UI
+        # ─────────────────────────────────────────
+        c1, c2, c3 = st.columns(3)
+    
+        with c1:
+            if not df_jaccard.empty:
+                st.metric("Estabilidade média (Jaccard)", f"{df_jaccard['Jaccard_lideres'].mean()*100:.1f}%")
+            else:
+                st.metric("Estabilidade média (Jaccard)", "—")
+    
+        with c2:
+            st.metric("Tickers finais com histórico de liderança", f"{pct_com_hist*100:.1f}%")
+    
+        with c3:
+            st.metric("Robustez à suavização (3y)", f"{jacc_suav*100:.1f}%")
+    
+        with st.expander("📌 Detalhes: Estabilidade ano a ano (Jaccard)", expanded=False):
+            if df_jaccard.empty:
+                st.info("Histórico insuficiente para calcular Jaccard ano a ano.")
+            else:
+                st.dataframe(df_jaccard, use_container_width=True)
+                st.caption(
+                    "Jaccard mede similaridade entre conjuntos de líderes. "
+                    "Quanto mais alto, mais estável é o motor ao longo do tempo."
+                )
+    
+        with st.expander("📌 Detalhes: Consistência histórica dos tickers escolhidos", expanded=False):
+            df_pres_show = df_pres.copy()
+            # adiciona nome (se disponível)
+            df_pres_show["empresa"] = df_pres_show["ticker"].apply(
+                lambda t: next((e["nome"] for e in empresas_lideres_finais if str(e["ticker"]).upper() == t), t)
+            )
+            st.dataframe(df_pres_show[["empresa", "ticker", "anos_como_lider", "anos"]], use_container_width=True)
+    
+        with st.expander("📌 Detalhes: Overlap líderes originais vs líderes suavizados (último ano)", expanded=False):
+            st.write(f"Último ano do score: **{ultimo_ano}**")
+            st.write(f"Coluna de grupo usada: **{grupo_col if grupo_col else 'UNIVERSO'}**")
+            st.write(f"Líderes originais (n={len(orig_last)}): {', '.join(sorted(orig_last)) if orig_last else '—'}")
+            st.write(f"Líderes suavizados 3y (n={len(suav_last)}): {', '.join(sorted(suav_last)) if suav_last else '—'}")
+            st.caption(
+                "Se o overlap com suavização for alto, a seleção é menos dependente de ruídos de um único ano."
+            )
+    
