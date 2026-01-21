@@ -54,7 +54,6 @@ from page.portfolio_patches import (
     render_patch4_diversificacao,
     render_patch5_benchmark_segmento,
 )
-from page.portfolio_patches import 
 
 # <<<
 
