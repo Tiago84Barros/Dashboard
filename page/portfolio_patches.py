@@ -485,7 +485,7 @@ def _retornos_ano_preco(tickers: list[str], ano: int) -> pd.Series:
 # PATCH 5 — Desempenho das empresas escolhidas de acordo com o resultado do último ano do score
 # ─────────────────────────────────────────────────────────────
 
-def render_patch6_benchmark_segmento(score_global: pd.DataFrame, empresas_lideres_finais: list[dict]) -> None:
+def render_patch5_benchmark_segmento(score_global: pd.DataFrame, empresas_lideres_finais: list[dict]) -> None:
     """
     Patch 6 — compara retorno no último ano do score vs retorno médio do segmento (SETOR>SUBSETOR>SEGMENTO).
     Observação: retorno por preço (sem dividendos) por robustez e performance.
