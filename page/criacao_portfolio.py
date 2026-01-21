@@ -52,7 +52,10 @@ from page.portfolio_patches import (
     render_patch2_dominancia,
     render_patch3_stress_test,
     render_patch4_diversificacao,
+    render_patch5_benchmark_segmento,
 )
+from page.portfolio_patches import 
+
 # <<<
 
 logger = logging.getLogger(__name__)
@@ -658,4 +661,6 @@ def render():
     render_patch2_dominancia(score_global, lideres_global, empresas_lideres_finais)
     render_patch3_stress_test(score_global, lideres_global, empresas_lideres_finais)
     render_patch4_diversificacao(empresas_lideres_finais, contrib_globais)
+    render_patch5_benchmark_segmento(score_global, empresas_lideres_finais)
+
 
