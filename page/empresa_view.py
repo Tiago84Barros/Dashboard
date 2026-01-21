@@ -179,7 +179,9 @@ def render_empresa_view(ticker: str):
         if current_price is None:
             st.subheader(f"{company_name} — Preço atual indisponível")
         else:
-            st.subheader(f"{company_name} — Preço Atual: R$ {current_price:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            st.subheader(
+                f"{company_name} — Preço Atual: R$ {current_price:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            )
         if company_website:
             st.caption(company_website)
         st.caption(f"Ticker: {ticker}")
@@ -198,43 +200,36 @@ def render_empresa_view(ticker: str):
         """
         <style>
         .growth-box {
-            border: 2px solid #ddd;
-            padding: 20px;
+            background-color: #0e1117;
+            border: 1px solid #1f1f1f;
+            padding: 14px 16px;
             border-radius: 10px;
-            margin-bottom: 10px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100px;
-            width: 100%;
-            text-align: center;
-            font-size: 20px;
-            font-weight: bold;
-            color: #333;
-            background-color: #f9f9f9;
+            font-size: 16px;
+            margin-bottom: 8px;
         }
         .metric-box {
-            background-color: #f9f9f9;
+            background-color: #ffffff;
             border-radius: 10px;
-            padding: 10px;
+            padding: 18px 14px;
             text-align: center;
-            margin-bottom: 15px;
-            border: 1px solid #e0e0e0;
+            margin-bottom: 14px;
+            box-shadow: 0 0 0 1px rgba(0,0,0,0.07);
         }
         .metric-value {
-            font-size: 24px;
-            font-weight: bold;
-            color: #222;
+            font-size: 22px;
+            font-weight: 700;
+            color: #111;
+            line-height: 1.1;
         }
         .metric-label {
-            font-size: 14px;
-            color: #ff6600;
-            font-weight: bold;
+            margin-top: 6px;
+            font-size: 13px;
+            color: #ff6a00;
         }
         .metric-source {
+            margin-top: 6px;
             font-size: 11px;
-            color: #999;
-            margin-top: 2px;
+            color: #7a7a7a;
         }
         </style>
         """,
@@ -303,6 +298,48 @@ def render_empresa_view(ticker: str):
     # DB “recente”: pega últimos registros (equivalente ao TRI anterior)
     mult_db_recent = load_multiplos_limitado_from_db(ticker, limite=12)
     mult_db_latest = _latest_row_by_date(mult_db_recent) if mult_db_recent is not None else pd.DataFrame()
+
+    # ── Diagnóstico YFinance (temporário)
+    # Use este bloco para entender se o problema é:
+    #  - falta de cobertura de fundamentals no Yahoo (campos ausentes), ou
+    #  - falha/bloqueio/rate limit no endpoint do yfinance (exceção / info vazio).
+    with st.expander("Diagnóstico YFinance", expanded=False):
+        try:
+            import yfinance as yf  # import local para não impactar carregamento geral
+
+            tkr = yf.Ticker(ticker)
+
+            # 1) Preço via history(): geralmente é o endpoint mais estável
+            hist = tkr.history(period="5d", auto_adjust=True)
+            hist_empty = (hist is None) or getattr(hist, "empty", True)
+            st.write("history() vazio?", bool(hist_empty))
+            if not hist_empty:
+                last_close = float(hist["Close"].dropna().iloc[-1])
+                st.write("Último Close (5d):", last_close)
+
+            # 2) Fundamentals via info: é o endpoint mais instável no yfinance
+            info = tkr.info
+            st.write("info() vazio?", bool(not info))
+            if isinstance(info, dict) and info:
+                keys_preview = list(info.keys())[:40]
+                st.write("info() keys (preview):", keys_preview)
+
+                st.write(
+                    "Campos alvo (raw):",
+                    {
+                        "dividendYield": info.get("dividendYield"),
+                        "priceToBook": info.get("priceToBook"),
+                        "payoutRatio": info.get("payoutRatio"),
+                        "trailingPE": info.get("trailingPE"),
+                    },
+                )
+            else:
+                st.warning(
+                    "info() retornou vazio. Isso pode indicar bloqueio/rate limit, "
+                    "ou ausência de cobertura do Yahoo para fundamentals do ticker."
+                )
+        except Exception as e:
+            st.error(f"Erro yfinance: {type(e).__name__}: {e}")
 
     # YF (para exibição): 1 linha
     mult_yf_latest = get_fundamentals_yf(ticker)
@@ -378,21 +415,36 @@ def render_empresa_view(ticker: str):
     cols_num = [c for c in mult_hist.columns if c not in exclude_columns]
 
     # mapeamento de nome bonito
-    col_name_mapping = {col: col.replace("_", " ").title() for col in cols_num}
-    display_name_to_col = {v: k for k, v in col_name_mapping.items()}
-    display_names = list(col_name_mapping.values())
+    pretty_map = {
+        "Margem_Liquida": "Margem Líquida",
+        "Margem_Operacional": "Margem Operacional",
+        "ROE": "ROE",
+        "ROIC": "ROIC",
+        "DY": "Dividend Yield",
+        "P/VP": "P/VP",
+        "Payout": "Payout",
+        "P/L": "P/L",
+        "Endividamento_Total": "Endividamento Total",
+        "Alavancagem_Financeira": "Alavancagem Financeira",
+        "Liquidez_Corrente": "Liquidez Corrente",
+    }
 
-    default_display = [n for n in ["Margem Liquida", "Margem Operacional"] if n in display_names]
-    variaveis_display = st.multiselect("Escolha os Indicadores:", display_names, default=default_display)
+    options = [pretty_map.get(c, c.replace("_", " ")) for c in cols_num]
+    default_opts = [x for x in ["Margem Líquida", "Margem Operacional"] if x in options]
 
-    if variaveis_display:
-        variaveis = [display_name_to_col[n] for n in variaveis_display if n in display_name_to_col]
-        if variaveis:
-            dfm_mult = mult_hist.melt(id_vars=["Data"], value_vars=variaveis, var_name="Indicador", value_name="Valor")
-            dfm_mult["Indicador"] = dfm_mult["Indicador"].map(col_name_mapping)
+    sel_mult = st.multiselect("Escolha os Indicadores:", options, default=default_opts)
+
+    if sel_mult:
+        rev_map = {v: k for k, v in pretty_map.items()}
+        cols_sel = [rev_map.get(x, x.replace(" ", "_")) for x in sel_mult if x]
+        cols_sel = [c for c in cols_sel if c in mult_hist.columns]
+
+        if cols_sel:
+            dfm = mult_hist.melt(id_vars=["Data"], value_vars=cols_sel, var_name="Indicador", value_name="Valor")
+            dfm["Indicador"] = dfm["Indicador"].map(lambda x: pretty_map.get(x, x.replace("_", " ")))
             st.plotly_chart(
-                px.bar(dfm_mult, x="Data", y="Valor", color="Indicador", barmode="group"),
+                px.line(dfm, x="Data", y="Valor", color="Indicador"),
                 use_container_width=True,
             )
         else:
-            st.info("Nenhuma variável válida selecionada.")
+            st.info("Sem colunas válidas para o gráfico (dados insuficientes no banco).")
