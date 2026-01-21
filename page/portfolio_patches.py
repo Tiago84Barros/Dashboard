@@ -423,3 +423,190 @@ def render_patch4_diversificacao(
         ax.set_xlabel("Setor")
         ax.grid(True, linestyle="--", alpha=0.4)
         st.pyplot(fig)
+
+import pandas as pd
+import streamlit as st
+import matplotlib.pyplot as plt
+
+from core.yf_data import baixar_precos
+
+
+def _norm_sa(ticker: str) -> str:
+    t = (ticker or "").strip().upper()
+    return t if t.endswith(".SA") else f"{t}.SA"
+
+
+def _strip_sa(ticker: str) -> str:
+    return (ticker or "").strip().upper().replace(".SA", "").strip()
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _retornos_ano_preco(tickers: list[str], ano: int) -> pd.Series:
+    """
+    Retorno simples de preço (sem dividendos) no ano calendário.
+    Retorna Series index=ticker_sem_SA, values=retorno (float).
+    """
+    if not tickers:
+        return pd.Series(dtype=float)
+
+    tickers_yf = [_norm_sa(t) for t in tickers]
+    precos = baixar_precos(tickers_yf)
+
+    if precos is None or precos.empty:
+        return pd.Series(dtype=float)
+
+    precos.index = pd.to_datetime(precos.index, errors="coerce")
+    precos = precos.dropna(how="all")
+    if precos.empty:
+        return pd.Series(dtype=float)
+
+    ini = pd.Timestamp(f"{ano}-01-01")
+    fim = pd.Timestamp(f"{ano}-12-31")
+    precos = precos.loc[(precos.index >= ini) & (precos.index <= fim)]
+    if precos.empty:
+        return pd.Series(dtype=float)
+
+    # padroniza para preços diários úteis
+    precos = precos.resample("B").last().ffill()
+    if precos.shape[0] < 2:
+        return pd.Series(dtype=float)
+
+    first = precos.iloc[0]
+    last = precos.iloc[-1]
+    ret = (last / (first + 1e-12)) - 1.0
+
+    # limpa nomes (.SA -> sem .SA)
+    ret.index = [ _strip_sa(c) for c in ret.index.astype(str).tolist() ]
+    ret = pd.to_numeric(ret, errors="coerce").dropna()
+
+    return ret
+
+# ─────────────────────────────────────────────────────────────
+# PATCH 5 — Desempenho das empresas escolhidas de acordo com o resultado do último ano do score
+# ─────────────────────────────────────────────────────────────
+
+def render_patch6_benchmark_segmento(score_global: pd.DataFrame, empresas_lideres_finais: list[dict]) -> None:
+    """
+    Patch 6 — compara retorno no último ano do score vs retorno médio do segmento (SETOR>SUBSETOR>SEGMENTO).
+    Observação: retorno por preço (sem dividendos) por robustez e performance.
+    """
+
+    st.markdown("## 📌 Benchmark do Segmento (último ano do score)")
+    st.caption(
+        "Compara o retorno das empresas escolhidas no último ano do score com o retorno médio do "
+        "segmento (SETOR > SUBSETOR > SEGMENTO) em que elas estão inseridas."
+    )
+
+    if score_global is None or score_global.empty or not empresas_lideres_finais:
+        st.info("Benchmark do segmento indisponível nesta execução (faltam dados de score ou líderes finais).")
+        return
+
+    required = {"Ano", "ticker", "SETOR", "SUBSETOR", "SEGMENTO"}
+    if not required.issubset(set(score_global.columns)):
+        st.info(f"Benchmark do segmento indisponível: score_global não contém colunas {sorted(required)}.")
+        return
+
+    df = score_global.copy()
+    df["Ano"] = pd.to_numeric(df["Ano"], errors="coerce")
+    df["ticker"] = df["ticker"].astype(str).map(_strip_sa)
+    df["SETOR"] = df["SETOR"].astype(str).fillna("OUTROS")
+    df["SUBSETOR"] = df["SUBSETOR"].astype(str).fillna("OUTROS")
+    df["SEGMENTO"] = df["SEGMENTO"].astype(str).fillna("OUTROS")
+    df = df.dropna(subset=["Ano", "ticker"])
+
+    if df.empty:
+        st.info("Benchmark do segmento indisponível: score_global vazio após normalização.")
+        return
+
+    ultimo_ano = int(df["Ano"].max())
+    df_ano = df[df["Ano"] == ultimo_ano].copy()
+    if df_ano.empty:
+        st.info("Benchmark do segmento indisponível: não há linhas no último ano do score.")
+        return
+
+    # mapeia ticker -> setor/subsetor/segmento (no último ano do score)
+    meta = (
+        df_ano[["ticker", "SETOR", "SUBSETOR", "SEGMENTO"]]
+        .drop_duplicates(subset=["ticker"])
+        .reset_index(drop=True)
+    )
+    meta_map = meta.set_index("ticker")[["SETOR", "SUBSETOR", "SEGMENTO"]].to_dict("index")
+
+    # tickers finais
+    tickers_finais = sorted({ _strip_sa(str(e.get("ticker",""))) for e in empresas_lideres_finais if str(e.get("ticker","")).strip() })
+    if not tickers_finais:
+        st.info("Benchmark do segmento indisponível: tickers finais vazios.")
+        return
+
+    # monta universo por segmento para benchmark (no último ano do score)
+    df_ano["id_segmento"] = df_ano["SETOR"] + " > " + df_ano["SUBSETOR"] + " > " + df_ano["SEGMENTO"]
+    uni_segmento = (
+        df_ano.groupby("id_segmento")["ticker"]
+        .apply(lambda s: sorted(set(s.dropna().tolist())))
+        .to_dict()
+    )
+
+    # opcional: limitar universo para performance (evita chamadas enormes no yfinance)
+    MAX_UNIVERSE = 40
+
+    linhas = []
+    # calcula retornos por segmento (cacheado por ano)
+    for tk in tickers_finais:
+        info = meta_map.get(tk)
+        if not info:
+            continue
+
+        id_seg = f"{info['SETOR']} > {info['SUBSETOR']} > {info['SEGMENTO']}"
+        universo = uni_segmento.get(id_seg, [])
+
+        # limita tamanho por segurança (mantém representatividade sem travar)
+        universo_lim = universo[:MAX_UNIVERSE]
+
+        # retornos no ano
+        ret_uni = _retornos_ano_preco(universo_lim, ultimo_ano)
+        ret_tk = _retornos_ano_preco([tk], ultimo_ano)
+
+        seg_mean = float(ret_uni.mean()) if (ret_uni is not None and not ret_uni.empty) else float("nan")
+        tk_ret = float(ret_tk.iloc[0]) if (ret_tk is not None and not ret_tk.empty) else float("nan")
+
+        linhas.append({
+            "ticker": tk,
+            "empresa": next((e.get("nome") for e in empresas_lideres_finais if _strip_sa(str(e.get("ticker",""))) == tk), tk),
+            "SETOR": info["SETOR"],
+            "SUBSETOR": info["SUBSETOR"],
+            "SEGMENTO": info["SEGMENTO"],
+            "retorno_empresa_%": tk_ret * 100.0 if pd.notna(tk_ret) else float("nan"),
+            "retorno_medio_segmento_%": seg_mean * 100.0 if pd.notna(seg_mean) else float("nan"),
+            "alpha_vs_segmento_pp": ((tk_ret - seg_mean) * 100.0) if (pd.notna(tk_ret) and pd.notna(seg_mean)) else float("nan"),
+            "tamanho_universo_usado": len(universo_lim),
+        })
+
+    if not linhas:
+        st.info("Não foi possível montar o comparativo (metadados do segmento não encontrados para os tickers finais).")
+        return
+
+    out = pd.DataFrame(linhas)
+    out = out.sort_values(["alpha_vs_segmento_pp", "retorno_empresa_%"], ascending=[False, False])
+
+    st.markdown(f"**Ano analisado (último ano do score): {ultimo_ano}**")
+    st.dataframe(out, use_container_width=True)
+
+    st.caption(
+        f"Nota técnica: o retorno é de **preço** (sem dividendos) para robustez e velocidade. "
+        f"O benchmark do segmento usa até **{MAX_UNIVERSE} tickers** do segmento para evitar travamentos."
+    )
+
+    # Gráfico: alpha vs segmento (pp)
+    with st.expander("📊 Gráfico: Alpha vs média do segmento (p.p.)", expanded=False):
+        plot_df = out.dropna(subset=["alpha_vs_segmento_pp"]).copy()
+        if plot_df.empty:
+            st.info("Sem dados suficientes para plotar.")
+        else:
+            fig, ax = plt.subplots(figsize=(10, 4))
+            ax.bar(plot_df["ticker"].astype(str), plot_df["alpha_vs_segmento_pp"].astype(float))
+            ax.set_ylabel("Alpha vs segmento (p.p.)")
+            ax.set_xlabel("Ticker")
+            ax.set_title("Retorno da empresa menos retorno médio do segmento (último ano do score)")
+            ax.grid(True, linestyle="--", alpha=0.4)
+            st.pyplot(fig)
+
