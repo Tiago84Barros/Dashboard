@@ -9,6 +9,8 @@ Objetivos desta versão:
 - Evitar "end" fixo que compromete reprodutibilidade e alinhamento temporal.
 - Robustez para 1 ticker vs múltiplos tickers.
 - Robustez contra Rate Limit do Yahoo (YFRateLimitError).
+- (PATCH) Cache TTL também em baixar_precos / baixar_precos_ano_corrente.
+- (PATCH) Detectar rate limit "disfarçado" (HTTP 429 / Too Many Requests) em exceções genéricas.
 """
 
 from functools import lru_cache
@@ -42,6 +44,15 @@ def _norm(ticker: str) -> str:
 def _strip_sa(col: str) -> str:
     """Remove sufixo .SA do nome da coluna."""
     return col.replace(".SA", "")
+
+
+def _looks_like_rate_limit(exc: Exception) -> bool:
+    """
+    Alguns bloqueios do Yahoo não sobem como YFRateLimitError.
+    Ex.: HTTP 429, Too Many Requests, rate limit.
+    """
+    msg = str(exc).lower()
+    return ("429" in msg) or ("too many requests" in msg) or ("rate limit" in msg) or ("ratelimit" in msg)
 
 
 # ────────────────────────── Rate limit guard ─────────────────
@@ -136,6 +147,14 @@ def get_company_info(ticker: str) -> Tuple[Optional[str], Optional[str]]:
         return None, None
 
     except Exception as e:
+        # (PATCH) tenta detectar rate limit disfarçado
+        if _looks_like_rate_limit(e):
+            logger.warning("Possível rate limit (get_company_info) para %s: %s", ticker, e)
+            _set_rate_limit_cooldown()
+            if _ST_AVAILABLE:
+                _sync_rate_limit_to_session()
+            return None, None
+
         logger.debug("get_company_info falhou para %s: %s", ticker, e)
         return None, None
 
@@ -175,6 +194,18 @@ def _download_prices(
         _set_rate_limit_cooldown()
         if _ST_AVAILABLE:
             _sync_rate_limit_to_session()
+        return pd.DataFrame()
+
+    except Exception as e:
+        # (PATCH) detectar 429 / Too Many Requests etc.
+        if _looks_like_rate_limit(e):
+            logger.warning("Possível rate limit (_download_prices) para %s: %s", tks_yf, e)
+            _set_rate_limit_cooldown()
+            if _ST_AVAILABLE:
+                _sync_rate_limit_to_session()
+            return pd.DataFrame()
+
+        logger.debug("_download_prices falhou para %s: %s", tks_yf, e)
         return pd.DataFrame()
 
     if raw is None or raw.empty:
@@ -221,6 +252,7 @@ def _download_prices(
 
 
 # ────────────────────────── baixar_precos ───────────────────
+@_cache(ttl_seconds=6 * 60 * 60)  # (PATCH) 6h: evita downloads repetidos em reruns
 def baixar_precos(
     tickers: Union[str, Sequence[str]],
     start: str = "2010-01-01",
@@ -250,6 +282,7 @@ def baixar_precos(
 
 
 # ────────────────────────── baixar_precos_ano_corrente ──────
+@_cache(ttl_seconds=60 * 60)  # (PATCH) 1h: suficiente para "ano corrente"
 def baixar_precos_ano_corrente(tickers: Union[str, Sequence[str]]) -> pd.DataFrame:
     """
     Baixa preços ajustados (auto_adjust=True) do ano corrente.
@@ -310,6 +343,15 @@ def coletar_dividendos(tickers: Sequence[str]) -> Dict[str, pd.Series]:
             result[tk] = pd.Series(dtype="float64")
 
         except Exception as e:
+            # (PATCH) detectar rate limit disfarçado
+            if _looks_like_rate_limit(e):
+                logger.warning("Possível rate limit (coletar_dividendos) para %s: %s", tk, e)
+                _set_rate_limit_cooldown()
+                if _ST_AVAILABLE:
+                    _sync_rate_limit_to_session()
+                result[tk] = pd.Series(dtype="float64")
+                continue
+
             logger.debug("coletar_dividendos falhou para %s: %s", tk, e)
             result[tk] = pd.Series(dtype="float64")
     return result
@@ -343,6 +385,11 @@ def get_price(ticker: str) -> Optional[float]:
         return None
 
     except Exception as e:
+        if _looks_like_rate_limit(e):
+            logger.warning("Possível rate limit (get_price) para %s: %s", ticker, e)
+            _set_rate_limit_cooldown()
+            if _ST_AVAILABLE:
+                _sync_rate_limit_to_session()
         logger.debug("get_price falhou para %s: %s", ticker, e)
         return None
 
@@ -388,8 +435,16 @@ def get_fundamentals_yf(ticker: str) -> pd.DataFrame:
         info = {}
 
     except Exception as e:
-        logger.debug("get_fundamentals_yf falhou para %s: %s", ticker, e)
-        info = {}
+        # (PATCH) detectar rate limit disfarçado
+        if _looks_like_rate_limit(e):
+            logger.warning("Possível rate limit (get_fundamentals_yf) para %s: %s", ticker, e)
+            _set_rate_limit_cooldown()
+            if _ST_AVAILABLE:
+                _sync_rate_limit_to_session()
+            info = {}
+        else:
+            logger.debug("get_fundamentals_yf falhou para %s: %s", ticker, e)
+            info = {}
 
     def percent(val):
         try:
@@ -428,9 +483,7 @@ def get_fundamentals_yf(ticker: str) -> pd.DataFrame:
         "P/L": as_float(info.get("trailingPE")),
         # Campos que o Yahoo pode não ter no mesmo conceito do seu DB:
         "Endividamento_Total": None,
-        # OBS: esse campo no seu arquivo original estava mapeado para leveredFreeCashFlow,
-        # o que NÃO é "alavancagem financeira" no sentido clássico. Mantive para não quebrar,
-        # mas recomendo você obter isso do DB.
+        # OBS: leveredFreeCashFlow não é alavancagem no sentido clássico.
         "Alavancagem_Financeira": as_float(info.get("leveredFreeCashFlow")),
         "Liquidez_Corrente": as_float(info.get("currentRatio")),
     }
