@@ -52,9 +52,7 @@ from page.portfolio_patches import (
     render_patch2_dominancia,
     render_patch3_stress_test,
     render_patch4_diversificacao,
-
 )
-
 # <<<
 
 logger = logging.getLogger(__name__)
@@ -184,6 +182,56 @@ def _dedup_empresas_lideres(empresas: List[Dict]) -> List[Dict]:
 
 
 # ─────────────────────────────────────────────────────────────
+# Patch anti-rate-limit: preços globais 1x por execução
+# ─────────────────────────────────────────────────────────────
+
+def _get_precos_global_mensal(setores_df: pd.DataFrame, min_anos_dre: int = 10) -> pd.DataFrame:
+    """
+    Baixa preços uma única vez (global), já em frequência mensal.
+    Usa session_state para evitar repetição em reruns.
+    """
+    cache_key = f"precos_global_mensal_minanos_{int(min_anos_dre)}"
+    precos_global = st.session_state.get(cache_key)
+
+    if precos_global is not None and isinstance(precos_global, pd.DataFrame) and not precos_global.empty:
+        return precos_global
+
+    # Universo de tickers do setores_df
+    tickers_universo = (
+        setores_df["ticker"].astype(str)
+        .str.upper()
+        .str.replace(".SA", "", regex=False)
+        .str.strip()
+    )
+    tickers_universo = sorted({t for t in tickers_universo.tolist() if t})
+
+    # Reduz universo antes de chamar yfinance (muito importante)
+    tickers_universo_ok = _filtrar_tickers_com_min_anos(tickers_universo, min_anos=min_anos_dre, max_workers=12)
+    if not tickers_universo_ok:
+        st.error("Não foi possível montar universo de tickers com histórico mínimo para baixar preços.")
+        st.stop()
+
+    tickers_universo_yf = [_norm_sa(t) for t in tickers_universo_ok]
+
+    precos = baixar_precos(tickers_universo_yf)
+    if precos is None or precos.empty:
+        st.error("Falha ao baixar preços (global).")
+        st.stop()
+
+    precos.index = pd.to_datetime(precos.index, errors="coerce")
+    precos = precos.dropna(how="all")
+    if precos.empty:
+        st.error("Preços (global) vazios após normalização.")
+        st.stop()
+
+    # Mensal (para penalizar_plato e reduzir carga)
+    precos_mensal = precos.resample("M").last()
+
+    st.session_state[cache_key] = precos_mensal
+    return precos_mensal
+
+
+# ─────────────────────────────────────────────────────────────
 # Render Streamlit
 # ─────────────────────────────────────────────────────────────
 
@@ -254,6 +302,11 @@ def render():
     if dados_macro is None or dados_macro.empty:
         st.error("Não foi possível carregar/normalizar os dados macroeconômicos.")
         st.stop()
+
+    # ─────────────────────────────────────────────────────────
+    # PATCH anti-rate-limit: baixa preços global (mensal) uma única vez
+    # ─────────────────────────────────────────────────────────
+    precos_global_mensal = _get_precos_global_mensal(setores_df, min_anos_dre=10)
 
     # grupos únicos por segmento
     setores_unicos = (
@@ -351,18 +404,15 @@ def render():
         if score is None or score.empty:
             continue
 
-        # preços + penalização de platô (mensal)
+        # ─────────────────────────────────────────────────────
+        # PATCH anti-rate-limit: usa preços globais já baixados
+        # ─────────────────────────────────────────────────────
         try:
-            precos = baixar_precos([_norm_sa(e.ticker) for e in lista_empresas])
-            if precos is None or precos.empty:
+            cols_seg = [e.ticker for e in lista_empresas if e.ticker in precos_global_mensal.columns]
+            precos_mensal = precos_global_mensal[cols_seg].dropna(how="all")
+            if precos_mensal.empty:
                 continue
 
-            precos.index = pd.to_datetime(precos.index, errors="coerce")
-            precos = precos.dropna(how="all")
-            if precos.empty:
-                continue
-
-            precos_mensal = precos.resample("M").last()
             score = penalizar_plato(score, precos_mensal, meses=12, penal=0.30)
         except Exception as e:
             logger.debug("Falha em preços/penalização (%s > %s > %s): %s", setor, subsetor, segmento, e, exc_info=True)
@@ -371,15 +421,7 @@ def render():
         if score is None or score.empty:
             continue
 
-        # dividendos + líderes + backtest
-        try:
-            tickers_score = [str(t) for t in score["ticker"].dropna().unique().tolist()]
-            tickers_score_yf = [_norm_sa(t) for t in tickers_score]
-            dividendos = coletar_dividendos(tickers_score_yf)
-        except Exception as e:
-            logger.debug("Falha dividendos (%s > %s > %s): %s", setor, subsetor, segmento, e, exc_info=True)
-            dividendos = {}
-
+        # líderes do segmento
         lideres = determinar_lideres(score)
         if lideres is None or lideres.empty:
             continue
@@ -404,9 +446,41 @@ def render():
         except Exception:
             pass
 
+        # ─────────────────────────────────────────────────────
+        # Para backtest, precisamos de preços DIÁRIOS do segmento.
+        # Evita novo download: usa precos_global original? Aqui só temos mensal.
+        # Solução simples e eficiente:
+        # - baixar preços DIÁRIOS APENAS quando o segmento já tem score/líderes,
+        #   e somente para os tickers do segmento (poucos tickers).
+        # Isso reduz drasticamente chamadas vs baixar por segmento ANTES.
+        # ─────────────────────────────────────────────────────
+        try:
+            tickers_seg_yf = [_norm_sa(e.ticker) for e in lista_empresas]
+            precos_diario = baixar_precos(tickers_seg_yf)
+            if precos_diario is None or precos_diario.empty:
+                continue
+
+            precos_diario.index = pd.to_datetime(precos_diario.index, errors="coerce")
+            precos_diario = precos_diario.dropna(how="all")
+            if precos_diario.empty:
+                continue
+        except Exception as e:
+            logger.debug("Falha ao baixar preços diários (%s > %s > %s): %s", setor, subsetor, segmento, e, exc_info=True)
+            continue
+
+        # ─────────────────────────────────────────────────────
+        # PATCH anti-rate-limit (dividendos):
+        # Não coletar dividendos por segmento de forma agressiva.
+        # Estratégia:
+        # - Por padrão, roda backtest sem dividendos (reduz chamadas).
+        # - Se você quiser reativar, colete SOMENTE para líderes do segmento
+        #   e apenas após aprovação (diff >= margem_superior).
+        # ─────────────────────────────────────────────────────
+        dividendos: Dict[str, pd.Series] = {}
+
         # ── Backtest (apenas 1 vez)
         try:
-            patrimonio_empresas, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
+            patrimonio_empresas, datas_aportes = gerir_carteira(precos_diario, score, lideres, dividendos)
             if patrimonio_empresas is None or patrimonio_empresas.empty:
                 continue
 
@@ -432,6 +506,16 @@ def render():
         # ─────────────────────────────────────────────
         # Segmento aprovado: exibição + captação de contribuições
         # ─────────────────────────────────────────────
+
+        # (Opcional) Agora que o segmento foi aprovado, se quiser dividendos:
+        # descomente este bloco (vai coletar poucos tickers)
+        #
+        # try:
+        #     tickers_lideres = sorted({_strip_sa(t) for t in lideres["ticker"].astype(str).tolist() if str(t).strip()})
+        #     tickers_lideres_yf = [_norm_sa(t) for t in tickers_lideres]
+        #     dividendos = coletar_dividendos(tickers_lideres_yf)
+        # except Exception:
+        #     dividendos = {}
 
         st.markdown(f"### {setor} > {subsetor} > {segmento}")
         st.markdown(f"**Valor final da estratégia:** R$ {final_empresas:,.2f} ({diff:.1f}% acima do Tesouro Selic)")
@@ -585,7 +669,14 @@ def render():
                 st.stop()
 
             tickers_limpos = [_strip_sa(tk) for tk in tickers_corrente_yf]
-            dividendos_dict = coletar_dividendos(tickers_corrente_yf)
+
+            # Para ano corrente, dividendos podem ser opcionais (custo alto).
+            # Se quiser manter, coletar só para tickers_corrente (poucos tickers).
+            dividendos_dict: Dict[str, pd.Series] = {}
+            try:
+                dividendos_dict = coletar_dividendos(tickers_corrente_yf)
+            except Exception:
+                dividendos_dict = {}
 
             datas_potenciais = pd.date_range(start=f"{ano_corrente}-01-01", end=f"{ano_corrente}-12-31", freq="MS")
             datas_aporte: List[pd.Timestamp] = []
