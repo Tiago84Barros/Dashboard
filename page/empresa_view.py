@@ -76,9 +76,6 @@ def _get_setores_df_cached() -> pd.DataFrame:
 
 
 def _load_db_payload(ticker_sa: str) -> Dict[str, Any]:
-    """
-    Carrega dados do DB (multiplos + dre) e devolve payload padronizado.
-    """
     mult = load_multiplos_from_db(ticker_sa)
     dre = load_data_from_db(ticker_sa)
 
@@ -92,7 +89,7 @@ def _load_db_payload(ticker_sa: str) -> Dict[str, Any]:
     if not dre.empty:
         dre = _clean_columns(dre)
 
-    # adiciona Ano quando possível (compatível com vários módulos)
+    # adiciona Ano quando possível
     if not mult.empty and "Data" in mult.columns and "Ano" not in mult.columns:
         mult["Ano"] = pd.to_datetime(mult["Data"], errors="coerce").dt.year
     if not dre.empty and "Data" in dre.columns and "Ano" not in dre.columns:
@@ -102,16 +99,11 @@ def _load_db_payload(ticker_sa: str) -> Dict[str, Any]:
 
 
 def _extract_latest_from_multiplos(mult: pd.DataFrame) -> Dict[str, Optional[float]]:
-    """
-    Tenta extrair do DB os campos mais comuns para o card de múltiplos.
-    Não quebra se as colunas não existirem.
-    """
     if mult is None or mult.empty:
         return {"DY": None, "P_L": None, "P_VP": None}
 
     df = mult.copy()
 
-    # normaliza datas
     if "Data" in df.columns:
         df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
         df = df.dropna(subset=["Data"]).sort_values("Data")
@@ -119,7 +111,6 @@ def _extract_latest_from_multiplos(mult: pd.DataFrame) -> Dict[str, Optional[flo
     else:
         last = df.iloc[-1]
 
-    # tenta pegar por vários nomes possíveis (robustez)
     def pick(*cols):
         for c in cols:
             if c in df.columns:
@@ -130,7 +121,7 @@ def _extract_latest_from_multiplos(mult: pd.DataFrame) -> Dict[str, Optional[flo
     pl = pick("P/L", "PL", "P_L", "preco_lucro")
     pvp = pick("P/VP", "PVP", "P_VP", "preco_valor_patrimonial")
 
-    # caso DY no DB esteja em fração, converte para %
+    # se DY vier em fração
     if dy is not None and dy <= 1.5:
         dy = dy * 100.0
 
@@ -141,7 +132,11 @@ def _extract_latest_from_multiplos(mult: pd.DataFrame) -> Dict[str, Optional[flo
 # Render Streamlit
 # ─────────────────────────────────────────────────────────────
 
-def render():
+def render() -> None:
+    """
+    Render padrão da página Empresa.
+    Mantido para compatibilidade com páginas que importam `render`.
+    """
     st.markdown("<h1 style='text-align: center;'>Empresa</h1>", unsafe_allow_html=True)
 
     setores_df = _get_setores_df_cached()
@@ -153,7 +148,6 @@ def render():
         st.error("Base de setores sem coluna 'ticker'.")
         st.stop()
 
-    # Universo de tickers (limpo)
     tickers = (
         setores_df["ticker"].astype(str)
         .str.upper()
@@ -162,14 +156,13 @@ def render():
     )
     tickers = sorted({t for t in tickers.tolist() if t})
 
-    # Sidebar: seleção
     with st.sidebar:
         st.markdown("### Seleção")
         ticker_sel = st.selectbox("Ticker", options=tickers, index=0 if tickers else None)
 
         st.markdown("---")
         st.markdown("### Dados externos (Yahoo Finance)")
-        st.caption("Para evitar rate limit, os dados do Yahoo só são consultados sob demanda.")
+        st.caption("Para evitar rate limit, o Yahoo só é consultado sob demanda.")
         btn_yahoo = st.button("Atualizar dados do Yahoo", use_container_width=True)
 
     if not ticker_sel:
@@ -180,54 +173,39 @@ def render():
     ticker_sa = _norm_sa(ticker)
     logo_url = get_logo_url(ticker)
 
-    # Setor/subsetor/segmento
-    setor_info = obter_setor_da_empresa(ticker, setores_df) if setores_df is not None else {}
-    if setor_info is None:
-        setor_info = {}
-
+    setor_info = obter_setor_da_empresa(ticker, setores_df) or {}
     setor = setor_info.get("SETOR") or setor_info.get("setor") or "—"
     subsetor = setor_info.get("SUBSETOR") or setor_info.get("subsetor") or "—"
     segmento = setor_info.get("SEGMENTO") or setor_info.get("segmento") or "—"
 
-    # Carrega DB
     db_payload = _load_db_payload(ticker_sa)
     mult = db_payload["multiplos"]
     dre = db_payload["dre"]
-
-    # Extrai “últimos” múltiplos do DB (fallback padrão)
     db_mult = _extract_latest_from_multiplos(mult)
 
-    # ─────────────────────────────────────────────────────────
-    # Yahoo (somente sob demanda)
-    # ─────────────────────────────────────────────────────────
-    # Cache por ticker em session_state para evitar repetir chamadas em reruns.
+    # Snapshot Yahoo por ticker
     yf_key = f"yf_snapshot::{ticker}"
     yf_snapshot = st.session_state.get(yf_key, None)
 
-    if btn_yahoo or yf_snapshot is None:
-        # só chama Yahoo se usuário pediu (btn_yahoo)
-        # ou se ainda não existe snapshot (primeira vez, mas sem forçar).
-        if btn_yahoo:
-            try:
-                nome_yf, site_yf = get_company_info(ticker_sa)
-                fund_yf = get_fundamentals_yf(ticker_sa)  # 1 linha
-                price = get_price(ticker_sa)
+    if btn_yahoo:
+        try:
+            nome_yf, site_yf = get_company_info(ticker_sa)
+            fund_yf = get_fundamentals_yf(ticker_sa)
+            price = get_price(ticker_sa)
 
-                yf_snapshot = {
-                    "nome": nome_yf,
-                    "site": site_yf,
-                    "fund": fund_yf,
-                    "price": price,
-                    "ts": datetime.now().isoformat(timespec="seconds"),
-                }
-                st.session_state[yf_key] = yf_snapshot
-            except Exception as e:
-                logger.debug("Falha ao atualizar Yahoo (%s): %s", ticker, e, exc_info=True)
-                st.warning("Não foi possível atualizar dados do Yahoo agora (possível rate limit).")
+            yf_snapshot = {
+                "nome": nome_yf,
+                "site": site_yf,
+                "fund": fund_yf,
+                "price": price,
+                "ts": datetime.now().isoformat(timespec="seconds"),
+            }
+            st.session_state[yf_key] = yf_snapshot
+        except Exception as e:
+            logger.debug("Falha ao atualizar Yahoo (%s): %s", ticker, e, exc_info=True)
+            st.warning("Não foi possível atualizar dados do Yahoo agora (possível rate limit).")
 
-    # ─────────────────────────────────────────────────────────
     # Header
-    # ─────────────────────────────────────────────────────────
     col_a, col_b = st.columns([1, 4])
     with col_a:
         st.image(logo_url, width=70)
@@ -245,10 +223,7 @@ def render():
 
     st.markdown("---")
 
-    # ─────────────────────────────────────────────────────────
-    # Cards principais (DB como fonte base; Yahoo como complemento)
-    # ─────────────────────────────────────────────────────────
-    # Yahoo fundamentals (quando existir)
+    # Cards
     yf_dy = yf_pvp = yf_pl = None
     if yf_snapshot and isinstance(yf_snapshot.get("fund"), pd.DataFrame) and not yf_snapshot["fund"].empty:
         row = yf_snapshot["fund"].iloc[0].to_dict()
@@ -256,7 +231,6 @@ def render():
         yf_pvp = _safe_float(row.get("P/VP"))
         yf_pl = _safe_float(row.get("P/L"))
 
-    # DB como base; se DB vier vazio, tenta Yahoo
     dy = db_mult.get("DY") if db_mult.get("DY") is not None else yf_dy
     pvp = db_mult.get("P_VP") if db_mult.get("P_VP") is not None else yf_pvp
     pl = db_mult.get("P_L") if db_mult.get("P_L") is not None else yf_pl
@@ -268,13 +242,10 @@ def render():
     c3.metric("P/VP", value=_fmt_num(pvp))
     c4.metric("P/L", value=_fmt_num(pl))
 
-    st.caption("Observação: por padrão, o app usa DB (CVM/ETL) e consulta Yahoo apenas sob demanda.")
+    st.caption("Por padrão: DB (CVM/ETL). Yahoo somente sob demanda.")
 
     st.markdown("---")
 
-    # ─────────────────────────────────────────────────────────
-    # Abas: Multiplos (DB) | DRE (DB) | Yahoo (snapshot)
-    # ─────────────────────────────────────────────────────────
     tab1, tab2, tab3 = st.tabs(["Múltiplos (DB)", "DRE (DB)", "Yahoo (snapshot)"])
 
     with tab1:
@@ -307,3 +278,15 @@ def render():
                 st.dataframe(fund, use_container_width=True)
             else:
                 st.info("Fundamentals do Yahoo indisponíveis (possível rate limit ou ausência de dados).")
+
+
+# ─────────────────────────────────────────────────────────────
+# Compatibilidade com o loader atual (espera render_empresa_view)
+# ─────────────────────────────────────────────────────────────
+
+def render_empresa_view() -> None:
+    """
+    Alias para compatibilidade com imports existentes:
+    `from page.empresa_view import render_empresa_view`
+    """
+    render()
