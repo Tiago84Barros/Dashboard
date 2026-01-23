@@ -5,16 +5,15 @@ import streamlit as st
 import matplotlib.pyplot as plt
 
 from core.db_loader import (
-    load_data_from_supabase,
-    load_multiplos_from_supabase,
-    load_macro_summary,
     load_setores_from_db,
+    load_data_from_db,
+    load_multiplos_from_db,
+    load_macro_summary,
 )
-from core.helpers import get_logo_url
+
+from core.helpers import get_logo_url, determinar_lideres
 from core.scoring import (
     calcular_score_acumulado,
-    penalizar_crowding,
-    penalizar_decay_lideranca,
     penalizar_plato,
     detectar_anomalias_mercado,
 )
@@ -97,6 +96,7 @@ def render() -> None:
     # Sidebar filtros
     with st.sidebar:
         setor_sel = st.selectbox("Setor:", sorted(setores_df["SETOR"].dropna().astype(str).unique().tolist()))
+
         subsetores = setores_df.loc[setores_df["SETOR"] == setor_sel, "SUBSETOR"].dropna().astype(str).unique().tolist()
         subsetor_sel = st.selectbox("Subsetor:", sorted(subsetores))
 
@@ -119,7 +119,7 @@ def render() -> None:
             st.caption("Mais anos mínimos = mais robustez, porém menor universo.")
         executar = st.button("Executar análise avançada")
 
-    st.markdown("#### Diagnóstico (dados do Supabase)")
+    st.markdown("#### Diagnóstico (dados do banco)")
     st.caption("Este painel usa dados fundamentalistas do banco e preços do Yahoo (quando disponível).")
 
     df_filtrado = setores_df[
@@ -136,17 +136,19 @@ def render() -> None:
     tickers = [t for t in tickers if t]
 
     # Aplica perfil (anos de DRE)
-    tickers_ok = []
+    tickers_ok: list[str] = []
     for tk in tickers:
-        dre = load_data_from_supabase(_norm_sa(tk))
+        dre = load_data_from_db(_norm_sa(tk))
         anos = _safe_year_count_from_dre(dre) if isinstance(dre, pd.DataFrame) else 0
+
         if perfil.startswith("Crescimento") and anos >= 10:
             continue
         if perfil.startswith("Estabelecida") and anos < 10:
             continue
         tickers_ok.append(tk)
 
-    if len(set(tickers_ok)) <= 1:
+    tickers_ok = sorted(set(tickers_ok))
+    if len(tickers_ok) <= 1:
         st.info("Filtro retornou universo insuficiente para análise (<= 1 ticker).")
         return
 
@@ -159,31 +161,34 @@ def render() -> None:
         for i in range(0, len(cards), 2):
             cols = st.columns(2, gap="large")
             for j in range(2):
-                if i + j < len(cards):
-                    row = cards.iloc[i + j]
-                    tk = _strip_sa(str(row["ticker"]))
-                    with cols[j]:
-                        st.markdown(
-                            f"""
-                            <div style="border:1px solid #ddd;border-radius:10px;padding:14px;background:#fff;text-align:center;">
-                                <img src="{get_logo_url(tk)}" width="52" />
-                                <div style="margin-top:8px;font-weight:700;">{row.get('nome_empresa', tk)}</div>
-                                <div style="color:#666;font-size:13px;">({tk})</div>
-                                <div style="color:#999;font-size:12px;margin-top:6px;">Histórico DRE: {_safe_year_count_from_dre(load_data_from_supabase(_norm_sa(tk)))} ano(s)</div>
-                            </div>
-                            """,
-                            unsafe_allow_html=True,
-                        )
+                if i + j >= len(cards):
+                    continue
+                row = cards.iloc[i + j]
+                tk = _strip_sa(str(row["ticker"]))
+                dre = load_data_from_db(_norm_sa(tk))
+                anos_dre = _safe_year_count_from_dre(dre) if isinstance(dre, pd.DataFrame) else 0
+                with cols[j]:
+                    st.markdown(
+                        f"""
+                        <div style="border:1px solid #ddd;border-radius:10px;padding:14px;background:#fff;text-align:center;">
+                            <img src="{get_logo_url(tk)}" width="52" />
+                            <div style="margin-top:8px;font-weight:700;">{row.get('nome_empresa', tk)}</div>
+                            <div style="color:#666;font-size:13px;">({tk})</div>
+                            <div style="color:#999;font-size:12px;margin-top:6px;">Histórico DRE: {anos_dre} ano(s)</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
 
     if not executar:
         return
 
     # Carrega payloads (DRE + múltiplos) do banco
-    lista_empresas = []
+    lista_empresas: list[dict] = []
     for tk in tickers_ok:
         tk_sa = _norm_sa(tk)
-        mult = load_multiplos_from_supabase(tk_sa)
-        dre = load_data_from_supabase(tk_sa)
+        mult = load_multiplos_from_db(tk_sa)
+        dre = load_data_from_db(tk_sa)
 
         if not isinstance(mult, pd.DataFrame) or not isinstance(dre, pd.DataFrame):
             continue
@@ -198,7 +203,7 @@ def render() -> None:
         if "Data" in dre.columns and "Ano" not in dre.columns:
             dre["Ano"] = pd.to_datetime(dre["Data"], errors="coerce").dt.year
 
-        lista_empresas.append({"ticker": tk, "nome": tk, "multiplos": mult, "dre": dre})
+        lista_empresas.append({"ticker": tk, "nome": row.get("nome_empresa", tk), "multiplos": mult, "dre": dre})
 
     if len(lista_empresas) <= 1:
         st.info("Sem dados suficientes no banco para executar o scoring no filtro selecionado.")
@@ -218,13 +223,6 @@ def render() -> None:
         st.info("Score vazio para o filtro selecionado.")
         return
 
-    # Penalidades
-    try:
-        score = penalizar_crowding(score, grupo_col="SEGMENTO")
-        score = penalizar_decay_lideranca(score, grupo_col="SEGMENTO")
-    except Exception:
-        pass
-
     # Preços (Yahoo) para penalidade de platô e backtest
     tickers_yf = [_norm_sa(e["ticker"]) for e in lista_empresas]
     precos = baixar_precos(tickers_yf)
@@ -240,8 +238,8 @@ def render() -> None:
         return
 
     # Penalidade de platô (mensal)
-    precos_mensal = precos.resample("M").last()
     try:
+        precos_mensal = precos.resample("M").last()
         score = penalizar_plato(score, precos_mensal, meses=12, penal=0.30)
     except Exception:
         pass
@@ -258,7 +256,7 @@ def render() -> None:
     except Exception:
         pass
 
-    # Dividendos (opcional, pode falhar com rate-limit)
+    # Dividendos (opcional; pode falhar com rate-limit)
     dividendos = {}
     try:
         dividendos = coletar_dividendos(tickers_yf)
@@ -267,9 +265,6 @@ def render() -> None:
 
     # Backtest
     try:
-        # Import aqui para evitar ciclos em alguns deploys
-        from core.helpers import determinar_lideres
-
         lideres = determinar_lideres(score)
         if lideres is None or lideres.empty:
             st.info("Não foi possível determinar líderes para o filtro selecionado.")
