@@ -15,7 +15,6 @@ from core.helpers import get_logo_url, determinar_lideres
 from core.scoring import (
     calcular_score_acumulado,
     penalizar_plato,
-    detectar_anomalias_mercado,
 )
 from core.portfolio import (
     gerir_carteira,
@@ -203,7 +202,15 @@ def render() -> None:
         if "Data" in dre.columns and "Ano" not in dre.columns:
             dre["Ano"] = pd.to_datetime(dre["Data"], errors="coerce").dt.year
 
-        lista_empresas.append({"ticker": tk, "nome": row.get("nome_empresa", tk), "multiplos": mult, "dre": dre})
+        # tenta puxar nome da base de setores (se houver)
+        nome_db = (
+            df_filtrado.loc[df_filtrado["ticker"].astype(str).map(_strip_sa) == tk, "nome_empresa"]
+            if "nome_empresa" in df_filtrado.columns
+            else None
+        )
+        nome = str(nome_db.iloc[0]) if (nome_db is not None and len(nome_db) > 0) else tk
+
+        lista_empresas.append({"ticker": tk, "nome": nome, "multiplos": mult, "dre": dre})
 
     if len(lista_empresas) <= 1:
         st.info("Sem dados suficientes no banco para executar o scoring no filtro selecionado.")
@@ -241,18 +248,6 @@ def render() -> None:
     try:
         precos_mensal = precos.resample("M").last()
         score = penalizar_plato(score, precos_mensal, meses=12, penal=0.30)
-    except Exception:
-        pass
-
-    # Diagnóstico de anomalias (split/dividendos/multiplicadores)
-    try:
-        anom = detectar_anomalias_mercado(precos, tickers=[_strip_sa(t) for t in tickers_yf])
-        if isinstance(anom, dict) and any(bool(v) for v in anom.values()):
-            st.warning(
-                f"Interpretação: flag_preco={anom.get('flag_preco')} sugere preço fora de escala (split/ajuste/coluna errada); "
-                f"flag_div={anom.get('flag_div')} sugere unidade errada de dividendos; "
-                f"flag_mult={anom.get('flag_mult')} indica explosão do multiplicador."
-            )
     except Exception:
         pass
 
