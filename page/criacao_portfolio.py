@@ -42,7 +42,6 @@ from core.portfolio import (
 from core.yf_data import (
     baixar_precos,
     coletar_dividendos,
-    baixar_precos_ano_corrente,
 )
 from core.weights import get_pesos
 
@@ -250,6 +249,14 @@ def render():
                 use_score_v2 = st.checkbox("Usar Score v2 (robusto)", value=True)
         # <<< PATCH SCORE V2
 
+        # >>> PATCH Yahoo: controle de carga (dividendos no YTD)
+        with st.expander("Yahoo (opções de carga)", expanded=False):
+            incluir_dividendos_ytd = st.checkbox(
+                "Incluir dividendos no gráfico do ano atual (mais lento / mais chamadas)",
+                value=False
+            )
+        # <<< PATCH Yahoo
+
         gerar = st.button("Gerar Portfólio")
 
     if not margem_input.strip():
@@ -447,12 +454,7 @@ def render():
             pass
 
         # ─────────────────────────────────────────────────────
-        # Para backtest, precisamos de preços DIÁRIOS do segmento.
-        # Evita novo download: usa precos_global original? Aqui só temos mensal.
-        # Solução simples e eficiente:
-        # - baixar preços DIÁRIOS APENAS quando o segmento já tem score/líderes,
-        #   e somente para os tickers do segmento (poucos tickers).
-        # Isso reduz drasticamente chamadas vs baixar por segmento ANTES.
+        # Backtest: preços DIÁRIOS do segmento (após scoring/líderes)
         # ─────────────────────────────────────────────────────
         try:
             tickers_seg_yf = [_norm_sa(e.ticker) for e in lista_empresas]
@@ -469,12 +471,8 @@ def render():
             continue
 
         # ─────────────────────────────────────────────────────
-        # PATCH anti-rate-limit (dividendos):
-        # Não coletar dividendos por segmento de forma agressiva.
-        # Estratégia:
-        # - Por padrão, roda backtest sem dividendos (reduz chamadas).
-        # - Se você quiser reativar, colete SOMENTE para líderes do segmento
-        #   e apenas após aprovação (diff >= margem_superior).
+        # Dividendos: por padrão vazio (minimiza chamadas).
+        # Caso queira, mantenha o bloco comentado e controle por checkbox.
         # ─────────────────────────────────────────────────────
         dividendos: Dict[str, pd.Series] = {}
 
@@ -506,17 +504,6 @@ def render():
         # ─────────────────────────────────────────────
         # Segmento aprovado: exibição + captação de contribuições
         # ─────────────────────────────────────────────
-
-        # (Opcional) Agora que o segmento foi aprovado, se quiser dividendos:
-        # descomente este bloco (vai coletar poucos tickers)
-        #
-        # try:
-        #     tickers_lideres = sorted({_strip_sa(t) for t in lideres["ticker"].astype(str).tolist() if str(t).strip()})
-        #     tickers_lideres_yf = [_norm_sa(t) for t in tickers_lideres]
-        #     dividendos = coletar_dividendos(tickers_lideres_yf)
-        # except Exception:
-        #     dividendos = {}
-
         st.markdown(f"### {setor} > {subsetor} > {segmento}")
         st.markdown(f"**Valor final da estratégia:** R$ {final_empresas:,.2f} ({diff:.1f}% acima do Tesouro Selic)")
 
@@ -655,7 +642,10 @@ def render():
         if tickers_corrente:
             tickers_corrente_yf = [_norm_sa(tk) for tk in tickers_corrente]
 
-            precos = baixar_precos_ano_corrente(tickers_corrente_yf)
+            # PATCH: evita baixar_precos_ano_corrente (chamada extra)
+            start_ytd = f"{ano_corrente}-01-01"
+            precos = baixar_precos(tickers_corrente_yf, start=start_ytd)
+
             if precos is None or precos.empty:
                 st.warning("Dados de preço indisponíveis para as ações escolhidas no ano atual.")
                 st.stop()
@@ -670,13 +660,13 @@ def render():
 
             tickers_limpos = [_strip_sa(tk) for tk in tickers_corrente_yf]
 
-            # Para ano corrente, dividendos podem ser opcionais (custo alto).
-            # Se quiser manter, coletar só para tickers_corrente (poucos tickers).
+            # PATCH: dividendos no YTD só se explicitamente habilitado
             dividendos_dict: Dict[str, pd.Series] = {}
-            try:
-                dividendos_dict = coletar_dividendos(tickers_corrente_yf)
-            except Exception:
-                dividendos_dict = {}
+            if ("incluir_dividendos_ytd" in locals()) and incluir_dividendos_ytd:
+                try:
+                    dividendos_dict = coletar_dividendos(tickers_corrente_yf)
+                except Exception:
+                    dividendos_dict = {}
 
             datas_potenciais = pd.date_range(start=f"{ano_corrente}-01-01", end=f"{ano_corrente}-12-31", freq="MS")
             datas_aporte: List[pd.Timestamp] = []
