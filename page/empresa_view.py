@@ -20,11 +20,14 @@ from core.yf_data import get_price, get_fundamentals_yf, get_yahoo_status
 
 
 
-st = get_yahoo_status()
-if st.get("rate_limited"):
-    mins = int(st.get("cooldown_remaining_seconds", 0) // 60)
-    st.warning(f"Yahoo Finance em cooldown (rate limit). Tente novamente em ~{mins} min. "
-               "As funcionalidades que dependem do Yahoo podem ficar indisponíveis.")
+yahoo_status = get_yahoo_status()
+if yahoo_status.get("rate_limited"):
+    mins = int(yahoo_status.get("cooldown_remaining_seconds", 0) // 60)
+    st.warning(
+        f"Yahoo Finance em cooldown (rate limit). "
+        f"Tente novamente em ~{mins} min. "
+        "Funcionalidades que dependem do Yahoo podem ficar indisponíveis."
+    
 
 
 def calculate_growth_rate(df: pd.DataFrame, column: str) -> float:
