@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Dict, Optional, Iterable
+from typing import List, Dict, Optional, Sequence
 import textwrap
 
 import pandas as pd
@@ -35,39 +35,42 @@ def _short_label(s: str, max_len: int = 22) -> str:
     return "\n".join(textwrap.wrap(s, width=max_len)) if len(s) > max_len else s
 
 
-def _chunks(seq: List[str], size: int) -> Iterable[List[str]]:
-    for i in range(0, len(seq), size):
-        yield seq[i : i + size]
-
-
-def _norm_sa(ticker: str) -> str:
-    t = (ticker or "").strip().upper()
-    return t if t.endswith(".SA") else f"{t}.SA"
-
-
 def _strip_sa(ticker: str) -> str:
     return (ticker or "").strip().upper().replace(".SA", "").strip()
 
 
+def _chunks(seq: Sequence[str], size: int) -> List[List[str]]:
+    out: List[List[str]] = []
+    seq = [s for s in seq if s]
+    for i in range(0, len(seq), max(1, int(size))):
+        out.append(list(seq[i:i + size]))
+    return out
+
+
 # ─────────────────────────────────────────────────────────────
-# Cache de preços por ticker (session_state) para patches
+# Cache local (session_state) de preços por ticker (Series)
+# IMPORTANTE: yf_data.baixar_precos retorna colunas SEM ".SA"
 # ─────────────────────────────────────────────────────────────
 
-def _get_precos_cached(tickers_yf: List[str], chunk_size: int = 80) -> pd.DataFrame:
+def _get_precos_cached(tickers: List[str], chunk_size: int = 80) -> pd.DataFrame:
     """
-    Cache por ticker em st.session_state para reduzir chamadas repetidas.
-    Retorna DataFrame com colunas= tickers_yf solicitados.
+    Retorna DF index=Data, cols=tickers (SEM .SA).
+    Cache por ticker (Series) em st.session_state para evitar chamadas repetidas.
     """
-    tickers_yf = [str(t).strip().upper() for t in tickers_yf if str(t).strip()]
-    tickers_yf = list(dict.fromkeys(tickers_yf))
-    if not tickers_yf:
+    def _key(t: str) -> str:
+        return _strip_sa(str(t).strip().upper())
+
+    req = [_key(t) for t in tickers if str(t).strip()]
+    req = list(dict.fromkeys(req))
+    if not req:
         return pd.DataFrame()
 
     cache: Dict[str, pd.Series] = st.session_state.setdefault("_precos_cache_series", {})
 
-    missing = [t for t in tickers_yf if t not in cache]
+    missing = [t for t in req if t not in cache]
+
     for lote in _chunks(missing, chunk_size):
-        df = baixar_precos(lote)
+        df = baixar_precos(lote)  # pode passar sem .SA
         if df is None or df.empty:
             continue
 
@@ -76,9 +79,8 @@ def _get_precos_cached(tickers_yf: List[str], chunk_size: int = 80) -> pd.DataFr
         if df.empty:
             continue
 
-        # garante que cada ticker vire uma Series cacheada
         for col in df.columns.astype(str).tolist():
-            c = col.strip().upper()
+            c = _key(col)  # garante SEM .SA
             try:
                 s = pd.to_numeric(df[col], errors="coerce").dropna()
                 if not s.empty:
@@ -86,10 +88,10 @@ def _get_precos_cached(tickers_yf: List[str], chunk_size: int = 80) -> pd.DataFr
             except Exception:
                 continue
 
-    # monta DF final alinhando índices
-    series_list = []
-    cols = []
-    for t in tickers_yf:
+    series_list: List[pd.Series] = []
+    cols: List[str] = []
+
+    for t in req:
         s = cache.get(t)
         if isinstance(s, pd.Series) and not s.empty:
             series_list.append(s.rename(t))
@@ -104,19 +106,18 @@ def _get_precos_cached(tickers_yf: List[str], chunk_size: int = 80) -> pd.DataFr
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
-def _retornos_ano_preco_bulk(tickers_sem_sa: List[str], ano: int) -> pd.Series:
+def _retornos_ano_preco_bulk(tickers: List[str], ano: int, chunk_size: int = 80) -> pd.Series:
     """
-    Retorno simples de preço (sem dividendos) no ano calendário, em modo bulk.
+    Retorno simples de preço (sem dividendos) no ano calendário para LISTA de tickers.
     Retorna Series index=ticker_sem_SA, values=retorno (float).
+    Usa cache + chunking para reduzir chamadas.
     """
-    tickers_sem_sa = [_strip_sa(t) for t in tickers_sem_sa if (t or "").strip()]
-    tickers_sem_sa = list(dict.fromkeys(tickers_sem_sa))
-    if not tickers_sem_sa:
+    tickers = [_strip_sa(t) for t in (tickers or []) if str(t).strip()]
+    tickers = list(dict.fromkeys(tickers))
+    if not tickers:
         return pd.Series(dtype=float)
 
-    tickers_yf = [_norm_sa(t) for t in tickers_sem_sa]
-    precos = _get_precos_cached(tickers_yf, chunk_size=80)
-
+    precos = _get_precos_cached(tickers, chunk_size=chunk_size)
     if precos is None or precos.empty:
         return pd.Series(dtype=float)
 
@@ -194,7 +195,6 @@ def render_patch1_regua_conviccao(
     smax = float(df_ano["Score_Ajustado"].max())
     df_ano["score_norm"] = ((df_ano["Score_Ajustado"] - smin) / ((smax - smin) + 1e-9)) * 100.0
 
-    # Normaliza lideres_global
     if not lg.empty and {"Ano", "ticker"}.issubset(lg.columns):
         lg = lg.copy()
         lg["ticker"] = lg["ticker"].astype(str).apply(_norm_tk)
@@ -372,7 +372,6 @@ def render_patch3_stress_test(
 
     ultimo_ano = int(max(anos_disp))
 
-    # 1) Estabilidade anual do conjunto de líderes (Jaccard)
     lideres_por_ano = (
         lg.groupby("Ano")["ticker"]
         .apply(lambda s: set(s.dropna().astype(str).tolist()))
@@ -390,7 +389,6 @@ def render_patch3_stress_test(
 
     df_jaccard = pd.DataFrame(jaccard_rows)
 
-    # 2) Consistência dos tickers finais (quantos anos foi líder)
     pres_rows = []
     for tk in sorted(tickers_finais):
         anos_lider = sorted(lg.loc[lg["ticker"] == tk, "Ano"].dropna().astype(int).unique().tolist())
@@ -398,7 +396,6 @@ def render_patch3_stress_test(
     df_pres = pd.DataFrame(pres_rows)
     pct_com_hist = float((df_pres["anos_como_lider"] > 0).mean()) if not df_pres.empty else 0.0
 
-    # 3) Sensibilidade à suavização (rolling 3y)
     sg2 = sg.sort_values(["ticker", "Ano"]).copy()
     sg2["Score_Suavizado_3y"] = (
         sg2.groupby("ticker")["Score_Ajustado"]
@@ -478,17 +475,17 @@ def render_patch4_diversificacao(
         st.info("Painel de diversificação indisponível: portfólio final vazio.")
         return
 
-    tickers = [_norm_tk(e.get("ticker", "")) for e in empresas_lideres_finais if _norm_tk(e.get("ticker", ""))]
+    tickers = [_strip_sa(e.get("ticker", "")) for e in empresas_lideres_finais if _strip_sa(e.get("ticker", ""))]
     tickers = list(dict.fromkeys(tickers))
 
-    setores = [str(e.get("setor", "OUTROS")) for e in empresas_lideres_finais if _norm_tk(e.get("ticker", "")) in tickers]
+    setores = [str(e.get("setor", "OUTROS")) for e in empresas_lideres_finais if _strip_sa(e.get("ticker", "")) in tickers]
 
     weights = None
     if contrib_globais:
         try:
             dfc = pd.DataFrame(contrib_globais).copy()
             if not dfc.empty and {"ticker", "valor_final"}.issubset(dfc.columns):
-                dfc["ticker"] = dfc["ticker"].astype(str).apply(_norm_tk)
+                dfc["ticker"] = dfc["ticker"].astype(str).apply(_strip_sa)
                 agg = dfc.groupby("ticker")["valor_final"].sum()
                 agg = agg[agg.index.isin(tickers)]
                 if not agg.empty and float(agg.sum()) > 0:
@@ -527,41 +524,38 @@ def render_patch4_diversificacao(
     st.dataframe(dfw, use_container_width=True)
 
     df_set = pd.DataFrame({"ticker": tickers, "setor": setores[:len(tickers)] if setores else ["OUTROS"] * len(tickers)})
-    df_set["peso"] = df_set["ticker"].map(lambda t: float(weights.get(_norm_tk(t), 0.0)))
+    df_set["peso"] = df_set["ticker"].map(lambda t: float(weights.get(_strip_sa(t), 0.0)))
     set_agg = df_set.groupby("setor")["peso"].sum().sort_values(ascending=False)
 
     if not set_agg.empty:
         st.markdown("### Concentração por setor")
-
         set_agg = set_agg.sort_values(ascending=True)
         labels = [_short_label(str(x), max_len=22) for x in set_agg.index.astype(str).tolist()]
         values = set_agg.values.astype(float)
 
         h = max(3.5, 0.55 * len(labels))
         fig, ax = plt.subplots(figsize=(10, h))
-
         ax.barh(labels, values)
         ax.set_xlabel("Peso (0–1)")
         ax.set_ylabel("Setor")
         ax.grid(True, linestyle="--", alpha=0.4)
         ax.set_xlim(0, max(0.05, float(values.max()) * 1.15))
-
         fig.tight_layout()
         st.pyplot(fig)
 
 
 # ─────────────────────────────────────────────────────────────
-# PATCH 5 — Benchmark do Segmento (reformulado para evitar múltiplas chamadas)
+# PATCH 5 — Benchmark do Segmento (último ano do score)
+# (otimizado: 1 chamada bulk por ano para todos os tickers necessários)
 # ─────────────────────────────────────────────────────────────
 
 def render_patch5_benchmark_segmento(score_global: pd.DataFrame, empresas_lideres_finais: list[dict]) -> None:
     """
-    Compara retorno no último ano do score vs retorno médio do segmento (SETOR>SUBSETOR>SEGMENTO),
-    usando retorno de preço (sem dividendos).
-
-    Otimização: faz download bulk uma única vez para os segmentos relevantes,
-    evitando chamadas repetidas por ticker/universo.
+    Compara retorno no último ano do score vs retorno médio do segmento (SETOR>SUBSETOR>SEGMENTO).
+    Retorno de preço (sem dividendos).
+    OTIMIZAÇÃO: usa retorno bulk no ano para todo o universo necessário (1 chamada consolidada).
     """
+
     st.markdown("## 📌 Benchmark do Segmento (último ano do score)")
     st.caption(
         "Compara o retorno das empresas escolhidas no último ano do score com o retorno médio do "
@@ -595,104 +589,88 @@ def render_patch5_benchmark_segmento(score_global: pd.DataFrame, empresas_lidere
         st.info("Benchmark do segmento indisponível: não há linhas no último ano do score.")
         return
 
-    df_ano["id_segmento"] = df_ano["SETOR"] + " > " + df_ano["SUBSETOR"] + " > " + df_ano["SEGMENTO"]
+    meta = (
+        df_ano[["ticker", "SETOR", "SUBSETOR", "SEGMENTO"]]
+        .drop_duplicates(subset=["ticker"])
+        .reset_index(drop=True)
+    )
+    meta_map = meta.set_index("ticker")[["SETOR", "SUBSETOR", "SEGMENTO"]].to_dict("index")
 
-    tickers_finais = sorted({
-        _strip_sa(str(e.get("ticker", "")))
-        for e in empresas_lideres_finais
-        if str(e.get("ticker", "")).strip()
-    })
+    tickers_finais = sorted({_strip_sa(str(e.get("ticker", ""))) for e in empresas_lideres_finais if str(e.get("ticker", "")).strip()})
     if not tickers_finais:
         st.info("Benchmark do segmento indisponível: tickers finais vazios.")
         return
 
-    segs_relevantes = set(df_ano.loc[df_ano["ticker"].isin(tickers_finais), "id_segmento"].dropna().astype(str).tolist())
-    if not segs_relevantes:
-        st.info("Benchmark do segmento indisponível: não foi possível identificar os segmentos dos tickers finais.")
-        return
-
-    # universo relevante: apenas tickers do(s) segmento(s) onde os líderes estão
-    uni_relevante = (
-        df_ano.loc[df_ano["id_segmento"].isin(segs_relevantes), ["id_segmento", "ticker"]]
-        .dropna()
-        .drop_duplicates()
+    df_ano["id_segmento"] = df_ano["SETOR"] + " > " + df_ano["SUBSETOR"] + " > " + df_ano["SEGMENTO"]
+    uni_segmento = (
+        df_ano.groupby("id_segmento")["ticker"]
+        .apply(lambda s: sorted(set(s.dropna().tolist())))
+        .to_dict()
     )
 
-    # limites de segurança (evita downloads gigantescos)
-    MAX_UNIVERSE_PER_SEG = 60
-    MAX_TOTAL_DOWNLOAD = 450
+    MAX_UNIVERSE = 40
 
-    tickers_download = []
-    universo_por_seg = {}
-    for seg_id, g in uni_relevante.groupby("id_segmento"):
-        tks = sorted(g["ticker"].astype(str).unique().tolist())
-        tks_lim = tks[:MAX_UNIVERSE_PER_SEG]
-        universo_por_seg[str(seg_id)] = tks_lim
-        tickers_download.extend(tks_lim)
+    # Monta um conjunto único de tickers que serão necessários no cálculo (para 1 chamada bulk)
+    needed_all: List[str] = []
+    per_ticker_universe: Dict[str, List[str]] = {}
 
-    tickers_download = sorted(set(tickers_download))
-    trunc_total = False
-    if len(tickers_download) > MAX_TOTAL_DOWNLOAD:
-        tickers_download = tickers_download[:MAX_TOTAL_DOWNLOAD]
-        trunc_total = True
+    for tk in tickers_finais:
+        info = meta_map.get(tk)
+        if not info:
+            continue
+        id_seg = f"{info['SETOR']} > {info['SUBSETOR']} > {info['SEGMENTO']}"
+        universo = uni_segmento.get(id_seg, [])
+        universo_lim = universo[:MAX_UNIVERSE]
+        per_ticker_universe[tk] = universo_lim
+        needed_all.extend(universo_lim)
+        needed_all.append(tk)
 
-    retornos = _retornos_ano_preco_bulk(tickers_download, ultimo_ano)
-    if retornos is None or retornos.empty:
-        st.info("Benchmark do segmento indisponível: retorno de preços não pôde ser calculado.")
-        return
+    needed_all = list(dict.fromkeys([_strip_sa(x) for x in needed_all if x]))
 
-    # monta dataframe com retorno e metadados do último ano
-    meta = df_ano[["ticker", "SETOR", "SUBSETOR", "SEGMENTO", "id_segmento"]].drop_duplicates("ticker")
-    meta = meta.set_index("ticker")
-
-    df_ret = retornos.rename("retorno").to_frame()
-    df_ret = df_ret.join(meta, how="left")
-
-    # média por segmento (com o subconjunto efetivamente baixado)
-    seg_mean = df_ret.groupby("id_segmento")["retorno"].mean()
+    # 1 única chamada bulk para retornos do ano em todos os tickers necessários
+    ret_all = _retornos_ano_preco_bulk(needed_all, ultimo_ano, chunk_size=80)
 
     linhas = []
     for tk in tickers_finais:
-        info = meta.loc[tk].to_dict() if tk in meta.index else None
+        info = meta_map.get(tk)
         if not info:
             continue
 
-        seg_id = str(info.get("id_segmento", "OUTROS"))
-        ret_tk = float(retornos.get(tk, float("nan")))
-        mean_seg = float(seg_mean.get(seg_id, float("nan")))
+        universo_lim = per_ticker_universe.get(tk, [])
+        if not universo_lim:
+            continue
 
-        universo_usado = universo_por_seg.get(seg_id, [])
-        # universo_usado pode ter sido truncado pelo MAX_TOTAL_DOWNLOAD
-        universo_usado_eff = [t for t in universo_usado if t in retornos.index.tolist()]
+        ret_uni = ret_all.reindex([_strip_sa(x) for x in universo_lim]).dropna()
+        seg_mean = float(ret_uni.mean()) if not ret_uni.empty else float("nan")
+
+        tk_ret = float(ret_all.get(_strip_sa(tk), float("nan")))
 
         linhas.append({
             "ticker": tk,
-            "empresa": next((e.get("nome") for e in empresas_lideres_finais if _strip_sa(str(e.get("ticker", ""))) == tk), tk),
-            "SETOR": info.get("SETOR", "OUTROS"),
-            "SUBSETOR": info.get("SUBSETOR", "OUTROS"),
-            "SEGMENTO": info.get("SEGMENTO", "OUTROS"),
-            "retorno_empresa_%": ret_tk * 100.0 if pd.notna(ret_tk) else float("nan"),
-            "retorno_medio_segmento_%": mean_seg * 100.0 if pd.notna(mean_seg) else float("nan"),
-            "alpha_vs_segmento_pp": ((ret_tk - mean_seg) * 100.0) if (pd.notna(ret_tk) and pd.notna(mean_seg)) else float("nan"),
-            "tamanho_universo_usado": len(universo_usado_eff),
+            "empresa": next((e.get("nome") for e in empresas_lideres_finais if _strip_sa(str(e.get("ticker",""))) == tk), tk),
+            "SETOR": info["SETOR"],
+            "SUBSETOR": info["SUBSETOR"],
+            "SEGMENTO": info["SEGMENTO"],
+            "retorno_empresa_%": tk_ret * 100.0 if pd.notna(tk_ret) else float("nan"),
+            "retorno_medio_segmento_%": seg_mean * 100.0 if pd.notna(seg_mean) else float("nan"),
+            "alpha_vs_segmento_pp": ((tk_ret - seg_mean) * 100.0) if (pd.notna(tk_ret) and pd.notna(seg_mean)) else float("nan"),
+            "tamanho_universo_usado": len(universo_lim),
         })
 
     if not linhas:
         st.info("Não foi possível montar o comparativo (metadados do segmento não encontrados para os tickers finais).")
         return
 
-    out = pd.DataFrame(linhas).sort_values(["alpha_vs_segmento_pp", "retorno_empresa_%"], ascending=[False, False])
+    out = pd.DataFrame(linhas)
+    out = out.sort_values(["alpha_vs_segmento_pp", "retorno_empresa_%"], ascending=[False, False])
 
     st.markdown(f"**Ano analisado (último ano do score): {ultimo_ano}**")
     st.dataframe(out, use_container_width=True)
 
-    nota = (
-        f"Nota técnica: retorno por **preço** (sem dividendos) para robustez e velocidade. "
-        f"Benchmark usa até **{MAX_UNIVERSE_PER_SEG} tickers por segmento** (subconjunto)."
+    st.caption(
+        f"Nota técnica: retorno é de **preço** (sem dividendos). "
+        f"O benchmark do segmento usa até **{MAX_UNIVERSE} tickers** do segmento para evitar travamentos."
     )
-    if trunc_total:
-        nota += f" Universo total também foi truncado para **{MAX_TOTAL_DOWNLOAD} tickers** por segurança."
-    st.caption(nota)
 
     with st.expander("📊 Gráfico: Alpha vs média do segmento (p.p.)", expanded=False):
         plot_df = out.dropna(subset=["alpha_vs_segmento_pp"]).copy()
