@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from typing import List, Dict, Optional
+import textwrap
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
+
+from core.yf_data import baixar_precos
 
 
 # ─────────────────────────────────────────────────────────────
@@ -21,6 +24,17 @@ def _get_nome(ticker: str, empresas_lideres_finais: List[Dict]) -> str:
 
 def _safe_df(df: Optional[pd.DataFrame]) -> pd.DataFrame:
     return df if isinstance(df, pd.DataFrame) else pd.DataFrame()
+
+
+def _short_label(s: str, max_len: int = 22) -> str:
+    s = (s or "").strip()
+    if not s:
+        return "OUTROS"
+    # opcional: limpeza leve para reduzir tamanho
+    s = s.replace("  ", " ")
+    # quebra linha para não embolar
+    return "\n".join(textwrap.wrap(s, width=max_len)) if len(s) > max_len else s
+
 
 
 # ─────────────────────────────────────────────────────────────
@@ -417,18 +431,26 @@ def render_patch4_diversificacao(
 
     if not set_agg.empty:
         st.markdown("### Concentração por setor")
-        fig, ax = plt.subplots()
-        ax.bar(set_agg.index.astype(str), set_agg.values.astype(float))
-        ax.set_ylabel("Peso (0–1)")
-        ax.set_xlabel("Setor")
+
+        # prepara labels “amigáveis”
+        set_agg = set_agg.sort_values(ascending=True)  # para barh ficar “bonito”
+        labels = [_short_label(str(x), max_len=22) for x in set_agg.index.astype(str).tolist()]
+        values = set_agg.values.astype(float)
+
+        # altura dinâmica: evita compressão
+        h = max(3.5, 0.55 * len(labels))
+        fig, ax = plt.subplots(figsize=(10, h))
+
+        ax.barh(labels, values)
+        ax.set_xlabel("Peso (0–1)")
+        ax.set_ylabel("Setor")
         ax.grid(True, linestyle="--", alpha=0.4)
+
+        # limites e formatação
+        ax.set_xlim(0, max(0.05, float(values.max()) * 1.15))
+
+        fig.tight_layout()
         st.pyplot(fig)
-
-import pandas as pd
-import streamlit as st
-import matplotlib.pyplot as plt
-
-from core.yf_data import baixar_precos
 
 
 def _norm_sa(ticker: str) -> str:
