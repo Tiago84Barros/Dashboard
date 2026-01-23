@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Optional, Sequence, Tuple, Dict
+from typing import List, Optional, Sequence, Tuple, Dict, Iterable
 
 import pandas as pd
 import streamlit as st
@@ -52,6 +52,7 @@ from page.portfolio_patches import (
     render_patch2_dominancia,
     render_patch3_stress_test,
     render_patch4_diversificacao,
+    render_patch5_benchmark_segmento,
 )
 # <<<
 
@@ -75,6 +76,11 @@ def _norm_sa(ticker: str) -> str:
 
 def _strip_sa(ticker: str) -> str:
     return (ticker or "").strip().upper().replace(".SA", "").strip()
+
+
+def _chunks(seq: List[str], size: int) -> Iterable[List[str]]:
+    for i in range(0, len(seq), size):
+        yield seq[i : i + size]
 
 
 def _safe_year_count_from_dre(dre: pd.DataFrame) -> int:
@@ -127,7 +133,6 @@ def _carregar_empresa(row: dict) -> Optional[EmpresaCarregada]:
         mult = _clean_columns(mult)
         dre = _clean_columns(dre)
 
-        # adiciona Ano quando possível (compatível com scoring)
         if "Data" in mult.columns and "Ano" not in mult.columns:
             mult["Ano"] = pd.to_datetime(mult["Data"], errors="coerce").dt.year
         if "Data" in dre.columns and "Ano" not in dre.columns:
@@ -182,6 +187,83 @@ def _build_macro() -> Optional[pd.DataFrame]:
 
 
 # ─────────────────────────────────────────────────────────────
+# Cache de dados de mercado (preços/dividendos) por ticker
+# ─────────────────────────────────────────────────────────────
+
+def _get_precos_cached(tickers_yf: List[str], chunk_size: int = 80) -> pd.DataFrame:
+    """
+    Cache por ticker em st.session_state para reduzir chamadas repetidas.
+    Retorna DataFrame com colunas= tickers_yf solicitados.
+    """
+    tickers_yf = [str(t).strip().upper() for t in tickers_yf if str(t).strip()]
+    tickers_yf = list(dict.fromkeys(tickers_yf))
+    if not tickers_yf:
+        return pd.DataFrame()
+
+    cache: Dict[str, pd.Series] = st.session_state.setdefault("_precos_cache_series", {})
+
+    missing = [t for t in tickers_yf if t not in cache]
+    for lote in _chunks(missing, chunk_size):
+        df = baixar_precos(lote)
+        if df is None or df.empty:
+            continue
+
+        df.index = pd.to_datetime(df.index, errors="coerce")
+        df = df.dropna(how="all")
+        if df.empty:
+            continue
+
+        for col in df.columns.astype(str).tolist():
+            c = col.strip().upper()
+            try:
+                s = pd.to_numeric(df[col], errors="coerce").dropna()
+                if not s.empty:
+                    cache[c] = s
+            except Exception:
+                continue
+
+    series_list = []
+    cols = []
+    for t in tickers_yf:
+        s = cache.get(t)
+        if isinstance(s, pd.Series) and not s.empty:
+            series_list.append(s.rename(t))
+            cols.append(t)
+
+    if not series_list:
+        return pd.DataFrame()
+
+    out = pd.concat(series_list, axis=1).sort_index()
+    out.columns = cols
+    return out
+
+
+def _get_dividendos_cached(tickers_yf: List[str], chunk_size: int = 60) -> Dict:
+    """
+    Cache por ticker em st.session_state para reduzir chamadas repetidas.
+    Mantém a estrutura de retorno do core.coletar_dividendos (dict).
+    """
+    tickers_yf = [str(t).strip().upper() for t in tickers_yf if str(t).strip()]
+    tickers_yf = list(dict.fromkeys(tickers_yf))
+    if not tickers_yf:
+        return {}
+
+    cache: Dict = st.session_state.setdefault("_div_cache", {})
+    missing = [t for t in tickers_yf if t not in cache]
+
+    for lote in _chunks(missing, chunk_size):
+        got = coletar_dividendos(lote)
+        if isinstance(got, dict) and got:
+            # normaliza chaves
+            for k, v in got.items():
+                kk = str(k).strip().upper()
+                cache[kk] = v
+
+    # devolve apenas os solicitados
+    return {t: cache.get(t) for t in tickers_yf if t in cache}
+
+
+# ─────────────────────────────────────────────────────────────
 # Render Streamlit
 # ─────────────────────────────────────────────────────────────
 
@@ -191,14 +273,12 @@ def render():
     with st.sidebar:
         margem_input = st.text_input("% acima do Tesouro Selic para destacar (obrigatório):", value="")
 
-        # >>> PATCH SCORE V2 (controle opcional, não quebra nada)
         with st.expander("Scoring (opções)", expanded=False):
             if calcular_score_acumulado_v2 is None:
                 st.caption("Score v2 indisponível (core/scoring_v2.py não encontrado).")
                 use_score_v2 = False
             else:
                 use_score_v2 = st.checkbox("Usar Score v2 (robusto)", value=True)
-        # <<< PATCH SCORE V2
 
         gerar = st.button("Gerar Portfólio")
 
@@ -215,7 +295,6 @@ def render():
     if not gerar:
         st.stop()
 
-    # ── Carrega setores (cache em sessão)
     setores_df = st.session_state.get("setores_df")
     if setores_df is None or getattr(setores_df, "empty", True):
         setores_df = load_setores_from_db()
@@ -225,13 +304,11 @@ def render():
         setores_df = _clean_columns(setores_df)
         st.session_state["setores_df"] = setores_df
 
-    # valida colunas esperadas
     required_cols = {"SETOR", "SUBSETOR", "SEGMENTO", "ticker"}
     if not required_cols.issubset(set(setores_df.columns)):
         st.error(f"Base de setores não contém as colunas esperadas: {sorted(required_cols)}")
         st.stop()
 
-    # >>> PATCH SCORE V2 (mapas ticker -> SEGMENTO/SUBSETOR/SETOR)
     _tmp = setores_df[["ticker", "SEGMENTO", "SUBSETOR", "SETOR"]].copy()
     _tmp["ticker"] = (
         _tmp["ticker"].astype(str)
@@ -246,14 +323,12 @@ def render():
     group_map = dict(zip(_tmp["ticker"], _tmp["SEGMENTO"]))
     subsetor_map = dict(zip(_tmp["ticker"], _tmp["SUBSETOR"]))
     setor_map = dict(zip(_tmp["ticker"], _tmp["SETOR"]))
-    # <<< PATCH SCORE V2
 
     dados_macro = _build_macro()
     if dados_macro is None or dados_macro.empty:
         st.error("Não foi possível carregar/normalizar os dados macroeconômicos.")
         st.stop()
 
-    # grupos únicos por segmento
     setores_unicos = (
         setores_df[["SETOR", "SUBSETOR", "SEGMENTO"]]
         .drop_duplicates()
@@ -262,15 +337,10 @@ def render():
 
     empresas_lideres_finais: List[dict] = []
 
-    # >>> PATCHES: acumuladores globais para módulo page/portfolio_patches.py
     scores_globais: List[pd.DataFrame] = []
     lideres_globais: List[pd.DataFrame] = []
     contrib_globais: List[Dict] = []
-    # <<<
 
-    # ─────────────────────────────────────────────────────────
-    # Loop por segmento (pipeline leve) - MANTIDO
-    # ─────────────────────────────────────────────────────────
     for _, seg in setores_unicos.iterrows():
         setor = str(seg["SETOR"])
         subsetor = str(seg["SUBSETOR"])
@@ -285,11 +355,9 @@ def render():
         tickers_segmento = [_strip_sa(t) for t in empresas_segmento["ticker"].astype(str).tolist()]
         tickers_segmento = [t for t in tickers_segmento if t]
 
-        # ignora segmentos com poucos tickers
         if len(set(tickers_segmento)) <= 1:
             continue
 
-        # filtro de histórico mínimo (>=10 anos)
         tickers_validos = _filtrar_tickers_com_min_anos(tickers_segmento, min_anos=10, max_workers=12)
         if len(tickers_validos) <= 1:
             continue
@@ -302,7 +370,6 @@ def render():
         if empresas_validas.empty or len(empresas_validas) <= 1:
             continue
 
-        # carrega dados completos (multiplos + dre) em paralelo
         lista_empresas: List[EmpresaCarregada] = []
         rows = empresas_validas.to_dict("records")
 
@@ -316,19 +383,14 @@ def render():
         if len(lista_empresas) <= 1:
             continue
 
-        # mapeia setor por empresa
         setores_empresa = {e.ticker: obter_setor_da_empresa(e.ticker, setores_df) for e in lista_empresas}
-
-        # pesos por SETOR (regra existente)
         pesos = get_pesos(setor)
 
-        # score acumulado
         payload_empresas = [
             {"ticker": e.ticker, "nome": e.nome, "multiplos": e.multiplos, "dre": e.dre}
             for e in lista_empresas
         ]
 
-        # >>> PATCH SCORE V2 (switch v1/v2) - MANTIDO
         if ("use_score_v2" in locals()) and use_score_v2 and (calcular_score_acumulado_v2 is not None):
             score = calcular_score_acumulado_v2(
                 lista_empresas=payload_empresas,
@@ -342,20 +404,23 @@ def render():
             )
         else:
             score = calcular_score_acumulado(payload_empresas, setores_empresa, pesos, dados_macro, anos_minimos=4)
-        # <<< PATCH SCORE V2
 
         if score is None or score.empty:
             continue
 
-        # preços + penalização de platô (mensal) - MANTIDO
+        # preços + penalização de platô (mensal) — agora com cache e chunking
         try:
-            precos = baixar_precos([_norm_sa(e.ticker) for e in lista_empresas])
+            tickers_yf = [_norm_sa(e.ticker) for e in lista_empresas]
+            precos = _get_precos_cached(tickers_yf, chunk_size=80)
+
             if precos is None or precos.empty:
                 continue
+
             precos.index = pd.to_datetime(precos.index, errors="coerce")
             precos = precos.dropna(how="all")
             if precos.empty:
                 continue
+
             precos_mensal = precos.resample("M").last()
             score = penalizar_plato(score, precos_mensal, meses=12, penal=0.30)
         except Exception:
@@ -364,10 +429,10 @@ def render():
         if score is None or score.empty:
             continue
 
-        # dividendos + líderes + backtest - MANTIDO
+        # dividendos + líderes + backtest — dividendos com cache
         tickers_score = [str(t) for t in score["ticker"].dropna().unique().tolist()]
         tickers_score_yf = [_norm_sa(t) for t in tickers_score]
-        dividendos = coletar_dividendos(tickers_score_yf)
+        dividendos = _get_dividendos_cached(tickers_score_yf, chunk_size=60)
 
         lideres = determinar_lideres(score)
         if lideres is None or lideres.empty:
@@ -392,11 +457,9 @@ def render():
         if diff < margem_superior:
             continue
 
-        # ── Exibição do segmento destacado
         st.markdown(f"### {setor} > {subsetor} > {segmento}")
         st.markdown(f"**Valor final da estratégia:** R$ {final_empresas:,.2f} ({diff:.1f}% acima do Tesouro Selic)")
 
-        # >>> PATCHES: acumular score e líderes globais (para patch1/patch2/patch3)
         try:
             score_tmp = score.copy()
             score_tmp["SETOR"] = setor
@@ -415,9 +478,7 @@ def render():
             lideres_globais.append(lideres_tmp)
         except Exception:
             pass
-        # <<<
 
-        # >>> PATCHES: capturar contribuições por ticker (para patch4_diversificacao)
         try:
             cols_tick = patrimonio_empresas.columns.drop("Patrimônio", errors="ignore").tolist()
             if cols_tick:
@@ -450,7 +511,6 @@ def render():
                     })
         except Exception:
             pass
-        # <<<
 
         empresas_estrategia = patrimonio_empresas.columns.drop("Patrimônio", errors="ignore")
         colunas_empresas = st.columns(min(3, len(empresas_estrategia)))
@@ -481,7 +541,6 @@ def render():
                 unsafe_allow_html=True,
             )
 
-        # líderes do último ano de score (para sugerir compra no próximo ano)
         ultimo_ano = int(pd.to_numeric(score["Ano"], errors="coerce").max())
         lideres_ano_anterior = lideres[lideres["Ano"] == ultimo_ano]
 
@@ -498,13 +557,8 @@ def render():
                 }
             )
 
-    # >>> PATCHES: dedup líderes finais (evita repetição em cards finais e patches)
     empresas_lideres_finais = _dedup_empresas_lideres(empresas_lideres_finais)
-    # <<<
 
-    # ─────────────────────────────────────────────────────────
-    # Bloco final: líderes para o próximo ano + distribuição setorial
-    # ─────────────────────────────────────────────────────────
     if empresas_lideres_finais:
         st.markdown("## 📑 Empresas líderes para o próximo ano")
         colunas_lideres = st.columns(3)
@@ -513,7 +567,7 @@ def render():
             col.markdown(
                 f"""
                 <div style='border: 2px solid #28a745; border-radius: 10px; padding: 12px; margin-bottom: 10px; background-color: #f0fff4; text-align: center;'>
-                    <img src="{emp.get('logo_url','')}" width="45" />
+                    <img src="{emp.get('logo_url','')}" width='45' />
                     <h5 style="margin: 5px 0 0;">{emp.get('nome','')}</h5>
                     <p style="margin: 0; color: #666; font-size: 13px;">({emp.get('ticker','')})</p>
                     <p style="font-size: 12px; color: #333;">Líder em {emp.get('ano_lider','—')}<br>Para compra em {emp.get('ano_compra','—')}</p>
@@ -535,9 +589,6 @@ def render():
         ax.axis("equal")
         st.pyplot(fig)
 
-    # ─────────────────────────────────────────────────────────
-    # Etapa: Desempenho parcial no ano corrente (líderes do ano)
-    # ─────────────────────────────────────────────────────────
     if empresas_lideres_finais:
         st.markdown("## 📊 Desempenho parcial das líderes (ano atual)")
 
@@ -561,7 +612,7 @@ def render():
                 st.stop()
 
             tickers_limpos = [_strip_sa(tk) for tk in tickers_corrente_yf]
-            dividendos_dict = coletar_dividendos(tickers_corrente_yf)
+            dividendos_dict = _get_dividendos_cached(tickers_corrente_yf, chunk_size=60)
 
             datas_potenciais = pd.date_range(start=f"{ano_corrente}-01-01", end=f"{ano_corrente}-12-31", freq="MS")
             datas_aporte: List[pd.Timestamp] = []
@@ -572,7 +623,6 @@ def render():
 
             patrimonio_aporte = gerir_carteira_simples(precos, tickers_limpos, datas_aporte, dividendos_dict=dividendos_dict)
 
-            # Selic benchmark (no mesmo índice do patrimônio da estratégia)
             df_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aporte)
             if df_selic is None or df_selic.empty:
                 st.warning("⚠️ Não foi possível calcular o benchmark Selic para o período.")
@@ -628,9 +678,6 @@ def render():
                 unsafe_allow_html=True,
             )
 
-    # ─────────────────────────────────────────────────────────
-    # PATCHES (1–4) via módulo separado
-    # ─────────────────────────────────────────────────────────
     score_global = pd.concat(scores_globais, ignore_index=True) if scores_globais else pd.DataFrame()
     lideres_global = pd.concat(lideres_globais, ignore_index=True) if lideres_globais else pd.DataFrame()
 
@@ -640,3 +687,6 @@ def render():
     render_patch2_dominancia(score_global, lideres_global, empresas_lideres_finais)
     render_patch3_stress_test(score_global, lideres_global, empresas_lideres_finais)
     render_patch4_diversificacao(empresas_lideres_finais, contrib_globais)
+
+    # Patch 5 (benchmark por segmento) — agora com download bulk
+    render_patch5_benchmark_segmento(score_global, empresas_lideres_finais)
