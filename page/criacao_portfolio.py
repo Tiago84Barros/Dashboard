@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple, Dict
 
 import pandas as pd
 import streamlit as st
@@ -46,6 +46,15 @@ from core.yf_data import (
 )
 from core.weights import get_pesos
 
+# >>> PATCHES (módulo separado) - mantido fora do pipeline para não impactar performance
+from page.portfolio_patches import (
+    render_patch1_regua_conviccao,
+    render_patch2_dominancia,
+    render_patch3_stress_test,
+    render_patch4_diversificacao,
+)
+# <<<
+
 logger = logging.getLogger(__name__)
 
 
@@ -65,7 +74,7 @@ def _norm_sa(ticker: str) -> str:
 
 
 def _strip_sa(ticker: str) -> str:
-    return (ticker or "").strip().upper().replace(".SA", "")
+    return (ticker or "").strip().upper().replace(".SA", "").strip()
 
 
 def _safe_year_count_from_dre(dre: pd.DataFrame) -> int:
@@ -75,6 +84,18 @@ def _safe_year_count_from_dre(dre: pd.DataFrame) -> int:
         return 0
     years = pd.to_datetime(dre["Data"], errors="coerce").dt.year
     return int(years.dropna().nunique())
+
+
+def _dedup_empresas_lideres(empresas: List[Dict]) -> List[Dict]:
+    """
+    Dedup por ticker mantendo o primeiro registro visto.
+    """
+    seen: Dict[str, Dict] = {}
+    for e in empresas:
+        tk = _strip_sa(str(e.get("ticker", "")))
+        if tk and tk not in seen:
+            seen[tk] = e
+    return list(seen.values())
 
 
 @dataclass(frozen=True)
@@ -206,7 +227,7 @@ def render():
 
     # valida colunas esperadas
     required_cols = {"SETOR", "SUBSETOR", "SEGMENTO", "ticker"}
-    if not required_cols.issubset(setores_df.columns):
+    if not required_cols.issubset(set(setores_df.columns)):
         st.error(f"Base de setores não contém as colunas esperadas: {sorted(required_cols)}")
         st.stop()
 
@@ -241,8 +262,14 @@ def render():
 
     empresas_lideres_finais: List[dict] = []
 
+    # >>> PATCHES: acumuladores globais para módulo page/portfolio_patches.py
+    scores_globais: List[pd.DataFrame] = []
+    lideres_globais: List[pd.DataFrame] = []
+    contrib_globais: List[Dict] = []
+    # <<<
+
     # ─────────────────────────────────────────────────────────
-    # Loop por segmento (pipeline leve)
+    # Loop por segmento (pipeline leve) - MANTIDO
     # ─────────────────────────────────────────────────────────
     for _, seg in setores_unicos.iterrows():
         setor = str(seg["SETOR"])
@@ -301,7 +328,7 @@ def render():
             for e in lista_empresas
         ]
 
-        # >>> PATCH SCORE V2 (switch v1/v2)
+        # >>> PATCH SCORE V2 (switch v1/v2) - MANTIDO
         if ("use_score_v2" in locals()) and use_score_v2 and (calcular_score_acumulado_v2 is not None):
             score = calcular_score_acumulado_v2(
                 lista_empresas=payload_empresas,
@@ -320,7 +347,7 @@ def render():
         if score is None or score.empty:
             continue
 
-        # preços + penalização de platô (mensal)
+        # preços + penalização de platô (mensal) - MANTIDO
         try:
             precos = baixar_precos([_norm_sa(e.ticker) for e in lista_empresas])
             if precos is None or precos.empty:
@@ -334,10 +361,10 @@ def render():
         except Exception:
             continue
 
-        if score.empty:
+        if score is None or score.empty:
             continue
 
-        # dividendos (normaliza para .SA) + líderes + backtest
+        # dividendos + líderes + backtest - MANTIDO
         tickers_score = [str(t) for t in score["ticker"].dropna().unique().tolist()]
         tickers_score_yf = [_norm_sa(t) for t in tickers_score]
         dividendos = coletar_dividendos(tickers_score_yf)
@@ -368,6 +395,62 @@ def render():
         # ── Exibição do segmento destacado
         st.markdown(f"### {setor} > {subsetor} > {segmento}")
         st.markdown(f"**Valor final da estratégia:** R$ {final_empresas:,.2f} ({diff:.1f}% acima do Tesouro Selic)")
+
+        # >>> PATCHES: acumular score e líderes globais (para patch1/patch2/patch3)
+        try:
+            score_tmp = score.copy()
+            score_tmp["SETOR"] = setor
+            score_tmp["SUBSETOR"] = subsetor
+            score_tmp["SEGMENTO"] = segmento
+            if {"Ano", "ticker", "Score_Ajustado"}.issubset(score_tmp.columns):
+                scores_globais.append(score_tmp[["Ano", "ticker", "Score_Ajustado", "SETOR", "SUBSETOR", "SEGMENTO"]])
+        except Exception:
+            pass
+
+        try:
+            lideres_tmp = lideres.copy()
+            lideres_tmp["SETOR"] = setor
+            lideres_tmp["SUBSETOR"] = subsetor
+            lideres_tmp["SEGMENTO"] = segmento
+            lideres_globais.append(lideres_tmp)
+        except Exception:
+            pass
+        # <<<
+
+        # >>> PATCHES: capturar contribuições por ticker (para patch4_diversificacao)
+        try:
+            cols_tick = patrimonio_empresas.columns.drop("Patrimônio", errors="ignore").tolist()
+            if cols_tick:
+                ini = patrimonio_empresas.iloc[0][cols_tick].astype(float)
+                fim = patrimonio_empresas.iloc[-1][cols_tick].astype(float)
+
+                total_fim = float(fim.sum()) if float(fim.sum()) != 0 else 1.0
+
+                for tk_col in cols_tick:
+                    tk_clean = _strip_sa(str(tk_col))
+                    v_ini = float(ini.get(tk_col, 0.0))
+                    v_fim = float(fim.get(tk_col, 0.0))
+                    ret = (v_fim / (v_ini + 1e-9)) - 1.0
+                    peso_final = v_fim / (total_fim + 1e-9)
+
+                    nome_tk = next((e.nome for e in lista_empresas if _strip_sa(e.ticker) == tk_clean), tk_clean)
+
+                    contrib_globais.append({
+                        "SETOR": setor,
+                        "SUBSETOR": subsetor,
+                        "SEGMENTO": segmento,
+                        "ticker": tk_clean,
+                        "nome": nome_tk,
+                        "valor_inicial": v_ini,
+                        "valor_final": v_fim,
+                        "peso_final": peso_final,
+                        "retorno_periodo": ret,
+                        "final_segmento": total_fim,
+                        "diff_vs_selic_pct": diff,
+                    })
+        except Exception:
+            pass
+        # <<<
 
         empresas_estrategia = patrimonio_empresas.columns.drop("Patrimônio", errors="ignore")
         colunas_empresas = st.columns(min(3, len(empresas_estrategia)))
@@ -415,6 +498,10 @@ def render():
                 }
             )
 
+    # >>> PATCHES: dedup líderes finais (evita repetição em cards finais e patches)
+    empresas_lideres_finais = _dedup_empresas_lideres(empresas_lideres_finais)
+    # <<<
+
     # ─────────────────────────────────────────────────────────
     # Bloco final: líderes para o próximo ano + distribuição setorial
     # ─────────────────────────────────────────────────────────
@@ -426,17 +513,17 @@ def render():
             col.markdown(
                 f"""
                 <div style='border: 2px solid #28a745; border-radius: 10px; padding: 12px; margin-bottom: 10px; background-color: #f0fff4; text-align: center;'>
-                    <img src="{emp['logo_url']}" width="45" />
-                    <h5 style="margin: 5px 0 0;">{emp['nome']}</h5>
-                    <p style="margin: 0; color: #666; font-size: 13px;">({emp['ticker']})</p>
-                    <p style="font-size: 12px; color: #333;">Líder em {emp['ano_lider']}<br>Para compra em {emp['ano_compra']}</p>
+                    <img src="{emp.get('logo_url','')}" width="45" />
+                    <h5 style="margin: 5px 0 0;">{emp.get('nome','')}</h5>
+                    <p style="margin: 0; color: #666; font-size: 13px;">({emp.get('ticker','')})</p>
+                    <p style="font-size: 12px; color: #333;">Líder em {emp.get('ano_lider','—')}<br>Para compra em {emp.get('ano_compra','—')}</p>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
 
         st.markdown("## 📊 Distribuição setorial do portfólio sugerido")
-        setores_portfolio = pd.Series([e["setor"] for e in empresas_lideres_finais]).value_counts()
+        setores_portfolio = pd.Series([e.get("setor", "OUTROS") for e in empresas_lideres_finais]).value_counts()
         fig, ax = plt.subplots()
         ax.pie(
             setores_portfolio.values,
@@ -455,7 +542,7 @@ def render():
         st.markdown("## 📊 Desempenho parcial das líderes (ano atual)")
 
         ano_corrente = datetime.now().year
-        tickers_corrente = [e["ticker"] for e in empresas_lideres_finais if int(e["ano_compra"]) == ano_corrente]
+        tickers_corrente = [e["ticker"] for e in empresas_lideres_finais if int(e.get("ano_compra", 0)) == ano_corrente]
 
         if tickers_corrente:
             tickers_corrente_yf = [_norm_sa(tk) for tk in tickers_corrente]
@@ -541,4 +628,15 @@ def render():
                 unsafe_allow_html=True,
             )
 
+    # ─────────────────────────────────────────────────────────
+    # PATCHES (1–4) via módulo separado
+    # ─────────────────────────────────────────────────────────
+    score_global = pd.concat(scores_globais, ignore_index=True) if scores_globais else pd.DataFrame()
+    lideres_global = pd.concat(lideres_globais, ignore_index=True) if lideres_globais else pd.DataFrame()
+
     st.markdown("<hr>", unsafe_allow_html=True)
+
+    render_patch1_regua_conviccao(score_global, lideres_global, empresas_lideres_finais)
+    render_patch2_dominancia(score_global, lideres_global, empresas_lideres_finais)
+    render_patch3_stress_test(score_global, lideres_global, empresas_lideres_finais)
+    render_patch4_diversificacao(empresas_lideres_finais, contrib_globais)
