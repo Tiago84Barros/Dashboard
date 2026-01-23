@@ -40,6 +40,7 @@ from core.portfolio import (
     calcular_patrimonio_selic_macro,
 )
 from core.weights import get_pesos
+from core.yf_data import get_yahoo_status
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,15 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────
 # Utilitários internos
 # ─────────────────────────────────────────────────────────────
+
+
+
+st = get_yahoo_status()
+if st.get("rate_limited"):
+    mins = int(st.get("cooldown_remaining_seconds", 0) // 60)
+    st.warning(f"Yahoo Finance em cooldown (rate limit). Tente novamente em ~{mins} min. "
+               "As funcionalidades que dependem do Yahoo podem ficar indisponíveis.")
+
 
 def _norm_sa(ticker: str) -> str:
     t = (ticker or "").strip().upper()
