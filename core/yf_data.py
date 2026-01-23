@@ -3,14 +3,12 @@ from __future__ import annotations
 """
 Camada de mercado via yfinance (B3).
 
-Objetivos desta versão:
-- Não depender de Streamlit (mas usar st.cache_data se disponível).
-- Remover duplicidades e padronizar retornos.
-- Evitar "end" fixo que compromete reprodutibilidade e alinhamento temporal.
-- Robustez para 1 ticker vs múltiplos tickers.
-- Robustez contra Rate Limit do Yahoo (YFRateLimitError).
-- (PATCH) Cache TTL também em baixar_precos / baixar_precos_ano_corrente.
-- (PATCH) Detectar rate limit "disfarçado" (HTTP 429 / Too Many Requests) em exceções genéricas.
+PATCH (2026-01):
+- Cache TTL manual (não congela vazio quando falha).
+- Chunking + pausa entre chunks para reduzir 429.
+- threads=False no yf.download (reduz agressividade).
+- Cache de dividendos por ticker (TTL) sem cachear falha como definitivo.
+- Mantém assinaturas públicas para minimizar mudanças no app.
 """
 
 from functools import lru_cache
@@ -25,16 +23,14 @@ import yfinance as yf
 
 logger = logging.getLogger(__name__)
 
-# yfinance rate-limit exception (nem sempre disponível dependendo da versão)
 try:
     from yfinance.exceptions import YFRateLimitError  # type: ignore
 except Exception:  # pragma: no cover
-    YFRateLimitError = Exception  # fallback conservador
+    YFRateLimitError = Exception
 
 
 # ────────────────────────── Util ────────────────────────────
 def _norm(ticker: str) -> str:
-    """Normaliza ticker para padrão B3 no Yahoo Finance (.SA)."""
     t = (ticker or "").strip().upper()
     if not t:
         return t
@@ -42,22 +38,15 @@ def _norm(ticker: str) -> str:
 
 
 def _strip_sa(col: str) -> str:
-    """Remove sufixo .SA do nome da coluna."""
     return col.replace(".SA", "")
 
 
 def _looks_like_rate_limit(exc: Exception) -> bool:
-    """
-    Alguns bloqueios do Yahoo não sobem como YFRateLimitError.
-    Ex.: HTTP 429, Too Many Requests, rate limit.
-    """
     msg = str(exc).lower()
     return ("429" in msg) or ("too many requests" in msg) or ("rate limit" in msg) or ("ratelimit" in msg)
 
 
 # ────────────────────────── Rate limit guard ─────────────────
-# Cooldown global quando detecta YFRateLimitError.
-# Quando Streamlit estiver disponível, também persistimos isso em st.session_state.
 _RATE_LIMIT_UNTIL_TS: float = 0.0
 _COOLDOWN_SECONDS_DEFAULT = 30 * 60  # 30 minutos
 
@@ -67,7 +56,6 @@ def _now_ts() -> float:
 
 
 def _is_rate_limited() -> bool:
-    global _RATE_LIMIT_UNTIL_TS
     return _now_ts() < float(_RATE_LIMIT_UNTIL_TS)
 
 
@@ -76,7 +64,7 @@ def _set_rate_limit_cooldown(seconds: int = _COOLDOWN_SECONDS_DEFAULT) -> None:
     _RATE_LIMIT_UNTIL_TS = _now_ts() + int(seconds)
 
 
-# ────────────────────────── Cache abstrato ──────────────────
+# ────────────────────────── Streamlit sync (opcional) ───────
 try:
     import streamlit as st  # type: ignore
 
@@ -84,10 +72,6 @@ try:
     _SS_KEY = "yf_rate_limit_until_ts"
 
     def _sync_rate_limit_from_session() -> None:
-        """
-        Sincroniza o cooldown do módulo com o session_state (por sessão),
-        para não martelar o Yahoo durante o rate limit.
-        """
         global _RATE_LIMIT_UNTIL_TS
         try:
             until = float(st.session_state.get(_SS_KEY, 0.0))
@@ -103,31 +87,64 @@ try:
         except Exception:
             pass
 
-    def _cache(ttl_seconds: int = 6 * 60 * 60):
-        """
-        Cache com TTL para não congelar respostas vazias em caso de falha/ratelimit.
-        """
-        def deco(func):
-            return st.cache_data(ttl=ttl_seconds, show_spinner=False)(func)  # pragma: no cover
-        return deco
-
-except Exception:  # sem streamlit
+except Exception:
     _ST_AVAILABLE = False
 
-    def _cache(ttl_seconds: int = 0):
-        """
-        Fallback sem Streamlit: LRU cache simples.
-        TTL é ignorado nesse modo.
-        """
-        def deco(func):
-            return lru_cache(maxsize=128)(func)
-        return deco
+    def _sync_rate_limit_from_session() -> None:
+        return
+
+    def _sync_rate_limit_to_session() -> None:
+        return
+
+
+# ────────────────────────── Cache TTL manual ─────────────────
+# IMPORTANTE: este cache só grava SUCESSO (df não vazio / series não vazia)
+# evitando "congelar vazio" em caso de falha/ratelimit.
+_PRICE_CACHE: Dict[str, Dict[str, object]] = {}
+_DIV_CACHE: Dict[str, Dict[str, object]] = {}
+
+def _price_key(tickers: Sequence[str], start: str, end: str, auto_adjust: bool, price_field: str) -> str:
+    t = sorted({_strip_sa(_norm(x)) for x in tickers if (x or "").strip()})
+    return f"PX|{start}|{end}|{int(auto_adjust)}|{price_field}|" + ",".join(t)
+
+def _cache_get_price(key: str, ttl_seconds: int) -> Optional[pd.DataFrame]:
+    hit = _PRICE_CACHE.get(key)
+    if not hit:
+        return None
+    ts = float(hit.get("ts", 0.0))
+    if (_now_ts() - ts) > ttl_seconds:
+        return None
+    df = hit.get("df")
+    if isinstance(df, pd.DataFrame) and not df.empty:
+        return df
+    return None
+
+def _cache_set_price(key: str, df: pd.DataFrame) -> None:
+    if df is None or df.empty:
+        return
+    _PRICE_CACHE[key] = {"ts": _now_ts(), "df": df}
+
+def _cache_get_div(ticker_clean: str, ttl_seconds: int) -> Optional[pd.Series]:
+    hit = _DIV_CACHE.get(ticker_clean)
+    if not hit:
+        return None
+    ts = float(hit.get("ts", 0.0))
+    if (_now_ts() - ts) > ttl_seconds:
+        return None
+    s = hit.get("s")
+    if isinstance(s, pd.Series) and not s.empty:
+        return s
+    return None
+
+def _cache_set_div(ticker_clean: str, s: pd.Series) -> None:
+    if s is None or s.empty:
+        return
+    _DIV_CACHE[ticker_clean] = {"ts": _now_ts(), "s": s}
 
 
 # ────────────────────────── get_company_info ────────────────
-@_cache(ttl_seconds=24 * 60 * 60)  # 24h
+@lru_cache(maxsize=256)
 def get_company_info(ticker: str) -> Tuple[Optional[str], Optional[str]]:
-    """Retorna (nome, website) quando disponíveis."""
     if _ST_AVAILABLE:
         _sync_rate_limit_from_session()
     if _is_rate_limited():
@@ -147,14 +164,12 @@ def get_company_info(ticker: str) -> Tuple[Optional[str], Optional[str]]:
         return None, None
 
     except Exception as e:
-        # (PATCH) tenta detectar rate limit disfarçado
         if _looks_like_rate_limit(e):
             logger.warning("Possível rate limit (get_company_info) para %s: %s", ticker, e)
             _set_rate_limit_cooldown()
             if _ST_AVAILABLE:
                 _sync_rate_limit_to_session()
             return None, None
-
         logger.debug("get_company_info falhou para %s: %s", ticker, e)
         return None, None
 
@@ -167,7 +182,7 @@ def _download_prices(
     auto_adjust: bool = True,
     price_field: str = "Close",
 ) -> pd.DataFrame:
-    """Baixa preços via yfinance, retornando DataFrame (index: datas; cols: tickers sem .SA)."""
+    """Baixa preços via yfinance, retornando DF (index datas; cols tickers sem .SA)."""
     if _ST_AVAILABLE:
         _sync_rate_limit_from_session()
     if _is_rate_limited():
@@ -187,7 +202,7 @@ def _download_prices(
             progress=False,
             auto_adjust=auto_adjust,
             group_by="ticker",
-            threads=True,
+            threads=False,  # PATCH: menos agressivo -> menos 429
         )
     except YFRateLimitError as e:
         logger.warning("Rate limit (_download_prices) para %s: %s", tks_yf, e)
@@ -195,16 +210,13 @@ def _download_prices(
         if _ST_AVAILABLE:
             _sync_rate_limit_to_session()
         return pd.DataFrame()
-
     except Exception as e:
-        # (PATCH) detectar 429 / Too Many Requests etc.
         if _looks_like_rate_limit(e):
             logger.warning("Possível rate limit (_download_prices) para %s: %s", tks_yf, e)
             _set_rate_limit_cooldown()
             if _ST_AVAILABLE:
                 _sync_rate_limit_to_session()
             return pd.DataFrame()
-
         logger.debug("_download_prices falhou para %s: %s", tks_yf, e)
         return pd.DataFrame()
 
@@ -230,7 +242,6 @@ def _download_prices(
                     if alt in set(lvl1):
                         df_out = raw.xs(alt, axis=1, level=1).copy()
                         break
-
     else:
         if price_field in raw.columns:
             df_out = raw[[price_field]].copy()
@@ -251,89 +262,184 @@ def _download_prices(
     return df_out
 
 
+def _download_prices_batched(
+    tickers: Sequence[str],
+    start: str,
+    end: str,
+    auto_adjust: bool = True,
+    price_field: str = "Close",
+    chunk_size: int = 80,
+    pause_seconds: float = 1.25,
+    max_retries: int = 2,
+) -> pd.DataFrame:
+    """PATCH: baixa em chunks para reduzir 429 e consolida colunas."""
+    tks = [t for t in (tickers or []) if (t or "").strip()]
+    if not tks:
+        return pd.DataFrame()
+
+    frames: List[pd.DataFrame] = []
+
+    for i in range(0, len(tks), chunk_size):
+        chunk = tks[i:i + chunk_size]
+
+        last_exc: Optional[Exception] = None
+        for attempt in range(max_retries + 1):
+            try:
+                df = _download_prices(chunk, start=start, end=end, auto_adjust=auto_adjust, price_field=price_field)
+                if df is not None and not df.empty:
+                    frames.append(df)
+                last_exc = None
+                break
+            except Exception as e:
+                last_exc = e
+                msg = str(e)
+                if ("Too Many Requests" in msg) or ("YFRateLimitError" in msg) or _looks_like_rate_limit(e):
+                    time.sleep(5 + attempt * 5)
+                else:
+                    time.sleep(1 + attempt * 1)
+
+        if last_exc is not None:
+            logger.debug("Chunk falhou (%s-%s): %s", i, i + chunk_size, last_exc)
+
+        time.sleep(pause_seconds)
+
+    if not frames:
+        return pd.DataFrame()
+
+    df_all = pd.concat(frames, axis=1)
+    df_all = df_all.loc[:, ~df_all.columns.duplicated()].copy()
+    df_all = df_all.sort_index()
+    return df_all
+
+
 # ────────────────────────── baixar_precos ───────────────────
-@_cache(ttl_seconds=6 * 60 * 60)  # (PATCH) 6h: evita downloads repetidos em reruns
 def baixar_precos(
     tickers: Union[str, Sequence[str]],
     start: str = "2010-01-01",
 ) -> pd.DataFrame:
     """
-    Baixa preços ajustados (auto_adjust=True) a partir de `start` até hoje (padrão).
+    Baixa preços ajustados (auto_adjust=True) a partir de `start` até hoje.
+    PATCH: cache TTL manual + chunking.
     """
     if isinstance(tickers, str):
         tickers_list = [tickers]
     else:
         tickers_list = list(tickers)
 
+    if _ST_AVAILABLE:
+        _sync_rate_limit_from_session()
+    if _is_rate_limited():
+        return pd.DataFrame()
+
     end = (pd.Timestamp.today().normalize() + pd.Timedelta(days=1)).date().isoformat()
+    key = _price_key(tickers_list, start, end, True, "Close")
+
+    cached = _cache_get_price(key, ttl_seconds=6 * 60 * 60)  # 6h
+    if cached is not None:
+        return cached
 
     try:
-        df = _download_prices(
+        df = _download_prices_batched(
             tickers_list,
             start=start,
             end=end,
             auto_adjust=True,
             price_field="Close",
+            chunk_size=80,
+            pause_seconds=1.25,
+            max_retries=2,
         )
-        return df
+        if df is not None and not df.empty:
+            _cache_set_price(key, df)
+        return df if df is not None else pd.DataFrame()
     except Exception as e:
         logger.exception("Erro ao baixar preços: %s", e)
         return pd.DataFrame()
 
 
 # ────────────────────────── baixar_precos_ano_corrente ──────
-@_cache(ttl_seconds=60 * 60)  # (PATCH) 1h: suficiente para "ano corrente"
 def baixar_precos_ano_corrente(tickers: Union[str, Sequence[str]]) -> pd.DataFrame:
     """
-    Baixa preços ajustados (auto_adjust=True) do ano corrente.
+    Mantida por compatibilidade.
+    PATCH: cache TTL manual (1h) + chunking.
     """
     if isinstance(tickers, str):
         tickers_list = [tickers]
     else:
         tickers_list = list(tickers)
 
+    if _ST_AVAILABLE:
+        _sync_rate_limit_from_session()
+    if _is_rate_limited():
+        return pd.DataFrame()
+
     ano = datetime.now().year
     start = f"{ano}-01-01"
-    end = f"{ano + 1}-01-01"  # exclusivo
+    end = f"{ano + 1}-01-01"
+
+    key = _price_key(tickers_list, start, end, True, "Close")
+    cached = _cache_get_price(key, ttl_seconds=60 * 60)  # 1h
+    if cached is not None:
+        return cached
 
     try:
-        df = _download_prices(
+        df = _download_prices_batched(
             tickers_list,
             start=start,
             end=end,
             auto_adjust=True,
             price_field="Close",
+            chunk_size=80,
+            pause_seconds=1.25,
+            max_retries=2,
         )
-        return df
+        if df is not None and not df.empty:
+            _cache_set_price(key, df)
+        return df if df is not None else pd.DataFrame()
     except Exception as e:
         logger.exception("Erro ao baixar preços do ano atual: %s", e)
         return pd.DataFrame()
 
 
 # ────────────────────────── coletar_dividendos ──────────────
-@_cache(ttl_seconds=12 * 60 * 60)  # 12h
 def coletar_dividendos(tickers: Sequence[str]) -> Dict[str, pd.Series]:
     """
-    Retorna dict {TICKER_SEM_SA: Series(dividendos)}, com índice datetime.
+    Retorna dict {TICKER_SEM_SA: Series(dividendos)} com índice datetime.
+    PATCH: cache por ticker (12h) e não cacheia vazio/erro como definitivo.
     """
     if _ST_AVAILABLE:
         _sync_rate_limit_from_session()
     if _is_rate_limited():
         return {_strip_sa(_norm(t)): pd.Series(dtype="float64") for t in (tickers or [])}
 
+    ttl_seconds = 12 * 60 * 60
     result: Dict[str, pd.Series] = {}
-    for t in tickers:
+
+    for t in (tickers or []):
         tk_yf = _norm(t)
         tk = _strip_sa(tk_yf)
+
+        hit = _cache_get_div(tk, ttl_seconds=ttl_seconds)
+        if hit is not None:
+            result[tk] = hit
+            continue
+
         try:
             div = yf.Ticker(tk_yf).dividends
             if div is None or len(div) == 0:
+                # IMPORTANTE: não cacheia vazio
                 result[tk] = pd.Series(dtype="float64")
                 continue
+
             div = div.copy()
             div.index = pd.to_datetime(div.index, errors="coerce")
             div = div.dropna()
-            result[tk] = div.astype(float)
+            div = div.astype(float)
+
+            if not div.empty:
+                _cache_set_div(tk, div)
+
+            result[tk] = div if not div.empty else pd.Series(dtype="float64")
 
         except YFRateLimitError as e:
             logger.warning("Rate limit (coletar_dividendos) para %s: %s", tk, e)
@@ -343,7 +449,6 @@ def coletar_dividendos(tickers: Sequence[str]) -> Dict[str, pd.Series]:
             result[tk] = pd.Series(dtype="float64")
 
         except Exception as e:
-            # (PATCH) detectar rate limit disfarçado
             if _looks_like_rate_limit(e):
                 logger.warning("Possível rate limit (coletar_dividendos) para %s: %s", tk, e)
                 _set_rate_limit_cooldown()
@@ -354,16 +459,13 @@ def coletar_dividendos(tickers: Sequence[str]) -> Dict[str, pd.Series]:
 
             logger.debug("coletar_dividendos falhou para %s: %s", tk, e)
             result[tk] = pd.Series(dtype="float64")
+
     return result
 
 
 # ────────────────────────── get_price ───────────────────────
-@_cache(ttl_seconds=60 * 60)  # 1h (preço muda; não cachear demais)
+@lru_cache(maxsize=512)
 def get_price(ticker: str) -> Optional[float]:
-    """
-    Retorna último preço disponível (Close) para o ticker.
-    Usa history() (mais estável que info()).
-    """
     if _ST_AVAILABLE:
         _sync_rate_limit_from_session()
     if _is_rate_limited():
@@ -395,15 +497,8 @@ def get_price(ticker: str) -> Optional[float]:
 
 
 # ────────────────────────── indicadores via info ────────────
-@_cache(ttl_seconds=12 * 60 * 60)  # 12h
+@lru_cache(maxsize=512)
 def get_fundamentals_yf(ticker: str) -> pd.DataFrame:
-    """
-    Extrai indicadores do yfinance.info e retorna como DataFrame (1 linha).
-
-    IMPORTANTE:
-    - .info é o endpoint mais sujeito a bloqueio (rate limit).
-    - Quando houver rate limit, retornamos DF com Nones para o UI usar fallback do DB.
-    """
     if _ST_AVAILABLE:
         _sync_rate_limit_from_session()
     if _is_rate_limited():
@@ -426,16 +521,13 @@ def get_fundamentals_yf(ticker: str) -> pd.DataFrame:
 
     try:
         info = yf.Ticker(_norm(ticker)).info
-
     except YFRateLimitError as e:
         logger.warning("Rate limit (get_fundamentals_yf) para %s: %s", ticker, e)
         _set_rate_limit_cooldown()
         if _ST_AVAILABLE:
             _sync_rate_limit_to_session()
         info = {}
-
     except Exception as e:
-        # (PATCH) detectar rate limit disfarçado
         if _looks_like_rate_limit(e):
             logger.warning("Possível rate limit (get_fundamentals_yf) para %s: %s", ticker, e)
             _set_rate_limit_cooldown()
@@ -459,8 +551,6 @@ def get_fundamentals_yf(ticker: str) -> pd.DataFrame:
         except (TypeError, ValueError):
             return None
 
-    # DY no Yahoo costuma vir em fração (0.05=5%). Seu UI trata DY como %.
-    # Aqui padronizamos para porcentagem.
     def dy_to_pct(val):
         try:
             if val is None:
@@ -481,9 +571,7 @@ def get_fundamentals_yf(ticker: str) -> pd.DataFrame:
         "P/VP": as_float(info.get("priceToBook")),
         "Payout": percent(info.get("payoutRatio")),
         "P/L": as_float(info.get("trailingPE")),
-        # Campos que o Yahoo pode não ter no mesmo conceito do seu DB:
         "Endividamento_Total": None,
-        # OBS: leveredFreeCashFlow não é alavancagem no sentido clássico.
         "Alavancagem_Financeira": as_float(info.get("leveredFreeCashFlow")),
         "Liquidez_Corrente": as_float(info.get("currentRatio")),
     }
@@ -494,7 +582,6 @@ def get_fundamentals_yf(ticker: str) -> pd.DataFrame:
     return df
 
 
-# ────────────────────────── __all__ ─────────────────────────
 __all__: List[str] = [
     "get_company_info",
     "baixar_precos",
