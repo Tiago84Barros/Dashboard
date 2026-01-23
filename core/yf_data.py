@@ -580,6 +580,20 @@ def get_fundamentals_yf(ticker: str) -> pd.DataFrame:
     df["Ticker"] = str(ticker).strip().upper()
     df["Data"] = pd.Timestamp.today().normalize()
     return df
+    
+def get_yahoo_status() -> dict:
+    """
+    Retorna status simples para debug/telemetria no UI.
+    """
+    global _RATE_LIMIT_UNTIL_TS
+    now = _now_ts()
+    until = float(_RATE_LIMIT_UNTIL_TS)
+    remaining = max(0.0, until - now)
+    return {
+        "rate_limited": bool(remaining > 0),
+        "cooldown_remaining_seconds": int(remaining),
+        "cooldown_until_ts": until,
+    }
 
 
 __all__: List[str] = [
@@ -589,4 +603,5 @@ __all__: List[str] = [
     "coletar_dividendos",
     "get_price",
     "get_fundamentals_yf",
+    "get_yahoo_status",
 ]
