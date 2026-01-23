@@ -30,11 +30,94 @@ def _short_label(s: str, max_len: int = 22) -> str:
     s = (s or "").strip()
     if not s:
         return "OUTROS"
-    # opcional: limpeza leve para reduzir tamanho
     s = s.replace("  ", " ")
-    # quebra linha para não embolar
     return "\n".join(textwrap.wrap(s, width=max_len)) if len(s) > max_len else s
 
+
+def _norm_sa(ticker: str) -> str:
+    t = (ticker or "").strip().upper()
+    return t if t.endswith(".SA") else f"{t}.SA"
+
+
+def _strip_sa(ticker: str) -> str:
+    return (ticker or "").strip().upper().replace(".SA", "").strip()
+
+
+def _chunk_list(xs: list[str], chunk_size: int) -> list[list[str]]:
+    if chunk_size <= 0:
+        return [xs]
+    return [xs[i:i + chunk_size] for i in range(0, len(xs), chunk_size)]
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _baixar_precos_lotes(tickers_sa_sorted: tuple[str, ...], lote: int = 40) -> pd.DataFrame:
+    """
+    Baixa preços em lotes para reduzir risco de rate limit/timeout.
+    Entrada é tuple ORDENADA (estável p/ cache).
+    Retorna DataFrame index=Date, columns=tickers_sa.
+    """
+    tickers = [t for t in tickers_sa_sorted if (t or "").strip()]
+    if not tickers:
+        return pd.DataFrame()
+
+    frames: list[pd.DataFrame] = []
+    for chunk in _chunk_list(tickers, int(lote)):
+        try:
+            df = baixar_precos(chunk)
+            if isinstance(df, pd.DataFrame) and not df.empty:
+                frames.append(df)
+        except Exception:
+            continue
+
+    if not frames:
+        return pd.DataFrame()
+
+    out = pd.concat(frames, axis=1)
+    # remove colunas duplicadas (pode acontecer em concat)
+    out = out.loc[:, ~out.columns.duplicated()]
+    return out
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _retornos_ano_preco(tickers_sorted: tuple[str, ...], ano: int) -> pd.Series:
+    """
+    Retorno simples de preço (sem dividendos) no ano calendário.
+    Retorna Series index=ticker_sem_SA, values=retorno (float).
+    Entrada é tuple ORDENADA (estável p/ cache).
+    """
+    tickers = [_strip_sa(t) for t in tickers_sorted if (t or "").strip()]
+    tickers = [t for t in tickers if t]
+    if not tickers:
+        return pd.Series(dtype=float)
+
+    tickers_yf = sorted({_norm_sa(t) for t in tickers})
+    precos = _baixar_precos_lotes(tuple(sorted(tickers_yf)), lote=40)
+
+    if precos is None or precos.empty:
+        return pd.Series(dtype=float)
+
+    precos.index = pd.to_datetime(precos.index, errors="coerce")
+    precos = precos.dropna(how="all")
+    if precos.empty:
+        return pd.Series(dtype=float)
+
+    ini = pd.Timestamp(f"{int(ano)}-01-01")
+    fim = pd.Timestamp(f"{int(ano)}-12-31")
+    precos = precos.loc[(precos.index >= ini) & (precos.index <= fim)]
+    if precos.empty:
+        return pd.Series(dtype=float)
+
+    precos = precos.resample("B").last().ffill()
+    if precos.shape[0] < 2:
+        return pd.Series(dtype=float)
+
+    first = precos.iloc[0]
+    last = precos.iloc[-1]
+    ret = (last / (first + 1e-12)) - 1.0
+
+    ret.index = [_strip_sa(c) for c in ret.index.astype(str).tolist()]
+    ret = pd.to_numeric(ret, errors="coerce").dropna()
+    return ret
 
 
 # ─────────────────────────────────────────────────────────────
@@ -87,7 +170,6 @@ def render_patch1_regua_conviccao(
     smax = float(df_ano["Score_Ajustado"].max())
     df_ano["score_norm"] = ((df_ano["Score_Ajustado"] - smin) / ((smax - smin) + 1e-9)) * 100.0
 
-    # Normaliza lideres_global
     if not lg.empty and {"Ano", "ticker"}.issubset(lg.columns):
         lg = lg.copy()
         lg["ticker"] = lg["ticker"].astype(str).apply(_norm_tk)
@@ -224,6 +306,7 @@ def render_patch2_dominancia(
         "baixa frequência pode indicar caso cíclico/pontual."
     )
 
+
 # ─────────────────────────────────────────────────────────────
 # PATCH 3 — Stress Test de Robustez
 # ─────────────────────────────────────────────────────────────
@@ -264,7 +347,6 @@ def render_patch3_stress_test(
 
     ultimo_ano = int(max(anos_disp))
 
-    # 1) Estabilidade anual do conjunto de líderes (Jaccard)
     lideres_por_ano = (
         lg.groupby("Ano")["ticker"]
         .apply(lambda s: set(s.dropna().astype(str).tolist()))
@@ -282,7 +364,6 @@ def render_patch3_stress_test(
 
     df_jaccard = pd.DataFrame(jaccard_rows)
 
-    # 2) Consistência dos tickers finais (quantos anos foi líder)
     pres_rows = []
     for tk in sorted(tickers_finais):
         anos_lider = sorted(lg.loc[lg["ticker"] == tk, "Ano"].dropna().astype(int).unique().tolist())
@@ -290,14 +371,12 @@ def render_patch3_stress_test(
     df_pres = pd.DataFrame(pres_rows)
     pct_com_hist = float((df_pres["anos_como_lider"] > 0).mean()) if not df_pres.empty else 0.0
 
-    # 3) Sensibilidade à suavização (rolling 3y)
     sg2 = sg.sort_values(["ticker", "Ano"]).copy()
     sg2["Score_Suavizado_3y"] = (
         sg2.groupby("ticker")["Score_Ajustado"]
         .transform(lambda s: s.rolling(window=3, min_periods=2).mean())
     )
 
-    # grupo_col se existir
     grupo_col = None
     for cand in ["SEGMENTO", "SUBSETOR", "SETOR"]:
         if cand in sg2.columns:
@@ -327,7 +406,6 @@ def render_patch3_stress_test(
     inter = orig_last.intersection(suav_last)
     jacc_suav = (len(inter) / (len(un) + 1e-9)) if un else 0.0
 
-    # UI
     c1, c2, c3 = st.columns(3)
     with c1:
         if not df_jaccard.empty:
@@ -373,262 +451,11 @@ def render_patch4_diversificacao(
         return
 
     tickers = [_norm_tk(e.get("ticker", "")) for e in empresas_lideres_finais if _norm_tk(e.get("ticker", ""))]
-    tickers = list(dict.fromkeys(tickers))  # preserva ordem e remove duplicatas
+    tickers = list(dict.fromkeys(tickers))
 
-    # setores (se existir no dict)
     setores = [str(e.get("setor", "OUTROS")) for e in empresas_lideres_finais if _norm_tk(e.get("ticker", "")) in tickers]
 
-    # pesos: tenta usar contrib_globais (se existir) agregando por ticker; senão pesos iguais
     weights = None
     if contrib_globais:
         try:
-            dfc = pd.DataFrame(contrib_globais).copy()
-            if not dfc.empty and {"ticker", "valor_final"}.issubset(dfc.columns):
-                dfc["ticker"] = dfc["ticker"].astype(str).apply(_norm_tk)
-                agg = dfc.groupby("ticker")["valor_final"].sum()
-                agg = agg[agg.index.isin(tickers)]
-                if not agg.empty and float(agg.sum()) > 0:
-                    weights = (agg / agg.sum()).to_dict()
-        except Exception:
-            weights = None
-
-    if weights is None:
-        w = 1.0 / max(1, len(tickers))
-        weights = {tk: w for tk in tickers}
-
-    # ticker concentration
-    w_series = pd.Series(weights).reindex(tickers).fillna(0.0)
-    w_series = w_series / (w_series.sum() + 1e-9)
-
-    hhi = float((w_series**2).sum())
-    effective_n = float(1.0 / (hhi + 1e-9))
-    w_max = float(w_series.max())
-    top3 = float(w_series.sort_values(ascending=False).head(3).sum())
-
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.metric("Concentração (HHI)", f"{hhi:.3f}")
-    with c2:
-        st.metric("N efetivo de apostas", f"{effective_n:.1f}")
-    with c3:
-        st.metric("Maior peso (ticker)", f"{w_max*100:.1f}%")
-
-    st.caption(f"Top 3 tickers concentram: **{top3*100:.1f}%** do portfólio (estimado).")
-
-    # tabela pesos
-    dfw = pd.DataFrame({
-        "ticker": tickers,
-        "empresa": [_get_nome(tk, empresas_lideres_finais) for tk in tickers],
-        "peso_%": (w_series.values * 100.0),
-    }).sort_values("peso_%", ascending=False)
-
-    st.dataframe(dfw, use_container_width=True)
-
-    # concentração setorial (usa setor do dict; se não houver, cai em OUTROS)
-    df_set = pd.DataFrame({"ticker": tickers, "setor": setores[:len(tickers)] if setores else ["OUTROS"] * len(tickers)})
-    df_set["peso"] = df_set["ticker"].map(lambda t: float(weights.get(_norm_tk(t), 0.0)))
-    set_agg = df_set.groupby("setor")["peso"].sum().sort_values(ascending=False)
-
-    if not set_agg.empty:
-        st.markdown("### Concentração por setor")
-
-        # prepara labels “amigáveis”
-        set_agg = set_agg.sort_values(ascending=True)  # para barh ficar “bonito”
-        labels = [_short_label(str(x), max_len=22) for x in set_agg.index.astype(str).tolist()]
-        values = set_agg.values.astype(float)
-
-        # altura dinâmica: evita compressão
-        h = max(3.5, 0.55 * len(labels))
-        fig, ax = plt.subplots(figsize=(10, h))
-
-        ax.barh(labels, values)
-        ax.set_xlabel("Peso (0–1)")
-        ax.set_ylabel("Setor")
-        ax.grid(True, linestyle="--", alpha=0.4)
-
-        # limites e formatação
-        ax.set_xlim(0, max(0.05, float(values.max()) * 1.15))
-
-        fig.tight_layout()
-        st.pyplot(fig)
-
-
-def _norm_sa(ticker: str) -> str:
-    t = (ticker or "").strip().upper()
-    return t if t.endswith(".SA") else f"{t}.SA"
-
-
-def _strip_sa(ticker: str) -> str:
-    return (ticker or "").strip().upper().replace(".SA", "").strip()
-
-
-@st.cache_data(show_spinner=False, ttl=3600)
-def _retornos_ano_preco(tickers: list[str], ano: int) -> pd.Series:
-    """
-    Retorno simples de preço (sem dividendos) no ano calendário.
-    Retorna Series index=ticker_sem_SA, values=retorno (float).
-    """
-    if not tickers:
-        return pd.Series(dtype=float)
-
-    tickers_yf = [_norm_sa(t) for t in tickers]
-    precos = baixar_precos(tickers_yf)
-
-    if precos is None or precos.empty:
-        return pd.Series(dtype=float)
-
-    precos.index = pd.to_datetime(precos.index, errors="coerce")
-    precos = precos.dropna(how="all")
-    if precos.empty:
-        return pd.Series(dtype=float)
-
-    ini = pd.Timestamp(f"{ano}-01-01")
-    fim = pd.Timestamp(f"{ano}-12-31")
-    precos = precos.loc[(precos.index >= ini) & (precos.index <= fim)]
-    if precos.empty:
-        return pd.Series(dtype=float)
-
-    # padroniza para preços diários úteis
-    precos = precos.resample("B").last().ffill()
-    if precos.shape[0] < 2:
-        return pd.Series(dtype=float)
-
-    first = precos.iloc[0]
-    last = precos.iloc[-1]
-    ret = (last / (first + 1e-12)) - 1.0
-
-    # limpa nomes (.SA -> sem .SA)
-    ret.index = [ _strip_sa(c) for c in ret.index.astype(str).tolist() ]
-    ret = pd.to_numeric(ret, errors="coerce").dropna()
-
-    return ret
-
-# ─────────────────────────────────────────────────────────────
-# PATCH 5 — Desempenho das empresas escolhidas de acordo com o resultado do último ano do score
-# ─────────────────────────────────────────────────────────────
-
-def render_patch5_benchmark_segmento(score_global: pd.DataFrame, empresas_lideres_finais: list[dict]) -> None:
-    """
-    Patch 6 — compara retorno no último ano do score vs retorno médio do segmento (SETOR>SUBSETOR>SEGMENTO).
-    Observação: retorno por preço (sem dividendos) por robustez e performance.
-    """
-
-    st.markdown("## 📌 Benchmark do Segmento (último ano do score)")
-    st.caption(
-        "Compara o retorno das empresas escolhidas no último ano do score com o retorno médio do "
-        "segmento (SETOR > SUBSETOR > SEGMENTO) em que elas estão inseridas."
-    )
-
-    if score_global is None or score_global.empty or not empresas_lideres_finais:
-        st.info("Benchmark do segmento indisponível nesta execução (faltam dados de score ou líderes finais).")
-        return
-
-    required = {"Ano", "ticker", "SETOR", "SUBSETOR", "SEGMENTO"}
-    if not required.issubset(set(score_global.columns)):
-        st.info(f"Benchmark do segmento indisponível: score_global não contém colunas {sorted(required)}.")
-        return
-
-    df = score_global.copy()
-    df["Ano"] = pd.to_numeric(df["Ano"], errors="coerce")
-    df["ticker"] = df["ticker"].astype(str).map(_strip_sa)
-    df["SETOR"] = df["SETOR"].astype(str).fillna("OUTROS")
-    df["SUBSETOR"] = df["SUBSETOR"].astype(str).fillna("OUTROS")
-    df["SEGMENTO"] = df["SEGMENTO"].astype(str).fillna("OUTROS")
-    df = df.dropna(subset=["Ano", "ticker"])
-
-    if df.empty:
-        st.info("Benchmark do segmento indisponível: score_global vazio após normalização.")
-        return
-
-    ultimo_ano = int(df["Ano"].max())
-    df_ano = df[df["Ano"] == ultimo_ano].copy()
-    if df_ano.empty:
-        st.info("Benchmark do segmento indisponível: não há linhas no último ano do score.")
-        return
-
-    # mapeia ticker -> setor/subsetor/segmento (no último ano do score)
-    meta = (
-        df_ano[["ticker", "SETOR", "SUBSETOR", "SEGMENTO"]]
-        .drop_duplicates(subset=["ticker"])
-        .reset_index(drop=True)
-    )
-    meta_map = meta.set_index("ticker")[["SETOR", "SUBSETOR", "SEGMENTO"]].to_dict("index")
-
-    # tickers finais
-    tickers_finais = sorted({ _strip_sa(str(e.get("ticker",""))) for e in empresas_lideres_finais if str(e.get("ticker","")).strip() })
-    if not tickers_finais:
-        st.info("Benchmark do segmento indisponível: tickers finais vazios.")
-        return
-
-    # monta universo por segmento para benchmark (no último ano do score)
-    df_ano["id_segmento"] = df_ano["SETOR"] + " > " + df_ano["SUBSETOR"] + " > " + df_ano["SEGMENTO"]
-    uni_segmento = (
-        df_ano.groupby("id_segmento")["ticker"]
-        .apply(lambda s: sorted(set(s.dropna().tolist())))
-        .to_dict()
-    )
-
-    # opcional: limitar universo para performance (evita chamadas enormes no yfinance)
-    MAX_UNIVERSE = 40
-
-    linhas = []
-    # calcula retornos por segmento (cacheado por ano)
-    for tk in tickers_finais:
-        info = meta_map.get(tk)
-        if not info:
-            continue
-
-        id_seg = f"{info['SETOR']} > {info['SUBSETOR']} > {info['SEGMENTO']}"
-        universo = uni_segmento.get(id_seg, [])
-
-        # limita tamanho por segurança (mantém representatividade sem travar)
-        universo_lim = universo[:MAX_UNIVERSE]
-
-        # retornos no ano
-        ret_uni = _retornos_ano_preco(universo_lim, ultimo_ano)
-        ret_tk = _retornos_ano_preco([tk], ultimo_ano)
-
-        seg_mean = float(ret_uni.mean()) if (ret_uni is not None and not ret_uni.empty) else float("nan")
-        tk_ret = float(ret_tk.iloc[0]) if (ret_tk is not None and not ret_tk.empty) else float("nan")
-
-        linhas.append({
-            "ticker": tk,
-            "empresa": next((e.get("nome") for e in empresas_lideres_finais if _strip_sa(str(e.get("ticker",""))) == tk), tk),
-            "SETOR": info["SETOR"],
-            "SUBSETOR": info["SUBSETOR"],
-            "SEGMENTO": info["SEGMENTO"],
-            "retorno_empresa_%": tk_ret * 100.0 if pd.notna(tk_ret) else float("nan"),
-            "retorno_medio_segmento_%": seg_mean * 100.0 if pd.notna(seg_mean) else float("nan"),
-            "alpha_vs_segmento_pp": ((tk_ret - seg_mean) * 100.0) if (pd.notna(tk_ret) and pd.notna(seg_mean)) else float("nan"),
-            "tamanho_universo_usado": len(universo_lim),
-        })
-
-    if not linhas:
-        st.info("Não foi possível montar o comparativo (metadados do segmento não encontrados para os tickers finais).")
-        return
-
-    out = pd.DataFrame(linhas)
-    out = out.sort_values(["alpha_vs_segmento_pp", "retorno_empresa_%"], ascending=[False, False])
-
-    st.markdown(f"**Ano analisado (último ano do score): {ultimo_ano}**")
-    st.dataframe(out, use_container_width=True)
-
-    st.caption(
-        f"Nota técnica: o retorno é de **preço** (sem dividendos) para robustez e velocidade. "
-        f"O benchmark do segmento usa até **{MAX_UNIVERSE} tickers** do segmento para evitar travamentos."
-    )
-
-    # Gráfico: alpha vs segmento (pp)
-    with st.expander("📊 Gráfico: Alpha vs média do segmento (p.p.)", expanded=False):
-        plot_df = out.dropna(subset=["alpha_vs_segmento_pp"]).copy()
-        if plot_df.empty:
-            st.info("Sem dados suficientes para plotar.")
-        else:
-            fig, ax = plt.subplots(figsize=(10, 4))
-            ax.bar(plot_df["ticker"].astype(str), plot_df["alpha_vs_segmento_pp"].astype(float))
-            ax.set_ylabel("Alpha vs segmento (p.p.)")
-            ax.set_xlabel("Ticker")
-            ax.set_title("Retorno da empresa menos retorno médio do segmento (último ano do score)")
-            ax.grid(True, linestyle="--", alpha=0.4)
-            st.pyplot(fig)
-
+            dfc = pd.DataFrame(contrib_glob_
