@@ -77,4 +77,235 @@ def _get_macro_cached() -> pd.DataFrame:
 # Render
 # ─────────────────────────────────────────────────────────────
 def render() -> None:
-    st.markdown(
+    st.markdown("<h1 style='text-align:center'>Análise Avançada de Ações</h1>", unsafe_allow_html=True)
+
+    setores_df = _get_setores_cached()
+    if setores_df is None or setores_df.empty:
+        st.error("Não foi possível carregar a base de setores do banco.")
+        st.stop()
+
+    required_cols = {"SETOR", "SUBSETOR", "SEGMENTO", "ticker"}
+    if not required_cols.issubset(set(setores_df.columns)):
+        st.error(f"Base de setores não contém as colunas esperadas: {sorted(required_cols)}")
+        st.stop()
+
+    dados_macro = _get_macro_cached()
+    if dados_macro is None or dados_macro.empty or "Data" not in dados_macro.columns:
+        st.error("Não foi possível carregar/normalizar os dados macroeconômicos.")
+        st.stop()
+
+    # Sidebar filtros
+    with st.sidebar:
+        setor_sel = st.selectbox("Setor:", sorted(setores_df["SETOR"].dropna().astype(str).unique().tolist()))
+        subsetores = setores_df.loc[setores_df["SETOR"] == setor_sel, "SUBSETOR"].dropna().astype(str).unique().tolist()
+        subsetor_sel = st.selectbox("Subsetor:", sorted(subsetores))
+
+        segmentos = setores_df.loc[
+            (setores_df["SETOR"] == setor_sel) & (setores_df["SUBSETOR"] == subsetor_sel),
+            "SEGMENTO",
+        ].dropna().astype(str).unique().tolist()
+        segmento_sel = st.selectbox("Segmento:", sorted(segmentos))
+
+        st.markdown("Perfil de empresa:")
+        perfil = st.radio(
+            "Perfil de empresa:",
+            options=["Crescimento (<10 anos)", "Estabelecida (≥10 anos)", "Todas"],
+            index=2,
+            label_visibility="collapsed",
+        )
+
+        with st.expander("Scoring (opções)", expanded=False):
+            anos_minimos = st.slider("Anos mínimos (scoring):", min_value=3, max_value=12, value=4)
+            st.caption("Mais anos mínimos = mais robustez, porém menor universo.")
+        executar = st.button("Executar análise avançada")
+
+    st.markdown("#### Diagnóstico (dados do Supabase)")
+    st.caption("Este painel usa dados fundamentalistas do banco e preços do Yahoo (quando disponível).")
+
+    df_filtrado = setores_df[
+        (setores_df["SETOR"] == setor_sel) &
+        (setores_df["SUBSETOR"] == subsetor_sel) &
+        (setores_df["SEGMENTO"] == segmento_sel)
+    ].copy()
+
+    if df_filtrado.empty:
+        st.info("Nenhuma empresa encontrada para os filtros selecionados.")
+        return
+
+    tickers = df_filtrado["ticker"].astype(str).map(_strip_sa).tolist()
+    tickers = [t for t in tickers if t]
+
+    # Aplica perfil (anos de DRE)
+    tickers_ok = []
+    for tk in tickers:
+        dre = load_data_from_supabase(_norm_sa(tk))
+        anos = _safe_year_count_from_dre(dre) if isinstance(dre, pd.DataFrame) else 0
+        if perfil.startswith("Crescimento") and anos >= 10:
+            continue
+        if perfil.startswith("Estabelecida") and anos < 10:
+            continue
+        tickers_ok.append(tk)
+
+    if len(set(tickers_ok)) <= 1:
+        st.info("Filtro retornou universo insuficiente para análise (<= 1 ticker).")
+        return
+
+    # Cards "Empresas no filtro"
+    st.markdown("## Empresas no filtro")
+    cards = df_filtrado[df_filtrado["ticker"].astype(str).map(_strip_sa).isin(set(tickers_ok))].copy()
+    cards = cards.drop_duplicates(subset=["ticker"]).reset_index(drop=True)
+
+    if not cards.empty:
+        for i in range(0, len(cards), 2):
+            cols = st.columns(2, gap="large")
+            for j in range(2):
+                if i + j < len(cards):
+                    row = cards.iloc[i + j]
+                    tk = _strip_sa(str(row["ticker"]))
+                    with cols[j]:
+                        st.markdown(
+                            f"""
+                            <div style="border:1px solid #ddd;border-radius:10px;padding:14px;background:#fff;text-align:center;">
+                                <img src="{get_logo_url(tk)}" width="52" />
+                                <div style="margin-top:8px;font-weight:700;">{row.get('nome_empresa', tk)}</div>
+                                <div style="color:#666;font-size:13px;">({tk})</div>
+                                <div style="color:#999;font-size:12px;margin-top:6px;">Histórico DRE: {_safe_year_count_from_dre(load_data_from_supabase(_norm_sa(tk)))} ano(s)</div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+
+    if not executar:
+        return
+
+    # Carrega payloads (DRE + múltiplos) do banco
+    lista_empresas = []
+    for tk in tickers_ok:
+        tk_sa = _norm_sa(tk)
+        mult = load_multiplos_from_supabase(tk_sa)
+        dre = load_data_from_supabase(tk_sa)
+
+        if not isinstance(mult, pd.DataFrame) or not isinstance(dre, pd.DataFrame):
+            continue
+        if mult.empty or dre.empty:
+            continue
+
+        mult = _clean_columns(mult)
+        dre = _clean_columns(dre)
+
+        if "Data" in mult.columns and "Ano" not in mult.columns:
+            mult["Ano"] = pd.to_datetime(mult["Data"], errors="coerce").dt.year
+        if "Data" in dre.columns and "Ano" not in dre.columns:
+            dre["Ano"] = pd.to_datetime(dre["Data"], errors="coerce").dt.year
+
+        lista_empresas.append({"ticker": tk, "nome": tk, "multiplos": mult, "dre": dre})
+
+    if len(lista_empresas) <= 1:
+        st.info("Sem dados suficientes no banco para executar o scoring no filtro selecionado.")
+        return
+
+    # Score
+    pesos = get_pesos(setor_sel)
+    setores_empresa = {e["ticker"]: {"SETOR": setor_sel, "SUBSETOR": subsetor_sel, "SEGMENTO": segmento_sel} for e in lista_empresas}
+
+    try:
+        score = calcular_score_acumulado(lista_empresas, setores_empresa, pesos, dados_macro, anos_minimos=anos_minimos)
+    except Exception as e:
+        st.error(f"Falha no cálculo do score: {e}")
+        return
+
+    if score is None or score.empty:
+        st.info("Score vazio para o filtro selecionado.")
+        return
+
+    # Penalidades
+    try:
+        score = penalizar_crowding(score, grupo_col="SEGMENTO")
+        score = penalizar_decay_lideranca(score, grupo_col="SEGMENTO")
+    except Exception:
+        pass
+
+    # Preços (Yahoo) para penalidade de platô e backtest
+    tickers_yf = [_norm_sa(e["ticker"]) for e in lista_empresas]
+    precos = baixar_precos(tickers_yf)
+
+    if precos is None or precos.empty:
+        st.warning("Não foi possível baixar preços para o segmento selecionado.")
+        return
+
+    precos.index = pd.to_datetime(precos.index, errors="coerce")
+    precos = precos.dropna(how="all")
+    if precos.empty:
+        st.warning("Preços vazios após normalização.")
+        return
+
+    # Penalidade de platô (mensal)
+    precos_mensal = precos.resample("M").last()
+    try:
+        score = penalizar_plato(score, precos_mensal, meses=12, penal=0.30)
+    except Exception:
+        pass
+
+    # Diagnóstico de anomalias (split/dividendos/multiplicadores)
+    try:
+        anom = detectar_anomalias_mercado(precos, tickers=[_strip_sa(t) for t in tickers_yf])
+        if isinstance(anom, dict) and any(bool(v) for v in anom.values()):
+            st.warning(
+                f"Interpretação: flag_preco={anom.get('flag_preco')} sugere preço fora de escala (split/ajuste/coluna errada); "
+                f"flag_div={anom.get('flag_div')} sugere unidade errada de dividendos; "
+                f"flag_mult={anom.get('flag_mult')} indica explosão do multiplicador."
+            )
+    except Exception:
+        pass
+
+    # Dividendos (opcional, pode falhar com rate-limit)
+    dividendos = {}
+    try:
+        dividendos = coletar_dividendos(tickers_yf)
+    except Exception:
+        dividendos = {}
+
+    # Backtest
+    try:
+        # Import aqui para evitar ciclos em alguns deploys
+        from core.helpers import determinar_lideres
+
+        lideres = determinar_lideres(score)
+        if lideres is None or lideres.empty:
+            st.info("Não foi possível determinar líderes para o filtro selecionado.")
+            return
+
+        patrimonio_empresas, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
+        if patrimonio_empresas is None or patrimonio_empresas.empty:
+            st.info("Backtest vazio.")
+            return
+
+        patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aportes)
+        if patrimonio_selic is None or patrimonio_selic.empty:
+            st.info("Benchmark Selic indisponível.")
+            return
+
+        final_emp = float(patrimonio_empresas.iloc[-1].drop("Patrimônio", errors="ignore").sum())
+        final_selic = float(patrimonio_selic.iloc[-1]["Tesouro Selic"])
+
+        st.markdown("## Resultado do filtro")
+        st.success(f"Valor final da estratégia: R$ {final_emp:,.2f} | Tesouro Selic: R$ {final_selic:,.2f}")
+
+        # Gráfico simples
+        st.markdown("### Evolução do patrimônio")
+        df_plot = pd.DataFrame({
+            "Estratégia": patrimonio_empresas.drop(columns=["Patrimônio"], errors="ignore").sum(axis=1),
+            "Tesouro Selic": patrimonio_selic["Tesouro Selic"],
+        }).dropna()
+
+        fig, ax = plt.subplots(figsize=(10, 4))
+        df_plot["Estratégia"].plot(ax=ax, label="Estratégia")
+        df_plot["Tesouro Selic"].plot(ax=ax, label="Tesouro Selic")
+        ax.set_ylabel("R$")
+        ax.grid(True, linestyle="--", alpha=0.4)
+        ax.legend()
+        st.pyplot(fig)
+
+    except Exception as e:
+        st.error(f"Falha no backtest: {e}")
+        return
