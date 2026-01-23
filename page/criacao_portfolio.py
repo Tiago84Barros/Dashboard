@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Optional, Sequence, Tuple, Dict
+from typing import List, Optional, Sequence, Tuple
 
 import pandas as pd
 import streamlit as st
@@ -42,23 +42,15 @@ from core.portfolio import (
 from core.yf_data import (
     baixar_precos,
     coletar_dividendos,
+    baixar_precos_ano_corrente,
 )
 from core.weights import get_pesos
-
-# >>> Patches em módulo separado
-from page.portfolio_patches import (
-    render_patch1_regua_conviccao,
-    render_patch2_dominancia,
-    render_patch3_stress_test,
-    render_patch4_diversificacao,
-)
-# <<<
 
 logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────
-# Utilitários internos
+# Utilitários internos (sem mexer em outros módulos)
 # ─────────────────────────────────────────────────────────────
 
 def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -73,7 +65,7 @@ def _norm_sa(ticker: str) -> str:
 
 
 def _strip_sa(ticker: str) -> str:
-    return (ticker or "").strip().upper().replace(".SA", "").strip()
+    return (ticker or "").strip().upper().replace(".SA", "")
 
 
 def _safe_year_count_from_dre(dre: pd.DataFrame) -> int:
@@ -122,7 +114,7 @@ def _carregar_empresa(row: dict) -> Optional[EmpresaCarregada]:
 
         return EmpresaCarregada(ticker=tk, nome=nome, multiplos=mult, dre=dre)
     except Exception as e:
-        logger.debug("Falha ao carregar empresa %s: %s", row.get("ticker"), e, exc_info=True)
+        logger.debug("Falha ao carregar empresa %s: %s", row.get("ticker"), e)
         return None
 
 
@@ -153,7 +145,7 @@ def _filtrar_tickers_com_min_anos(tickers: Sequence[str], min_anos: int = 10, ma
 
 def _build_macro() -> Optional[pd.DataFrame]:
     """
-    Retorna macro com coluna 'Data' (não index), alinhado ao padrão.
+    Retorna macro com coluna 'Data' (não index), alinhado ao padrão das outras páginas.
     """
     dados_macro = load_macro_summary()
     if dados_macro is None or dados_macro.empty:
@@ -166,68 +158,6 @@ def _build_macro() -> Optional[pd.DataFrame]:
     dados_macro["Data"] = pd.to_datetime(dados_macro["Data"], errors="coerce")
     dados_macro = dados_macro.dropna(subset=["Data"]).sort_values("Data").reset_index(drop=True)
     return dados_macro
-
-
-def _dedup_empresas_lideres(empresas: List[Dict]) -> List[Dict]:
-    """
-    Dedup por ticker mantendo o primeiro registro visto.
-    """
-    seen = {}
-    for e in empresas:
-        tk = _strip_sa(str(e.get("ticker", "")))
-        if tk and tk not in seen:
-            seen[tk] = e
-    return list(seen.values())
-
-
-# ─────────────────────────────────────────────────────────────
-# Patch anti-rate-limit: preços globais 1x por execução
-# ─────────────────────────────────────────────────────────────
-
-def _get_precos_global_mensal(setores_df: pd.DataFrame, min_anos_dre: int = 10) -> pd.DataFrame:
-    """
-    Baixa preços uma única vez (global), já em frequência mensal.
-    Usa session_state para evitar repetição em reruns.
-    """
-    cache_key = f"precos_global_mensal_minanos_{int(min_anos_dre)}"
-    precos_global = st.session_state.get(cache_key)
-
-    if precos_global is not None and isinstance(precos_global, pd.DataFrame) and not precos_global.empty:
-        return precos_global
-
-    # Universo de tickers do setores_df
-    tickers_universo = (
-        setores_df["ticker"].astype(str)
-        .str.upper()
-        .str.replace(".SA", "", regex=False)
-        .str.strip()
-    )
-    tickers_universo = sorted({t for t in tickers_universo.tolist() if t})
-
-    # Reduz universo antes de chamar yfinance (muito importante)
-    tickers_universo_ok = _filtrar_tickers_com_min_anos(tickers_universo, min_anos=min_anos_dre, max_workers=12)
-    if not tickers_universo_ok:
-        st.error("Não foi possível montar universo de tickers com histórico mínimo para baixar preços.")
-        st.stop()
-
-    tickers_universo_yf = [_norm_sa(t) for t in tickers_universo_ok]
-
-    precos = baixar_precos(tickers_universo_yf)
-    if precos is None or precos.empty:
-        st.error("Falha ao baixar preços (global).")
-        st.stop()
-
-    precos.index = pd.to_datetime(precos.index, errors="coerce")
-    precos = precos.dropna(how="all")
-    if precos.empty:
-        st.error("Preços (global) vazios após normalização.")
-        st.stop()
-
-    # Mensal (para penalizar_plato e reduzir carga)
-    precos_mensal = precos.resample("M").last()
-
-    st.session_state[cache_key] = precos_mensal
-    return precos_mensal
 
 
 # ─────────────────────────────────────────────────────────────
@@ -248,14 +178,6 @@ def render():
             else:
                 use_score_v2 = st.checkbox("Usar Score v2 (robusto)", value=True)
         # <<< PATCH SCORE V2
-
-        # >>> PATCH Yahoo: controle de carga (dividendos no YTD)
-        with st.expander("Yahoo (opções de carga)", expanded=False):
-            incluir_dividendos_ytd = st.checkbox(
-                "Incluir dividendos no gráfico do ano atual (mais lento / mais chamadas)",
-                value=False
-            )
-        # <<< PATCH Yahoo
 
         gerar = st.button("Gerar Portfólio")
 
@@ -284,7 +206,7 @@ def render():
 
     # valida colunas esperadas
     required_cols = {"SETOR", "SUBSETOR", "SEGMENTO", "ticker"}
-    if not required_cols.issubset(set(setores_df.columns)):
+    if not required_cols.issubset(setores_df.columns):
         st.error(f"Base de setores não contém as colunas esperadas: {sorted(required_cols)}")
         st.stop()
 
@@ -310,11 +232,6 @@ def render():
         st.error("Não foi possível carregar/normalizar os dados macroeconômicos.")
         st.stop()
 
-    # ─────────────────────────────────────────────────────────
-    # PATCH anti-rate-limit: baixa preços global (mensal) uma única vez
-    # ─────────────────────────────────────────────────────────
-    precos_global_mensal = _get_precos_global_mensal(setores_df, min_anos_dre=10)
-
     # grupos únicos por segmento
     setores_unicos = (
         setores_df[["SETOR", "SUBSETOR", "SEGMENTO"]]
@@ -324,13 +241,8 @@ def render():
 
     empresas_lideres_finais: List[dict] = []
 
-    # ── acumuladores globais para patches
-    scores_globais: List[pd.DataFrame] = []
-    lideres_globais: List[pd.DataFrame] = []
-    contrib_globais: List[Dict] = []
-
     # ─────────────────────────────────────────────────────────
-    # Loop por segmento
+    # Loop por segmento (pipeline leve)
     # ─────────────────────────────────────────────────────────
     for _, seg in setores_unicos.iterrows():
         setor = str(seg["SETOR"])
@@ -377,118 +289,70 @@ def render():
         if len(lista_empresas) <= 1:
             continue
 
-        # mapeia setor por empresa (fluxo v1)
+        # mapeia setor por empresa
         setores_empresa = {e.ticker: obter_setor_da_empresa(e.ticker, setores_df) for e in lista_empresas}
 
-        # pesos por SETOR
+        # pesos por SETOR (regra existente)
         pesos = get_pesos(setor)
 
-        # payload do scoring
+        # score acumulado
         payload_empresas = [
             {"ticker": e.ticker, "nome": e.nome, "multiplos": e.multiplos, "dre": e.dre}
             for e in lista_empresas
         ]
 
-        # score acumulado (v1/v2)
-        try:
-            if ("use_score_v2" in locals()) and use_score_v2 and (calcular_score_acumulado_v2 is not None):
-                score = calcular_score_acumulado_v2(
-                    lista_empresas=payload_empresas,
-                    group_map=group_map,
-                    subsetor_map=subsetor_map,
-                    setor_map=setor_map,
-                    pesos_utilizados=pesos,
-                    anos_minimos=4,
-                    prefer_group_col="SEGMENTO",
-                    min_n_group=7,
-                )
-            else:
-                score = calcular_score_acumulado(payload_empresas, setores_empresa, pesos, dados_macro, anos_minimos=4)
-        except Exception as e:
-            logger.debug("Falha no scoring (%s > %s > %s): %s", setor, subsetor, segmento, e, exc_info=True)
-            continue
+        # >>> PATCH SCORE V2 (switch v1/v2)
+        if ("use_score_v2" in locals()) and use_score_v2 and (calcular_score_acumulado_v2 is not None):
+            score = calcular_score_acumulado_v2(
+                lista_empresas=payload_empresas,
+                group_map=group_map,
+                subsetor_map=subsetor_map,
+                setor_map=setor_map,
+                pesos_utilizados=pesos,
+                anos_minimos=4,
+                prefer_group_col="SEGMENTO",
+                min_n_group=7,
+            )
+        else:
+            score = calcular_score_acumulado(payload_empresas, setores_empresa, pesos, dados_macro, anos_minimos=4)
+        # <<< PATCH SCORE V2
 
         if score is None or score.empty:
             continue
 
-        # ─────────────────────────────────────────────────────
-        # PATCH anti-rate-limit: usa preços globais já baixados
-        # ─────────────────────────────────────────────────────
+        # preços + penalização de platô (mensal)
         try:
-            cols_seg = [e.ticker for e in lista_empresas if e.ticker in precos_global_mensal.columns]
-            precos_mensal = precos_global_mensal[cols_seg].dropna(how="all")
-            if precos_mensal.empty:
+            precos = baixar_precos([_norm_sa(e.ticker) for e in lista_empresas])
+            if precos is None or precos.empty:
                 continue
-
+            precos.index = pd.to_datetime(precos.index, errors="coerce")
+            precos = precos.dropna(how="all")
+            if precos.empty:
+                continue
+            precos_mensal = precos.resample("M").last()
             score = penalizar_plato(score, precos_mensal, meses=12, penal=0.30)
-        except Exception as e:
-            logger.debug("Falha em preços/penalização (%s > %s > %s): %s", setor, subsetor, segmento, e, exc_info=True)
+        except Exception:
             continue
 
-        if score is None or score.empty:
+        if score.empty:
             continue
 
-        # líderes do segmento
+        # dividendos (normaliza para .SA) + líderes + backtest
+        tickers_score = [str(t) for t in score["ticker"].dropna().unique().tolist()]
+        tickers_score_yf = [_norm_sa(t) for t in tickers_score]
+        dividendos = coletar_dividendos(tickers_score_yf)
+
         lideres = determinar_lideres(score)
         if lideres is None or lideres.empty:
             continue
 
-        # ── acumula score e líderes (global) para patches finais
-        try:
-            score_tmp = score.copy()
-            score_tmp["SETOR"] = setor
-            score_tmp["SUBSETOR"] = subsetor
-            score_tmp["SEGMENTO"] = segmento
-            if {"Ano", "ticker", "Score_Ajustado"}.issubset(score_tmp.columns):
-                scores_globais.append(score_tmp[["Ano", "ticker", "Score_Ajustado", "SETOR", "SUBSETOR", "SEGMENTO"]])
-        except Exception:
-            pass
-
-        try:
-            lideres_tmp = lideres.copy()
-            lideres_tmp["SETOR"] = setor
-            lideres_tmp["SUBSETOR"] = subsetor
-            lideres_tmp["SEGMENTO"] = segmento
-            lideres_globais.append(lideres_tmp)
-        except Exception:
-            pass
-
-        # ─────────────────────────────────────────────────────
-        # Backtest: preços DIÁRIOS do segmento (após scoring/líderes)
-        # ─────────────────────────────────────────────────────
-        try:
-            tickers_seg_yf = [_norm_sa(e.ticker) for e in lista_empresas]
-            precos_diario = baixar_precos(tickers_seg_yf)
-            if precos_diario is None or precos_diario.empty:
-                continue
-
-            precos_diario.index = pd.to_datetime(precos_diario.index, errors="coerce")
-            precos_diario = precos_diario.dropna(how="all")
-            if precos_diario.empty:
-                continue
-        except Exception as e:
-            logger.debug("Falha ao baixar preços diários (%s > %s > %s): %s", setor, subsetor, segmento, e, exc_info=True)
+        patrimonio_empresas, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
+        if patrimonio_empresas is None or patrimonio_empresas.empty:
             continue
 
-        # ─────────────────────────────────────────────────────
-        # Dividendos: por padrão vazio (minimiza chamadas).
-        # Caso queira, mantenha o bloco comentado e controle por checkbox.
-        # ─────────────────────────────────────────────────────
-        dividendos: Dict[str, pd.Series] = {}
+        patrimonio_empresas = patrimonio_empresas.apply(pd.to_numeric, errors="coerce")
+        final_empresas = float(patrimonio_empresas.iloc[-1].drop("Patrimônio", errors="ignore").sum())
 
-        # ── Backtest (apenas 1 vez)
-        try:
-            patrimonio_empresas, datas_aportes = gerir_carteira(precos_diario, score, lideres, dividendos)
-            if patrimonio_empresas is None or patrimonio_empresas.empty:
-                continue
-
-            patrimonio_empresas = patrimonio_empresas.apply(pd.to_numeric, errors="coerce")
-            final_empresas = float(patrimonio_empresas.iloc[-1].drop("Patrimônio", errors="ignore").sum())
-        except Exception as e:
-            logger.debug("Falha gerir_carteira (%s > %s > %s): %s", setor, subsetor, segmento, e, exc_info=True)
-            continue
-
-        # ── Benchmark Selic
         patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aportes)
         if patrimonio_selic is None or patrimonio_selic.empty:
             continue
@@ -499,49 +363,12 @@ def render():
 
         diff = ((final_empresas / final_selic) - 1) * 100.0
         if diff < margem_superior:
-            continue  # segmento não aprovado
+            continue
 
-        # ─────────────────────────────────────────────
-        # Segmento aprovado: exibição + captação de contribuições
-        # ─────────────────────────────────────────────
+        # ── Exibição do segmento destacado
         st.markdown(f"### {setor} > {subsetor} > {segmento}")
         st.markdown(f"**Valor final da estratégia:** R$ {final_empresas:,.2f} ({diff:.1f}% acima do Tesouro Selic)")
 
-        # PATCH 5 — capturar contribuições por ticker (somente para segmento aprovado)
-        try:
-            cols_tick = patrimonio_empresas.columns.drop("Patrimônio", errors="ignore").tolist()
-            if cols_tick:
-                ini = patrimonio_empresas.iloc[0][cols_tick].astype(float)
-                fim = patrimonio_empresas.iloc[-1][cols_tick].astype(float)
-
-                total_fim = float(fim.sum()) if float(fim.sum()) != 0 else 1.0
-
-                for tk_col in cols_tick:
-                    tk_clean = _strip_sa(str(tk_col))
-                    v_ini = float(ini.get(tk_col, 0.0))
-                    v_fim = float(fim.get(tk_col, 0.0))
-                    ret = (v_fim / (v_ini + 1e-9)) - 1.0
-                    peso_final = v_fim / (total_fim + 1e-9)
-
-                    nome_tk = next((e.nome for e in lista_empresas if _strip_sa(e.ticker) == tk_clean), tk_clean)
-
-                    contrib_globais.append({
-                        "SETOR": setor,
-                        "SUBSETOR": subsetor,
-                        "SEGMENTO": segmento,
-                        "ticker": tk_clean,
-                        "nome": nome_tk,
-                        "valor_inicial": v_ini,
-                        "valor_final": v_fim,
-                        "peso_final": peso_final,
-                        "retorno_periodo": ret,
-                        "final_segmento": total_fim,
-                        "diff_vs_selic_pct": diff,
-                    })
-        except Exception as e:
-            logger.debug("Falha contribuições (%s > %s > %s): %s", setor, subsetor, segmento, e, exc_info=True)
-
-        # Cards das empresas do segmento
         empresas_estrategia = patrimonio_empresas.columns.drop("Patrimônio", errors="ignore")
         colunas_empresas = st.columns(min(3, len(empresas_estrategia)))
 
@@ -550,8 +377,8 @@ def render():
 
             tk_clean = _strip_sa(str(ticker_col))
             logo_url = get_logo_url(tk_clean)
-            nome = next((e.nome for e in lista_empresas if _strip_sa(e.ticker) == tk_clean), tk_clean)
 
+            nome = next((e.nome for e in lista_empresas if _strip_sa(e.ticker) == tk_clean), tk_clean)
             valor_final = float(patrimonio_empresas[ticker_col].iloc[-1])
             perc_part = (valor_final / final_empresas) * 100.0 if final_empresas != 0 else 0.0
 
@@ -589,15 +416,6 @@ def render():
             )
 
     # ─────────────────────────────────────────────────────────
-    # Consolidação global (scores e líderes) para patches finais
-    # ─────────────────────────────────────────────────────────
-    score_global = pd.concat(scores_globais, ignore_index=True) if scores_globais else pd.DataFrame()
-    lideres_global = pd.concat(lideres_globais, ignore_index=True) if lideres_globais else pd.DataFrame()
-
-    # dedup líderes finais
-    empresas_lideres_finais = _dedup_empresas_lideres(empresas_lideres_finais)
-
-    # ─────────────────────────────────────────────────────────
     # Bloco final: líderes para o próximo ano + distribuição setorial
     # ─────────────────────────────────────────────────────────
     if empresas_lideres_finais:
@@ -608,17 +426,17 @@ def render():
             col.markdown(
                 f"""
                 <div style='border: 2px solid #28a745; border-radius: 10px; padding: 12px; margin-bottom: 10px; background-color: #f0fff4; text-align: center;'>
-                    <img src="{emp.get('logo_url','')}" width="45" />
-                    <h5 style="margin: 5px 0 0;">{emp.get('nome','')}</h5>
-                    <p style="margin: 0; color: #666; font-size: 13px;">({emp.get('ticker','')})</p>
-                    <p style="font-size: 12px; color: #333;">Líder em {emp.get('ano_lider','—')}<br>Para compra em {emp.get('ano_compra','—')}</p>
+                    <img src="{emp['logo_url']}" width="45" />
+                    <h5 style="margin: 5px 0 0;">{emp['nome']}</h5>
+                    <p style="margin: 0; color: #666; font-size: 13px;">({emp['ticker']})</p>
+                    <p style="font-size: 12px; color: #333;">Líder em {emp['ano_lider']}<br>Para compra em {emp['ano_compra']}</p>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
 
         st.markdown("## 📊 Distribuição setorial do portfólio sugerido")
-        setores_portfolio = pd.Series([e.get("setor", "OUTROS") for e in empresas_lideres_finais]).value_counts()
+        setores_portfolio = pd.Series([e["setor"] for e in empresas_lideres_finais]).value_counts()
         fig, ax = plt.subplots()
         ax.pie(
             setores_portfolio.values,
@@ -637,17 +455,14 @@ def render():
         st.markdown("## 📊 Desempenho parcial das líderes (ano atual)")
 
         ano_corrente = datetime.now().year
-        tickers_corrente = [e["ticker"] for e in empresas_lideres_finais if int(e.get("ano_compra", 0)) == ano_corrente]
+        tickers_corrente = [e["ticker"] for e in empresas_lideres_finais if int(e["ano_compra"]) == ano_corrente]
 
         if tickers_corrente:
             tickers_corrente_yf = [_norm_sa(tk) for tk in tickers_corrente]
 
-            # PATCH: evita baixar_precos_ano_corrente (chamada extra)
-            start_ytd = f"{ano_corrente}-01-01"
-            precos = baixar_precos(tickers_corrente_yf, start=start_ytd)
-
+            precos = baixar_precos_ano_corrente(tickers_corrente_yf)
             if precos is None or precos.empty:
-                st.warning("Dados de preço indisponíveis para as ações escolhidas no ano atual.")
+                st.warning("⚠️ Dados de preço indisponíveis para as ações escolhidas no ano atual.")
                 st.stop()
 
             precos.index = pd.to_datetime(precos.index, errors="coerce")
@@ -655,18 +470,11 @@ def render():
             precos = precos.resample("B").last().ffill()
 
             if precos.empty:
-                st.warning("Dados de preço indisponíveis para as ações escolhidas no ano atual.")
+                st.warning("⚠️ Dados de preço indisponíveis para as ações escolhidas no ano atual.")
                 st.stop()
 
             tickers_limpos = [_strip_sa(tk) for tk in tickers_corrente_yf]
-
-            # PATCH: dividendos no YTD só se explicitamente habilitado
-            dividendos_dict: Dict[str, pd.Series] = {}
-            if ("incluir_dividendos_ytd" in locals()) and incluir_dividendos_ytd:
-                try:
-                    dividendos_dict = coletar_dividendos(tickers_corrente_yf)
-                except Exception:
-                    dividendos_dict = {}
+            dividendos_dict = coletar_dividendos(tickers_corrente_yf)
 
             datas_potenciais = pd.date_range(start=f"{ano_corrente}-01-01", end=f"{ano_corrente}-12-31", freq="MS")
             datas_aporte: List[pd.Timestamp] = []
@@ -677,9 +485,10 @@ def render():
 
             patrimonio_aporte = gerir_carteira_simples(precos, tickers_limpos, datas_aporte, dividendos_dict=dividendos_dict)
 
+            # Selic benchmark (no mesmo índice do patrimônio da estratégia)
             df_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aporte)
             if df_selic is None or df_selic.empty:
-                st.warning("Não foi possível calcular o benchmark Selic para o período.")
+                st.warning("⚠️ Não foi possível calcular o benchmark Selic para o período.")
                 st.stop()
 
             df_selic = df_selic.reindex(patrimonio_aporte.index).ffill()
@@ -693,7 +502,7 @@ def render():
             ).dropna()
 
             if df_final.empty or df_final["Tesouro Selic"].isna().all():
-                st.warning("Não foi possível construir gráfico com os dados disponíveis.")
+                st.warning("⚠️ Não foi possível construir gráfico com os dados disponíveis.")
                 st.stop()
 
             st.markdown(f"### Comparativo de desempenho parcial em {ano_corrente}")
@@ -723,7 +532,7 @@ def render():
             st.markdown(
                 f"""
                 <div style="margin-top: 20px; padding: 15px; border-radius: 8px; background-color: #f9f9f9; border-left: 5px solid {cor};">
-                    <h4 style="margin: 0;">Resultado Comparativo</h4>
+                    <h4 style="margin: 0;">📊 Resultado Comparativo</h4>
                     <p style="font-size: 16px; color: #333;">{mensagem}</p>
                     <p style="font-size: 14px; color: #666;">Retorno total da estratégia sobre o capital aportado no ano: <strong>{retorno_estrategia:.2f}%</strong></p>
                     <p style="font-size: 14px; color: #999;">Baseado nas empresas líderes selecionadas com score fundamentalista ajustado.</p>
@@ -732,12 +541,4 @@ def render():
                 unsafe_allow_html=True,
             )
 
-    # ─────────────────────────────────────────────────────────
-    # PATCHES (1–5) via módulo separado
-    # ─────────────────────────────────────────────────────────
     st.markdown("<hr>", unsafe_allow_html=True)
-
-    render_patch1_regua_conviccao(score_global, lideres_global, empresas_lideres_finais)
-    render_patch2_dominancia(score_global, lideres_global, empresas_lideres_finais)
-    render_patch3_stress_test(score_global, lideres_global, empresas_lideres_finais)
-    render_patch4_diversificacao(empresas_lideres_finais, contrib_globais)
