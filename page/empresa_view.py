@@ -98,48 +98,52 @@ def _pick_first(row: pd.Series, *cols: str):
     return None
 
 
+def _is_missing(x) -> bool:
+    try:
+        if x is None:
+            return True
+        if isinstance(x, (float, int)):
+            if pd.isna(x) or np.isinf(x) or float(x) == 0.0:
+                return True
+        if isinstance(x, str) and not x.strip():
+            return True
+    except Exception:
+        return True
+    return False
+
+
 def _compute_pl_pvp_from_db_and_price(
-    ticker: str,
     indicadores: pd.DataFrame,
     mult_db_latest: pd.DataFrame,
     price: float | None,
 ) -> dict:
     """
-    Calcula P/L e P/VP quando DB não tiver, usando:
+    Calcula P/L e P/VP quando possível:
       P/L = Preço / LPA
-      P/VP = Preço / VPA
-    VPA pode vir:
-      - coluna VPA
-      - ou Patrimonio_Liquido / N_Acoes (se existir)
+      P/VP = Preço / VPA  (ou PL / N_Acoes)
     """
     out = {"P/L": None, "P/VP": None}
 
     if price is None or not np.isfinite(price) or price <= 0:
         return out
 
-    # pega última linha de indicadores (DRE) para LPA/VPA/Patrimônio
     ind = indicadores.copy()
     if "Data" in ind.columns:
         ind["Data"] = pd.to_datetime(ind["Data"], errors="coerce")
         ind = ind.dropna(subset=["Data"]).sort_values("Data")
-    last_ind = ind.iloc[-1] if not ind.empty else None
+    if ind.empty:
+        return out
 
-    lpa = None
-    vpa = None
-    pliq = None
+    last_ind = ind.iloc[-1]
+    lpa = _safe_float(_pick_first(last_ind, "LPA", "Lucro_Por_Acao", "LucroPorAcao"))
+    vpa = _safe_float(_pick_first(last_ind, "VPA", "Valor_Patrimonial_Por_Acao", "ValorPatrimonialPorAcao"))
+    pliq = _safe_float(_pick_first(last_ind, "Patrimonio_Liquido", "PatrimonioLiquido"))
 
-    if last_ind is not None:
-        lpa = _safe_float(_pick_first(last_ind, "LPA", "Lucro_Por_Acao", "LucroPorAcao"))
-        vpa = _safe_float(_pick_first(last_ind, "VPA", "Valor_Patrimonial_Por_Acao", "ValorPatrimonialPorAcao"))
-        pliq = _safe_float(_pick_first(last_ind, "Patrimonio_Liquido", "PatrimonioLiquido"))
-
-    # tenta N_Acoes do múltiplo DB
     n_acoes = None
     if mult_db_latest is not None and not mult_db_latest.empty:
         rowm = mult_db_latest.iloc[0]
-        n_acoes = _safe_float(_pick_first(rowm, "N_Acoes", "N Acoes", "N_Acoes_Total", "Num_Acoes"))
+        n_acoes = _safe_float(_pick_first(rowm, "N_Acoes", "N Acoes", "Num_Acoes", "N_Acoes_Total"))
 
-    # calcula VPA se não existir
     if vpa is None and pliq is not None and n_acoes is not None and n_acoes > 0:
         vpa = pliq / n_acoes
 
@@ -158,54 +162,76 @@ def _merge_display_multiplos(
     computed: dict,
 ) -> tuple[pd.DataFrame, dict]:
     """
-    Monta DF final (1 linha) e mapa de fonte por coluna:
-    - Base: DB (sempre disponível)
-    - Complemento: Yahoo (se existir snapshot)
-    - Complemento 2: Computados (P/L, P/VP) quando possível
+    Monta DF final (1 linha) e fontes:
+      - Base: DB
+      - Complemento: YF (só nos campos faltantes)
+      - Complemento: Calc (P/L, P/VP se computados)
     """
     fonte: dict = {}
-    db1 = _latest_row_by_date(db_latest) if db_latest is not None else pd.DataFrame()
-    df_disp = db1.copy()
 
-    # fonte inicial: DB
+    db1 = _latest_row_by_date(db_latest) if db_latest is not None else pd.DataFrame()
+    df_disp = db1.copy() if db1 is not None else pd.DataFrame()
+
     if df_disp is not None and not df_disp.empty:
         for c in df_disp.columns:
             fonte[c] = "DB"
 
-    # injeta Yahoo se existir e vier com campos
+    # Injeta Yahoo apenas se existir (1 linha)
     if isinstance(yf_latest, pd.DataFrame) and not yf_latest.empty:
-        # garante 1 linha
         yf1 = yf_latest.head(1).copy()
+        if df_disp is None or df_disp.empty:
+            df_disp = pd.DataFrame([{}])
+
         for c in yf1.columns:
             yv = yf1.at[0, c]
-            # se DB não tem ou DB é vazio e Yahoo tem algo, usa Yahoo
-            if (df_disp is None) or df_disp.empty or (c not in df_disp.columns):
-                if df_disp is None or df_disp.empty:
-                    df_disp = pd.DataFrame([{}])
+            if c not in df_disp.columns:
                 df_disp[c] = yv
                 fonte[c] = "YF"
             else:
-                # se DB está vazio/NaN e Yahoo tem, preenche
                 dbv = df_disp.at[0, c]
-                miss_db = (dbv is None) or (isinstance(dbv, float) and (pd.isna(dbv) or np.isinf(dbv))) or (isinstance(dbv, (int, float)) and float(dbv) == 0.0)
-                miss_yf = (yv is None) or (isinstance(yv, float) and (pd.isna(yv) or np.isinf(yv))) or (isinstance(yv, (int, float)) and float(yv) == 0.0)
-                if miss_db and not miss_yf:
+                if _is_missing(dbv) and not _is_missing(yv):
                     df_disp.at[0, c] = yv
                     fonte[c] = "YF"
 
-    # injeta computados (se existirem)
     if df_disp is None or df_disp.empty:
         df_disp = pd.DataFrame([{}])
 
+    # Computados (sobrescrevem apenas se existirem)
     if computed.get("P/L") is not None:
         df_disp["P/L"] = computed["P/L"]
         fonte["P/L"] = "Calc"
-
     if computed.get("P/VP") is not None:
         df_disp["P/VP"] = computed["P/VP"]
         fonte["P/VP"] = "Calc"
 
     return df_disp, fonte
+
+
+@st.cache_data(show_spinner=False, ttl=6 * 60 * 60)
+def _yf_snapshot_if_needed(ticker: str, need: tuple[bool, bool, bool]) -> dict:
+    """
+    Snapshot silencioso (cacheado por 6h) — evita martelar Yahoo.
+
+    need:
+      (need_info, need_price, need_fund)
+    """
+    need_info, need_price, need_fund = need
+
+    out = {"name": None, "website": None, "price": None, "fund": None}
+
+    # Faz somente o mínimo necessário
+    if need_info:
+        name, website = get_company_info(ticker)
+        out["name"] = name
+        out["website"] = website
+
+    if need_price:
+        out["price"] = get_price(ticker)
+
+    if need_fund:
+        out["fund"] = get_fundamentals_yf(ticker)
+
+    return out
 
 
 # ─────────────────────────────────────────────────────────────
@@ -219,7 +245,7 @@ def render_empresa_view(ticker: str):
 
     ticker = str(ticker).strip().upper()
 
-    # ── DRE / indicadores do DB
+    # ── DB: DRE / indicadores
     indicadores = load_data_from_db(ticker)
     if indicadores is None or indicadores.empty:
         st.error("Indicadores financeiros (DRE) não encontrados no banco.")
@@ -229,36 +255,41 @@ def render_empresa_view(ticker: str):
     indicadores["Data"] = pd.to_datetime(indicadores["Data"], errors="coerce")
     indicadores = indicadores.dropna(subset=["Data"]).sort_values("Data")
 
-    # ── Controle: Yahoo sob demanda (evita rate limit)
-    st.markdown("### Dados externos (Yahoo Finance)")
-    st.caption("Para evitar rate limit, o Yahoo só é consultado quando você clicar no botão.")
-    colb1, colb2 = st.columns([1, 5])
-    with colb1:
-        btn_yahoo = st.button("Atualizar Yahoo", use_container_width=True, key=f"btn_yahoo_{ticker}")
-    with colb2:
-        st.caption("Se estiver em rate limit, o core/yf_data aplica cooldown automaticamente.")
+    # ── DB: múltiplos
+    mult_db_recent = load_multiplos_limitado_from_db(ticker, limite=12)
+    mult_db_latest = _latest_row_by_date(mult_db_recent) if mult_db_recent is not None else pd.DataFrame()
 
-    snap_key = f"yf_empresa_snapshot::{ticker}"
-    snap = st.session_state.get(snap_key)
+    # ── Determina quais campos estão faltando no DB e só então consulta Yahoo (silencioso)
+    need_fund = False
+    if mult_db_latest is None or mult_db_latest.empty:
+        need_fund = True
+    else:
+        row = mult_db_latest.iloc[0]
+        # queremos preencher apenas o que estiver faltando
+        for col in ["DY", "P/VP", "P/L", "Payout"]:
+            if col not in mult_db_latest.columns or _is_missing(row.get(col)):
+                need_fund = True
+                break
 
-    # atualiza snapshot só se usuário clicar
-    if btn_yahoo:
-        name, website = get_company_info(ticker)
-        price = get_price(ticker)
-        fund = get_fundamentals_yf(ticker)  # 1 linha
-        snap = {"name": name, "website": website, "price": price, "fund": fund}
-        st.session_state[snap_key] = snap
+    # preço ajuda em P/L e P/VP (calc), e também para mostrar no topo
+    need_price = True  # sempre tentamos (cacheado) — se falhar, só fica indisponível
 
-    # ── Cabeçalho (usa snapshot se existir; caso contrário, não chama Yahoo)
-    company_name = (snap.get("name") if isinstance(snap, dict) else None) or ticker.replace(".SA", "").upper()
-    company_website = (snap.get("website") if isinstance(snap, dict) else None)
-    current_price = (snap.get("price") if isinstance(snap, dict) else None)
+    # info (nome/site) é opcional; tentamos sempre, mas cacheado
+    need_info = True
+
+    snap = _yf_snapshot_if_needed(ticker, (need_info, need_price, need_fund))
+    company_name = snap.get("name") or ticker.replace(".SA", "").upper()
+    company_website = snap.get("website")
+    current_price = _safe_float(snap.get("price"))
+    fund_yf = snap.get("fund") if isinstance(snap.get("fund"), pd.DataFrame) else None
+
+    # ── Header (sem mencionar fonte)
     logo_url = get_logo_url(ticker)
 
     col1, col2 = st.columns([4, 1])
     with col1:
         if current_price is None:
-            st.subheader(f"{company_name} — Preço atual indisponível (clique em Atualizar Yahoo)")
+            st.subheader(f"{company_name} — Preço atual indisponível")
         else:
             st.subheader(
                 f"{company_name} — Preço Atual: R$ {current_price:,.2f}"
@@ -357,23 +388,15 @@ def render_empresa_view(ticker: str):
             st.plotly_chart(px.bar(dfm, x="Data", y="Valor", color="Indicador", barmode="group"), use_container_width=True)
 
     # ─────────────────────────────────────────────────────────
-    # Indicadores Financeiros (cards) — DB + Yahoo (sob demanda) + calculados
+    # Indicadores Financeiros (cards)
     # ─────────────────────────────────────────────────────────
     st.markdown("---")
     st.markdown("### Indicadores Financeiros")
 
-    mult_db_recent = load_multiplos_limitado_from_db(ticker, limite=12)
-    mult_db_latest = _latest_row_by_date(mult_db_recent) if mult_db_recent is not None else pd.DataFrame()
-
-    fund_yf = (snap.get("fund") if isinstance(snap, dict) else None)
-    if not isinstance(fund_yf, pd.DataFrame):
-        fund_yf = None
-
     computed = _compute_pl_pvp_from_db_and_price(
-        ticker=ticker,
         indicadores=indicadores,
         mult_db_latest=mult_db_latest,
-        price=_safe_float(current_price),
+        price=current_price,
     )
 
     multiplos_display, fontes = _merge_display_multiplos(mult_db_latest, fund_yf, computed)
@@ -407,7 +430,7 @@ def render_empresa_view(ticker: str):
     ]
 
     if multiplos_display is None or multiplos_display.empty:
-        st.info("Indicadores financeiros indisponíveis (DB/YF).")
+        st.info("Indicadores financeiros indisponíveis.")
     else:
         rows = (len(valores) + 3) // 4
         for i in range(rows):
@@ -416,13 +439,11 @@ def render_empresa_view(ticker: str):
                 with cols[j]:
                     v = multiplos_display.at[0, col_key] if col_key in multiplos_display.columns else None
                     tooltip = descricoes.get(label, "")
-                    src = fontes.get(col_key, "—")
                     st.markdown(
                         f"""
                         <div class='metric-box' title="{tooltip}">
                             <div class='metric-value'>{_fmt_metric(label, v)}</div>
                             <div class='metric-label'><strong>{label}</strong></div>
-                            <div class='metric-source'>Fonte: {src}</div>
                         </div>
                         """,
                         unsafe_allow_html=True,
