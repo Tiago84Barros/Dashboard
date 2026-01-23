@@ -48,8 +48,8 @@ def render_patch1_regua_conviccao(
 ) -> None:
     st.markdown("## 🧭 Régua de Convicção Fundamental")
     st.caption(
-        "Força relativa das empresas selecionadas no último ano disponível do score, "
-        "normalizada em 0–100 com base no Score_Ajustado."
+        "Patch 1 (Régua de Convicção): mede quão forte foi a seleção no último ano do score. "
+        "Quanto maior o score normalizado e maior o gap para o 2º colocado, maior a convicção da tese."
     )
 
     sg = _safe_df(score_global).copy()
@@ -136,8 +136,8 @@ def render_patch2_dominancia(
 ) -> None:
     st.markdown("## 🏆 Mapa de Dominância no Segmento")
     st.caption(
-        "Frequência de liderança mede em quantos anos a empresa foi líder "
-        "dividido pelo número de anos em que ela participou do ranking (histórico do score)."
+        "Patch 2 (Dominância): avalia se a liderança é estrutural ou pontual. "
+        "Alta frequência de liderança no histórico sugere tese mais durável; baixa frequência sugere ciclo/oportunidade específica."
     )
 
     sg = _safe_df(score_global).copy()
@@ -235,8 +235,8 @@ def render_patch3_stress_test(
 ) -> None:
     st.markdown("## 🧪 Stress Test de Robustez")
     st.caption(
-        "Mede robustez da seleção por: estabilidade ao longo do tempo (Jaccard), "
-        "consistência histórica de liderança e sensibilidade a suavização (rolling 3 anos)."
+        "Patch 3 (Stress Test): verifica se a seleção é robusta. "
+        "Se pequenas mudanças (suavização/tempo) mudam muito os líderes, o portfólio pode estar frágil e mais sujeito a reversões."
     )
 
     sg = _safe_df(score_global).copy()
@@ -364,8 +364,8 @@ def render_patch4_diversificacao(
 ) -> None:
     st.markdown("## 🧯 Diversificação e Concentração de Risco")
     st.caption(
-        "Avalia concentração por ticker e por setor. Se não houver pesos reais disponíveis, "
-        "assume pesos iguais. Se houver contribuições (Patch 5), usa pesos finais agregados."
+        "Patch 4 (Diversificação): mede concentração e risco de dependência. "
+        "Mesmo um portfólio vencedor pode ser frágil se estiver concentrado em poucos tickers ou em um setor dominante."
     )
 
     if not empresas_lideres_finais:
