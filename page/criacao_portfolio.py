@@ -45,6 +45,7 @@ from core.yf_data import (
     baixar_precos_ano_corrente,
 )
 from core.weights import get_pesos
+from core.yf_data import get_yahoo_status
 
 # >>> PATCHES (módulo separado) - mantido fora do pipeline para não impactar performance
 from page.portfolio_patches import (
@@ -61,6 +62,13 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────
 # Utilitários internos (sem mexer em outros módulos)
 # ─────────────────────────────────────────────────────────────
+
+st = get_yahoo_status()
+if st.get("rate_limited"):
+    mins = int(st.get("cooldown_remaining_seconds", 0) // 60)
+    st.warning(f"Yahoo Finance em cooldown (rate limit). Tente novamente em ~{mins} min. "
+               "As funcionalidades que dependem do Yahoo podem ficar indisponíveis.")
+
 
 def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
