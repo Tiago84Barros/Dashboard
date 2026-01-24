@@ -39,28 +39,28 @@ def _strip_sa(ticker: str) -> str:
     return (ticker or "").strip().upper().replace(".SA", "").strip()
 
 
-def _chunks(seq: Sequence[str], size: int) -> List[List[str]]:
-    out: List[List[str]] = []
-    seq = [s for s in seq if s]
-    for i in range(0, len(seq), max(1, int(size))):
-        out.append(list(seq[i:i + size]))
-    return out
+def _chunks(seq: Sequence[str], n: int) -> List[List[str]]:
+    seq = list(seq)
+    return [seq[i : i + n] for i in range(0, len(seq), n)]
 
 
 # ─────────────────────────────────────────────────────────────
-# Cache local (session_state) de preços por ticker (Series)
-# IMPORTANTE: yf_data.baixar_precos retorna colunas SEM ".SA"
+# Cache de preços em sessão (reduz chamadas repetidas)
+# IMPORTANTE: core.yf_data.baixar_precos retorna colunas SEM ".SA"
+# Então cacheia e retorna SEM ".SA"
 # ─────────────────────────────────────────────────────────────
+
+def _key_ticker(t: str) -> str:
+    return _strip_sa(str(t).strip().upper())
+
 
 def _get_precos_cached(tickers: List[str], chunk_size: int = 80) -> pd.DataFrame:
     """
-    Retorna DF index=Data, cols=tickers (SEM .SA).
-    Cache por ticker (Series) em st.session_state para evitar chamadas repetidas.
+    Retorna DataFrame com colunas = tickers limpos (sem .SA).
+    Usa st.session_state para cachear séries individuais por ticker,
+    evitando baixar novamente para cada patch/chamada.
     """
-    def _key(t: str) -> str:
-        return _strip_sa(str(t).strip().upper())
-
-    req = [_key(t) for t in tickers if str(t).strip()]
+    req = [_key_ticker(t) for t in tickers if str(t).strip()]
     req = list(dict.fromkeys(req))
     if not req:
         return pd.DataFrame()
@@ -68,9 +68,9 @@ def _get_precos_cached(tickers: List[str], chunk_size: int = 80) -> pd.DataFrame
     cache: Dict[str, pd.Series] = st.session_state.setdefault("_precos_cache_series", {})
 
     missing = [t for t in req if t not in cache]
-
     for lote in _chunks(missing, chunk_size):
-        df = baixar_precos(lote)  # pode passar sem .SA
+        # baixar_precos aceita com/sem .SA; e retorna colunas sem .SA
+        df = baixar_precos(lote)
         if df is None or df.empty:
             continue
 
@@ -80,7 +80,7 @@ def _get_precos_cached(tickers: List[str], chunk_size: int = 80) -> pd.DataFrame
             continue
 
         for col in df.columns.astype(str).tolist():
-            c = _key(col)  # garante SEM .SA
+            c = _key_ticker(col)
             try:
                 s = pd.to_numeric(df[col], errors="coerce").dropna()
                 if not s.empty:
@@ -90,7 +90,6 @@ def _get_precos_cached(tickers: List[str], chunk_size: int = 80) -> pd.DataFrame
 
     series_list: List[pd.Series] = []
     cols: List[str] = []
-
     for t in req:
         s = cache.get(t)
         if isinstance(s, pd.Series) and not s.empty:
@@ -103,46 +102,6 @@ def _get_precos_cached(tickers: List[str], chunk_size: int = 80) -> pd.DataFrame
     out = pd.concat(series_list, axis=1).sort_index()
     out.columns = cols
     return out
-
-
-@st.cache_data(show_spinner=False, ttl=3600)
-def _retornos_ano_preco_bulk(tickers: List[str], ano: int, chunk_size: int = 80) -> pd.Series:
-    """
-    Retorno simples de preço (sem dividendos) no ano calendário para LISTA de tickers.
-    Retorna Series index=ticker_sem_SA, values=retorno (float).
-    Usa cache + chunking para reduzir chamadas.
-    """
-    tickers = [_strip_sa(t) for t in (tickers or []) if str(t).strip()]
-    tickers = list(dict.fromkeys(tickers))
-    if not tickers:
-        return pd.Series(dtype=float)
-
-    precos = _get_precos_cached(tickers, chunk_size=chunk_size)
-    if precos is None or precos.empty:
-        return pd.Series(dtype=float)
-
-    precos.index = pd.to_datetime(precos.index, errors="coerce")
-    precos = precos.dropna(how="all")
-    if precos.empty:
-        return pd.Series(dtype=float)
-
-    ini = pd.Timestamp(f"{ano}-01-01")
-    fim = pd.Timestamp(f"{ano}-12-31")
-    precos = precos.loc[(precos.index >= ini) & (precos.index <= fim)]
-    if precos.empty:
-        return pd.Series(dtype=float)
-
-    precos = precos.resample("B").last().ffill()
-    if precos.shape[0] < 2:
-        return pd.Series(dtype=float)
-
-    first = precos.iloc[0]
-    last = precos.iloc[-1]
-    ret = (last / (first + 1e-12)) - 1.0
-
-    ret.index = [_strip_sa(c) for c in ret.index.astype(str).tolist()]
-    ret = pd.to_numeric(ret, errors="coerce").dropna()
-    return ret
 
 
 # ─────────────────────────────────────────────────────────────
@@ -195,6 +154,7 @@ def render_patch1_regua_conviccao(
     smax = float(df_ano["Score_Ajustado"].max())
     df_ano["score_norm"] = ((df_ano["Score_Ajustado"] - smin) / ((smax - smin) + 1e-9)) * 100.0
 
+    # Normaliza lideres_global
     if not lg.empty and {"Ano", "ticker"}.issubset(lg.columns):
         lg = lg.copy()
         lg["ticker"] = lg["ticker"].astype(str).apply(_norm_tk)
@@ -372,6 +332,7 @@ def render_patch3_stress_test(
 
     ultimo_ano = int(max(anos_disp))
 
+    # 1) Estabilidade anual do conjunto de líderes (Jaccard)
     lideres_por_ano = (
         lg.groupby("Ano")["ticker"]
         .apply(lambda s: set(s.dropna().astype(str).tolist()))
@@ -389,6 +350,7 @@ def render_patch3_stress_test(
 
     df_jaccard = pd.DataFrame(jaccard_rows)
 
+    # 2) Consistência dos tickers finais (quantos anos foi líder)
     pres_rows = []
     for tk in sorted(tickers_finais):
         anos_lider = sorted(lg.loc[lg["ticker"] == tk, "Ano"].dropna().astype(int).unique().tolist())
@@ -396,6 +358,7 @@ def render_patch3_stress_test(
     df_pres = pd.DataFrame(pres_rows)
     pct_com_hist = float((df_pres["anos_como_lider"] > 0).mean()) if not df_pres.empty else 0.0
 
+    # 3) Sensibilidade à suavização (rolling 3y)
     sg2 = sg.sort_values(["ticker", "Ano"]).copy()
     sg2["Score_Suavizado_3y"] = (
         sg2.groupby("ticker")["Score_Ajustado"]
@@ -431,6 +394,7 @@ def render_patch3_stress_test(
     inter = orig_last.intersection(suav_last)
     jacc_suav = (len(inter) / (len(un) + 1e-9)) if un else 0.0
 
+    # UI
     c1, c2, c3 = st.columns(3)
     with c1:
         if not df_jaccard.empty:
@@ -475,17 +439,17 @@ def render_patch4_diversificacao(
         st.info("Painel de diversificação indisponível: portfólio final vazio.")
         return
 
-    tickers = [_strip_sa(e.get("ticker", "")) for e in empresas_lideres_finais if _strip_sa(e.get("ticker", ""))]
+    tickers = [_norm_tk(e.get("ticker", "")) for e in empresas_lideres_finais if _norm_tk(e.get("ticker", ""))]
     tickers = list(dict.fromkeys(tickers))
 
-    setores = [str(e.get("setor", "OUTROS")) for e in empresas_lideres_finais if _strip_sa(e.get("ticker", "")) in tickers]
+    setores = [str(e.get("setor", "OUTROS")) for e in empresas_lideres_finais if _norm_tk(e.get("ticker", "")) in tickers]
 
     weights = None
     if contrib_globais:
         try:
             dfc = pd.DataFrame(contrib_globais).copy()
             if not dfc.empty and {"ticker", "valor_final"}.issubset(dfc.columns):
-                dfc["ticker"] = dfc["ticker"].astype(str).apply(_strip_sa)
+                dfc["ticker"] = dfc["ticker"].astype(str).apply(_norm_tk)
                 agg = dfc.groupby("ticker")["valor_final"].sum()
                 agg = agg[agg.index.isin(tickers)]
                 if not agg.empty and float(agg.sum()) > 0:
@@ -524,38 +488,83 @@ def render_patch4_diversificacao(
     st.dataframe(dfw, use_container_width=True)
 
     df_set = pd.DataFrame({"ticker": tickers, "setor": setores[:len(tickers)] if setores else ["OUTROS"] * len(tickers)})
-    df_set["peso"] = df_set["ticker"].map(lambda t: float(weights.get(_strip_sa(t), 0.0)))
+    df_set["peso"] = df_set["ticker"].map(lambda t: float(weights.get(_norm_tk(t), 0.0)))
     set_agg = df_set.groupby("setor")["peso"].sum().sort_values(ascending=False)
 
     if not set_agg.empty:
         st.markdown("### Concentração por setor")
+
         set_agg = set_agg.sort_values(ascending=True)
         labels = [_short_label(str(x), max_len=22) for x in set_agg.index.astype(str).tolist()]
         values = set_agg.values.astype(float)
 
         h = max(3.5, 0.55 * len(labels))
         fig, ax = plt.subplots(figsize=(10, h))
+
         ax.barh(labels, values)
         ax.set_xlabel("Peso (0–1)")
         ax.set_ylabel("Setor")
         ax.grid(True, linestyle="--", alpha=0.4)
+
         ax.set_xlim(0, max(0.05, float(values.max()) * 1.15))
+
         fig.tight_layout()
         st.pyplot(fig)
 
 
 # ─────────────────────────────────────────────────────────────
-# PATCH 5 — Benchmark do Segmento (último ano do score)
-# (otimizado: 1 chamada bulk por ano para todos os tickers necessários)
+# Retornos anuais por preço (sem dividendos) — BULK (1 chamada)
 # ─────────────────────────────────────────────────────────────
 
-def render_patch5_benchmark_segmento(score_global: pd.DataFrame, empresas_lideres_finais: list[dict]) -> None:
+@st.cache_data(show_spinner=False, ttl=3600)
+def _retornos_ano_preco_bulk(tickers: List[str], ano: int) -> pd.Series:
+    """
+    Retorno simples de preço (sem dividendos) no ano calendário.
+    Usa 1 chamada bulk (cacheada) ao invés de chamar por ticker.
+    Retorna Series index=ticker_limpo, values=retorno (float).
+    """
+    tks = [_strip_sa(t) for t in (tickers or []) if str(t).strip()]
+    tks = list(dict.fromkeys(tks))
+    if not tks:
+        return pd.Series(dtype=float)
+
+    precos = _get_precos_cached(tks, chunk_size=80)
+    if precos is None or precos.empty:
+        return pd.Series(dtype=float)
+
+    precos.index = pd.to_datetime(precos.index, errors="coerce")
+    precos = precos.dropna(how="all")
+    if precos.empty:
+        return pd.Series(dtype=float)
+
+    ini = pd.Timestamp(f"{ano}-01-01")
+    fim = pd.Timestamp(f"{ano}-12-31")
+    precos = precos.loc[(precos.index >= ini) & (precos.index <= fim)]
+    if precos.empty:
+        return pd.Series(dtype=float)
+
+    precos = precos.resample("B").last().ffill()
+    if precos.shape[0] < 2:
+        return pd.Series(dtype=float)
+
+    first = precos.iloc[0]
+    last = precos.iloc[-1]
+    ret = (last / (first + 1e-12)) - 1.0
+
+    ret.index = [_strip_sa(c) for c in ret.index.astype(str).tolist()]
+    ret = pd.to_numeric(ret, errors="coerce").dropna()
+    return ret
+
+
+# ─────────────────────────────────────────────────────────────
+# PATCH 5 — Benchmark do Segmento (último ano do score)
+# ─────────────────────────────────────────────────────────────
+
+def render_patch5_benchmark_segmento(score_global: pd.DataFrame, empresas_lideres_finais: List[Dict]) -> None:
     """
     Compara retorno no último ano do score vs retorno médio do segmento (SETOR>SUBSETOR>SEGMENTO).
-    Retorno de preço (sem dividendos).
-    OTIMIZAÇÃO: usa retorno bulk no ano para todo o universo necessário (1 chamada consolidada).
+    Retorno por preço (sem dividendos) para robustez e performance.
     """
-
     st.markdown("## 📌 Benchmark do Segmento (último ano do score)")
     st.caption(
         "Compara o retorno das empresas escolhidas no último ano do score com o retorno médio do "
@@ -589,6 +598,7 @@ def render_patch5_benchmark_segmento(score_global: pd.DataFrame, empresas_lidere
         st.info("Benchmark do segmento indisponível: não há linhas no último ano do score.")
         return
 
+    # mapeia ticker -> setor/subsetor/segmento (no último ano do score)
     meta = (
         df_ano[["ticker", "SETOR", "SUBSETOR", "SEGMENTO"]]
         .drop_duplicates(subset=["ticker"])
@@ -608,12 +618,12 @@ def render_patch5_benchmark_segmento(score_global: pd.DataFrame, empresas_lidere
         .to_dict()
     )
 
+    # Limite de universo por segmento
     MAX_UNIVERSE = 40
 
-    # Monta um conjunto único de tickers que serão necessários no cálculo (para 1 chamada bulk)
-    needed_all: List[str] = []
-    per_ticker_universe: Dict[str, List[str]] = {}
-
+    # 1) Monta o conjunto TOTAL de tickers que precisaremos cotar (bulk 1x)
+    #    (união dos universos limados + tickers finais)
+    all_needed: List[str] = []
     for tk in tickers_finais:
         info = meta_map.get(tk)
         if not info:
@@ -621,33 +631,33 @@ def render_patch5_benchmark_segmento(score_global: pd.DataFrame, empresas_lidere
         id_seg = f"{info['SETOR']} > {info['SUBSETOR']} > {info['SEGMENTO']}"
         universo = uni_segmento.get(id_seg, [])
         universo_lim = universo[:MAX_UNIVERSE]
-        per_ticker_universe[tk] = universo_lim
-        needed_all.extend(universo_lim)
-        needed_all.append(tk)
+        all_needed.extend(universo_lim)
+        all_needed.append(tk)
 
-    needed_all = list(dict.fromkeys([_strip_sa(x) for x in needed_all if x]))
+    all_needed = list(dict.fromkeys([_strip_sa(x) for x in all_needed if str(x).strip()]))
 
-    # 1 única chamada bulk para retornos do ano em todos os tickers necessários
-    ret_all = _retornos_ano_preco_bulk(needed_all, ultimo_ano, chunk_size=80)
+    # 2) 1 chamada bulk por ano (cacheada)
+    ret_all = _retornos_ano_preco_bulk(all_needed, ultimo_ano)
 
-    linhas = []
+    linhas: List[Dict] = []
     for tk in tickers_finais:
         info = meta_map.get(tk)
         if not info:
             continue
 
-        universo_lim = per_ticker_universe.get(tk, [])
-        if not universo_lim:
-            continue
+        id_seg = f"{info['SETOR']} > {info['SUBSETOR']} > {info['SEGMENTO']}"
+        universo = uni_segmento.get(id_seg, [])
+        universo_lim = [ _strip_sa(x) for x in universo[:MAX_UNIVERSE] if str(x).strip() ]
 
-        ret_uni = ret_all.reindex([_strip_sa(x) for x in universo_lim]).dropna()
+        ret_uni = ret_all.reindex(universo_lim).dropna()
         seg_mean = float(ret_uni.mean()) if not ret_uni.empty else float("nan")
 
-        tk_ret = float(ret_all.get(_strip_sa(tk), float("nan")))
+        tk_ret = ret_all.get(tk, float("nan"))
+        tk_ret = float(tk_ret) if pd.notna(tk_ret) else float("nan")
 
         linhas.append({
             "ticker": tk,
-            "empresa": next((e.get("nome") for e in empresas_lideres_finais if _strip_sa(str(e.get("ticker",""))) == tk), tk),
+            "empresa": next((e.get("nome") for e in empresas_lideres_finais if _strip_sa(str(e.get("ticker", ""))) == tk), tk),
             "SETOR": info["SETOR"],
             "SUBSETOR": info["SUBSETOR"],
             "SEGMENTO": info["SEGMENTO"],
@@ -668,8 +678,8 @@ def render_patch5_benchmark_segmento(score_global: pd.DataFrame, empresas_lidere
     st.dataframe(out, use_container_width=True)
 
     st.caption(
-        f"Nota técnica: retorno é de **preço** (sem dividendos). "
-        f"O benchmark do segmento usa até **{MAX_UNIVERSE} tickers** do segmento para evitar travamentos."
+        f"Nota técnica: o retorno é de **preço** (sem dividendos) para robustez e velocidade. "
+        f"O benchmark do segmento usa até **{MAX_UNIVERSE} tickers** do segmento."
     )
 
     with st.expander("📊 Gráfico: Alpha vs média do segmento (p.p.)", expanded=False):
