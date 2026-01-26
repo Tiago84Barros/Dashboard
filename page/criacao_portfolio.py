@@ -13,6 +13,11 @@ import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 
+try:
+    from zoneinfo import ZoneInfo
+except Exception:
+    ZoneInfo = None  # type: ignore
+
 from core.db_loader import (
     load_setores_from_db,
     load_data_from_db,
@@ -75,8 +80,55 @@ from core.session_store import (
 logger = logging.getLogger(__name__)
 
 # Limite simples para evitar salvar preço gigante na sessão
-# (o objetivo é manter o app responsivo ao trocar de páginas)
 MAX_PRECOS_COLS_SALVAR = 300
+
+
+# ─────────────────────────────────────────────────────────────
+# Helpers de tempo / label (sem depender do session_store)
+# ─────────────────────────────────────────────────────────────
+
+def _now_sp() -> datetime:
+    """
+    Streamlit Cloud geralmente roda em UTC; aqui padronizamos para America/Sao_Paulo.
+    """
+    if ZoneInfo is None:
+        return datetime.now()
+    try:
+        return datetime.now(ZoneInfo("America/Sao_Paulo"))
+    except Exception:
+        return datetime.now()
+
+
+def _fmt_dt(dt_str: str) -> str:
+    """
+    Normaliza string ISO para "YYYY-MM-DD HH:MM:SS" quando possível.
+    """
+    if not dt_str:
+        return ""
+    try:
+        # aceita isoformat com/sem timezone
+        dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+        # converte p/ SP se tiver tz
+        if ZoneInfo is not None and dt.tzinfo is not None:
+            dt = dt.astimezone(ZoneInfo("America/Sao_Paulo"))
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return dt_str
+
+
+def _run_label_from_saved(saved: dict) -> str:
+    meta = (saved or {}).get("_meta", {}) or {}
+    when = _fmt_dt(str(meta.get("created_at", "")))
+    m = meta.get("margem_superior", "")
+    v2 = meta.get("use_score_v2", "")
+    n = len((saved or {}).get("empresas_lideres_finais", []) or [])
+    parts = []
+    if when:
+        parts.append(when)
+    parts.append(f"margem={m}")
+    parts.append(f"v2={v2}")
+    parts.append(f"líderes={n}")
+    return " | ".join(parts)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -182,9 +234,7 @@ def _build_macro() -> Optional[pd.DataFrame]:
 def _maybe_shrink_precos(precos_global: pd.DataFrame, tickers_finais: List[str]) -> pd.DataFrame:
     """
     Evita salvar um dataframe enorme na sessão.
-    Se colunas > MAX_PRECOS_COLS_SALVAR, guarda apenas:
-      - tickers finais
-      - e as colunas já presentes no DF que batem com esses tickers.
+    Se colunas > MAX_PRECOS_COLS_SALVAR, guarda apenas tickers finais.
     """
     if not isinstance(precos_global, pd.DataFrame) or precos_global.empty:
         return pd.DataFrame()
@@ -200,8 +250,9 @@ def _maybe_shrink_precos(precos_global: pd.DataFrame, tickers_finais: List[str])
     out = precos_global[keep].copy() if keep else pd.DataFrame()
     return out
 
+
 def _render_bloco_final_portfolio(empresas_lideres_finais: List[dict]) -> None:
-    """Re-renderiza o bloco visual final (cards + pizza) sem depender de yfinance."""
+    """Cards + pizza (não depende do yfinance)."""
     if not empresas_lideres_finais:
         return
 
@@ -266,16 +317,18 @@ def render():
 
     # Painel de persistência (sempre visível)
     with st.expander("Resultados salvos nesta sessão", expanded=True):
-        runs = list_runs(store_cfg)
-        lk_label = last_run_label(store_cfg)
-        
-        if runs:
-            st.caption(f"Execuções salvas: {len(runs)}")
+        runs = list_runs(store_cfg)  # pode ser lista (o mais comum) ou dict dependendo do seu session_store
+
+        lk = last_run_key(store_cfg)
+        saved_last = load_run(store_cfg, lk) if lk else None
+        lk_label = _run_label_from_saved(saved_last) if saved_last else None
+
+        # Contagem de runs: se list -> len(list); se dict -> len(dict)
+        n_runs = len(runs) if runs else 0
+
+        if n_runs > 0:
+            st.caption(f"Execuções salvas: {n_runs}")
             if lk_label:
-                meta = runs.get(lk, {}).get("_meta", {})
-                when = meta.get("created_at", "")
-                m = meta.get("margem_superior", "")
-                v2 = meta.get("use_score_v2", "")
                 st.write(f"Última execução: {lk_label}")
 
             c1, c2 = st.columns(2)
@@ -340,7 +393,8 @@ def render():
             lideres_global = saved.get("lideres_global", pd.DataFrame())
             precos_global = saved.get("precos_global", pd.DataFrame())
             contrib_globais = saved.get("contrib_globais", None)
-       
+
+            # cards + pizza no modo salvo
             _render_bloco_final_portfolio(empresas_lideres_finais)
 
             st.markdown("<hr>", unsafe_allow_html=True)
@@ -581,7 +635,7 @@ def render():
     if empresas_lideres_finais:
         st.markdown("## 📊 Desempenho parcial das líderes (ano atual)")
 
-        ano_corrente = datetime.now().year
+        ano_corrente = _now_sp().year
         tickers_corrente = [e["ticker"] for e in empresas_lideres_finais if int(e["ano_compra"]) == ano_corrente]
 
         if tickers_corrente:
@@ -646,6 +700,9 @@ def render():
     else:
         precos_global = pd.DataFrame()
 
+    # ✅ cards + pizza também na execução normal (não só no histórico)
+    _render_bloco_final_portfolio(empresas_lideres_finais)
+
     st.markdown("<hr>", unsafe_allow_html=True)
 
     if empresas_lideres_finais:
@@ -676,7 +733,8 @@ def render():
         run_key,
         payload={
             "_meta": {
-                "created_at": datetime.now().isoformat(timespec="seconds"),
+                # ✅ salva em fuso SP (string amigável, mas ainda ISO-like)
+                "created_at": _now_sp().isoformat(timespec="seconds"),
                 "margem_superior": margem_superior,
                 "use_score_v2": bool(use_score_v2),
                 "precos_cols_salvos": int(precos_salvar.shape[1]) if isinstance(precos_salvar, pd.DataFrame) else 0,
