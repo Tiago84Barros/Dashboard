@@ -317,20 +317,15 @@ def render():
 
     # Painel de persistência (sempre visível)
     with st.expander("Resultados salvos nesta sessão", expanded=True):
-        runs = list_runs(store_cfg)  # pode ser lista (o mais comum) ou dict dependendo do seu session_store
-
+        runs = list_runs(store_cfg)  # lista de dicts
         lk = last_run_key(store_cfg)
-        saved_last = load_run(store_cfg, lk) if lk else None
-        lk_label = _run_label_from_saved(saved_last) if saved_last else None
-
-        # Contagem de runs: se list -> len(list); se dict -> len(dict)
-        n_runs = len(runs) if runs else 0
-
-        if n_runs > 0:
-            st.caption(f"Execuções salvas: {n_runs}")
+        lk_label = last_run_label(store_cfg)
+    
+        if runs:
+            st.caption(f"Execuções salvas: {len(runs)}")
             if lk_label:
                 st.write(f"Última execução: {lk_label}")
-
+    
             c1, c2 = st.columns(2)
             with c1:
                 if st.button("Reexibir último resultado (sem recalcular)", key="portfolio_show_saved"):
@@ -342,6 +337,7 @@ def render():
                     st.success("Resultados salvos removidos desta sessão.")
         else:
             st.caption("Nenhum resultado salvo ainda. Gere um portfólio para salvar.")
+
 
     if not margem_input.strip():
         st.warning("Digite uma porcentagem no campo lateral e clique em 'Gerar Portfólio'.")
