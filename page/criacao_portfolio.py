@@ -44,6 +44,21 @@ from core.yf_data import (
     coletar_dividendos,
     baixar_precos_ano_corrente,
 )
+
+# depois que você já tiver:
+# - score_global
+# - lideres_global
+# - empresas_lideres_finais
+# - precos  (DataFrame com colunas de tickers e índice datetime)
+
+from page.portfolio_patches import (
+    render_patch1_regua_conviccao,
+    render_patch2_dominancia,
+    render_patch3_stress_test,
+    render_patch4_diversificacao,
+    render_patch5_benchmark_segmento,
+)
+
 from core.weights import get_pesos
 
 logger = logging.getLogger(__name__)
@@ -542,3 +557,11 @@ def render():
             )
 
     st.markdown("<hr>", unsafe_allow_html=True)
+
+    render_patch1_regua_conviccao(score_global, lideres_global, empresas_lideres_finais)
+    render_patch2_dominancia(score_global, lideres_global, empresas_lideres_finais)
+    render_patch3_stress_test(score_global, lideres_global, empresas_lideres_finais)
+    render_patch4_diversificacao(empresas_lideres_finais, contrib_globais=contrib_globais)
+    
+    # PATCH 5 agora NÃO baixa nada
+    render_patch5_benchmark_segmento(score_global, empresas_lideres_finais, precos=precos, max_universe=80)
