@@ -71,10 +71,12 @@ from core.session_store import (
     load_run,
     list_runs,
     last_run_key,
+    last_run_label,   # <-- ADICIONE ESTA LINHA
     clear_runs,
     set_force_render_saved,
     consume_force_render_saved,
 )
+
 # <<< Persistência em sessão
 
 logger = logging.getLogger(__name__)
@@ -318,7 +320,6 @@ def render():
     # Painel de persistência (sempre visível)
     with st.expander("Resultados salvos nesta sessão", expanded=True):
         runs = list_runs(store_cfg)  # lista de dicts
-        lk = last_run_key(store_cfg)
         lk_label = last_run_label(store_cfg)
     
         if runs:
@@ -337,6 +338,7 @@ def render():
                     st.success("Resultados salvos removidos desta sessão.")
         else:
             st.caption("Nenhum resultado salvo ainda. Gere um portfólio para salvar.")
+
 
 
     if not margem_input.strip():
