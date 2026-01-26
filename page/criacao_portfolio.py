@@ -200,6 +200,41 @@ def _maybe_shrink_precos(precos_global: pd.DataFrame, tickers_finais: List[str])
     out = precos_global[keep].copy() if keep else pd.DataFrame()
     return out
 
+def _render_bloco_final_portfolio(empresas_lideres_finais: List[dict]) -> None:
+    """Re-renderiza o bloco visual final (cards + pizza) sem depender de yfinance."""
+    if not empresas_lideres_finais:
+        return
+
+    st.markdown("## 📑 Empresas líderes para o próximo ano")
+    colunas_lideres = st.columns(3)
+    for idx, emp in enumerate(empresas_lideres_finais):
+        col = colunas_lideres[idx % 3]
+        col.markdown(
+            f"""
+            <div style='border: 2px solid #28a745; border-radius: 10px; padding: 12px; margin-bottom: 10px; background-color: #f0fff4; text-align: center;'>
+                <img src="{emp.get('logo_url','')}" width="45" />
+                <h5 style="margin: 5px 0 0;">{emp.get('nome','')}</h5>
+                <p style="margin: 0; color: #666; font-size: 13px;">({emp.get('ticker','')})</p>
+                <p style="font-size: 12px; color: #333;">Líder em {emp.get('ano_lider','')}<br>Para compra em {emp.get('ano_compra','')}</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("## 📊 Distribuição setorial do portfólio sugerido")
+    setores_portfolio = pd.Series([e.get("setor", "OUTROS") for e in empresas_lideres_finais]).value_counts()
+
+    fig, ax = plt.subplots()
+    ax.pie(
+        setores_portfolio.values,
+        labels=setores_portfolio.index,
+        autopct="%1.1f%%",
+        startangle=90,
+        textprops={"fontsize": 10},
+    )
+    ax.axis("equal")
+    st.pyplot(fig)
+
 
 # ─────────────────────────────────────────────────────────────
 # Render Streamlit
@@ -305,6 +340,8 @@ def render():
             lideres_global = saved.get("lideres_global", pd.DataFrame())
             precos_global = saved.get("precos_global", pd.DataFrame())
             contrib_globais = saved.get("contrib_globais", None)
+       
+            _render_bloco_final_portfolio(empresas_lideres_finais)
 
             st.markdown("<hr>", unsafe_allow_html=True)
             if empresas_lideres_finais:
