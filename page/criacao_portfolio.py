@@ -1,5 +1,4 @@
 # =========================
-# ARQUIVO 2/3
 # page/criacao_portfolio.py  (COM persistência em sessão)
 # =========================
 from __future__ import annotations
@@ -59,7 +58,7 @@ from page.portfolio_patches import (
 
 from core.weights import get_pesos
 
-# >>> Persistência em sessão (NOVO)
+# >>> Persistência em sessão
 from core.session_store import (
     RunStoreConfig,
     make_run_key,
@@ -75,9 +74,13 @@ from core.session_store import (
 
 logger = logging.getLogger(__name__)
 
+# Limite simples para evitar salvar preço gigante na sessão
+# (o objetivo é manter o app responsivo ao trocar de páginas)
+MAX_PRECOS_COLS_SALVAR = 300
+
 
 # ─────────────────────────────────────────────────────────────
-# Utilitários internos (sem mexer em outros módulos)
+# Utilitários internos
 # ─────────────────────────────────────────────────────────────
 
 def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -176,6 +179,28 @@ def _build_macro() -> Optional[pd.DataFrame]:
     return dados_macro
 
 
+def _maybe_shrink_precos(precos_global: pd.DataFrame, tickers_finais: List[str]) -> pd.DataFrame:
+    """
+    Evita salvar um dataframe enorme na sessão.
+    Se colunas > MAX_PRECOS_COLS_SALVAR, guarda apenas:
+      - tickers finais
+      - e as colunas já presentes no DF que batem com esses tickers.
+    """
+    if not isinstance(precos_global, pd.DataFrame) or precos_global.empty:
+        return pd.DataFrame()
+
+    cols = [str(c) for c in precos_global.columns]
+    if len(cols) <= MAX_PRECOS_COLS_SALVAR:
+        return precos_global
+
+    tset = set([_strip_sa(t) for t in (tickers_finais or []) if str(t).strip()])
+    keep = [c for c in cols if _strip_sa(c) in tset]
+    keep = list(dict.fromkeys(keep))
+
+    out = precos_global[keep].copy() if keep else pd.DataFrame()
+    return out
+
+
 # ─────────────────────────────────────────────────────────────
 # Render Streamlit
 # ─────────────────────────────────────────────────────────────
@@ -185,17 +210,24 @@ def render():
 
     store_cfg = RunStoreConfig(namespace="portfolio")
 
+    # Persistir último valor digitado na margem
+    default_margem = st.session_state.get("portfolio_last_margem_input", "")
+
     with st.sidebar:
-        margem_input = st.text_input("% acima do Tesouro Selic para destacar (obrigatório):", value="")
+        margem_input = st.text_input(
+            "% acima do Tesouro Selic para destacar (obrigatório):",
+            value=default_margem,
+            key="portfolio_margem_input",
+        )
 
         with st.expander("Scoring (opções)", expanded=False):
             if calcular_score_acumulado_v2 is None:
                 st.caption("Score v2 indisponível (core/scoring_v2.py não encontrado).")
                 use_score_v2 = False
             else:
-                use_score_v2 = st.checkbox("Usar Score v2 (robusto)", value=True)
+                use_score_v2 = st.checkbox("Usar Score v2 (robusto)", value=True, key="portfolio_use_score_v2")
 
-        gerar = st.button("Gerar Portfólio")
+        gerar = st.button("Gerar Portfólio", key="portfolio_btn_gerar")
 
     # Painel de persistência (sempre visível)
     with st.expander("Resultados salvos nesta sessão", expanded=True):
@@ -205,7 +237,11 @@ def render():
         if runs:
             st.caption(f"Execuções salvas: {len(runs)}")
             if lk:
-                st.write(f"Última execução: `{lk}`")
+                meta = runs.get(lk, {}).get("_meta", {})
+                when = meta.get("created_at", "")
+                m = meta.get("margem_superior", "")
+                v2 = meta.get("use_score_v2", "")
+                st.write(f"Última execução: `{lk}` | {when} | margem={m} | v2={v2}")
 
             c1, c2 = st.columns(2)
             with c1:
@@ -222,6 +258,9 @@ def render():
     if not margem_input.strip():
         st.warning("Digite uma porcentagem no campo lateral e clique em 'Gerar Portfólio'.")
         return
+
+    # Guarda o último valor digitado
+    st.session_state["portfolio_last_margem_input"] = margem_input.strip()
 
     try:
         margem_superior = float(margem_input.strip())
@@ -256,7 +295,6 @@ def render():
 
         saved = load_run(store_cfg, rk)
         if saved is None:
-            # fallback: último salvo (mesmo se params mudaram)
             saved = load_run(store_cfg, last_run_key(store_cfg))
 
         if saved:
@@ -274,7 +312,12 @@ def render():
                 render_patch2_dominancia(score_global, lideres_global, empresas_lideres_finais)
                 render_patch3_stress_test(score_global, lideres_global, empresas_lideres_finais)
                 render_patch4_diversificacao(empresas_lideres_finais, contrib_globais=contrib_globais)
-                render_patch5_benchmark_segmento(score_global, empresas_lideres_finais, precos=precos_global, max_universe=80)
+                render_patch5_benchmark_segmento(
+                    score_global,
+                    empresas_lideres_finais,
+                    precos=precos_global,
+                    max_universe=80,
+                )
             else:
                 st.info("Resultado salvo não contém líderes finais.")
 
@@ -528,7 +571,12 @@ def render():
                 if data_valida is not None and data_valida in precos_corrente.index:
                     datas_aporte.append(data_valida)
 
-            patrimonio_aporte = gerir_carteira_simples(precos_corrente, tickers_limpos, datas_aporte, dividendos_dict=dividendos_dict)
+            patrimonio_aporte = gerir_carteira_simples(
+                precos_corrente,
+                tickers_limpos,
+                datas_aporte,
+                dividendos_dict=dividendos_dict,
+            )
 
             df_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aporte)
             if df_selic is None or df_selic.empty:
@@ -568,7 +616,15 @@ def render():
         render_patch2_dominancia(score_global, lideres_global, empresas_lideres_finais)
         render_patch3_stress_test(score_global, lideres_global, empresas_lideres_finais)
         render_patch4_diversificacao(empresas_lideres_finais, contrib_globais=contrib_globais)
-        render_patch5_benchmark_segmento(score_global, empresas_lideres_finais, precos=precos_global, max_universe=80)
+
+        # Para patch 5, salva um precos_global “enxuto” se necessário
+        precos_para_patch5 = _maybe_shrink_precos(precos_global, [e.get("ticker", "") for e in empresas_lideres_finais])
+        render_patch5_benchmark_segmento(
+            score_global,
+            empresas_lideres_finais,
+            precos=precos_para_patch5,
+            max_universe=80,
+        )
     else:
         st.info("Sem líderes finais para análise de patches nesta execução.")
 
@@ -576,16 +632,24 @@ def render():
     params = {"margem_superior": margem_superior, "use_score_v2": bool(use_score_v2)}
     run_key = make_run_key(store_cfg, params=params, setores_df=setores_df, macro_df=dados_macro)
 
+    precos_salvar = _maybe_shrink_precos(precos_global, [e.get("ticker", "") for e in empresas_lideres_finais])
+
     save_run(
         store_cfg,
         run_key,
         payload={
+            "_meta": {
+                "created_at": datetime.now().isoformat(timespec="seconds"),
+                "margem_superior": margem_superior,
+                "use_score_v2": bool(use_score_v2),
+                "precos_cols_salvos": int(precos_salvar.shape[1]) if isinstance(precos_salvar, pd.DataFrame) else 0,
+            },
             "margem_superior": margem_superior,
             "use_score_v2": bool(use_score_v2),
             "empresas_lideres_finais": empresas_lideres_finais,
             "score_global": score_global,
             "lideres_global": lideres_global,
-            "precos_global": precos_global,
+            "precos_global": precos_salvar,
             "contrib_globais": contrib_globais,
         },
     )
