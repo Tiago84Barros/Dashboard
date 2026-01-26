@@ -51,10 +51,12 @@ from core.session_store import (
     load_run,
     list_runs,
     last_run_key,
+    last_run_label,   # <-- ADICIONE
     clear_runs,
     set_force_render_saved,
     consume_force_render_saved,
 )
+
 # <<< Persistência em sessão
 
 logger = logging.getLogger(__name__)
@@ -483,28 +485,30 @@ def render() -> None:
     # Painel de persistência
     # ─────────────────────────────────────────────────────────
     with st.expander("Resultados salvos nesta sessão", expanded=True):
-        runs = list_runs(store_cfg)
-        lk = last_run_key(store_cfg)
-
+        runs = list_runs(store_cfg)              # <- LISTA: [{"key":..., "label":...}, ...]
+        lk = last_run_key(store_cfg)             # <- string (md5)
+        lk_label = last_run_label(store_cfg)     # <- label amigável
+    
         if runs:
             st.caption(f"Execuções salvas: {len(runs)}")
-            if lk:
-                meta = runs.get(lk, {}).get("_meta", {})
-                when = meta.get("created_at", "")
-                fset = meta.get("filters", {})
-                st.write(f"Última execução: `{lk}` | {when} | {fset}")
-
+    
+            if lk_label:
+                st.write(f"Última execução: {lk_label}")
+    
             c1, c2 = st.columns(2)
+    
             with c1:
-                if st.button("Reexibir último resultado (sem recalcular)", key="adv_show_saved"):
+                if st.button("Reexibir último resultado (sem recalcular)", key="advanced_show_saved"):
                     set_force_render_saved(store_cfg, True)
                     st.rerun()
+    
             with c2:
-                if st.button("Limpar resultados salvos", key="adv_clear_saved"):
+                if st.button("Limpar resultados salvos", key="advanced_clear_saved"):
                     clear_runs(store_cfg)
                     st.success("Resultados salvos removidos desta sessão.")
         else:
             st.caption("Nenhum resultado salvo ainda. Execute uma análise para salvar.")
+
 
     # ─────────────────────────────────────────────────────────
     # Reexibir salvo (sem recalcular)
