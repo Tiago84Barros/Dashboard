@@ -267,16 +267,16 @@ def render():
     # Painel de persistência (sempre visível)
     with st.expander("Resultados salvos nesta sessão", expanded=True):
         runs = list_runs(store_cfg)
-        lk = last_run_key(store_cfg)
-
+        lk_label = last_run_label(store_cfg)
+        
         if runs:
             st.caption(f"Execuções salvas: {len(runs)}")
-            if lk:
+            if lk_label:
                 meta = runs.get(lk, {}).get("_meta", {})
                 when = meta.get("created_at", "")
                 m = meta.get("margem_superior", "")
                 v2 = meta.get("use_score_v2", "")
-                st.write(f"Última execução: `{lk}` | {when} | margem={m} | v2={v2}")
+                st.write(f"Última execução: {lk_label}")
 
             c1, c2 = st.columns(2)
             with c1:
