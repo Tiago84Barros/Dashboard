@@ -645,7 +645,7 @@ def render_patch5_benchmark_segmento(
         f"O benchmark do segmento usa até **{max_universe} tickers**, limitado aos que existem no DataFrame de preços carregado."
     )
 
-    with st.expander("📊 Gráfico: Alpha vs média do segmento (p.p.)", expanded=False):
+    with st.expander("📊 Gráfico: Desempenho relativo das empresas vs média do segmento", expanded=False):
         plot_df = out.dropna(subset=["alpha_vs_segmento_pp"]).copy()
         if plot_df.empty:
             st.info("Sem dados suficientes para plotar.")
