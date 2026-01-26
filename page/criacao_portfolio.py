@@ -45,12 +45,6 @@ from core.yf_data import (
     baixar_precos_ano_corrente,
 )
 
-# depois que você já tiver:
-# - score_global
-# - lideres_global
-# - empresas_lideres_finais
-# - precos  (DataFrame com colunas de tickers e índice datetime)
-
 from page.portfolio_patches import (
     render_patch1_regua_conviccao,
     render_patch2_dominancia,
@@ -256,6 +250,14 @@ def render():
 
     empresas_lideres_finais: List[dict] = []
 
+    # ─────────────────────────────────────────────────────────────
+    # Acumuladores globais para os PATCHES (evita NameError + patch 5 sem yfinance)
+    # ─────────────────────────────────────────────────────────────
+    score_global_parts: List[pd.DataFrame] = []
+    lideres_global_parts: List[pd.DataFrame] = []
+    precos_global: pd.DataFrame = pd.DataFrame()
+    contrib_globais = None  # se não houver cálculo de contribuições, deixe None
+
     # ─────────────────────────────────────────────────────────
     # Loop por segmento (pipeline leve)
     # ─────────────────────────────────────────────────────────
@@ -335,6 +337,13 @@ def render():
         if score is None or score.empty:
             continue
 
+        # garante colunas de metadados para patches (especialmente Patch 5)
+        if "ticker" in score.columns:
+            score["ticker"] = score["ticker"].astype(str).apply(_strip_sa)
+        score["SETOR"] = setor
+        score["SUBSETOR"] = subsetor
+        score["SEGMENTO"] = segmento
+
         # preços + penalização de platô (mensal)
         try:
             precos = baixar_precos([_norm_sa(e.ticker) for e in lista_empresas])
@@ -344,6 +353,18 @@ def render():
             precos = precos.dropna(how="all")
             if precos.empty:
                 continue
+
+            # acumula preços globalmente (colunas sem .SA) para patches (Patch 5)
+            precos_seg = precos.copy()
+            precos_seg.index = pd.to_datetime(precos_seg.index, errors="coerce")
+            precos_seg = precos_seg.dropna(how="all")
+            precos_seg.columns = [_strip_sa(str(c)) for c in precos_seg.columns.astype(str).tolist()]
+
+            if precos_global is None or precos_global.empty:
+                precos_global = precos_seg
+            else:
+                precos_global = precos_global.join(precos_seg, how="outer")
+
             precos_mensal = precos.resample("M").last()
             score = penalizar_plato(score, precos_mensal, meses=12, penal=0.30)
         except Exception:
@@ -360,6 +381,17 @@ def render():
         lideres = determinar_lideres(score)
         if lideres is None or lideres.empty:
             continue
+
+        # acumula score e líderes globais (para Patch 1-3 e Patch 5)
+        lideres2 = lideres.copy()
+        if "ticker" in lideres2.columns:
+            lideres2["ticker"] = lideres2["ticker"].astype(str).apply(_strip_sa)
+        lideres2["SETOR"] = setor
+        lideres2["SUBSETOR"] = subsetor
+        lideres2["SEGMENTO"] = segmento
+
+        score_global_parts.append(score.copy())
+        lideres_global_parts.append(lideres2)
 
         patrimonio_empresas, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
         if patrimonio_empresas is None or patrimonio_empresas.empty:
@@ -475,16 +507,17 @@ def render():
         if tickers_corrente:
             tickers_corrente_yf = [_norm_sa(tk) for tk in tickers_corrente]
 
-            precos = baixar_precos_ano_corrente(tickers_corrente_yf)
-            if precos is None or precos.empty:
+            # NÃO sobrescreve 'precos' do loop: use 'precos_corrente'
+            precos_corrente = baixar_precos_ano_corrente(tickers_corrente_yf)
+            if precos_corrente is None or precos_corrente.empty:
                 st.warning("⚠️ Dados de preço indisponíveis para as ações escolhidas no ano atual.")
                 st.stop()
 
-            precos.index = pd.to_datetime(precos.index, errors="coerce")
-            precos = precos.dropna(how="all")
-            precos = precos.resample("B").last().ffill()
+            precos_corrente.index = pd.to_datetime(precos_corrente.index, errors="coerce")
+            precos_corrente = precos_corrente.dropna(how="all")
+            precos_corrente = precos_corrente.resample("B").last().ffill()
 
-            if precos.empty:
+            if precos_corrente.empty:
                 st.warning("⚠️ Dados de preço indisponíveis para as ações escolhidas no ano atual.")
                 st.stop()
 
@@ -494,11 +527,13 @@ def render():
             datas_potenciais = pd.date_range(start=f"{ano_corrente}-01-01", end=f"{ano_corrente}-12-31", freq="MS")
             datas_aporte: List[pd.Timestamp] = []
             for data in datas_potenciais:
-                data_valida = encontrar_proxima_data_valida(data, precos)
-                if data_valida is not None and data_valida in precos.index:
+                data_valida = encontrar_proxima_data_valida(data, precos_corrente)
+                if data_valida is not None and data_valida in precos_corrente.index:
                     datas_aporte.append(data_valida)
 
-            patrimonio_aporte = gerir_carteira_simples(precos, tickers_limpos, datas_aporte, dividendos_dict=dividendos_dict)
+            patrimonio_aporte = gerir_carteira_simples(
+                precos_corrente, tickers_limpos, datas_aporte, dividendos_dict=dividendos_dict
+            )
 
             # Selic benchmark (no mesmo índice do patrimônio da estratégia)
             df_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aporte)
@@ -535,7 +570,11 @@ def render():
             desempenho = ((valor_estrategia_final / valor_selic_final) - 1) * 100.0 if valor_selic_final > 0 else 0.0
 
             patrimonio_total_aplicado = 1000.0 * len(datas_aporte)
-            retorno_estrategia = ((valor_estrategia_final / patrimonio_total_aplicado) - 1) * 100.0 if patrimonio_total_aplicado > 0 else 0.0
+            retorno_estrategia = (
+                ((valor_estrategia_final / patrimonio_total_aplicado) - 1) * 100.0
+                if patrimonio_total_aplicado > 0
+                else 0.0
+            )
 
             if desempenho > 0:
                 cor = "green"
@@ -556,12 +595,33 @@ def render():
                 unsafe_allow_html=True,
             )
 
+    # ─────────────────────────────────────────────────────────────
+    # Consolida globais para os patches
+    # ─────────────────────────────────────────────────────────────
+    score_global = pd.concat(score_global_parts, ignore_index=True) if score_global_parts else pd.DataFrame()
+    lideres_global = pd.concat(lideres_global_parts, ignore_index=True) if lideres_global_parts else pd.DataFrame()
+
+    if isinstance(precos_global, pd.DataFrame) and not precos_global.empty:
+        precos_global.index = pd.to_datetime(precos_global.index, errors="coerce")
+        precos_global = precos_global.dropna(how="all")
+        precos_global = precos_global.sort_index()
+    else:
+        precos_global = pd.DataFrame()
+
     st.markdown("<hr>", unsafe_allow_html=True)
 
-    render_patch1_regua_conviccao(score_global, lideres_global, empresas_lideres_finais)
-    render_patch2_dominancia(score_global, lideres_global, empresas_lideres_finais)
-    render_patch3_stress_test(score_global, lideres_global, empresas_lideres_finais)
-    render_patch4_diversificacao(empresas_lideres_finais, contrib_globais=contrib_globais)
-    
-    # PATCH 5 agora NÃO baixa nada
-    render_patch5_benchmark_segmento(score_global, empresas_lideres_finais, precos=precos, max_universe=80)
+    # ─────────────────────────────────────────────────────────────
+    # PATCHES: sem yfinance (Patch 5 usa precos_global consolidado)
+    # ─────────────────────────────────────────────────────────────
+    if empresas_lideres_finais:
+        render_patch1_regua_conviccao(score_global, lideres_global, empresas_lideres_finais)
+        render_patch2_dominancia(score_global, lideres_global, empresas_lideres_finais)
+        render_patch3_stress_test(score_global, lideres_global, empresas_lideres_finais)
+        render_patch4_diversificacao(empresas_lideres_finais, contrib_globais=contrib_globais)
+
+        # Patch 5 agora NÃO baixa nada
+        render_patch5_benchmark_segmento(
+            score_global, empresas_lideres_finais, precos=precos_global, max_universe=80
+        )
+    else:
+        st.info("Sem líderes finais para análise de patches nesta execução.")
