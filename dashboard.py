@@ -31,11 +31,17 @@ _load_env_from_secrets()
 if st.button("Testar OpenAI"):
     try:
         from core.ai_models.llm_client.factory import get_llm_client
+
         llm = get_llm_client()
 
-        # teste "raw" (sem schema)
-        text = llm.generate_text("Responda apenas com a palavra: OK")
-        st.success(text)
+        resp = llm.generate_json(
+            system="Você é um verificador de conectividade.",
+            user="Retorne um JSON com ok=true e msg='conectou'.",
+            schema_hint='{"ok": true, "msg": "conectou"}',
+            context=None,
+        )
+
+        st.success(resp)
 
     except Exception as e:
         st.exception(e)
@@ -178,6 +184,7 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
 
 
 
