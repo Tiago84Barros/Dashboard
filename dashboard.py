@@ -29,13 +29,16 @@ _load_env_from_secrets()
 
 # _____________________ Teste de funcionalidade da API da OpenAI_____
 if st.button("Testar OpenAI"):
-    from core.ai_models.llm_client.factory import get_llm_client
-    llm = get_llm_client()
-    resp = llm.generate_json(
-        prompt="Responda com {\"ok\": true}",
-        schema={"ok": bool},
-    )
-    st.write(resp)
+    try:
+        from core.ai_models.llm_client.factory import get_llm_client
+        llm = get_llm_client()
+
+        # teste "raw" (sem schema)
+        text = llm.generate_text("Responda apenas com a palavra: OK")
+        st.success(text)
+
+    except Exception as e:
+        st.exception(e)
 
 # ───────────────────────── Ajuste de path ──────────────────────────
 ROOT_DIR = pathlib.Path(__file__).resolve().parent
@@ -175,6 +178,7 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
 
 
 
