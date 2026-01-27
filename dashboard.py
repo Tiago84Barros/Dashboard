@@ -14,7 +14,7 @@ import logging
 import pathlib
 import sys
 from typing import Callable, Optional
-
+import os
 import streamlit as st
 
 logger = logging.getLogger(__name__)
@@ -175,6 +175,7 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
 
 
 
