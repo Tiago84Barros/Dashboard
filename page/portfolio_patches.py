@@ -657,3 +657,282 @@ def render_patch5_benchmark_segmento(
             ax.set_title("Retorno da empresa menos retorno médio do segmento (último ano do score)")
             ax.grid(True, linestyle="--", alpha=0.4)
             st.pyplot(fig)
+
+# ─────────────────────────────────────────────────────────────
+# PATCH 6 — IA (OpenAI) Seleção Assistida entre Líderes
+# ─────────────────────────────────────────────────────────────
+
+def _coletar_metricas_ultima_linha(df: pd.DataFrame, ticker: str) -> Dict:
+    """
+    Pega uma amostra compacta das métricas do último ano (ou última linha disponível)
+    para o ticker, evitando enviar colunas gigantes para o LLM.
+    """
+    if df is None or df.empty:
+        return {}
+
+    d = df.copy()
+    if "ticker" not in d.columns:
+        return {}
+
+    d["ticker"] = d["ticker"].astype(str).map(_strip_sa)
+
+    rows = d[d["ticker"] == _strip_sa(ticker)].copy()
+    if rows.empty:
+        return {}
+
+    # tenta usar último ano se existir
+    if "Ano" in rows.columns:
+        rows["Ano"] = pd.to_numeric(rows["Ano"], errors="coerce")
+        rows = rows.dropna(subset=["Ano"])
+        if not rows.empty:
+            ultimo_ano = int(rows["Ano"].max())
+            rows = rows[rows["Ano"] == ultimo_ano]
+            if rows.empty:
+                return {}
+
+    r0 = rows.iloc[-1].to_dict()
+
+    # whitelisting: só campos comuns e úteis (ignora o resto)
+    keep = [
+        "Score_Ajustado", "Score",
+        "P/VP", "P/L", "EV/EBITDA",
+        "DY", "ROE", "ROIC",
+        "Margem_Bruta", "Margem_EBITDA", "Margem_Liquida",
+        "Crescimento_Receita", "Crescimento_Lucro",
+        "Liquidez_Corrente", "Endividamento_Total", "Divida_Liquida_EBITDA",
+        "Ano", "SETOR", "SUBSETOR", "SEGMENTO",
+    ]
+    out = {}
+    for k in keep:
+        if k in r0:
+            v = r0.get(k)
+            # reduz tamanho
+            if isinstance(v, (float, int, np.floating, np.integer)) and np.isfinite(v):
+                out[k] = float(v)
+            elif v is None or (isinstance(v, float) and not np.isfinite(v)):
+                continue
+            else:
+                out[k] = str(v)[:120]
+    return out
+
+
+def _historico_lideranca(lideres_global: pd.DataFrame, ticker: str) -> Dict[str, any]:
+    if lideres_global is None or lideres_global.empty:
+        return {"anos_lider": 0, "lista_anos": []}
+
+    lg = lideres_global.copy()
+    if not {"ticker", "Ano"}.issubset(lg.columns):
+        return {"anos_lider": 0, "lista_anos": []}
+
+    lg["ticker"] = lg["ticker"].astype(str).map(_strip_sa)
+    lg["Ano"] = pd.to_numeric(lg["Ano"], errors="coerce")
+    lg = lg.dropna(subset=["ticker", "Ano"])
+
+    anos = (
+        lg.loc[lg["ticker"] == _strip_sa(ticker), "Ano"]
+        .dropna()
+        .astype(int)
+        .unique()
+        .tolist()
+    )
+    anos = sorted(anos)
+    return {"anos_lider": len(anos), "lista_anos": anos}
+
+
+def _montar_contexto_patch6(
+    score_global: pd.DataFrame,
+    lideres_global: pd.DataFrame,
+    empresas_lideres_finais: List[Dict],
+) -> List[Dict[str, any]]:
+    """
+    Monta um contexto compacto por ticker para o LLM.
+    Não usa notícias ainda; só sinais internos.
+    """
+    ctx: List[Dict[str, any]] = []
+
+    for e in (empresas_lideres_finais or []):
+        tk = _strip_sa(str(e.get("ticker", "")))
+        if not tk:
+            continue
+
+        nome = str(e.get("nome", tk))
+        setor = str(e.get("setor", "OUTROS"))
+        subsetor = str(e.get("subsetor", e.get("SUBSETOR", "OUTROS")))
+        segmento = str(e.get("segmento", e.get("SEGMENTO", "OUTROS")))
+        ano_lider = e.get("ano_lider", None)
+        ano_compra = e.get("ano_compra", None)
+
+        metrics = _coletar_metricas_ultima_linha(_safe_df(score_global), tk)
+        lh = _historico_lideranca(_safe_df(lideres_global), tk)
+
+        texto = (
+            f"Ticker: {tk}\n"
+            f"Empresa: {nome}\n"
+            f"Classificação: SETOR={setor} | SUBSETOR={subsetor} | SEGMENTO={segmento}\n"
+            f"Ano líder (conforme algoritmo): {ano_lider}\n"
+            f"Ano sugerido para compra: {ano_compra}\n"
+            f"Histórico liderança: {lh['anos_lider']} anos; anos={lh['lista_anos']}\n"
+            f"Métricas (último ano disponível no score_global): {metrics}\n"
+            "\nRegras:\n"
+            "- Use apenas essas informações.\n"
+            "- Se faltar dado, reduza a confiança.\n"
+            "- Não invente fatos externos.\n"
+        )
+
+        ctx.append(
+            {
+                "title": f"{tk} - {nome}",
+                "source": "dados internos (score/patches)",
+                "published_at": "",
+                "text": texto,
+            }
+        )
+
+    return ctx
+
+
+@st.cache_data(ttl=60 * 60 * 24, show_spinner=False)
+def _patch6_ai_cached(
+    tickers_key: tuple,
+    context_texts_key: tuple,
+    max_recs: int,
+) -> Dict[str, any]:
+    """
+    Cache 24h: evita custo repetido. Keys precisam ser hashable.
+    """
+    from core.ai_models.llm_client.factory import get_llm_client
+
+    llm = get_llm_client()
+
+    system = (
+        "Você é um módulo de apoio à decisão do algoritmo. "
+        "Você NÃO deve recomendar compra/venda como consultoria, "
+        "apenas ranquear as opções dadas com base em sinais internos. "
+        "Responda APENAS com JSON válido."
+    )
+
+    user = (
+        "Tarefa: ranquear os tickers líderes candidatos para o próximo ano, "
+        "selecionando um subconjunto com maior probabilidade de bom desempenho relativo "
+        "com base em qualidade, consistência e valuation (somente pelos dados internos fornecidos).\n\n"
+        f"Restrições:\n"
+        f"- Retorne no máximo {max_recs} tickers.\n"
+        "- Para cada ticker, retorne:\n"
+        "  score_ia (0-100), confidence (0-1), rationale (curto), riscos (lista), catalisadores (lista)\n"
+        "- Para os não selecionados, retorne ticker e motivo.\n"
+        "- Se a informação for insuficiente, reduza confidence e explique.\n"
+    )
+
+    schema_hint = (
+        '{'
+        '"recomendadas": ['
+        '{"ticker":"PETR3","score_ia":75,"confidence":0.72,'
+        '"rationale":"...","riscos":["..."],"catalisadores":["..."]}'
+        '],'
+        '"nao_selecionadas":[{"ticker":"XXXX","motivo":"..."}]'
+        '}'
+    )
+
+    # reconstrói context no formato esperado pelo client
+    context = [{"title": "", "text": t, "source": "ctx", "published_at": ""} for t in context_texts_key]
+
+    return llm.generate_json(system=system, user=user, schema_hint=schema_hint, context=context)
+
+
+def render_patch6_ia_selecao_lideres(
+    score_global: pd.DataFrame,
+    lideres_global: pd.DataFrame,
+    empresas_lideres_finais: List[Dict],
+    max_recs_default: int = 10,
+) -> Optional[Dict[str, any]]:
+    """
+    Patch 6: usa IA (OpenAI) para ranquear/selecionar entre as líderes já definidas pelo algoritmo.
+    Retorna o JSON da IA (para salvar no run), ou None se não rodar.
+    """
+    st.markdown("## 🤖 IA (OpenAI) — Seleção assistida entre líderes")
+    st.caption(
+        "Patch 6: a IA ranqueia um subconjunto entre as líderes finais usando apenas sinais internos "
+        "(score_global/lideres_global e metadados). Não usa notícias ainda."
+    )
+
+    if not empresas_lideres_finais:
+        st.info("Patch 6 indisponível: lista de líderes finais vazia.")
+        return None
+
+    # controles
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        use_ai = st.checkbox("Ativar IA neste patch", value=False, key="patch6_use_ai")
+    with c2:
+        max_recs = st.slider(
+            "Máximo de tickers recomendadas",
+            min_value=3,
+            max_value=min(20, max(3, len(empresas_lideres_finais))),
+            value=min(max_recs_default, max(3, len(empresas_lideres_finais))),
+            step=1,
+            key="patch6_max_recs",
+        )
+
+    if not use_ai:
+        st.info("IA desligada. Ative o checkbox acima para rodar este patch.")
+        return None
+
+    # monta contexto
+    ctx = _montar_contexto_patch6(_safe_df(score_global), _safe_df(lideres_global), empresas_lideres_finais)
+    if not ctx:
+        st.warning("Não foi possível montar contexto interno para a IA.")
+        return None
+
+    # keys hashable p/ cache
+    tickers_key = tuple(sorted({_strip_sa(str(e.get("ticker", ""))) for e in empresas_lideres_finais if str(e.get("ticker", "")).strip()}))
+    context_texts_key = tuple([c.get("text", "") for c in ctx])
+
+    try:
+        with st.spinner("IA: ranqueando líderes..."):
+            ai_resp = _patch6_ai_cached(
+                tickers_key=tickers_key,
+                context_texts_key=context_texts_key,
+                max_recs=int(max_recs),
+            )
+    except Exception as e:
+        st.warning("IA falhou neste patch. Verifique logs/Secrets/limites. Seguindo sem IA.")
+        st.exception(e)
+        return None
+
+    if not isinstance(ai_resp, dict) or not ai_resp:
+        st.warning("IA retornou resposta vazia ou fora do formato esperado.")
+        st.json(ai_resp)
+        return ai_resp
+
+    recs = ai_resp.get("recomendadas", []) or []
+    if not recs:
+        st.warning("IA não retornou recomendações no formato esperado.")
+        st.json(ai_resp)
+        return ai_resp
+
+    # tabela amigável
+    rows = []
+    for r in recs:
+        rows.append(
+            {
+                "ticker": _strip_sa(str(r.get("ticker", ""))),
+                "empresa": _get_nome(str(r.get("ticker", "")), empresas_lideres_finais),
+                "score_ia": r.get("score_ia"),
+                "confidence": r.get("confidence"),
+                "rationale": r.get("rationale"),
+                "riscos": ", ".join(r.get("riscos", []) or []),
+                "catalisadores": ", ".join(r.get("catalisadores", []) or []),
+            }
+        )
+
+    df = pd.DataFrame(rows)
+    st.dataframe(df, use_container_width=True)
+
+    nao = ai_resp.get("nao_selecionadas", []) or []
+    if nao:
+        with st.expander("Ver tickers não selecionadas pela IA", expanded=False):
+            st.json(nao)
+
+    st.caption("Uso recomendado: trate como sinal auxiliar. O score fundamentalista continua sendo o driver principal.")
+    return ai_resp
+
