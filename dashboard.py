@@ -19,6 +19,23 @@ import streamlit as st
 
 logger = logging.getLogger(__name__)
 
+# ___________________ carrega a API da OpenAI _______________________
+def _load_env_from_secrets():
+    for k in ("OPENAI_API_KEY", "AI_PROVIDER", "AI_MODEL"):
+        if k in st.secrets and not os.getenv(k):
+            os.environ[k] = str(st.secrets[k])
+
+_load_env_from_secrets()
+
+# _____________________ Teste de funcionalidade da API da OpenAI_____
+if st.button("Testar OpenAI"):
+    from core.ai_models.llm_client.factory import get_llm_client
+    llm = get_llm_client()
+    resp = llm.generate_json(
+        prompt="Responda com {\"ok\": true}",
+        schema={"ok": bool},
+    )
+    st.write(resp)
 
 # ───────────────────────── Ajuste de path ──────────────────────────
 ROOT_DIR = pathlib.Path(__file__).resolve().parent
@@ -158,6 +175,7 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
 
 
 
