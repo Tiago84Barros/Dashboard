@@ -59,7 +59,8 @@ from page.portfolio_patches import (
     render_patch3_stress_test,
     render_patch4_diversificacao,
     render_patch5_benchmark_segmento,
-    render_patch6_ia_selecao_lideres,  # ✅ Patch 6 (IA) vindo do arquivo portfolio_patches.py
+    render_patch6_ia_selecao_lideres,
+    render_patch7_validacao_evidencias,  # ✅ Patch 7
 )
 
 from core.weights import get_pesos
@@ -72,12 +73,11 @@ from core.session_store import (
     load_run,
     list_runs,
     last_run_key,
-    last_run_label,   # <-- ADICIONE ESTA LINHA
+    last_run_label,
     clear_runs,
     set_force_render_saved,
     consume_force_render_saved,
 )
-
 # <<< Persistência em sessão
 
 logger = logging.getLogger(__name__)
@@ -109,9 +109,7 @@ def _fmt_dt(dt_str: str) -> str:
     if not dt_str:
         return ""
     try:
-        # aceita isoformat com/sem timezone
         dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-        # converte p/ SP se tiver tz
         if ZoneInfo is not None and dt.tzinfo is not None:
             dt = dt.astimezone(ZoneInfo("America/Sao_Paulo"))
         return dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -290,6 +288,62 @@ def _render_bloco_final_portfolio(empresas_lideres_finais: List[dict]) -> None:
     st.pyplot(fig)
 
 
+def _render_all_patches(
+    *,
+    score_global: pd.DataFrame,
+    lideres_global: pd.DataFrame,
+    empresas_lideres_finais: List[dict],
+    precos_global: pd.DataFrame,
+    contrib_globais,
+    show_patch6: bool = True,
+    show_patch7: bool = True,
+) -> Tuple[Optional[dict], Optional[dict]]:
+    """
+    Renderiza patches 1..7 (quando habilitados) e retorna (resp_patch6, resp_patch7).
+    """
+    if not empresas_lideres_finais:
+        st.info("Sem líderes finais para análise de patches nesta execução.")
+        return None, None
+
+    render_patch1_regua_conviccao(score_global, lideres_global, empresas_lideres_finais)
+    render_patch2_dominancia(score_global, lideres_global, empresas_lideres_finais)
+    render_patch3_stress_test(score_global, lideres_global, empresas_lideres_finais)
+    render_patch4_diversificacao(empresas_lideres_finais, contrib_globais=contrib_globais)
+
+    precos_para_patch5 = _maybe_shrink_precos(precos_global, [e.get("ticker", "") for e in empresas_lideres_finais])
+    render_patch5_benchmark_segmento(
+        score_global,
+        empresas_lideres_finais,
+        precos=precos_para_patch5,
+        max_universe=80,
+    )
+
+    patch6_resp = None
+    patch7_resp = None
+
+    if show_patch6:
+        st.markdown("<hr>", unsafe_allow_html=True)
+        patch6_resp = render_patch6_ia_selecao_lideres(
+            score_global=score_global,
+            lideres_global=lideres_global,
+            empresas_lideres_finais=empresas_lideres_finais,
+            max_recs_default=10,
+        )
+
+    if show_patch7:
+        st.markdown("<hr>", unsafe_allow_html=True)
+        patch7_resp = render_patch7_validacao_evidencias(
+            score_global=score_global,
+            lideres_global=lideres_global,
+            empresas_lideres_finais=empresas_lideres_finais,
+            days=60,
+            max_items_per_ticker=15,
+            cache_ttl_hours=12,
+        )
+
+    return patch6_resp, patch7_resp
+
+
 # ─────────────────────────────────────────────────────────────
 # Render Streamlit
 # ─────────────────────────────────────────────────────────────
@@ -320,7 +374,7 @@ def render():
 
     # Painel de persistência (sempre visível)
     with st.expander("Resultados salvos nesta sessão", expanded=True):
-        runs = list_runs(store_cfg)  # lista de dicts
+        runs = list_runs(store_cfg)
         lk_label = last_run_label(store_cfg)
 
         if runs:
@@ -373,7 +427,7 @@ def render():
         st.error("Não foi possível carregar/normalizar os dados macroeconômicos.")
         st.stop()
 
-    # Reexibir salvo (sem recalcular)
+    # Reexibir salvo (sem recalcular) - botão explícito
     if consume_force_render_saved(store_cfg):
         params = {"margem_superior": margem_superior, "use_score_v2": bool(use_score_v2)}
         rk = make_run_key(store_cfg, params=params, setores_df=setores_df, macro_df=dados_macro)
@@ -390,35 +444,38 @@ def render():
             lideres_global = saved.get("lideres_global", pd.DataFrame())
             precos_global = saved.get("precos_global", pd.DataFrame())
             contrib_globais = saved.get("contrib_globais", None)
-            ia_recomendacoes = saved.get("ia_recomendacoes", None)  # ✅
 
-            # cards + pizza no modo salvo
+            patch6_saved = saved.get("ia_recomendacoes", None)
+            patch7_saved = saved.get("patch7_evidencias", None)
+
             _render_bloco_final_portfolio(empresas_lideres_finais)
 
             st.markdown("<hr>", unsafe_allow_html=True)
             if empresas_lideres_finais:
-                render_patch1_regua_conviccao(score_global, lideres_global, empresas_lideres_finais)
-                render_patch2_dominancia(score_global, lideres_global, empresas_lideres_finais)
-                render_patch3_stress_test(score_global, lideres_global, empresas_lideres_finais)
-                render_patch4_diversificacao(empresas_lideres_finais, contrib_globais=contrib_globais)
-                render_patch5_benchmark_segmento(
-                    score_global,
-                    empresas_lideres_finais,
-                    precos=precos_global,
-                    max_universe=80,
+                _ = _render_all_patches(
+                    score_global=score_global,
+                    lideres_global=lideres_global,
+                    empresas_lideres_finais=empresas_lideres_finais,
+                    precos_global=precos_global,
+                    contrib_globais=contrib_globais,
+                    show_patch6=False,  # não recalcula no modo salvo
+                    show_patch7=False,
                 )
 
-                # ✅ Patch 6 (IA) no modo salvo:
-                # Se tiver salvo, mostramos o JSON; se não, permitimos rodar novamente (opcional).
                 st.markdown("<hr>", unsafe_allow_html=True)
-                st.markdown("## 🤖 IA (OpenAI) — Patch 6 (modo salvo)")
-                if ia_recomendacoes:
-                    st.caption("Exibindo recomendações de IA salvas nesta execução.")
-                    st.json(ia_recomendacoes)
+                st.markdown("## 🤖 Patch 6 — IA (salvo)")
+                if patch6_saved:
+                    st.json(patch6_saved)
                 else:
-                    st.caption("Nenhuma recomendação de IA foi salva nesta execução. Você pode rodar agora (opcional).")
-                    _ = render_patch6_ia_selecao_lideres(score_global, lideres_global, empresas_lideres_finais)
+                    st.caption("Nenhuma recomendação de IA foi salva nesta execução.")
 
+                st.markdown("<hr>", unsafe_allow_html=True)
+                st.markdown("## 🧾 Patch 7 — Evidências (salvo)")
+                if patch7_saved:
+                    rep = patch7_saved.get("report", patch7_saved) if isinstance(patch7_saved, dict) else patch7_saved
+                    st.json(rep)
+                else:
+                    st.caption("Nenhuma validação por evidências foi salva nesta execução.")
             else:
                 st.info("Resultado salvo não contém líderes finais.")
 
@@ -433,44 +490,31 @@ def render():
         saved = load_run(store_cfg, last_run_key(store_cfg))
         if saved:
             st.info("Reexibindo último resultado salvo (modo interativo).")
-    
+
             empresas_lideres_finais = saved.get("empresas_lideres_finais", [])
             score_global = saved.get("score_global", pd.DataFrame())
             lideres_global = saved.get("lideres_global", pd.DataFrame())
             precos_global = saved.get("precos_global", pd.DataFrame())
             contrib_globais = saved.get("contrib_globais", None)
-    
+
             _render_bloco_final_portfolio(empresas_lideres_finais)
-    
+
             st.markdown("<hr>", unsafe_allow_html=True)
             if empresas_lideres_finais:
-                render_patch1_regua_conviccao(score_global, lideres_global, empresas_lideres_finais)
-                render_patch2_dominancia(score_global, lideres_global, empresas_lideres_finais)
-                render_patch3_stress_test(score_global, lideres_global, empresas_lideres_finais)
-                render_patch4_diversificacao(empresas_lideres_finais, contrib_globais=contrib_globais)
-    
-                precos_para_patch5 = _maybe_shrink_precos(precos_global, [e.get("ticker", "") for e in empresas_lideres_finais])
-                render_patch5_benchmark_segmento(
-                    score_global,
-                    empresas_lideres_finais,
-                    precos=precos_para_patch5,
-                    max_universe=80,
-                )
-    
-                # ✅ PATCH 6 (IA) agora funciona sem “zerar”
-                render_patch6_ia_selecao_lideres(
-                    score_global,
-                    lideres_global,
-                    empresas_lideres_finais,
-                    max_recs_default=10,
+                _ = _render_all_patches(
+                    score_global=score_global,
+                    lideres_global=lideres_global,
+                    empresas_lideres_finais=empresas_lideres_finais,
+                    precos_global=precos_global,
+                    contrib_globais=contrib_globais,
+                    show_patch6=True,
+                    show_patch7=True,
                 )
             else:
                 st.info("Resultado salvo não contém líderes finais.")
-    
         else:
             st.info("Nenhum resultado salvo ainda. Clique em **Gerar Portfólio** para criar um.")
         st.stop()
-
 
     # >>> PATCH SCORE V2 (mapas ticker -> SEGMENTO/SUBSETOR/SETOR)
     _tmp = setores_df[["ticker", "SEGMENTO", "SUBSETOR", "SETOR"]].copy()
@@ -757,33 +801,19 @@ def render():
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
-    ia_resp = None  # ✅ será preenchido se o patch 6 rodar
+    patch6_resp = None
+    patch7_resp = None
 
     if empresas_lideres_finais:
-        render_patch1_regua_conviccao(score_global, lideres_global, empresas_lideres_finais)
-        render_patch2_dominancia(score_global, lideres_global, empresas_lideres_finais)
-        render_patch3_stress_test(score_global, lideres_global, empresas_lideres_finais)
-        render_patch4_diversificacao(empresas_lideres_finais, contrib_globais=contrib_globais)
-
-        # Para patch 5, salva um precos_global “enxuto” se necessário
-        precos_para_patch5 = _maybe_shrink_precos(precos_global, [e.get("ticker", "") for e in empresas_lideres_finais])
-        render_patch5_benchmark_segmento(
-            score_global,
-            empresas_lideres_finais,
-            precos=precos_para_patch5,
-            max_universe=80,
-        )
-
-        # ✅ Patch 6 — IA (OpenAI) (fica no portfolio_patches.py)
-        st.markdown("<hr>", unsafe_allow_html=True)
-        ia_resp = render_patch6_ia_selecao_lideres(
+        patch6_resp, patch7_resp = _render_all_patches(
             score_global=score_global,
             lideres_global=lideres_global,
             empresas_lideres_finais=empresas_lideres_finais,
-            max_recs_default=10,
+            precos_global=precos_global,
+            contrib_globais=contrib_globais,
+            show_patch6=True,
+            show_patch7=True,
         )
-    else:
-        st.info("Sem líderes finais para análise de patches nesta execução.")
 
     # Salva execução na sessão (para não perder ao trocar de página)
     params = {"margem_superior": margem_superior, "use_score_v2": bool(use_score_v2)}
@@ -796,7 +826,6 @@ def render():
         run_key,
         payload={
             "_meta": {
-                # ✅ salva em fuso SP (string amigável, mas ainda ISO-like)
                 "created_at": _now_sp().isoformat(timespec="seconds"),
                 "margem_superior": margem_superior,
                 "use_score_v2": bool(use_score_v2),
@@ -809,6 +838,7 @@ def render():
             "lideres_global": lideres_global,
             "precos_global": precos_salvar,
             "contrib_globais": contrib_globais,
-            "ia_recomendacoes": ia_resp,  # ✅ salva retorno da IA
+            "ia_recomendacoes": patch6_resp,      # ✅ Patch 6 salvo
+            "patch7_evidencias": patch7_resp,     # ✅ Patch 7 salvo
         },
     )
