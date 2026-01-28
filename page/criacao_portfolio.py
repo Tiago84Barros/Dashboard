@@ -427,8 +427,50 @@ def render():
         st.warning("Não encontrei um resultado salvo compatível para reexibir.")
         st.stop()
 
+    # Se não clicou em "Gerar Portfólio", mas existe resultado salvo,
+    # reexibe automaticamente o último (permite patches interativos como IA).
     if not gerar:
+        saved = load_run(store_cfg, last_run_key(store_cfg))
+        if saved:
+            st.info("Reexibindo último resultado salvo (modo interativo).")
+    
+            empresas_lideres_finais = saved.get("empresas_lideres_finais", [])
+            score_global = saved.get("score_global", pd.DataFrame())
+            lideres_global = saved.get("lideres_global", pd.DataFrame())
+            precos_global = saved.get("precos_global", pd.DataFrame())
+            contrib_globais = saved.get("contrib_globais", None)
+    
+            _render_bloco_final_portfolio(empresas_lideres_finais)
+    
+            st.markdown("<hr>", unsafe_allow_html=True)
+            if empresas_lideres_finais:
+                render_patch1_regua_conviccao(score_global, lideres_global, empresas_lideres_finais)
+                render_patch2_dominancia(score_global, lideres_global, empresas_lideres_finais)
+                render_patch3_stress_test(score_global, lideres_global, empresas_lideres_finais)
+                render_patch4_diversificacao(empresas_lideres_finais, contrib_globais=contrib_globais)
+    
+                precos_para_patch5 = _maybe_shrink_precos(precos_global, [e.get("ticker", "") for e in empresas_lideres_finais])
+                render_patch5_benchmark_segmento(
+                    score_global,
+                    empresas_lideres_finais,
+                    precos=precos_para_patch5,
+                    max_universe=80,
+                )
+    
+                # ✅ PATCH 6 (IA) agora funciona sem “zerar”
+                render_patch6_ia_selecao_lideres(
+                    score_global,
+                    lideres_global,
+                    empresas_lideres_finais,
+                    max_recs_default=10,
+                )
+            else:
+                st.info("Resultado salvo não contém líderes finais.")
+    
+        else:
+            st.info("Nenhum resultado salvo ainda. Clique em **Gerar Portfólio** para criar um.")
         st.stop()
+
 
     # >>> PATCH SCORE V2 (mapas ticker -> SEGMENTO/SUBSETOR/SETOR)
     _tmp = setores_df[["ticker", "SEGMENTO", "SUBSETOR", "SETOR"]].copy()
