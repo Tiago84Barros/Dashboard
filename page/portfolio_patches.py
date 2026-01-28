@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from typing import List, Dict, Optional
+from typing import Any, Dict, List, Optional
 import textwrap
 
 import numpy as np
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
+import hashlib
+import json
+import pandas as pd
 
 
 # ─────────────────────────────────────────────────────────────
@@ -662,16 +665,6 @@ def render_patch5_benchmark_segmento(
 # PATCH 6 — IA (OpenAI) — Seleção/validação amigável
 # (usa core/ai_models/* e mantém resultado em sessão)
 # ─────────────────────────────────────────────────────────────
-
-from __future__ import annotations
-
-from typing import Any, Dict, List, Optional
-import hashlib
-import json
-import pandas as pd
-import streamlit as st
-
-
 def render_patch6_ia_selecao_lideres(
     score_global: pd.DataFrame,
     lideres_global: pd.DataFrame,
