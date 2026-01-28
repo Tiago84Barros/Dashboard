@@ -1002,3 +1002,291 @@ def _render_patch6_report(resp: Dict[str, Any], *, mostrar_tabela: bool = False)
 
     with st.expander("Ver JSON completo (debug)", expanded=False):
         st.json(resp)
+
+# ─────────────────────────────────────────────────────────────
+# PATCH 7 — Validação por evidências (News & Sentiment).
+# ─────────────────────────────────────────────────────────────
+
+def render_patch7_validacao_evidencias(
+    score_global: pd.DataFrame,
+    lideres_global: pd.DataFrame,
+    empresas_lideres_finais: List[Dict],
+    *,
+    days: int = 60,
+    max_items_per_ticker: int = 15,
+    cache_ttl_hours: int = 12,
+) -> Optional[Dict]:
+    """
+    PATCH 7 — Validação por evidências (News & Sentiment).
+    - Coleta Google News RSS (janela padrão 60d)
+    - Pede ao LLM um relatório amigável por ticker + resumo do portfólio
+    - Retorna dict (para salvar no session_store)
+    """
+    st.markdown("## 🧾 Patch 7 — Validação por Evidências (noticiário recente)")
+    st.caption(
+        "Objetivo: verificar se o noticiário recente **reforça**, **coloca alertas** ou **enfraquece** a tese "
+        "para as empresas selecionadas (com base no score até 2024). "
+        "Fonte: Google News (RSS)."
+    )
+
+    if not empresas_lideres_finais:
+        st.info("Patch 7 indisponível: não há líderes finais.")
+        return None
+
+    # ── imports locais (evita quebrar a página toda se faltar algo)
+    try:
+        from core.ai_models.pipelines.news_pipeline import build_news_for_portfolio
+    except Exception as e:
+        st.error(f"Não consegui carregar o pipeline de notícias. Erro: {e}")
+        return None
+
+    # ── inicializa LLM do seu projeto (mesmo padrão do Patch 6)
+    llm = None
+    try:
+        # ajuste: seu openai_client está em core/ai_models/llm_client/openai_client.py
+        from core.ai_models.llm_client.openai_client import OpenAIChatClient
+        llm = OpenAIChatClient()
+    except Exception as e:
+        st.error(f"Não consegui inicializar o cliente de IA (LLM). Verifique core/ai_models/llm_client/*.py e secrets.\n{e}")
+        return None
+
+    # ── Controles simples
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        dias = st.number_input("Janela (dias)", min_value=7, max_value=120, value=int(days), step=1)
+    with c2:
+        max_it = st.number_input("Evidências por ticker", min_value=5, max_value=30, value=int(max_items_per_ticker), step=1)
+    with c3:
+        st.write("")
+        st.write("")
+        run_btn = st.button("Executar Patch 7", key="patch7_run")
+
+    # cache (12h) — use st.cache_data para não ficar batendo RSS toda hora
+    @st.cache_data(ttl=60 * 60 * int(cache_ttl_hours), show_spinner=False)
+    def _cached_fetch_portfolio(tickers_and_names: List[tuple], dias_: int, max_: int) -> Dict[str, List[Dict]]:
+        news_map = build_news_for_portfolio(
+            tickers_and_names=tickers_and_names,
+            days=dias_,
+            max_items_per_ticker=max_,
+        )
+        # serializa NewsItem -> dict (cache do Streamlit é melhor com tipos simples)
+        out: Dict[str, List[Dict]] = {}
+        for tk, items in news_map.items():
+            out[tk] = [
+                {
+                    "ticker": it.ticker,
+                    "title": it.title,
+                    "link": it.link,
+                    "source": it.source,
+                    "published_at": (it.published_at.isoformat() if it.published_at else None),
+                    "snippet": it.snippet,
+                }
+                for it in items
+            ]
+        return out
+
+    # prepara lista tickers/nome
+    tickers_and_names = []
+    for e in empresas_lideres_finais:
+        tk = (e.get("ticker") or "").upper().replace(".SA", "").strip()
+        nm = (e.get("nome") or tk).strip()
+        if tk:
+            tickers_and_names.append((tk, nm))
+    tickers_and_names = list(dict.fromkeys(tickers_and_names))  # dedup preservando ordem
+
+    if not run_btn:
+        st.info("Clique em **Executar Patch 7** para gerar o relatório do noticiário.")
+        return None
+
+    with st.spinner("Coletando evidências (RSS) e gerando relatório..."):
+        news_map = _cached_fetch_portfolio(tickers_and_names, int(dias), int(max_it))
+
+        # monta contexto para o LLM: por ticker, evidências + dados do score/histórico
+        # score (último ano do score)
+        sg = _safe_df(score_global).copy()
+        if "Ano" in sg.columns:
+            sg["Ano"] = pd.to_numeric(sg["Ano"], errors="coerce")
+        if "ticker" in sg.columns:
+            sg["ticker"] = sg["ticker"].astype(str).apply(_norm_tk)
+
+        ultimo_ano = int(sg["Ano"].max()) if ("Ano" in sg.columns and not sg.empty) else None
+
+        # Score ajustado no último ano
+        score_last_map = {}
+        if ultimo_ano is not None and not sg.empty and {"Ano", "ticker", "Score_Ajustado"}.issubset(sg.columns):
+            df_last = sg[sg["Ano"] == ultimo_ano].copy()
+            for _, r in df_last.iterrows():
+                score_last_map[str(r["ticker"])] = float(pd.to_numeric(r["Score_Ajustado"], errors="coerce") or 0.0)
+
+        # anos de liderança
+        lg = _safe_df(lideres_global).copy()
+        if not lg.empty and {"Ano", "ticker"}.issubset(lg.columns):
+            lg["Ano"] = pd.to_numeric(lg["Ano"], errors="coerce")
+            lg["ticker"] = lg["ticker"].astype(str).apply(_norm_tk)
+
+        lider_years_map = {}
+        if not lg.empty:
+            for tk in [t for t, _ in tickers_and_names]:
+                yrs = sorted(lg.loc[lg["ticker"] == tk, "Ano"].dropna().astype(int).unique().tolist())
+                lider_years_map[tk] = yrs
+
+        # Prompt amigável + schema
+        system = (
+            "Você é um analista de investimentos prudente e didático. "
+            "Você NÃO prevê o futuro. Você trabalha com evidências recentes (noticiário) "
+            "para reforçar/alertar/enfraquecer uma tese baseada em histórico (score até 2024). "
+            "Fale em português claro, sem jargão excessivo. "
+            "Se a evidência for fraca ou insuficiente, diga isso explicitamente."
+        )
+
+        schema_hint = """
+Retorne JSON com este formato:
+{
+  "portfolio_resumo": {
+    "mensagem": "texto curto e amigável (5-8 linhas)",
+    "clima_geral": "reforça|alerta|misto|insuficiente",
+    "principais_catalisadores": ["...","...","..."],
+    "principais_riscos": ["...","...","..."],
+    "o_que_monitorar": ["...","...","..."]
+  },
+  "por_ticker": [
+    {
+      "ticker": "PETR3",
+      "empresa": "PETROBRAS",
+      "veredito": "reforca|alerta|enfraquece|insuficiente",
+      "confianca": 0.0,
+      "por_que": ["3 bullets curtos"],
+      "riscos": ["2-3 bullets curtos"],
+      "monitorar": ["2-3 bullets curtos"],
+      "evidencias_usadas": [
+        {"title": "...", "source": "...", "published_at": "ISO ou null", "link": "...", "sinal": "positivo|neutro|negativo"}
+      ]
+    }
+  ],
+  "observacao_importante": "Lembrete que score vai até 2024 e notícias não garantem performance."
+}
+"""
+
+        # user prompt com dados (compacto)
+        ctx = []
+        for tk, nm in tickers_and_names:
+            evid = news_map.get(tk, []) or []
+            # limita por segurança (já veio limitado)
+            ctx.append(
+                {
+                    "ticker": tk,
+                    "empresa": nm,
+                    "ultimo_ano_score": ultimo_ano,
+                    "score_ultimo_ano": score_last_map.get(tk),
+                    "anos_lideranca": lider_years_map.get(tk, []),
+                    "evidencias": evid,
+                }
+            )
+
+        user = (
+            "Analise o portfólio selecionado e as evidências recentes do noticiário. "
+            "Entregue um resumo do portfólio (amigável) e um mini-relatório por ticker. "
+            "Classifique cada evidência como positivo/neutro/negativo, mas seja conservador.\n\n"
+            f"DADOS:\n{ctx}"
+        )
+
+        try:
+            resp = llm.generate_json(system=system, user=user, schema_hint=schema_hint, context=None)
+        except Exception as e:
+            st.error(f"Falha ao gerar relatório via IA: {e}")
+            return None
+
+    # ── Render amigável
+    if not isinstance(resp, dict):
+        st.error("IA retornou um formato inesperado.")
+        return None
+
+    port = (resp.get("portfolio_resumo") or {}) if isinstance(resp.get("portfolio_resumo"), dict) else {}
+    st.markdown("### 🧠 Resumo do portfólio (IA)")
+    if port.get("mensagem"):
+        st.write(port.get("mensagem"))
+
+    cols = st.columns(3)
+    with cols[0]:
+        st.metric("Clima geral", str(port.get("clima_geral", "—")))
+    with cols[1]:
+        st.metric("Janela", f"{int(dias)} dias")
+    with cols[2]:
+        st.metric("Evidências/ticker", f"{int(max_it)}")
+
+    with st.expander("📌 Principais catalisadores", expanded=False):
+        for x in (port.get("principais_catalisadores") or [])[:8]:
+            st.write(f"• {x}")
+
+    with st.expander("⚠️ Principais riscos", expanded=False):
+        for x in (port.get("principais_riscos") or [])[:8]:
+            st.write(f"• {x}")
+
+    with st.expander("👀 O que monitorar", expanded=False):
+        for x in (port.get("o_que_monitorar") or [])[:8]:
+            st.write(f"• {x}")
+
+    obs = resp.get("observacao_importante")
+    if obs:
+        st.info(str(obs))
+
+    st.markdown("### ✅ Relatórios por empresa")
+    por_ticker = resp.get("por_ticker") or []
+    if not isinstance(por_ticker, list):
+        por_ticker = []
+
+    # ordena: reforca > alerta > enfraquece > insuficiente
+    order = {"reforca": 0, "alerta": 1, "enfraquece": 2, "insuficiente": 3}
+    por_ticker = sorted(por_ticker, key=lambda d: order.get(str(d.get("veredito", "")).lower(), 9))
+
+    for item in por_ticker:
+        tk = str(item.get("ticker", "")).upper()
+        emp = str(item.get("empresa", tk))
+        ver = str(item.get("veredito", "—")).lower()
+        conf = item.get("confianca", None)
+
+        title = f"{emp} ({tk}) — veredito: {ver}"
+        if isinstance(conf, (int, float)):
+            title += f" | confiança {float(conf):.2f}"
+
+        with st.expander(title, expanded=False):
+            st.write("**Por que (em português claro):**")
+            for b in (item.get("por_que") or [])[:6]:
+                st.write(f"• {b}")
+
+            st.write("**Riscos:**")
+            for b in (item.get("riscos") or [])[:6]:
+                st.write(f"• {b}")
+
+            st.write("**O que monitorar:**")
+            for b in (item.get("monitorar") or [])[:6]:
+                st.write(f"• {b}")
+
+            evids = item.get("evidencias_usadas") or []
+            if evids:
+                df_e = pd.DataFrame(evids)
+                # deixa link clicável via markdown (streamlit não linka automaticamente no dataframe)
+                st.write("**Evidências (links):**")
+                for ev in evids[:15]:
+                    t = str(ev.get("title", "")).strip()
+                    src = str(ev.get("source", "")).strip()
+                    dt = str(ev.get("published_at", "")).replace("T", " ")[:19]
+                    lk = str(ev.get("link", "")).strip()
+                    sg = str(ev.get("sinal", "")).strip()
+                    if lk:
+                        st.markdown(f"- [{t}]({lk}) — {src} — {dt} — **{sg}**")
+                    else:
+                        st.write(f"- {t} — {src} — {dt} — {sg}")
+            else:
+                st.caption("Sem evidências suficientes no RSS para esta janela.")
+
+    # retorna p/ salvar em session_store
+    return {
+        "days": int(dias),
+        "max_items_per_ticker": int(max_it),
+        "generated_at": _now_sp().isoformat(timespec="seconds") if "_now_sp" in globals() else None,
+        "report": resp,
+    }
+
+
+
