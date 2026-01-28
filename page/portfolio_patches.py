@@ -659,224 +659,385 @@ def render_patch5_benchmark_segmento(
             st.pyplot(fig)
 
 # ─────────────────────────────────────────────────────────────
-# PATCH 6 — IA (OpenAI) Seleção Assistida entre Líderes
+# PATCH 6 — IA (OpenAI) — Relatório amigável (decisão só até o último ano do score)
 # ─────────────────────────────────────────────────────────────
-# ─────────────────────────────────────────────────────────────
-# PATCH 6 — IA (OpenAI) Seleção Assistida entre Líderes
-# ─────────────────────────────────────────────────────────────
-
-def _coletar_metricas_ultima_linha(df: pd.DataFrame, ticker: str) -> Dict:
-    if df is None or df.empty or "ticker" not in df.columns:
-        return {}
-
-    d = df.copy()
-    d["ticker"] = d["ticker"].astype(str).map(_strip_sa)
-    rows = d[d["ticker"] == _strip_sa(ticker)]
-
-    if rows.empty:
-        return {}
-
-    if "Ano" in rows.columns:
-        rows["Ano"] = pd.to_numeric(rows["Ano"], errors="coerce")
-        rows = rows.dropna(subset=["Ano"])
-        if not rows.empty:
-            rows = rows[rows["Ano"] == rows["Ano"].max()]
-
-    r0 = rows.iloc[-1].to_dict()
-
-    keep = [
-        "Score_Ajustado", "Score",
-        "P/VP", "P/L", "EV/EBITDA",
-        "DY", "ROE", "ROIC",
-        "Margem_Bruta", "Margem_EBITDA", "Margem_Liquida",
-        "Crescimento_Receita", "Crescimento_Lucro",
-        "Liquidez_Corrente", "Endividamento_Total", "Divida_Liquida_EBITDA",
-        "SETOR", "SUBSETOR", "SEGMENTO", "Ano",
-    ]
-
-    out = {}
-    for k in keep:
-        if k in r0:
-            v = r0.get(k)
-            if isinstance(v, (float, int)) and pd.notna(v):
-                out[k] = float(v)
-            elif isinstance(v, str):
-                out[k] = v[:120]
-
-    return out
-
-
-def _historico_lideranca(lideres_global: pd.DataFrame, ticker: str) -> Dict:
-    if lideres_global is None or lideres_global.empty:
-        return {"anos_lider": 0, "anos": []}
-
-    lg = lideres_global.copy()
-    if not {"ticker", "Ano"}.issubset(lg.columns):
-        return {"anos_lider": 0, "anos": []}
-
-    lg["ticker"] = lg["ticker"].astype(str).map(_strip_sa)
-    lg["Ano"] = pd.to_numeric(lg["Ano"], errors="coerce")
-    lg = lg.dropna(subset=["ticker", "Ano"])
-
-    anos = sorted(lg.loc[lg["ticker"] == _strip_sa(ticker), "Ano"].astype(int).unique().tolist())
-    return {"anos_lider": len(anos), "anos": anos}
-
-
-def _montar_contexto_patch6(
-    score_global: pd.DataFrame,
-    lideres_global: pd.DataFrame,
-    empresas_lideres_finais: List[Dict],
-) -> List[Dict]:
-
-    ctx = []
-
-    for e in empresas_lideres_finais:
-        tk = _strip_sa(str(e.get("ticker", "")))
-        if not tk:
-            continue
-
-        nome = e.get("nome", tk)
-        metrics = _coletar_metricas_ultima_linha(score_global, tk)
-        hist = _historico_lideranca(lideres_global, tk)
-
-        texto = (
-            f"Ticker: {tk}\n"
-            f"Empresa: {nome}\n"
-            f"Ano líder: {e.get('ano_lider')}\n"
-            f"Ano compra: {e.get('ano_compra')}\n"
-            f"Histórico liderança: {hist['anos_lider']} anos {hist['anos']}\n"
-            f"Métricas fundamentais (último ano): {metrics}\n"
-            "Use apenas essas informações.\n"
-        )
-
-        ctx.append(
-            {
-                "title": f"{tk} - {nome}",
-                "source": "dados internos",
-                "published_at": "",
-                "text": texto,
-            }
-        )
-
-    return ctx
-
-
-@st.cache_data(ttl=60 * 60 * 24, show_spinner=False)
-def _patch6_ai_cached(context_texts: tuple, max_recs: int) -> Dict:
-    from core.ai_models.llm_client.factory import get_llm_client
-
-    llm = get_llm_client()
-
-    system = (
-        "Você é um módulo de apoio à decisão do algoritmo. "
-        "Não forneça recomendação de investimento. "
-        "Ranqueie os tickers com base apenas nos dados fornecidos. "
-        "Responda somente em JSON válido."
-    )
-
-    user = (
-        "Tarefa: selecionar os tickers com maior probabilidade de desempenho relativo positivo "
-        "no próximo ano, usando consistência, qualidade e valuation.\n"
-        f"Retorne no máximo {max_recs} tickers.\n"
-        "Para cada um informe score_ia (0-100), confidence (0-1), "
-        "rationale curto, riscos e catalisadores.\n"
-        "Para os não selecionados, informe o motivo.\n"
-    )
-
-    schema_hint = (
-        '{'
-        '"recomendadas":[{"ticker":"XXXX","score_ia":80,"confidence":0.7,'
-        '"rationale":"...","riscos":["..."],"catalisadores":["..."]}],'
-        '"nao_selecionadas":[{"ticker":"YYYY","motivo":"..."}]'
-        '}'
-    )
-
-    context = [{"title": "", "text": t, "source": "ctx", "published_at": ""} for t in context_texts]
-
-    return llm.generate_json(system=system, user=user, schema_hint=schema_hint, context=context)
-
-
 def render_patch6_ia_selecao_lideres(
     score_global: pd.DataFrame,
     lideres_global: pd.DataFrame,
     empresas_lideres_finais: List[Dict],
     max_recs_default: int = 10,
+    precos: Optional[pd.DataFrame] = None,   # opcional (se você quiser passar)
 ) -> Optional[Dict]:
+    """
+    Patch 6:
+    - Gera um mini-relatório (tom humano) sobre as empresas líderes,
+      usando apenas dados ATÉ o último ano do score (ex.: 2024).
+    - NÃO usa 2025 como critério de decisão (pós-período).
+    - Retorna um dict (JSON) para você salvar em sessão (ia_recomendacoes).
+    """
 
-    st.markdown("## 🤖 IA (OpenAI) — Seleção assistida entre líderes")
+    import json
+    import hashlib
+    from datetime import datetime
+
+    st.markdown("## 🤖 IA (OpenAI) — Parecer amigável (Patch 6)")
     st.caption(
-        "Patch 6: a IA ranqueia as líderes finais usando apenas sinais internos "
-        "(fundamentos + histórico de liderança)."
+        "Este parecer usa **somente dados até o último ano do score**. "
+        "Resultados posteriores (ex.: 2025) entram apenas como **monitoramento**, não como validação/critério."
     )
 
-    if not empresas_lideres_finais:
-        st.info("Patch 6 indisponível: não há líderes finais.")
+    sg = _safe_df(score_global).copy()
+    lg = _safe_df(lideres_global).copy()
+
+    if sg.empty or not {"Ano", "ticker"}.issubset(set(sg.columns)) or not empresas_lideres_finais:
+        st.info("IA (Patch 6) indisponível: faltam dados de score_global ou líderes finais.")
         return None
 
-    with st.form("patch6_form"):
-        use_ai = st.checkbox("Ativar IA neste patch", value=False)
-        max_recs = st.slider(
-            "Máximo de empresas recomendadas",
+    # ── normalizações básicas
+    sg["Ano"] = pd.to_numeric(sg["Ano"], errors="coerce")
+    sg["ticker"] = sg["ticker"].astype(str).apply(_strip_sa)
+
+    if not lg.empty and {"Ano", "ticker"}.issubset(set(lg.columns)):
+        lg["Ano"] = pd.to_numeric(lg["Ano"], errors="coerce")
+        lg["ticker"] = lg["ticker"].astype(str).apply(_strip_sa)
+    else:
+        lg = pd.DataFrame(columns=["Ano", "ticker"])
+
+    sg = sg.dropna(subset=["Ano", "ticker"])
+    if sg.empty:
+        st.info("IA (Patch 6) indisponível: score_global vazio após normalização.")
+        return None
+
+    last_year = int(sg["Ano"].max())
+
+    # Tickers do portfólio final
+    tickers_finais = sorted({
+        _strip_sa(str(e.get("ticker", "")))
+        for e in (empresas_lideres_finais or [])
+        if str(e.get("ticker", "")).strip()
+    })
+    if not tickers_finais:
+        st.info("IA (Patch 6) indisponível: tickers finais vazios.")
+        return None
+
+    # Score do último ano
+    sg_last = sg[sg["Ano"] == last_year].copy()
+    if sg_last.empty:
+        st.info("IA (Patch 6) indisponível: não há linhas no último ano do score.")
+        return None
+
+    # tenta descobrir coluna de score (varia conforme seu pipeline)
+    score_col = None
+    for cand in ["Score_Ajustado", "score_ajustado", "SCORE_AJUSTADO", "Score", "score"]:
+        if cand in sg_last.columns:
+            score_col = cand
+            break
+
+    if score_col is None:
+        st.info("IA (Patch 6) indisponível: não encontrei coluna de score (ex.: Score_Ajustado) no score_global.")
+        return None
+
+    # Metadados (SETOR/SUBSETOR/SEGMENTO) se existirem
+    for col in ["SETOR", "SUBSETOR", "SEGMENTO"]:
+        if col not in sg_last.columns:
+            sg_last[col] = "OUTROS"
+    sg_last["SETOR"] = sg_last["SETOR"].astype(str).fillna("OUTROS")
+    sg_last["SUBSETOR"] = sg_last["SUBSETOR"].astype(str).fillna("OUTROS")
+    sg_last["SEGMENTO"] = sg_last["SEGMENTO"].astype(str).fillna("OUTROS")
+
+    # Liderança histórica (até last_year)
+    lg_upto = lg[lg["Ano"].notna() & (lg["Ano"].astype(int) <= last_year)].copy()
+    lider_count = (
+        lg_upto.groupby("ticker")["Ano"].nunique().rename("anos_como_lider").to_dict()
+        if not lg_upto.empty else {}
+    )
+    lider_years = (
+        lg_upto.groupby("ticker")["Ano"].apply(lambda s: sorted(set(s.dropna().astype(int).tolist()))).to_dict()
+        if not lg_upto.empty else {}
+    )
+
+    # Monta tabela-base do universo final (até 2024, por ex.)
+    base_rows: List[Dict] = []
+    sg_map = sg_last.set_index("ticker")
+    for tk in tickers_finais:
+        nome = _get_nome(tk, empresas_lideres_finais)
+        if tk not in sg_map.index:
+            # se não tem no score_last, ainda mostramos (mas com score NaN)
+            info = {"SETOR": "OUTROS", "SUBSETOR": "OUTROS", "SEGMENTO": "OUTROS"}
+            sc = float("nan")
+        else:
+            row = sg_map.loc[tk]
+            # se houver duplicata por ticker, pega a maior pontuação
+            if isinstance(row, pd.DataFrame):
+                row = row.sort_values(score_col, ascending=False).iloc[0]
+            info = {
+                "SETOR": str(row.get("SETOR", "OUTROS")),
+                "SUBSETOR": str(row.get("SUBSETOR", "OUTROS")),
+                "SEGMENTO": str(row.get("SEGMENTO", "OUTROS")),
+            }
+            sc = pd.to_numeric(row.get(score_col, float("nan")), errors="coerce")
+            sc = float(sc) if pd.notna(sc) else float("nan")
+
+        base_rows.append({
+            "ticker": tk,
+            "empresa": nome,
+            "setor": info["SETOR"],
+            "subsetor": info["SUBSETOR"],
+            "segmento": info["SEGMENTO"],
+            "score_ate_ultimo_ano": sc,
+            "anos_como_lider": int(lider_count.get(tk, 0)),
+            "anos_lider": ", ".join(map(str, lider_years.get(tk, []))) if lider_years.get(tk) else "",
+        })
+
+    base_df = pd.DataFrame(base_rows)
+
+    # Parâmetros UI
+    c1, c2, c3 = st.columns([1, 1, 2])
+    with c1:
+        max_recs = st.number_input(
+            "Quantas recomendações (top N)?",
             min_value=3,
-            max_value=min(20, len(empresas_lideres_finais)),
-            value=min(max_recs_default, len(empresas_lideres_finais)),
+            max_value=30,
+            value=int(max_recs_default),
             step=1,
+            key="patch6_max_recs",
         )
-        run_ai = st.form_submit_button("Executar IA (Patch 6)")
+    with c2:
+        estilo = st.selectbox(
+            "Estilo do relatório",
+            ["Bem direto", "Equilibrado", "Mais explicativo"],
+            index=1,
+            key="patch6_estilo",
+        )
+    with c3:
+        st.caption(f"Período de decisão: **até {last_year}** (não usa 2025 como critério).")
 
-    if not run_ai:
-        st.info("Configure as opções acima e clique em **Executar IA (Patch 6)**.")
+    # Cache em sessão (evita chamar IA de novo sem necessidade)
+    payload_fingerprint = {
+        "last_year": last_year,
+        "tickers": tickers_finais,
+        "max_recs": int(max_recs),
+        "estilo": estilo,
+        "scores": {r["ticker"]: r["score_ate_ultimo_ano"] for r in base_rows},
+        "lider": {r["ticker"]: r["anos_como_lider"] for r in base_rows},
+    }
+    fp = hashlib.md5(json.dumps(payload_fingerprint, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+    ss_key = f"patch6_cached_{fp}"
+
+    # Botão principal
+    run_btn = st.button("Executar IA (Patch 6)", key=f"patch6_run_{fp}")
+
+    # Se já tem cache e não clicou, apenas mostra
+    cached = st.session_state.get(ss_key)
+    if cached and not run_btn:
+        st.success("Mostrando o parecer já gerado (cache desta sessão).")
+        _render_patch6_output(cached, base_df, last_year)
+        return cached
+
+    if not run_btn:
+        st.info("Clique em **Executar IA (Patch 6)** para gerar o parecer.")
         return None
 
-    if not use_ai:
-        st.warning("Ative a opção **Ativar IA neste patch** para executar.")
-        return None
+    # ─────────────────────────────────────────────────────────
+    # Chamada ao LLM (com fallback)
+    # ─────────────────────────────────────────────────────────
+    llm = None
+    llm_err = None
 
-    ctx = _montar_contexto_patch6(score_global, lideres_global, empresas_lideres_finais)
-    if not ctx:
-        st.warning("Não foi possível montar contexto interno para a IA.")
-        return None
-
-    ctx_texts = tuple(c["text"] for c in ctx)
-
+    # tenta alguns caminhos prováveis, sem quebrar o app
     try:
-        with st.spinner("IA analisando líderes..."):
-            ai_resp = _patch6_ai_cached(ctx_texts, int(max_recs))
-    except Exception as e:
-        st.error("Falha ao executar IA.")
-        st.exception(e)
+        from core.ai.llm_factory import get_llm_client  # type: ignore
+        llm = get_llm_client()
+    except Exception as e1:
+        try:
+            from core.ai import get_llm_client  # type: ignore
+            llm = get_llm_client()
+        except Exception as e2:
+            try:
+                from core.ai.openai_client import OpenAIChatClient  # type: ignore
+                llm = OpenAIChatClient()
+            except Exception as e3:
+                llm_err = f"{type(e1).__name__}: {e1} | {type(e2).__name__}: {e2} | {type(e3).__name__}: {e3}"
+
+    if llm is None:
+        st.error("Não consegui inicializar o cliente de IA (LLM). Verifique o módulo core.ai/*.py e as secrets.")
+        st.code(str(llm_err or "LLM init failed"))
         return None
 
-    if not isinstance(ai_resp, dict):
-        st.warning("Resposta da IA inválida.")
-        st.json(ai_resp)
-        return ai_resp
+    # Monta contexto compacto
+    context_items = []
+    for _, r in base_df.sort_values(["score_ate_ultimo_ano"], ascending=False).iterrows():
+        context_items.append({
+            "ticker": str(r["ticker"]),
+            "empresa": str(r["empresa"]),
+            "setor": str(r["setor"]),
+            "subsetor": str(r["subsetor"]),
+            "segmento": str(r["segmento"]),
+            "score_ate_ultimo_ano": float(r["score_ate_ultimo_ano"]) if pd.notna(r["score_ate_ultimo_ano"]) else None,
+            "anos_como_lider": int(r["anos_como_lider"]),
+            "anos_lider": str(r["anos_lider"] or ""),
+        })
 
-    recs = ai_resp.get("recomendadas", [])
-    if recs:
-        rows = []
-        for r in recs:
-            rows.append(
-                {
-                    "ticker": r.get("ticker"),
-                    "empresa": _get_nome(r.get("ticker"), empresas_lideres_finais),
-                    "score_ia": r.get("score_ia"),
-                    "confidence": r.get("confidence"),
-                    "rationale": r.get("rationale"),
-                    "riscos": ", ".join(r.get("riscos", []) or []),
-                    "catalisadores": ", ".join(r.get("catalisadores", []) or []),
-                }
-            )
-        st.dataframe(pd.DataFrame(rows), use_container_width=True)
+    # Tom do relatório
+    if estilo == "Bem direto":
+        tone = "Escreva curto, objetivo, em português do Brasil, sem jargões."
+    elif estilo == "Mais explicativo":
+        tone = "Escreva como um mini-relatório simples, bem explicadinho, em português do Brasil, sem jargões."
+    else:
+        tone = "Escreva um mini-relatório simples e amigável, em português do Brasil, com clareza e sem jargões."
 
-    nao = ai_resp.get("nao_selecionadas", [])
-    if nao:
-        with st.expander("Empresas não selecionadas pela IA"):
-            st.json(nao)
-
-    st.caption(
-        "⚠️ Uso recomendado: sinal auxiliar. "
-        "O score fundamentalista continua sendo o principal driver da decisão."
+    system = (
+        f"{tone} "
+        f"IMPORTANTE: você deve tomar decisões usando APENAS dados até {last_year} (inclusive). "
+        "Não use nada depois desse ano como justificativa (ex.: 2025). "
+        "Se citar 2025, trate somente como MONITORAMENTO e deixe explícito que NÃO entrou na decisão."
     )
 
-    return ai_resp
+    schema_hint = """
+{
+  "periodo_decisao": "string",
+  "resumo_em_5_linhas": ["string"],
+  "recomendadas": [
+    {
+      "ticker": "string",
+      "empresa": "string",
+      "nota_0_a_100": 0,
+      "confianca_0_a_1": 0.0,
+      "por_que_entrar": ["string"],
+      "principais_riscos": ["string"],
+      "o_que_monitorar_apos_periodo": ["string"]
+    }
+  ],
+  "nao_recomendadas": [
+    {
+      "ticker": "string",
+      "empresa": "string",
+      "motivo_simples": "string",
+      "como_ela_poderia_voltar": "string",
+      "monitoramento_apos_periodo": ["string"]
+    }
+  ],
+  "observacoes_modelo": ["string"]
+}
+""".strip()
+
+    user = (
+        f"Tarefa: gere um parecer para seleção de até {int(max_recs)} ações (top N) "
+        f"com base no score até {last_year} e no histórico de liderança. "
+        "O público é investidor comum. Nada de linguagem técnica. "
+        "Se uma ação não for recomendada, explique de forma simples o porquê "
+        "sem usar dados posteriores ao período."
+    )
+
+    with st.spinner("Gerando parecer com IA..."):
+        try:
+            resp = llm.generate_json(
+                system=system,
+                user=user,
+                schema_hint=schema_hint,
+                context=context_items,
+            )
+        except Exception as e:
+            st.error("Falha ao chamar a IA para gerar o parecer.")
+            st.code(f"{type(e).__name__}: {e}")
+            return None
+
+    # validações leves
+    if not isinstance(resp, dict) or not resp:
+        st.error("A IA retornou uma resposta vazia/inesperada.")
+        st.json(resp)
+        return None
+
+    # guarda cache
+    st.session_state[ss_key] = resp
+
+    # render amigável
+    _render_patch6_output(resp, base_df, last_year)
+    return resp
+
+
+def _render_patch6_output(resp: Dict, base_df: pd.DataFrame, last_year: int) -> None:
+    """Renderiza o Patch 6 em formato amigável."""
+    st.markdown("### 🧾 Parecer em linguagem simples")
+
+    periodo = str(resp.get("periodo_decisao") or f"Até {last_year}")
+    st.caption(f"Período de decisão considerado: **{periodo}** (monitoramentos posteriores não entram na decisão).")
+
+    resumo = resp.get("resumo_em_5_linhas") or []
+    if isinstance(resumo, list) and resumo:
+        st.markdown("**Resumo rápido**")
+        for line in resumo[:8]:
+            st.markdown(f"- {str(line)}")
+
+    recs = resp.get("recomendadas") or []
+    nrecs = resp.get("nao_recomendadas") or []
+
+    # blocos recomendadas
+    st.markdown("### ✅ Recomendadas (explicação humana)")
+    if not recs:
+        st.info("A IA não trouxe uma lista de recomendadas.")
+    else:
+        # tabela curta + texto
+        df_r = pd.DataFrame(recs).copy()
+        show_cols = [c for c in ["ticker", "empresa", "nota_0_a_100", "confianca_0_a_1"] if c in df_r.columns]
+        if show_cols:
+            st.dataframe(df_r[show_cols], use_container_width=True)
+
+        for item in recs:
+            tk = str(item.get("ticker", "")).upper()
+            emp = str(item.get("empresa", tk))
+            nota = item.get("nota_0_a_100", None)
+            conf = item.get("confianca_0_a_1", None)
+
+            with st.expander(f"{emp} ({tk}) — nota {nota} | confiança {conf}", expanded=False):
+                pq = item.get("por_que_entrar") or []
+                rk = item.get("principais_riscos") or []
+                mon = item.get("o_que_monitorar_apos_periodo") or []
+
+                if pq:
+                    st.markdown("**Por que entra (até o fim do período do score):**")
+                    for x in pq[:10]:
+                        st.markdown(f"- {x}")
+
+                if rk:
+                    st.markdown("**Principais riscos:**")
+                    for x in rk[:10]:
+                        st.markdown(f"- {x}")
+
+                if mon:
+                    st.markdown("**Depois do período (monitoramento, não decisão):**")
+                    for x in mon[:10]:
+                        st.markdown(f"- {x}")
+
+    # blocos não recomendadas
+    st.markdown("### ⚠️ Não recomendadas (e por quê)")
+    if not nrecs:
+        st.info("A IA não listou ações não recomendadas.")
+    else:
+        df_n = pd.DataFrame(nrecs).copy()
+        show_cols2 = [c for c in ["ticker", "empresa", "motivo_simples"] if c in df_n.columns]
+        if show_cols2:
+            st.dataframe(df_n[show_cols2], use_container_width=True)
+
+        with st.expander("Ver detalhes de não recomendadas", expanded=False):
+            for item in nrecs:
+                tk = str(item.get("ticker", "")).upper()
+                emp = str(item.get("empresa", tk))
+                st.markdown(f"**{emp} ({tk})**")
+                st.markdown(f"- Motivo (até {last_year}): {item.get('motivo_simples','')}")
+                st.markdown(f"- Como poderia voltar: {item.get('como_ela_poderia_voltar','')}")
+                mon = item.get("monitoramento_apos_periodo") or []
+                if mon:
+                    st.markdown("- Monitorar depois do período:")
+                    for x in mon[:8]:
+                        st.markdown(f"  - {x}")
+                st.markdown("---")
+
+    obs = resp.get("observacoes_modelo") or []
+    if isinstance(obs, list) and obs:
+        st.markdown("### 🔎 Observações sobre o modelo")
+        for x in obs[:12]:
+            st.markdown(f"- {x}")
+
+    with st.expander("📦 Resposta bruta (JSON)", expanded=False):
+        st.json(resp)
