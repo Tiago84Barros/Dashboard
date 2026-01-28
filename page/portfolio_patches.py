@@ -680,7 +680,7 @@ def render_patch6_ia_selecao_lideres(
       - None se não executar (ou se não conseguir inicializar LLM).
     """
 
-    st.markdown("## 🤖 Patch 6 — Validação por IA (relatório amigável)")
+    st.markdown("## 🤖 Validação por IA (relatório amigável)")
     st.caption(
         "A IA usa **apenas** os dados que você já calculou (score e histórico de liderança). "
         "Ela **não conhece o futuro**: se o score vai até 2024, ela não usa performance de 2025."
