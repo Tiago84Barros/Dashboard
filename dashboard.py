@@ -27,25 +27,6 @@ def _load_env_from_secrets():
 
 _load_env_from_secrets()
 
-# _____________________ Teste de funcionalidade da API da OpenAI_____
-if st.button("Testar OpenAI"):
-    try:
-        from core.ai_models.llm_client.factory import get_llm_client
-
-        llm = get_llm_client()
-
-        resp = llm.generate_json(
-            system="Você é um verificador de conectividade.",
-            user="Retorne um JSON com ok=true e msg='conectou'.",
-            schema_hint='{"ok": true, "msg": "conectou"}',
-            context=None,
-        )
-
-        st.success(resp)
-
-    except Exception as e:
-        st.exception(e)
-
 # ───────────────────────── Ajuste de path ──────────────────────────
 ROOT_DIR = pathlib.Path(__file__).resolve().parent
 if str(ROOT_DIR) not in sys.path:
@@ -184,6 +165,7 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
 
 
 
