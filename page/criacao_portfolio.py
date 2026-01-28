@@ -59,6 +59,7 @@ from page.portfolio_patches import (
     render_patch3_stress_test,
     render_patch4_diversificacao,
     render_patch5_benchmark_segmento,
+    render_patch6_ia_selecao_lideres,  # ✅ Patch 6 (IA) vindo do arquivo portfolio_patches.py
 )
 
 from core.weights import get_pesos
@@ -321,12 +322,12 @@ def render():
     with st.expander("Resultados salvos nesta sessão", expanded=True):
         runs = list_runs(store_cfg)  # lista de dicts
         lk_label = last_run_label(store_cfg)
-    
+
         if runs:
             st.caption(f"Execuções salvas: {len(runs)}")
             if lk_label:
                 st.write(f"Última execução: {lk_label}")
-    
+
             c1, c2 = st.columns(2)
             with c1:
                 if st.button("Reexibir último resultado (sem recalcular)", key="portfolio_show_saved"):
@@ -338,8 +339,6 @@ def render():
                     st.success("Resultados salvos removidos desta sessão.")
         else:
             st.caption("Nenhum resultado salvo ainda. Gere um portfólio para salvar.")
-
-
 
     if not margem_input.strip():
         st.warning("Digite uma porcentagem no campo lateral e clique em 'Gerar Portfólio'.")
@@ -391,6 +390,7 @@ def render():
             lideres_global = saved.get("lideres_global", pd.DataFrame())
             precos_global = saved.get("precos_global", pd.DataFrame())
             contrib_globais = saved.get("contrib_globais", None)
+            ia_recomendacoes = saved.get("ia_recomendacoes", None)  # ✅
 
             # cards + pizza no modo salvo
             _render_bloco_final_portfolio(empresas_lideres_finais)
@@ -407,6 +407,18 @@ def render():
                     precos=precos_global,
                     max_universe=80,
                 )
+
+                # ✅ Patch 6 (IA) no modo salvo:
+                # Se tiver salvo, mostramos o JSON; se não, permitimos rodar novamente (opcional).
+                st.markdown("<hr>", unsafe_allow_html=True)
+                st.markdown("## 🤖 IA (OpenAI) — Patch 6 (modo salvo)")
+                if ia_recomendacoes:
+                    st.caption("Exibindo recomendações de IA salvas nesta execução.")
+                    st.json(ia_recomendacoes)
+                else:
+                    st.caption("Nenhuma recomendação de IA foi salva nesta execução. Você pode rodar agora (opcional).")
+                    _ = render_patch6_ia_selecao_lideres(score_global, lideres_global, empresas_lideres_finais)
+
             else:
                 st.info("Resultado salvo não contém líderes finais.")
 
@@ -703,6 +715,8 @@ def render():
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
+    ia_resp = None  # ✅ será preenchido se o patch 6 rodar
+
     if empresas_lideres_finais:
         render_patch1_regua_conviccao(score_global, lideres_global, empresas_lideres_finais)
         render_patch2_dominancia(score_global, lideres_global, empresas_lideres_finais)
@@ -716,6 +730,15 @@ def render():
             empresas_lideres_finais,
             precos=precos_para_patch5,
             max_universe=80,
+        )
+
+        # ✅ Patch 6 — IA (OpenAI) (fica no portfolio_patches.py)
+        st.markdown("<hr>", unsafe_allow_html=True)
+        ia_resp = render_patch6_ia_selecao_lideres(
+            score_global=score_global,
+            lideres_global=lideres_global,
+            empresas_lideres_finais=empresas_lideres_finais,
+            max_recs_default=10,
         )
     else:
         st.info("Sem líderes finais para análise de patches nesta execução.")
@@ -744,5 +767,6 @@ def render():
             "lideres_global": lideres_global,
             "precos_global": precos_salvar,
             "contrib_globais": contrib_globais,
+            "ia_recomendacoes": ia_resp,  # ✅ salva retorno da IA
         },
     )
