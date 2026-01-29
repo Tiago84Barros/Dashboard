@@ -1004,289 +1004,388 @@ def _render_patch6_report(resp: Dict[str, Any], *, mostrar_tabela: bool = False)
         st.json(resp)
 
 # ─────────────────────────────────────────────────────────────
-# PATCH 7 — Validação por evidências (News & Sentiment).
+# PATCH 7 — Validação por evidências (Notícias/Fontes) + Resumo do Portfólio
+# (leve, “anti-timeout”, por ticker, com cache em st.session_state)
 # ─────────────────────────────────────────────────────────────
+#
+# Cole ESTE BLOCO no final do seu arquivo page/portfolio_patches.py
+# (garanta que NÃO exista nenhum "from __future__ import ..." no meio do arquivo).
+#
+# Requisitos:
+# - Estrutura: core/ai_models/...
+# - Funções esperadas (já no seu projeto):
+#   - core.ai_models.pipelines.news_pipeline.get_llm()
+#   - core.ai_models.pipelines.news_pipeline.build_news_context_for_tickers(...)
+#   - core.ai_models.prompts.system.SYSTEM_GUARDRAILS
+#   - core.ai_models.prompts.schemas.SCHEMA_PATCH7
+#
+# Integração em criacao_portfolio.py:
+#   from page.portfolio_patches import render_patch7_validacao_evidencias
+#   ...
+#   patch7_resp = render_patch7_validacao_evidencias(...)
+#   (e salve patch7_resp no session_store, como você fez no patch6)
+#
+
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+import time
+import textwrap
+
+import streamlit as st
+import pandas as pd
+
+
+def _p7_strip_sa(ticker: str) -> str:
+    return (ticker or "").strip().upper().replace(".SA", "").strip()
+
+
+def _p7_get_nome(ticker: str, empresas_lideres_finais: List[Dict]) -> str:
+    tk = _p7_strip_sa(ticker)
+    for e in (empresas_lideres_finais or []):
+        if _p7_strip_sa(str(e.get("ticker", ""))) == tk:
+            return str(e.get("nome") or tk)
+    return tk
+
+
+def _p7_cache_get(key: str) -> Optional[dict]:
+    cache = st.session_state.get("_patch7_cache", {})
+    item = cache.get(key)
+    if not item:
+        return None
+    exp = float(item.get("expires_at", 0))
+    if exp and time.time() > exp:
+        return None
+    return item.get("value")
+
+
+def _p7_cache_set(key: str, value: dict, ttl_seconds: int) -> None:
+    cache = st.session_state.get("_patch7_cache", {})
+    cache[key] = {"value": value, "expires_at": time.time() + float(ttl_seconds)}
+    st.session_state["_patch7_cache"] = cache
+
+
+def _p7_bullets(xs: Any, max_items: int = 8) -> List[str]:
+    if xs is None:
+        return []
+    if isinstance(xs, str):
+        return [xs.strip()] if xs.strip() else []
+    if isinstance(xs, list):
+        out = []
+        for x in xs:
+            if x is None:
+                continue
+            s = str(x).strip()
+            if s:
+                out.append(s)
+            if len(out) >= max_items:
+                break
+        return out
+    return []
+
+
+def _p7_render_card(
+    *,
+    ticker: str,
+    nome: str,
+    veredito: str,
+    resumo: str,
+    catalisadores: List[str],
+    riscos: List[str],
+    evidencias: Optional[List[Dict[str, Any]]] = None,
+) -> None:
+    ver = (veredito or "—").strip()
+    resumo = (resumo or "—").strip()
+
+    with st.expander(f"{nome} ({ticker}) — **{ver.upper()}**", expanded=False):
+        st.markdown(resumo)
+
+        if catalisadores:
+            st.markdown("**Catalisadores**")
+            for x in catalisadores:
+                st.write(f"• {x}")
+
+        if riscos:
+            st.markdown("**Riscos**")
+            for x in riscos:
+                st.write(f"• {x}")
+
+        if evidencias:
+            with st.expander("Fontes consideradas (contexto)", expanded=False):
+                for it in evidencias[:12]:
+                    titulo = str(it.get("title") or it.get("titulo") or "—").strip()
+                    fonte = str(it.get("source") or it.get("fonte") or "—").strip()
+                    data = str(it.get("date") or it.get("data") or "").strip()
+                    url = str(it.get("url") or "").strip()
+                    snippet = str(it.get("snippet") or it.get("resumo") or "").strip()
+
+                    line1 = f"- **{titulo}**"
+                    meta = " · ".join([x for x in [fonte, data] if x])
+                    if meta:
+                        line1 += f" ({meta})"
+                    st.markdown(line1)
+                    if snippet:
+                        st.caption(textwrap.shorten(snippet, width=220, placeholder="…"))
+                    if url:
+                        st.caption(url)
+
 
 def render_patch7_validacao_evidencias(
     score_global: pd.DataFrame,
     lideres_global: pd.DataFrame,
     empresas_lideres_finais: List[Dict],
     *,
-    days: int = 60,
-    max_items_per_ticker: int = 15,
-    cache_ttl_hours: int = 12,
-) -> Optional[Dict]:
+    days_default: int = 60,
+    max_items_per_ticker_default: int = 10,
+    cache_ttl_hours_default: int = 12,
+) -> Optional[dict]:
     """
-    PATCH 7 — Validação por evidências (News & Sentiment).
-    - Coleta Google News RSS (janela padrão 60d)
-    - Pede ao LLM um relatório amigável por ticker + resumo do portfólio
-    - Retorna dict (para salvar no session_store)
+    Patch 7:
+    - Coleta evidências (notícias/fontes) por ticker (pré-filtradas no pipeline).
+    - Chama a LLM por ticker (requests menores -> menos timeout).
+    - Gera um resumo final do portfólio com base nos relatórios individuais.
+
+    Retorna um dict com:
+      { "resultados_por_ticker": {...}, "resumo_portfolio": {...}, "falhas": [...], "params": {...} }
     """
-    st.markdown("## 🧾 Patch 7 — Validação por Evidências (noticiário recente)")
+
+    st.markdown("## 🧾 Patch 7 — Evidências externas + Resumo do Portfólio")
     st.caption(
-        "Objetivo: verificar se o noticiário recente **reforça**, **coloca alertas** ou **enfraquece** a tese "
-        "para as empresas selecionadas (com base no score até 2024). "
-        "Fonte: Google News (RSS)."
+        "Gera uma validação simples (amigável) por empresa usando evidências recentes (notícias/fontes) "
+        "e consolida um resumo do portfólio. Projetado para evitar timeout (análise por ticker)."
     )
 
     if not empresas_lideres_finais:
         st.info("Patch 7 indisponível: não há líderes finais.")
         return None
 
-    # ── imports locais (evita quebrar a página toda se faltar algo)
-    try:
-        from core.ai_models.pipelines.news_pipeline import build_news_for_portfolio
-    except Exception as e:
-        st.error(f"Não consegui carregar o pipeline de notícias. Erro: {e}")
-        return None
-
-    # ── inicializa LLM do seu projeto (mesmo padrão do Patch 6)
-    llm = None
-    try:
-        # ajuste: seu openai_client está em core/ai_models/llm_client/openai_client.py
-        from core.ai_models.llm_client.openai_client import OpenAIChatClient
-        llm = OpenAIChatClient()
-    except Exception as e:
-        st.error(f"Não consegui inicializar o cliente de IA (LLM). Verifique core/ai_models/llm_client/*.py e secrets.\n{e}")
-        return None
-
-    # ── Controles simples
+    # Controles
     c1, c2, c3 = st.columns(3)
     with c1:
-        dias = st.number_input("Janela (dias)", min_value=7, max_value=120, value=int(days), step=1)
+        days = st.number_input("Janela (dias)", min_value=7, max_value=365, value=int(days_default), step=7, key="patch7_days")
     with c2:
-        max_it = st.number_input("Evidências por ticker", min_value=5, max_value=30, value=int(max_items_per_ticker), step=1)
-    with c3:
-        st.write("")
-        st.write("")
-        run_btn = st.button("Executar Patch 7", key="patch7_run")
-
-    # cache (12h) — use st.cache_data para não ficar batendo RSS toda hora
-    @st.cache_data(ttl=60 * 60 * int(cache_ttl_hours), show_spinner=False)
-    def _cached_fetch_portfolio(tickers_and_names: List[tuple], dias_: int, max_: int) -> Dict[str, List[Dict]]:
-        news_map = build_news_for_portfolio(
-            tickers_and_names=tickers_and_names,
-            days=dias_,
-            max_items_per_ticker=max_,
+        max_items_per_ticker = st.number_input(
+            "Máx. evidências por ticker",
+            min_value=2,
+            max_value=25,
+            value=int(max_items_per_ticker_default),
+            step=1,
+            key="patch7_max_items",
         )
-        # serializa NewsItem -> dict (cache do Streamlit é melhor com tipos simples)
-        out: Dict[str, List[Dict]] = {}
-        for tk, items in news_map.items():
-            out[tk] = [
-                {
-                    "ticker": it.ticker,
-                    "title": it.title,
-                    "link": it.link,
-                    "source": it.source,
-                    "published_at": (it.published_at.isoformat() if it.published_at else None),
-                    "snippet": it.snippet,
-                }
-                for it in items
-            ]
-        return out
+    with c3:
+        cache_ttl_hours = st.number_input(
+            "Cache (horas)",
+            min_value=1,
+            max_value=72,
+            value=int(cache_ttl_hours_default),
+            step=1,
+            key="patch7_cache_hours",
+        )
 
-    # prepara lista tickers/nome
-    tickers_and_names = []
-    for e in empresas_lideres_finais:
-        tk = (e.get("ticker") or "").upper().replace(".SA", "").strip()
-        nm = (e.get("nome") or tk).strip()
-        if tk:
-            tickers_and_names.append((tk, nm))
-    tickers_and_names = list(dict.fromkeys(tickers_and_names))  # dedup preservando ordem
+    run = st.button("Rodar Patch 7", key="patch7_run_btn")
 
-    if not run_btn:
-        st.info("Clique em **Executar Patch 7** para gerar o relatório do noticiário.")
+    if not run:
+        st.info("Clique em **Rodar Patch 7** para gerar o relatório.")
         return None
 
-    with st.spinner("Coletando evidências (RSS) e gerando relatório..."):
-        news_map = _cached_fetch_portfolio(tickers_and_names, int(dias), int(max_it))
+    # Imports tardios (evita quebrar a página ao carregar)
+    try:
+        from core.ai_models.pipelines.news_pipeline import build_news_context_for_tickers, get_llm
+        from core.ai_models.prompts.system import SYSTEM_GUARDRAILS
+        from core.ai_models.prompts.schemas import SCHEMA_PATCH7
+    except Exception as e:
+        st.error(f"Patch 7 indisponível: falha ao importar módulos core.ai_models/*. Erro: {e}")
+        return None
 
-        # monta contexto para o LLM: por ticker, evidências + dados do score/histórico
-        # score (último ano do score)
-        sg = _safe_df(score_global).copy()
-        if "Ano" in sg.columns:
-            sg["Ano"] = pd.to_numeric(sg["Ano"], errors="coerce")
-        if "ticker" in sg.columns:
-            sg["ticker"] = sg["ticker"].astype(str).apply(_norm_tk)
+    # Tickers alvo
+    tickers = []
+    for e in empresas_lideres_finais:
+        tk = _p7_strip_sa(str(e.get("ticker", "")))
+        if tk:
+            tickers.append(tk)
+    tickers = list(dict.fromkeys(tickers))
+    if not tickers:
+        st.warning("Patch 7: nenhum ticker válido encontrado.")
+        return None
 
-        ultimo_ano = int(sg["Ano"].max()) if ("Ano" in sg.columns and not sg.empty) else None
+    # Cache key (depende de tickers + params)
+    cache_key = f"patch7::{','.join(tickers)}::days={int(days)}::n={int(max_items_per_ticker)}"
+    cached = _p7_cache_get(cache_key)
+    if cached:
+        st.success("Usando resultado do Patch 7 a partir do cache.")
+        _render_patch7_output(cached, empresas_lideres_finais)
+        return cached
 
-        # Score ajustado no último ano
-        score_last_map = {}
-        if ultimo_ano is not None and not sg.empty and {"Ano", "ticker", "Score_Ajustado"}.issubset(sg.columns):
-            df_last = sg[sg["Ano"] == ultimo_ano].copy()
-            for _, r in df_last.iterrows():
-                score_last_map[str(r["ticker"])] = float(pd.to_numeric(r["Score_Ajustado"], errors="coerce") or 0.0)
+    # 1) Evidências
+    with st.spinner("Coletando evidências (notícias/fontes) e preparando contexto..."):
+        evidencias_por_ticker: Dict[str, List[Dict[str, Any]]] = build_news_context_for_tickers(
+            tickers=tickers,
+            days=int(days),
+            max_items_per_ticker=int(max_items_per_ticker),
+            cache_ttl_hours=int(cache_ttl_hours),
+        ) or {}
 
-        # anos de liderança
-        lg = _safe_df(lideres_global).copy()
-        if not lg.empty and {"Ano", "ticker"}.issubset(lg.columns):
-            lg["Ano"] = pd.to_numeric(lg["Ano"], errors="coerce")
-            lg["ticker"] = lg["ticker"].astype(str).apply(_norm_tk)
+    # 2) LLM
+    try:
+        llm = get_llm()
+    except Exception as e:
+        st.error(f"Não consegui inicializar o cliente de IA (LLM). Verifique secrets e core/ai_models/*. Erro: {e}")
+        return None
 
-        lider_years_map = {}
-        if not lg.empty:
-            for tk in [t for t, _ in tickers_and_names]:
-                yrs = sorted(lg.loc[lg["ticker"] == tk, "Ano"].dropna().astype(int).unique().tolist())
-                lider_years_map[tk] = yrs
+    resultados: Dict[str, dict] = {}
+    falhas: List[Dict[str, str]] = []
 
-        # Prompt amigável + schema
-        system = (
-            "Você é um analista de investimentos prudente e didático. "
-            "Você NÃO prevê o futuro. Você trabalha com evidências recentes (noticiário) "
-            "para reforçar/alertar/enfraquecer uma tese baseada em histórico (score até 2024). "
-            "Fale em português claro, sem jargão excessivo. "
-            "Se a evidência for fraca ou insuficiente, diga isso explicitamente."
-        )
+    # 3) Análise por ticker (anti-timeout)
+    for tk in tickers:
+        ctx = evidencias_por_ticker.get(tk, []) or []
+        nome = _p7_get_nome(tk, empresas_lideres_finais)
 
-        schema_hint = """
-Retorne JSON com este formato:
-{
-  "portfolio_resumo": {
-    "mensagem": "texto curto e amigável (5-8 linhas)",
-    "clima_geral": "reforça|alerta|misto|insuficiente",
-    "principais_catalisadores": ["...","...","..."],
-    "principais_riscos": ["...","...","..."],
-    "o_que_monitorar": ["...","...","..."]
-  },
-  "por_ticker": [
-    {
-      "ticker": "PETR3",
-      "empresa": "PETROBRAS",
-      "veredito": "reforca|alerta|enfraquece|insuficiente",
-      "confianca": 0.0,
-      "por_que": ["3 bullets curtos"],
-      "riscos": ["2-3 bullets curtos"],
-      "monitorar": ["2-3 bullets curtos"],
-      "evidencias_usadas": [
-        {"title": "...", "source": "...", "published_at": "ISO ou null", "link": "...", "sinal": "positivo|neutro|negativo"}
-      ]
-    }
-  ],
-  "observacao_importante": "Lembrete que score vai até 2024 e notícias não garantem performance."
-}
-"""
-
-        # user prompt com dados (compacto)
-        ctx = []
-        for tk, nm in tickers_and_names:
-            evid = news_map.get(tk, []) or []
-            # limita por segurança (já veio limitado)
-            ctx.append(
-                {
-                    "ticker": tk,
-                    "empresa": nm,
-                    "ultimo_ano_score": ultimo_ano,
-                    "score_ultimo_ano": score_last_map.get(tk),
-                    "anos_lideranca": lider_years_map.get(tk, []),
-                    "evidencias": evid,
-                }
-            )
-
-        user = (
-            "Analise o portfólio selecionado e as evidências recentes do noticiário. "
-            "Entregue um resumo do portfólio (amigável) e um mini-relatório por ticker. "
-            "Classifique cada evidência como positivo/neutro/negativo, mas seja conservador.\n\n"
-            f"DADOS:\n{ctx}"
+        user_task = (
+            f"Você é um analista fundamentalista. Analise o ticker {tk} (empresa: {nome}).\n"
+            "Use APENAS o contexto fornecido (evidências).\n\n"
+            "Entregue um mini-relatório amigável e direto:\n"
+            "1) Resumo em 4–7 linhas (linguagem simples)\n"
+            "2) 3–6 catalisadores\n"
+            "3) 3–6 riscos\n"
+            "4) Um veredito: 'fortalece a tese', 'neutro' ou 'enfraquece a tese'\n\n"
+            "Importante: não invente fatos, não use números/afirmações não presentes no contexto."
         )
 
         try:
-            resp = llm.generate_json(system=system, user=user, schema_hint=schema_hint, context=None)
+            with st.spinner(f"IA analisando {tk}..."):
+                out = llm.generate_json(
+                    system=SYSTEM_GUARDRAILS,
+                    user=user_task,
+                    schema_hint=SCHEMA_PATCH7,
+                    context=ctx,
+                )
+            if not isinstance(out, dict):
+                out = {}
+            out.setdefault("ticker", tk)
+            resultados[tk] = out
         except Exception as e:
-            st.error(f"Falha ao gerar relatório via IA: {e}")
-            return None
+            falhas.append({"ticker": tk, "erro": str(e)})
+            resultados[tk] = {
+                "ticker": tk,
+                "veredito": "indisponível",
+                "resumo": "Não foi possível gerar (timeout/erro). Tente novamente com menos evidências por ticker.",
+                "catalisadores": [],
+                "riscos": [],
+            }
 
-    # ── Render amigável
-    if not isinstance(resp, dict):
-        st.error("IA retornou um formato inesperado.")
-        return None
+    # 4) Resumo do portfólio (request leve)
+    resumo_portfolio: dict
+    try:
+        packed = [{"ticker": k, **(v or {})} for k, v in resultados.items()]
+        user_task2 = (
+            "Com base nos relatórios por ticker abaixo, gere um resumo do portfólio inteiro.\n"
+            "Formato:\n"
+            "- visao_geral: 3–6 linhas\n"
+            "- destaques: 3–6 bullets\n"
+            "- riscos_comuns: 3–6 bullets\n"
+            "- catalisadores_comuns: 3–6 bullets\n"
+            "- acoes_praticas: 3–6 bullets (o que monitorar/acompanhar)\n"
+            "Tom: simples, amigável, estilo relatório curto."
+        )
+        schema2 = (
+            '{"visao_geral":"str","destaques":["str"],"riscos_comuns":["str"],'
+            '"catalisadores_comuns":["str"],"acoes_praticas":["str"]}'
+        )
+        with st.spinner("IA consolidando resumo do portfólio..."):
+            resumo_portfolio = llm.generate_json(
+                system=SYSTEM_GUARDRAILS,
+                user=user_task2,
+                schema_hint=schema2,
+                context=packed[:20],
+            )
+        if not isinstance(resumo_portfolio, dict):
+            resumo_portfolio = {"visao_geral": "—", "destaques": [], "riscos_comuns": [], "catalisadores_comuns": [], "acoes_praticas": []}
+    except Exception as e:
+        resumo_portfolio = {"erro": f"Falha ao consolidar resumo do portfólio: {e}"}
 
-    port = (resp.get("portfolio_resumo") or {}) if isinstance(resp.get("portfolio_resumo"), dict) else {}
-    st.markdown("### 🧠 Resumo do portfólio (IA)")
-    if port.get("mensagem"):
-        st.write(port.get("mensagem"))
-
-    cols = st.columns(3)
-    with cols[0]:
-        st.metric("Clima geral", str(port.get("clima_geral", "—")))
-    with cols[1]:
-        st.metric("Janela", f"{int(dias)} dias")
-    with cols[2]:
-        st.metric("Evidências/ticker", f"{int(max_it)}")
-
-    with st.expander("📌 Principais catalisadores", expanded=False):
-        for x in (port.get("principais_catalisadores") or [])[:8]:
-            st.write(f"• {x}")
-
-    with st.expander("⚠️ Principais riscos", expanded=False):
-        for x in (port.get("principais_riscos") or [])[:8]:
-            st.write(f"• {x}")
-
-    with st.expander("👀 O que monitorar", expanded=False):
-        for x in (port.get("o_que_monitorar") or [])[:8]:
-            st.write(f"• {x}")
-
-    obs = resp.get("observacao_importante")
-    if obs:
-        st.info(str(obs))
-
-    st.markdown("### ✅ Relatórios por empresa")
-    por_ticker = resp.get("por_ticker") or []
-    if not isinstance(por_ticker, list):
-        por_ticker = []
-
-    # ordena: reforca > alerta > enfraquece > insuficiente
-    order = {"reforca": 0, "alerta": 1, "enfraquece": 2, "insuficiente": 3}
-    por_ticker = sorted(por_ticker, key=lambda d: order.get(str(d.get("veredito", "")).lower(), 9))
-
-    for item in por_ticker:
-        tk = str(item.get("ticker", "")).upper()
-        emp = str(item.get("empresa", tk))
-        ver = str(item.get("veredito", "—")).lower()
-        conf = item.get("confianca", None)
-
-        title = f"{emp} ({tk}) — veredito: {ver}"
-        if isinstance(conf, (int, float)):
-            title += f" | confiança {float(conf):.2f}"
-
-        with st.expander(title, expanded=False):
-            st.write("**Por que (em português claro):**")
-            for b in (item.get("por_que") or [])[:6]:
-                st.write(f"• {b}")
-
-            st.write("**Riscos:**")
-            for b in (item.get("riscos") or [])[:6]:
-                st.write(f"• {b}")
-
-            st.write("**O que monitorar:**")
-            for b in (item.get("monitorar") or [])[:6]:
-                st.write(f"• {b}")
-
-            evids = item.get("evidencias_usadas") or []
-            if evids:
-                df_e = pd.DataFrame(evids)
-                # deixa link clicável via markdown (streamlit não linka automaticamente no dataframe)
-                st.write("**Evidências (links):**")
-                for ev in evids[:15]:
-                    t = str(ev.get("title", "")).strip()
-                    src = str(ev.get("source", "")).strip()
-                    dt = str(ev.get("published_at", "")).replace("T", " ")[:19]
-                    lk = str(ev.get("link", "")).strip()
-                    sg = str(ev.get("sinal", "")).strip()
-                    if lk:
-                        st.markdown(f"- [{t}]({lk}) — {src} — {dt} — **{sg}**")
-                    else:
-                        st.write(f"- {t} — {src} — {dt} — {sg}")
-            else:
-                st.caption("Sem evidências suficientes no RSS para esta janela.")
-
-    # retorna p/ salvar em session_store
-    return {
-        "days": int(dias),
-        "max_items_per_ticker": int(max_it),
-        "generated_at": _now_sp().isoformat(timespec="seconds") if "_now_sp" in globals() else None,
-        "report": resp,
+    payload = {
+        "resultados_por_ticker": resultados,
+        "resumo_portfolio": resumo_portfolio,
+        "falhas": falhas,
+        "params": {
+            "days": int(days),
+            "max_items_per_ticker": int(max_items_per_ticker),
+            "cache_ttl_hours": int(cache_ttl_hours),
+        },
+        "generated_at": int(time.time()),
     }
 
+    # Cache final (TTL em segundos)
+    _p7_cache_set(cache_key, payload, ttl_seconds=int(cache_ttl_hours) * 3600)
+
+    _render_patch7_output(payload, empresas_lideres_finais)
+    return payload
 
 
+def _render_patch7_output(payload: dict, empresas_lideres_finais: List[Dict]) -> None:
+    resultados = (payload or {}).get("resultados_por_ticker", {}) or {}
+    resumo = (payload or {}).get("resumo_portfolio", {}) or {}
+    falhas = (payload or {}).get("falhas", []) or []
+
+    st.markdown("### 📌 Resumo do portfólio (IA)")
+    if isinstance(resumo, dict) and resumo.get("erro"):
+        st.warning(resumo.get("erro"))
+    else:
+        visao = (resumo.get("visao_geral") or "—").strip()
+        st.write(visao)
+
+        destaques = _p7_bullets(resumo.get("destaques"))
+        if destaques:
+            st.markdown("**Destaques**")
+            for x in destaques:
+                st.write(f"• {x}")
+
+        riscos = _p7_bullets(resumo.get("riscos_comuns"))
+        if riscos:
+            st.markdown("**Riscos comuns**")
+            for x in riscos:
+                st.write(f"• {x}")
+
+        cats = _p7_bullets(resumo.get("catalisadores_comuns"))
+        if cats:
+            st.markdown("**Catalisadores comuns**")
+            for x in cats:
+                st.write(f"• {x}")
+
+        acoes = _p7_bullets(resumo.get("acoes_praticas"))
+        if acoes:
+            st.markdown("**Ações práticas (o que monitorar)**")
+            for x in acoes:
+                st.write(f"• {x}")
+
+    st.markdown("### 🧩 Relatório por empresa")
+    # ordem: mesma do portfolio final
+    for e in (empresas_lideres_finais or []):
+        tk = _p7_strip_sa(str(e.get("ticker", "")))
+        if not tk:
+            continue
+        rep = resultados.get(tk, {}) or {}
+        nome = _p7_get_nome(tk, empresas_lideres_finais)
+
+        veredito = str(rep.get("veredito") or "—")
+        resumo_txt = str(rep.get("resumo") or "—")
+        catalisadores = _p7_bullets(rep.get("catalisadores"))
+        riscos = _p7_bullets(rep.get("riscos"))
+
+        # tenta também expor as evidências usadas (se você decidir guardar no retorno)
+        evidencias = rep.get("evidencias") if isinstance(rep.get("evidencias"), list) else None
+
+        _p7_render_card(
+            ticker=tk,
+            nome=nome,
+            veredito=veredito,
+            resumo=resumo_txt,
+            catalisadores=catalisadores,
+            riscos=riscos,
+            evidencias=evidencias,
+        )
+
+    if falhas:
+        st.warning("Alguns tickers falharam (timeout/oscilação). Você pode tentar novamente.")
+        with st.expander("Detalhes das falhas", expanded=False):
+            st.json(falhas)
