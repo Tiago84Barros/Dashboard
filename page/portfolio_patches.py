@@ -1026,16 +1026,6 @@ def _render_patch6_report(resp: Dict[str, Any], *, mostrar_tabela: bool = False)
 #   (e salve patch7_resp no session_store, como você fez no patch6)
 #
 
-from __future__ import annotations
-
-from typing import Any, Dict, List, Optional
-import time
-import textwrap
-
-import streamlit as st
-import pandas as pd
-
-
 def _p7_strip_sa(ticker: str) -> str:
     return (ticker or "").strip().upper().replace(".SA", "").strip()
 
