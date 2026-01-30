@@ -1,32 +1,60 @@
 from __future__ import annotations
 
-import json
-import time
+import os
 from typing import Any, Dict, List, Optional
+
+import streamlit as st
+from openai import OpenAI
 
 from core.ai_models.llm_client.base import LLMClient
 
-try:
-    from openai import OpenAI
-except Exception:  # pragma: no cover
-    OpenAI = None
+
+def _get_api_key() -> str:
+    """
+    Resolve a API Key da OpenAI com prioridade correta:
+    1) Streamlit Secrets (Cloud)
+    2) Variável de ambiente
+    """
+    if "OPENAI_API_KEY" in st.secrets:
+        return str(st.secrets["OPENAI_API_KEY"])
+
+    key = os.getenv("OPENAI_API_KEY")
+    if key:
+        return key
+
+    raise RuntimeError(
+        "OPENAI_API_KEY não encontrada. "
+        "Configure em Settings → Secrets (Streamlit Cloud) "
+        "ou como variável de ambiente."
+    )
 
 
 class OpenAIChatClient(LLMClient):
+    """
+    Implementação OpenAI do contrato LLMClient.
+
+    - Compatível com Patch 6 e Patch 7
+    - Não quebra se o chamador não passar api_key explicitamente
+    """
+
     def __init__(
         self,
         *,
-        api_key: str,
-        model: str = "gpt-4o-mini",
-        timeout_s: int = 60,
-        max_retries: int = 3,
-    ) -> None:
-        if OpenAI is None:
-            raise RuntimeError("SDK openai não disponível. Verifique requirements.")
-        self.client = OpenAI(api_key=api_key, timeout=timeout_s)  # ✅ timeout maior
+        api_key: Optional[str] = None,
+        model: str = "gpt-4.1-mini",
+        temperature: float = 0.2,
+        timeout: int = 60,
+    ):
+        self.api_key = api_key or _get_api_key()
         self.model = model
-        self.max_retries = max_retries
+        self.temperature = temperature
+        self.timeout = timeout
 
+        self._client = OpenAI(api_key=self.api_key)
+
+    # ------------------------------------------------------------------
+    # GERAÇÃO DE JSON ESTRUTURADO (Patch 6 e 7)
+    # ------------------------------------------------------------------
     def generate_json(
         self,
         *,
@@ -35,40 +63,63 @@ class OpenAIChatClient(LLMClient):
         schema_hint: str,
         context: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        ctx = context or []
-        # ✅ compacta contexto para não explodir tokens
-        # (você pode ajustar limite abaixo)
-        if len(ctx) > 20:
-            ctx = ctx[:20]
+        messages = [{"role": "system", "content": system}]
 
-        payload_user = (
-            f"{user}\n\n"
-            f"=== CONTEXTO (itens pré-filtrados) ===\n"
-            f"{json.dumps(ctx, ensure_ascii=False)[:12000]}\n\n"
-            f"=== FORMATO JSON ESPERADO ===\n{schema_hint}\n"
-            f"Responda SOMENTE com JSON válido."
+        if context:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": f"Contexto adicional:\n{context}",
+                }
+            )
+
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    f"{user}\n\n"
+                    f"Responda OBRIGATORIAMENTE em JSON válido no seguinte formato:\n"
+                    f"{schema_hint}"
+                ),
+            }
         )
 
-        last_err: Optional[Exception] = None
-        for attempt in range(self.max_retries + 1):
-            try:
-                resp = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": payload_user},
-                    ],
-                    temperature=0.2,
-                )
-                txt = (resp.choices[0].message.content or "").strip()
-                return json.loads(txt)
-            except Exception as e:
-                last_err = e
-                # ✅ retry com backoff exponencial
-                if attempt < self.max_retries:
-                    time.sleep(1.5 * (2 ** attempt))
-                    continue
-                raise RuntimeError(f"Falha ao chamar OpenAI: {e}") from e
+        try:
+            resp = self._client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=self.temperature,
+                timeout=self.timeout,
+                response_format={"type": "json_object"},
+            )
 
+            content = resp.choices[0].message.content
+            return self._safe_json_load(content)
+
+        except Exception as e:
+            raise RuntimeError(f"Falha ao chamar OpenAI: {e}") from e
+
+    # ------------------------------------------------------------------
+    # EMBEDDINGS (opcional – Patch 7 pode usar)
+    # ------------------------------------------------------------------
     def embed(self, texts: List[str]) -> List[List[float]]:
-        raise NotImplementedError("Embeddings não habilitados neste projeto.")
+        try:
+            resp = self._client.embeddings.create(
+                model="text-embedding-3-small",
+                input=texts,
+            )
+            return [d.embedding for d in resp.data]
+        except Exception as e:
+            raise RuntimeError(f"Falha ao gerar embeddings: {e}") from e
+
+    # ------------------------------------------------------------------
+    # UTIL
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _safe_json_load(text: str) -> Dict[str, Any]:
+        import json
+
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            raise ValueError(f"Resposta não é JSON válido:\n{text}")
