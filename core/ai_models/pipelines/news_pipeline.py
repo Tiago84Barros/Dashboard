@@ -10,6 +10,10 @@ import xml.etree.ElementTree as ET
 import requests
 
 
+# ─────────────────────────────────────────────────────────────
+# MODELOS
+# ─────────────────────────────────────────────────────────────
+
 @dataclass
 class NewsItem:
     ticker: str
@@ -20,9 +24,11 @@ class NewsItem:
     snippet: str
 
 
+# ─────────────────────────────────────────────────────────────
+# HELPERS RSS
+# ─────────────────────────────────────────────────────────────
+
 def _google_news_rss_url(query: str, days: int = 60) -> str:
-    # Google News RSS: ceid BR:pt-419, hl pt-BR, gl BR
-    # "when:60d" costuma funcionar bem no Google News.
     q = query.strip()
     q = re.sub(r"\s+", " ", q)
     return (
@@ -37,14 +43,12 @@ def _safe_text(x: Optional[str]) -> str:
 
 
 def _parse_rss_datetime(pub: str) -> Optional[datetime]:
-    # Ex: "Mon, 27 Jan 2026 19:22:00 GMT"
     pub = (pub or "").strip()
     if not pub:
         return None
     for fmt in ("%a, %d %b %Y %H:%M:%S %Z", "%a, %d %b %Y %H:%M:%S %z"):
         try:
             dt = datetime.strptime(pub, fmt)
-            # normaliza p/ timezone aware
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
             return dt
@@ -58,7 +62,15 @@ def _dedup_key(title: str, link: str) -> str:
     return hashlib.sha1(raw.encode("utf-8", errors="ignore")).hexdigest()
 
 
-def fetch_google_news_rss(query: str, days: int = 60, timeout: int = 12) -> List[Tuple[str, str, str, str]]:
+# ─────────────────────────────────────────────────────────────
+# COLETA RSS
+# ─────────────────────────────────────────────────────────────
+
+def fetch_google_news_rss(
+    query: str,
+    days: int = 60,
+    timeout: int = 12,
+) -> List[Tuple[str, str, str, str]]:
     """
     Retorna tuplas: (title, link, source, pubDate)
     """
@@ -77,7 +89,6 @@ def fetch_google_news_rss(query: str, days: int = 60, timeout: int = 12) -> List
         link = _safe_text(item.findtext("link"))
         pub = _safe_text(item.findtext("pubDate"))
 
-        # fonte no RSS do Google News normalmente vem em <source>
         src_el = item.find("source")
         source = _safe_text(src_el.text if src_el is not None else "")
 
@@ -86,6 +97,10 @@ def fetch_google_news_rss(query: str, days: int = 60, timeout: int = 12) -> List
     return out
 
 
+# ─────────────────────────────────────────────────────────────
+# CONSTRUÇÃO POR TICKER
+# ─────────────────────────────────────────────────────────────
+
 def build_news_items_for_ticker(
     *,
     ticker: str,
@@ -93,19 +108,13 @@ def build_news_items_for_ticker(
     days: int = 60,
     max_items: int = 15,
 ) -> List[NewsItem]:
-    """
-    Coleta evidências (RSS) e retorna itens deduplicados e filtrados por janela.
-    """
     tk = (ticker or "").upper().replace(".SA", "").strip()
     name = (company_name or tk).strip()
 
-    # Query simples e robusta: ticker + nome
-    # Você pode ajustar depois para incluir "B3" ou setor, se quiser.
     query = f'{tk} OR "{name}"'
 
     rows = fetch_google_news_rss(query, days=days)
 
-    # Dedup + filtro de data (60 dias)
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=days)
 
@@ -128,12 +137,14 @@ def build_news_items_for_ticker(
                 link=link,
                 source=source or "Fonte não informada",
                 published_at=dt,
-                snippet="",  # RSS não traz snippet consistente; deixamos vazio.
+                snippet="",
             )
         )
 
-    # ordena por recência (desc) e corta
-    items.sort(key=lambda x: x.published_at or datetime(1970, 1, 1, tzinfo=timezone.utc), reverse=True)
+    items.sort(
+        key=lambda x: x.published_at or datetime(1970, 1, 1, tzinfo=timezone.utc),
+        reverse=True,
+    )
     return items[:max_items]
 
 
@@ -155,3 +166,46 @@ def build_news_for_portfolio(
         except Exception:
             out[tk] = []
     return out
+
+
+# ─────────────────────────────────────────────────────────────
+# 🔹 NOVO — CONTEXTO PARA PATCH 7
+# ─────────────────────────────────────────────────────────────
+
+def build_news_context_for_tickers(
+    *,
+    tickers_and_names: List[Tuple[str, str]],
+    days: int = 60,
+    max_items_per_ticker: int = 10,
+) -> Dict[str, List[Dict]]:
+    """
+    Retorna contexto simplificado por ticker, pronto para:
+    - Patch 7 (validação de evidências)
+    - Relatórios narrativos
+    - Auditoria / explicabilidade
+
+    NÃO chama LLM.
+    """
+
+    raw = build_news_for_portfolio(
+        tickers_and_names=tickers_and_names,
+        days=days,
+        max_items_per_ticker=max_items_per_ticker,
+    )
+
+    context: Dict[str, List[Dict]] = {}
+
+    for tk, items in raw.items():
+        rows: List[Dict] = []
+        for it in items:
+            rows.append(
+                {
+                    "title": it.title,
+                    "source": it.source,
+                    "date": it.published_at.isoformat() if it.published_at else None,
+                    "link": it.link,
+                }
+            )
+        context[tk] = rows
+
+    return context
