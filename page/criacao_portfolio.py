@@ -336,10 +336,11 @@ def _render_all_patches(
             score_global=score_global,
             lideres_global=lideres_global,
             empresas_lideres_finais=empresas_lideres_finais,
-            days=60,
-            max_items_per_ticker=15,
-            cache_ttl_hours=12,
+            days_default=60,
+            max_items_per_ticker_default=10,
+            cache_ttl_hours_default=12,
         )
+
 
     return patch6_resp, patch7_resp
 
