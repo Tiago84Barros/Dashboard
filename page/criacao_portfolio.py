@@ -822,10 +822,12 @@ def render():
     params = {"margem_superior": margem_superior, "use_score_v2": bool(use_score_v2)}
     run_key = make_run_key(store_cfg, params=params, setores_df=setores_df, macro_df=dados_macro)
 
-    precos_salvar = _maybe_shrink_precos(precos_global, [e.get("ticker", "") for e in empresas_lideres_finais])
+    precos_salvar = _maybe_shrink_precos(
+        precos_global,
+        [e.get("ticker", "") for e in (empresas_lideres_finais or [])],
+    )
 
-    save_run(
-            try:
+    try:
         save_run(
             store_cfg,
             run_key,
@@ -843,8 +845,8 @@ def render():
                 "lideres_global": lideres_global,
                 "precos_global": precos_salvar,
                 "contrib_globais": contrib_globais,
-                "ia_recomendacoes": patch6_resp,
-                "patch7_evidencias": patch7_resp,
+                "ia_recomendacoes": patch6_resp,   # Patch 6 salvo
+                "patch7_evidencias": patch7_resp,  # Patch 7 salvo
             },
         )
     except Exception as e:
@@ -854,7 +856,6 @@ def render():
     # --- garante que o próximo rerun recupere exatamente esse run_key
     st.session_state["portfolio_last_run_key"] = run_key
 
-    # opcional (recomendado): já reexibe em modo interativo após gerar/salvar
+    # Reexibe em modo interativo após gerar/salvar
     st.success("Portfólio gerado e salvo. Reexibindo em modo interativo…")
     st.rerun()
-
