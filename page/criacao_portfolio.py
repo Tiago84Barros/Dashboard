@@ -488,7 +488,9 @@ def render():
     # Se não clicou em "Gerar Portfólio", mas existe resultado salvo,
     # reexibe automaticamente o último (permite patches interativos como IA).
     if not gerar:
-        saved = load_run(store_cfg, last_run_key(store_cfg))
+        rk = st.session_state.get("portfolio_last_run_key") or last_run_key(store_cfg)
+        saved = load_run(store_cfg, rk) if rk else None
+
         if saved:
             st.info("Reexibindo último resultado salvo (modo interativo).")
 
@@ -823,23 +825,36 @@ def render():
     precos_salvar = _maybe_shrink_precos(precos_global, [e.get("ticker", "") for e in empresas_lideres_finais])
 
     save_run(
-        store_cfg,
-        run_key,
-        payload={
-            "_meta": {
-                "created_at": _now_sp().isoformat(timespec="seconds"),
+            try:
+        save_run(
+            store_cfg,
+            run_key,
+            payload={
+                "_meta": {
+                    "created_at": _now_sp().isoformat(timespec="seconds"),
+                    "margem_superior": margem_superior,
+                    "use_score_v2": bool(use_score_v2),
+                    "precos_cols_salvos": int(precos_salvar.shape[1]) if isinstance(precos_salvar, pd.DataFrame) else 0,
+                },
                 "margem_superior": margem_superior,
                 "use_score_v2": bool(use_score_v2),
-                "precos_cols_salvos": int(precos_salvar.shape[1]) if isinstance(precos_salvar, pd.DataFrame) else 0,
+                "empresas_lideres_finais": empresas_lideres_finais,
+                "score_global": score_global,
+                "lideres_global": lideres_global,
+                "precos_global": precos_salvar,
+                "contrib_globais": contrib_globais,
+                "ia_recomendacoes": patch6_resp,
+                "patch7_evidencias": patch7_resp,
             },
-            "margem_superior": margem_superior,
-            "use_score_v2": bool(use_score_v2),
-            "empresas_lideres_finais": empresas_lideres_finais,
-            "score_global": score_global,
-            "lideres_global": lideres_global,
-            "precos_global": precos_salvar,
-            "contrib_globais": contrib_globais,
-            "ia_recomendacoes": patch6_resp,      # ✅ Patch 6 salvo
-            "patch7_evidencias": patch7_resp,     # ✅ Patch 7 salvo
-        },
-    )
+        )
+    except Exception as e:
+        st.error(f"Falha ao salvar execução em sessão: {e}")
+        st.stop()
+
+    # --- garante que o próximo rerun recupere exatamente esse run_key
+    st.session_state["portfolio_last_run_key"] = run_key
+
+    # opcional (recomendado): já reexibe em modo interativo após gerar/salvar
+    st.success("Portfólio gerado e salvo. Reexibindo em modo interativo…")
+    st.rerun()
+
