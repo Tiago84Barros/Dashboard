@@ -252,6 +252,37 @@ def _maybe_shrink_precos(precos_global: pd.DataFrame, tickers_finais: List[str])
     return out
 
 
+def _minify_score_global(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Reduz o payload salvo em sessão (evita reset/restart por memória).
+    Mantém apenas colunas mais úteis para patches e inspeção.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    # tenta manter o que existe
+    base_cols = ["ticker", "Ano", "SETOR", "SUBSETOR", "SEGMENTO"]
+    candidate_cols = base_cols + [
+        "Score_Final", "score_final", "Score", "score", "score_total",
+        "Alpha_vs_Segmento_pp", "alpha_vs_segmento_pp",
+        "DY", "PVP", "ROE", "ROIC", "Margem_Liquida", "Margem_EBITDA",
+    ]
+    keep = [c for c in candidate_cols if c in df.columns]
+    if not keep:
+        keep = [c for c in base_cols if c in df.columns]
+    out = df[keep].copy() if keep else pd.DataFrame()
+    return out
+
+
+def _minify_lideres_global(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    cols = ["ticker", "Ano", "SETOR", "SUBSETOR", "SEGMENTO"]
+    keep = [c for c in cols if c in df.columns]
+    out = df[keep].copy() if keep else pd.DataFrame()
+    return out
+
+
 def _render_bloco_final_portfolio(empresas_lideres_finais: List[dict]) -> None:
     """Cards + pizza (não depende do yfinance)."""
     if not empresas_lideres_finais:
@@ -340,7 +371,6 @@ def _render_all_patches(
             max_items_per_ticker_default=10,
             cache_ttl_hours_default=12,
         )
-
 
     return patch6_resp, patch7_resp
 
@@ -636,11 +666,18 @@ def render():
             if precos_global is None or precos_global.empty:
                 precos_global = precos_seg
             else:
-                precos_global = precos_global.join(precos_seg, how="outer")
+                # evita colunas duplicadas explode/join estranho
+                precos_global = precos_global.join(precos_seg, how="outer", rsuffix="_dup")
+
+                # remove duplicatas por rsuffix (mantém a primeira)
+                dup_cols = [c for c in precos_global.columns if str(c).endswith("_dup")]
+                if dup_cols:
+                    precos_global = precos_global.drop(columns=dup_cols, errors="ignore")
 
             precos_mensal = precos.resample("M").last()
             score = penalizar_plato(score, precos_mensal, meses=12, penal=0.30)
-        except Exception:
+        except Exception as e:
+            logger.exception("Falha ao processar preços/plato no segmento %s > %s > %s", setor, subsetor, segmento)
             continue
 
         if score.empty:
@@ -648,7 +685,11 @@ def render():
 
         tickers_score = [str(t) for t in score["ticker"].dropna().unique().tolist()]
         tickers_score_yf = [_norm_sa(t) for t in tickers_score]
-        dividendos = coletar_dividendos(tickers_score_yf)
+        try:
+            dividendos = coletar_dividendos(tickers_score_yf)
+        except Exception:
+            logger.exception("Falha ao coletar dividendos no segmento %s > %s > %s", setor, subsetor, segmento)
+            continue
 
         lideres = determinar_lideres(score)
         if lideres is None or lideres.empty:
@@ -664,7 +705,12 @@ def render():
         score_global_parts.append(score.copy())
         lideres_global_parts.append(lideres2)
 
-        patrimonio_empresas, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
+        try:
+            patrimonio_empresas, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
+        except Exception:
+            logger.exception("Falha ao gerir carteira no segmento %s > %s > %s", setor, subsetor, segmento)
+            continue
+
         if patrimonio_empresas is None or patrimonio_empresas.empty:
             continue
 
@@ -730,7 +776,7 @@ def render():
                 }
             )
 
-    # ---- Ano corrente (mantém, mas não sobrescreve 'precos')
+    # ---- Ano corrente (NÃO usa st.stop; apenas pula o bloco se falhar)
     if empresas_lideres_finais:
         st.markdown("## 📊 Desempenho parcial das líderes (ano atual)")
 
@@ -738,56 +784,62 @@ def render():
         tickers_corrente = [e["ticker"] for e in empresas_lideres_finais if int(e["ano_compra"]) == ano_corrente]
 
         if tickers_corrente:
+            pular_ano_corrente = False
+
             tickers_corrente_yf = [_norm_sa(tk) for tk in tickers_corrente]
             precos_corrente = baixar_precos_ano_corrente(tickers_corrente_yf)
             if precos_corrente is None or precos_corrente.empty:
                 st.warning("⚠️ Dados de preço indisponíveis para as ações escolhidas no ano atual.")
-                st.stop()
+                pular_ano_corrente = True
 
-            precos_corrente.index = pd.to_datetime(precos_corrente.index, errors="coerce")
-            precos_corrente = precos_corrente.dropna(how="all")
-            precos_corrente = precos_corrente.resample("B").last().ffill()
-            if precos_corrente.empty:
-                st.warning("⚠️ Dados de preço indisponíveis para as ações escolhidas no ano atual.")
-                st.stop()
+            if not pular_ano_corrente:
+                precos_corrente.index = pd.to_datetime(precos_corrente.index, errors="coerce")
+                precos_corrente = precos_corrente.dropna(how="all")
+                precos_corrente = precos_corrente.resample("B").last().ffill()
+                if precos_corrente.empty:
+                    st.warning("⚠️ Dados de preço indisponíveis para as ações escolhidas no ano atual.")
+                    pular_ano_corrente = True
 
-            tickers_limpos = [_strip_sa(tk) for tk in tickers_corrente_yf]
-            dividendos_dict = coletar_dividendos(tickers_corrente_yf)
+            if not pular_ano_corrente:
+                tickers_limpos = [_strip_sa(tk) for tk in tickers_corrente_yf]
+                dividendos_dict = coletar_dividendos(tickers_corrente_yf)
 
-            datas_potenciais = pd.date_range(start=f"{ano_corrente}-01-01", end=f"{ano_corrente}-12-31", freq="MS")
-            datas_aporte: List[pd.Timestamp] = []
-            for data in datas_potenciais:
-                data_valida = encontrar_proxima_data_valida(data, precos_corrente)
-                if data_valida is not None and data_valida in precos_corrente.index:
-                    datas_aporte.append(data_valida)
+                datas_potenciais = pd.date_range(start=f"{ano_corrente}-01-01", end=f"{ano_corrente}-12-31", freq="MS")
+                datas_aporte: List[pd.Timestamp] = []
+                for data in datas_potenciais:
+                    data_valida = encontrar_proxima_data_valida(data, precos_corrente)
+                    if data_valida is not None and data_valida in precos_corrente.index:
+                        datas_aporte.append(data_valida)
 
-            patrimonio_aporte = gerir_carteira_simples(
-                precos_corrente,
-                tickers_limpos,
-                datas_aporte,
-                dividendos_dict=dividendos_dict,
-            )
+                patrimonio_aporte = gerir_carteira_simples(
+                    precos_corrente,
+                    tickers_limpos,
+                    datas_aporte,
+                    dividendos_dict=dividendos_dict,
+                )
 
-            df_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aporte)
-            if df_selic is None or df_selic.empty:
-                st.warning("⚠️ Não foi possível calcular o benchmark Selic para o período.")
-                st.stop()
+                df_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aporte)
+                if df_selic is None or df_selic.empty:
+                    st.warning("⚠️ Não foi possível calcular o benchmark Selic para o período.")
+                    pular_ano_corrente = True
 
-            df_selic = df_selic.reindex(patrimonio_aporte.index).ffill()
-            df_final = pd.concat([patrimonio_aporte.rename("Estratégia de Aporte"), df_selic], axis=1).dropna()
-            if df_final.empty or df_final["Tesouro Selic"].isna().all():
-                st.warning("⚠️ Não foi possível construir gráfico com os dados disponíveis.")
-                st.stop()
+            if not pular_ano_corrente:
+                df_selic = df_selic.reindex(patrimonio_aporte.index).ffill()
+                df_final = pd.concat([patrimonio_aporte.rename("Estratégia de Aporte"), df_selic], axis=1).dropna()
+                if df_final.empty or df_final["Tesouro Selic"].isna().all():
+                    st.warning("⚠️ Não foi possível construir gráfico com os dados disponíveis.")
+                    pular_ano_corrente = True
 
-            st.markdown(f"### Comparativo de desempenho parcial em {ano_corrente}")
-            fig, ax = plt.subplots(figsize=(10, 5))
-            df_final["Estratégia de Aporte"].plot(ax=ax, label="Estratégia de Aporte")
-            df_final["Tesouro Selic"].plot(ax=ax, label="Tesouro Selic")
-            ax.set_ylabel("Valor acumulado (R$)")
-            ax.set_xlabel("Data")
-            ax.legend()
-            ax.grid(True, linestyle="--", alpha=0.5)
-            st.pyplot(fig)
+            if not pular_ano_corrente:
+                st.markdown(f"### Comparativo de desempenho parcial em {ano_corrente}")
+                fig, ax = plt.subplots(figsize=(10, 5))
+                df_final["Estratégia de Aporte"].plot(ax=ax, label="Estratégia de Aporte")
+                df_final["Tesouro Selic"].plot(ax=ax, label="Tesouro Selic")
+                ax.set_ylabel("Valor acumulado (R$)")
+                ax.set_xlabel("Data")
+                ax.legend()
+                ax.grid(True, linestyle="--", alpha=0.5)
+                st.pyplot(fig)
 
     # Consolida globais para patches e para salvar
     score_global = pd.concat(score_global_parts, ignore_index=True) if score_global_parts else pd.DataFrame()
@@ -827,6 +879,10 @@ def render():
         [e.get("ticker", "") for e in (empresas_lideres_finais or [])],
     )
 
+    # ✅ minifica payloads pesados antes de salvar
+    score_global_salvar = _minify_score_global(score_global)
+    lideres_global_salvar = _minify_lideres_global(lideres_global)
+
     try:
         save_run(
             store_cfg,
@@ -837,12 +893,14 @@ def render():
                     "margem_superior": margem_superior,
                     "use_score_v2": bool(use_score_v2),
                     "precos_cols_salvos": int(precos_salvar.shape[1]) if isinstance(precos_salvar, pd.DataFrame) else 0,
+                    "score_rows_salvos": int(score_global_salvar.shape[0]) if isinstance(score_global_salvar, pd.DataFrame) else 0,
+                    "lideres_rows_salvos": int(lideres_global_salvar.shape[0]) if isinstance(lideres_global_salvar, pd.DataFrame) else 0,
                 },
                 "margem_superior": margem_superior,
                 "use_score_v2": bool(use_score_v2),
                 "empresas_lideres_finais": empresas_lideres_finais,
-                "score_global": score_global,
-                "lideres_global": lideres_global,
+                "score_global": score_global_salvar,
+                "lideres_global": lideres_global_salvar,
                 "precos_global": precos_salvar,
                 "contrib_globais": contrib_globais,
                 "ia_recomendacoes": patch6_resp,   # Patch 6 salvo
@@ -856,6 +914,9 @@ def render():
     # --- garante que o próximo rerun recupere exatamente esse run_key
     st.session_state["portfolio_last_run_key"] = run_key
 
-    # Reexibe em modo interativo após gerar/salvar
-    st.success("Portfólio gerado e salvo. Reexibindo em modo interativo…")
+    # ✅ ancora a próxima renderização no salvo (mais robusto)
+    set_force_render_saved(store_cfg, True)
+
+    # Reexibe em modo salvo/estável após gerar/salvar
+    st.success("Portfólio gerado e salvo. Reexibindo em modo estável…")
     st.rerun()
