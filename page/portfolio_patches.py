@@ -1003,19 +1003,9 @@ def _render_patch6_report(resp: Dict[str, Any], *, mostrar_tabela: bool = False)
     with st.expander("Ver JSON completo (debug)", expanded=False):
         st.json(resp)
 
-# ─────────────────────────────────────────────────────────────
-# PATCH 7 — Validação por evidências (Notícias/Fontes)
-# + Resumo do Portfólio (amigável, anti-crash, com cache)
-# ─────────────────────────────────────────────────────────────
-
-import time
-import hashlib
-import json
-from typing import Any, Dict, List, Optional
-
-import pandas as pd
-import streamlit as st
-
+# =========================
+# PATCH 7 — Evidências externas + Resumo do Portfólio (UI premium)
+# =========================
 
 def _p7_strip_sa(ticker: str) -> str:
     return (ticker or "").strip().upper().replace(".SA", "").strip()
@@ -1036,7 +1026,7 @@ def _p7_bullets(xs: Any, max_items: int = 6) -> List[str]:
         s = xs.strip()
         return [s] if s else []
     if isinstance(xs, list):
-        out = []
+        out: List[str] = []
         for x in xs:
             s = str(x).strip()
             if s:
@@ -1074,6 +1064,112 @@ def _p7_store_get(key: str) -> Optional[dict]:
     return item.get("value")
 
 
+def _p7_schema_fallback() -> str:
+    """
+    Fallback se SCHEMA_PATCH7 não existir no core.ai_models.prompts.schemas.
+    """
+    return """
+    {
+      "ticker": "STRING",
+      "empresa": "STRING",
+      "veredito": "fortalece|neutro|enfraquece",
+      "resumo": "STRING",
+      "catalisadores": ["..."],
+      "riscos": ["..."]
+    }
+    """.strip()
+
+
+def _p7_inject_css() -> None:
+    """
+    Injeta CSS apenas uma vez para deixar o Patch 7 com aparência de relatório premium.
+    """
+    if st.session_state.get("_patch7_css_injected"):
+        return
+
+    st.markdown(
+        """
+        <style>
+          /* --- Patch7 typography & blocks --- */
+          .p7-title {
+            font-size: 28px;
+            font-weight: 800;
+            margin: 0 0 6px 0;
+            letter-spacing: 0.2px;
+            color: #6DD5FA;
+          }
+          .p7-subtitle {
+            font-size: 14px;
+            opacity: 0.85;
+            margin: 0 0 14px 0;
+          }
+          .p7-card {
+            border: 1px solid rgba(255,255,255,0.10);
+            border-radius: 14px;
+            padding: 14px 16px;
+            background: rgba(255,255,255,0.03);
+            margin: 10px 0 14px 0;
+          }
+          .p7-section-title {
+            font-size: 16px;
+            font-weight: 800;
+            margin: 0 0 8px 0;
+            letter-spacing: 0.2px;
+          }
+          .p7-text {
+            font-size: 16px;
+            line-height: 1.65;
+            margin: 0;
+          }
+          .p7-bullets {
+            font-size: 16px;
+            line-height: 1.65;
+            margin: 6px 0 0 0;
+            padding-left: 18px;
+          }
+          .p7-badge {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 800;
+            letter-spacing: 0.3px;
+            margin-left: 8px;
+            vertical-align: middle;
+          }
+          .p7-badge-strong { background: rgba(124,252,152,0.18); color: #7CFC98; border: 1px solid rgba(124,252,152,0.35); }
+          .p7-badge-neutral { background: rgba(243,210,80,0.18); color: #F3D250; border: 1px solid rgba(243,210,80,0.35); }
+          .p7-badge-weak { background: rgba(255,107,107,0.18); color: #FF6B6B; border: 1px solid rgba(255,107,107,0.35); }
+
+          .p7-kpi {
+            font-size: 13px;
+            opacity: 0.9;
+            margin-top: 8px;
+          }
+          .p7-muted {
+            opacity: 0.78;
+          }
+
+          /* Improve expander header readability */
+          div[data-testid="stExpander"] summary {
+            font-weight: 700;
+          }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.session_state["_patch7_css_injected"] = True
+
+
+def _p7_badge_html(veredito: str) -> str:
+    v = (veredito or "").strip().lower()
+    if v == "fortalece":
+        return '<span class="p7-badge p7-badge-strong">FORTALECE</span>'
+    if v == "enfraquece":
+        return '<span class="p7-badge p7-badge-weak">ENFRAQUECE</span>'
+    return '<span class="p7-badge p7-badge-neutral">NEUTRO</span>'
+
+
 def render_patch7_validacao_evidencias(
     score_global: pd.DataFrame,
     lideres_global: pd.DataFrame,
@@ -1084,10 +1180,18 @@ def render_patch7_validacao_evidencias(
     cache_ttl_hours_default: int = 12,
 ) -> Optional[dict]:
 
-    st.markdown("## 🧾 Patch 7 — Evidências externas + Resumo do Portfólio")
-    st.caption(
-        "Validação qualitativa baseada em notícias/fontes recentes. "
-        "Se o score vai até 2024, a IA não usa performance de 2025+."
+    _p7_inject_css()
+
+    st.markdown(
+        """
+        <div>
+          <div class="p7-title">📊 Patch 7 — Evidências externas & Leitura do Portfólio</div>
+          <div class="p7-subtitle p7-muted">
+            Validação qualitativa baseada em notícias/fontes recentes. Se o score vai até 2024, a IA não usa performance de 2025+.
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
     if not empresas_lideres_finais:
@@ -1134,13 +1238,16 @@ def render_patch7_validacao_evidencias(
         from core.ai_models.pipelines.news_pipeline import build_news_for_portfolio
         from core.ai_models.llm_client.factory import get_llm_client
         from core.ai_models.prompts.system import SYSTEM_GUARDRAILS
-        from core.ai_models.prompts.schemas import SCHEMA_PATCH7
+        try:
+            from core.ai_models.prompts.schemas import SCHEMA_PATCH7  # pode não existir
+        except Exception:
+            SCHEMA_PATCH7 = _p7_schema_fallback()
     except Exception as e:
         st.error(f"Patch 7 indisponível: erro ao importar módulos IA. {type(e).__name__}: {e}")
         return None
 
     # 1) Coleta notícias
-    with st.spinner("Coletando notícias relevantes..."):
+    with st.spinner("Coletando evidências recentes..."):
         try:
             news_map = build_news_for_portfolio(
                 tickers_and_names=[(a[0], a[1]) for a in tickers_and_names],
@@ -1216,7 +1323,7 @@ def render_patch7_validacao_evidencias(
                 "evidencias": ctx_items,
             }
 
-    # 4) Resumo do portfólio (✅ agora protegido)
+    # 4) Resumo do portfólio (✅ protegido)
     resumo_portfolio: dict = {}
     try:
         resumo_portfolio = llm.generate_json(
@@ -1252,51 +1359,126 @@ def render_patch7_validacao_evidencias(
 
 
 def _render_patch7_output(payload: dict, empresas_lideres_finais: List[Dict]) -> None:
+    _p7_inject_css()
+
     resultados = (payload or {}).get("resultados_por_ticker", {}) or {}
     resumo = (payload or {}).get("resumo_portfolio", {}) or {}
     falhas = (payload or {}).get("falhas", []) or []
+    params = (payload or {}).get("params", {}) or {}
+    days = params.get("days")
+    max_items = params.get("max_items")
 
-    st.markdown("### 📌 Resumo do portfólio (IA)")
+    # ===== Resumo do portfólio =====
+    st.markdown(
+        f"""
+        <div class="p7-card">
+          <div class="p7-section-title" style="color:#F3D250;">🧠 Contexto Estratégico</div>
+          <div class="p7-kpi p7-muted">Janela: <b>{days}</b> dias • Evidências por empresa: <b>{max_items}</b></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        """
+        <div class="p7-card">
+          <div class="p7-section-title" style="color:#6DD5FA;">📌 Resumo do portfólio</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     if isinstance(resumo, dict) and resumo.get("erro"):
         st.warning(f"Falha ao gerar resumo do portfólio: {resumo.get('erro')}")
+        st.markdown("</div>", unsafe_allow_html=True)
     else:
-        st.write(str(resumo.get("visao_geral") or "—").strip())
+        visao = str(resumo.get("visao_geral") or "—").strip()
+        st.markdown(f'<p class="p7-text">{visao}</p>', unsafe_allow_html=True)
 
-        for title, key in [
-            ("Destaques", "destaques"),
-            ("Riscos comuns", "riscos_comuns"),
-            ("Catalisadores comuns", "catalisadores_comuns"),
-            ("Ações práticas", "acoes_praticas"),
-        ]:
+        def _render_list(title: str, key: str, color: str) -> None:
             items = _p7_bullets(resumo.get(key), max_items=8)
-            if items:
-                st.markdown(f"**{title}**")
-                for x in items:
-                    st.write(f"• {x}")
+            if not items:
+                return
+            st.markdown(
+                f'<div style="margin-top:12px;"><div class="p7-section-title" style="color:{color};">{title}</div></div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown('<ul class="p7-bullets">', unsafe_allow_html=True)
+            for x in items:
+                st.markdown(f"<li>{x}</li>", unsafe_allow_html=True)
+            st.markdown("</ul>", unsafe_allow_html=True)
 
-    st.markdown("### 🧩 Relatório por empresa")
+        _render_list("🚀 Destaques & Catalisadores", "destaques", "#7CFC98")
+        _render_list("⚠️ Riscos comuns", "riscos_comuns", "#FF6B6B")
+        _render_list("🧩 Catalisadores comuns", "catalisadores_comuns", "#7CFC98")
+        _render_list("✅ Ações práticas", "acoes_praticas", "#6DD5FA")
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # ===== Relatório por empresa =====
+    st.markdown(
+        """
+        <div class="p7-card">
+          <div class="p7-section-title" style="color:#6DD5FA;">🧩 Relatório por empresa</div>
+          <div class="p7-muted" style="font-size:13px;">Abra cada empresa para ver resumo, catalisadores e riscos.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     for e in (empresas_lideres_finais or []):
         tk = _p7_strip_sa(str(e.get("ticker", "")))
         if not tk:
             continue
         rep = resultados.get(tk, {}) or {}
-        nome = _p7_get_nome(tk, empresas_lideres_finais)
-        ver = str(rep.get("veredito") or "—").strip()
-        res = str(rep.get("resumo") or "—").strip()
-        cats = _p7_bullets(rep.get("catalisadores"))
-        risks = _p7_bullets(rep.get("riscos"))
 
-        with st.expander(f"{nome} ({tk}) — {ver.upper()}", expanded=False):
-            st.write(res)
+        nome = _p7_get_nome(tk, empresas_lideres_finais)
+        ver = str(rep.get("veredito") or "neutro").strip().lower()
+        res = str(rep.get("resumo") or "—").strip()
+        cats = _p7_bullets(rep.get("catalisadores"), max_items=8)
+        risks = _p7_bullets(rep.get("riscos"), max_items=8)
+
+        badge = _p7_badge_html(ver)
+
+        exp_title = f"{nome} ({tk})"
+        with st.expander(exp_title, expanded=False):
+            st.markdown(
+                f"""
+                <div class="p7-card">
+                  <div class="p7-section-title" style="color:#6DD5FA;">
+                    🏭 {nome} ({tk}) {badge}
+                  </div>
+                  <p class="p7-text">{res}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
             if cats:
-                st.markdown("**Catalisadores**")
+                st.markdown(
+                    """
+                    <div class="p7-card">
+                      <div class="p7-section-title" style="color:#7CFC98;">🚀 Catalisadores</div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                st.markdown('<ul class="p7-bullets">', unsafe_allow_html=True)
                 for x in cats:
-                    st.write(f"• {x}")
+                    st.markdown(f"<li>{x}</li>", unsafe_allow_html=True)
+                st.markdown("</ul></div>", unsafe_allow_html=True)
+
             if risks:
-                st.markdown("**Riscos**")
+                st.markdown(
+                    """
+                    <div class="p7-card">
+                      <div class="p7-section-title" style="color:#FF6B6B;">⚠️ Riscos</div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                st.markdown('<ul class="p7-bullets">', unsafe_allow_html=True)
                 for x in risks:
-                    st.write(f"• {x}")
+                    st.markdown(f"<li>{x}</li>", unsafe_allow_html=True)
+                st.markdown("</ul></div>", unsafe_allow_html=True)
 
     if falhas:
-        with st.expander("Detalhes de falhas (debug)", expanded=False):
+        with st.expander("🛠️ Detalhes de falhas (debug)", expanded=False):
             st.json(falhas)
