@@ -1,15 +1,13 @@
 # =========================
-# page/criacao_portfolio.py  (COM persistência em sessão + Patch7 neutralizado)
+# page/criacao_portfolio.py  (COM persistência em sessão)
 # =========================
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import pandas as pd
 import streamlit as st
@@ -62,7 +60,7 @@ from page.portfolio_patches import (
     render_patch4_diversificacao,
     render_patch5_benchmark_segmento,
     render_patch6_ia_selecao_lideres,
-    # render_patch7_validacao_evidencias,  # ❌ Patch 7 neutralizado
+    render_patch7_validacao_evidencias,  # Patch 7 (mantido, mas neutralizado abaixo)
 )
 
 from core.weights import get_pesos
@@ -87,11 +85,21 @@ logger = logging.getLogger(__name__)
 # Limite simples para evitar salvar preço gigante na sessão
 MAX_PRECOS_COLS_SALVAR = 300
 
+# ─────────────────────────────────────────────────────────────
+# CONTROLE DE DIAGNÓSTICO
+# ─────────────────────────────────────────────────────────────
+# Neutraliza o Patch 7 para verificar se ele é o gatilho do "reiniciar".
+PATCH7_ENABLED = False
+
 
 # ─────────────────────────────────────────────────────────────
-# Helpers de tempo / label
+# Helpers de tempo / label (sem depender do session_store)
 # ─────────────────────────────────────────────────────────────
+
 def _now_sp() -> datetime:
+    """
+    Streamlit Cloud geralmente roda em UTC; aqui padronizamos para America/Sao_Paulo.
+    """
     if ZoneInfo is None:
         return datetime.now()
     try:
@@ -99,6 +107,40 @@ def _now_sp() -> datetime:
     except Exception:
         return datetime.now()
 
+
+def _fmt_dt(dt_str: str) -> str:
+    """
+    Normaliza string ISO para "YYYY-MM-DD HH:MM:SS" quando possível.
+    """
+    if not dt_str:
+        return ""
+    try:
+        dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+        if ZoneInfo is not None and dt.tzinfo is not None:
+            dt = dt.astimezone(ZoneInfo("America/Sao_Paulo"))
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return dt_str
+
+
+def _run_label_from_saved(saved: dict) -> str:
+    meta = (saved or {}).get("_meta", {}) or {}
+    when = _fmt_dt(str(meta.get("created_at", "")))
+    m = meta.get("margem_superior", "")
+    v2 = meta.get("use_score_v2", "")
+    n = len((saved or {}).get("empresas_lideres_finais", []) or [])
+    parts = []
+    if when:
+        parts.append(when)
+    parts.append(f"margem={m}")
+    parts.append(f"v2={v2}")
+    parts.append(f"líderes={n}")
+    return " | ".join(parts)
+
+
+# ─────────────────────────────────────────────────────────────
+# Utilitários internos
+# ─────────────────────────────────────────────────────────────
 
 def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
@@ -124,56 +166,6 @@ def _safe_year_count_from_dre(dre: pd.DataFrame) -> int:
     return int(years.dropna().nunique())
 
 
-def _build_macro() -> Optional[pd.DataFrame]:
-    dados_macro = load_macro_summary()
-    if dados_macro is None or dados_macro.empty:
-        return None
-    dados_macro = _clean_columns(dados_macro)
-    if "Data" not in dados_macro.columns:
-        return None
-    dados_macro["Data"] = pd.to_datetime(dados_macro["Data"], errors="coerce")
-    dados_macro = dados_macro.dropna(subset=["Data"]).sort_values("Data").reset_index(drop=True)
-    return dados_macro
-
-
-def _maybe_shrink_precos(precos_global: pd.DataFrame, tickers_finais: List[str]) -> pd.DataFrame:
-    if not isinstance(precos_global, pd.DataFrame) or precos_global.empty:
-        return pd.DataFrame()
-
-    cols = [str(c) for c in precos_global.columns]
-    if len(cols) <= MAX_PRECOS_COLS_SALVAR:
-        return precos_global
-
-    tset = set([_strip_sa(t) for t in (tickers_finais or []) if str(t).strip()])
-    keep = [c for c in cols if _strip_sa(c) in tset]
-    keep = list(dict.fromkeys(keep))
-    return precos_global[keep].copy() if keep else pd.DataFrame()
-
-
-def _minify_score_global(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame()
-    base_cols = ["ticker", "Ano", "SETOR", "SUBSETOR", "SEGMENTO"]
-    candidates = base_cols + [
-        "Score_Final", "score_final", "Score", "score", "score_total",
-        "Alpha_vs_Segmento_pp", "alpha_vs_segmento_pp",
-        "DY", "PVP", "ROE", "ROIC",
-        "Margem_Liquida", "Margem_EBITDA", "Margem_Bruta",
-    ]
-    keep = [c for c in candidates if c in df.columns]
-    if not keep:
-        keep = [c for c in base_cols if c in df.columns]
-    return df[keep].copy() if keep else pd.DataFrame()
-
-
-def _minify_lideres_global(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame()
-    cols = ["ticker", "Ano", "SETOR", "SUBSETOR", "SEGMENTO"]
-    keep = [c for c in cols if c in df.columns]
-    return df[keep].copy() if keep else pd.DataFrame()
-
-
 @dataclass(frozen=True)
 class EmpresaCarregada:
     ticker: str     # sem .SA
@@ -190,6 +182,7 @@ def _carregar_empresa(row: dict) -> Optional[EmpresaCarregada]:
             return None
 
         tk_sa = _norm_sa(tk)
+
         mult = load_multiplos_from_db(tk_sa)
         dre = load_data_from_db(tk_sa)
 
@@ -231,7 +224,42 @@ def _filtrar_tickers_com_min_anos(tickers: Sequence[str], min_anos: int = 10, ma
     return sorted(set(ok))
 
 
+def _build_macro() -> Optional[pd.DataFrame]:
+    dados_macro = load_macro_summary()
+    if dados_macro is None or dados_macro.empty:
+        return None
+    dados_macro = _clean_columns(dados_macro)
+
+    if "Data" not in dados_macro.columns:
+        return None
+
+    dados_macro["Data"] = pd.to_datetime(dados_macro["Data"], errors="coerce")
+    dados_macro = dados_macro.dropna(subset=["Data"]).sort_values("Data").reset_index(drop=True)
+    return dados_macro
+
+
+def _maybe_shrink_precos(precos_global: pd.DataFrame, tickers_finais: List[str]) -> pd.DataFrame:
+    """
+    Evita salvar um dataframe enorme na sessão.
+    Se colunas > MAX_PRECOS_COLS_SALVAR, guarda apenas tickers finais.
+    """
+    if not isinstance(precos_global, pd.DataFrame) or precos_global.empty:
+        return pd.DataFrame()
+
+    cols = [str(c) for c in precos_global.columns]
+    if len(cols) <= MAX_PRECOS_COLS_SALVAR:
+        return precos_global
+
+    tset = set([_strip_sa(t) for t in (tickers_finais or []) if str(t).strip()])
+    keep = [c for c in cols if _strip_sa(c) in tset]
+    keep = list(dict.fromkeys(keep))
+
+    out = precos_global[keep].copy() if keep else pd.DataFrame()
+    return out
+
+
 def _render_bloco_final_portfolio(empresas_lideres_finais: List[dict]) -> None:
+    """Cards + pizza (não depende do yfinance)."""
     if not empresas_lideres_finais:
         return
 
@@ -274,10 +302,10 @@ def _render_all_patches(
     precos_global: pd.DataFrame,
     contrib_globais,
     show_patch6: bool = True,
+    show_patch7: bool = True,
 ) -> Tuple[Optional[dict], Optional[dict]]:
     """
-    Renderiza patches 1..6. Patch 7 neutralizado para diagnóstico de reinício.
-    Retorna (resp_patch6, None).
+    Renderiza patches 1..7 (quando habilitados) e retorna (resp_patch6, resp_patch7).
     """
     if not empresas_lideres_finais:
         st.info("Sem líderes finais para análise de patches nesta execução.")
@@ -297,6 +325,8 @@ def _render_all_patches(
     )
 
     patch6_resp = None
+    patch7_resp = None
+
     if show_patch6:
         st.markdown("<hr>", unsafe_allow_html=True)
         patch6_resp = render_patch6_ia_selecao_lideres(
@@ -306,16 +336,30 @@ def _render_all_patches(
             max_recs_default=10,
         )
 
-    st.markdown("<hr>", unsafe_allow_html=True)
-    st.info("Patch 7 neutralizado temporariamente para diagnóstico do reinício (criação_portfolio.py).")
+    if show_patch7:
+        st.markdown("<hr>", unsafe_allow_html=True)
+        patch7_resp = render_patch7_validacao_evidencias(
+            score_global=score_global,
+            lideres_global=lideres_global,
+            empresas_lideres_finais=empresas_lideres_finais,
+            days_default=60,
+            max_items_per_ticker_default=10,
+            cache_ttl_hours_default=12,
+        )
 
-    return patch6_resp, None
+    return patch6_resp, patch7_resp
 
+
+# ─────────────────────────────────────────────────────────────
+# Render Streamlit
+# ─────────────────────────────────────────────────────────────
 
 def render():
     st.markdown("<h1 style='text-align: center;'>Criação de Portfólio</h1>", unsafe_allow_html=True)
 
     store_cfg = RunStoreConfig(namespace="portfolio")
+
+    # Persistir último valor digitado na margem
     default_margem = st.session_state.get("portfolio_last_margem_input", "")
 
     with st.sidebar:
@@ -334,6 +378,7 @@ def render():
 
         gerar = st.button("Gerar Portfólio", key="portfolio_btn_gerar")
 
+    # Painel de persistência (sempre visível)
     with st.expander("Resultados salvos nesta sessão", expanded=True):
         runs = list_runs(store_cfg)
         lk_label = last_run_label(store_cfg)
@@ -359,6 +404,7 @@ def render():
         st.warning("Digite uma porcentagem no campo lateral e clique em 'Gerar Portfólio'.")
         return
 
+    # Guarda o último valor digitado
     st.session_state["portfolio_last_margem_input"] = margem_input.strip()
 
     try:
@@ -367,6 +413,7 @@ def render():
         st.error("Porcentagem inválida. Digite apenas números.")
         return
 
+    # ── Carrega setores (cache em sessão)
     setores_df = st.session_state.get("setores_df")
     if setores_df is None or getattr(setores_df, "empty", True):
         setores_df = load_setores_from_db()
@@ -386,14 +433,10 @@ def render():
         st.error("Não foi possível carregar/normalizar os dados macroeconômicos.")
         st.stop()
 
-    # MODO SALVO (sem recalcular)
+    # Reexibir salvo (sem recalcular) - botão explícito
     if consume_force_render_saved(store_cfg):
-        rk = make_run_key(
-            store_cfg,
-            params={"margem_superior": float(margem_superior), "use_score_v2": bool(use_score_v2)},
-            setores_df=setores_df,
-            macro_df=dados_macro,
-        )
+        params = {"margem_superior": margem_superior, "use_score_v2": bool(use_score_v2)}
+        rk = make_run_key(store_cfg, params=params, setores_df=setores_df, macro_df=dados_macro)
 
         saved = load_run(store_cfg, rk)
         if saved is None:
@@ -409,18 +452,20 @@ def render():
             contrib_globais = saved.get("contrib_globais", None)
 
             patch6_saved = saved.get("ia_recomendacoes", None)
+            patch7_saved = saved.get("patch7_evidencias", None)
 
             _render_bloco_final_portfolio(empresas_lideres_finais)
 
             st.markdown("<hr>", unsafe_allow_html=True)
             if empresas_lideres_finais:
-                _render_all_patches(
+                _ = _render_all_patches(
                     score_global=score_global,
                     lideres_global=lideres_global,
                     empresas_lideres_finais=empresas_lideres_finais,
                     precos_global=precos_global,
                     contrib_globais=contrib_globais,
-                    show_patch6=False,
+                    show_patch6=False,  # não recalcula no modo salvo
+                    show_patch7=False,  # mantido como antes
                 )
 
                 st.markdown("<hr>", unsafe_allow_html=True)
@@ -429,6 +474,17 @@ def render():
                     st.json(patch6_saved)
                 else:
                     st.caption("Nenhuma recomendação de IA foi salva nesta execução.")
+
+                st.markdown("<hr>", unsafe_allow_html=True)
+                st.markdown("## 🧾 Patch 7 — Evidências (salvo)")
+                if PATCH7_ENABLED:
+                    if patch7_saved:
+                        rep = patch7_saved.get("report", patch7_saved) if isinstance(patch7_saved, dict) else patch7_saved
+                        st.json(rep)
+                    else:
+                        st.caption("Nenhuma validação por evidências foi salva nesta execução.")
+                else:
+                    st.caption("Patch 7 está neutralizado neste módulo para diagnóstico de reinício.")
             else:
                 st.info("Resultado salvo não contém líderes finais.")
 
@@ -437,7 +493,8 @@ def render():
         st.warning("Não encontrei um resultado salvo compatível para reexibir.")
         st.stop()
 
-    # MODO INTERATIVO (padrão)
+    # Se não clicou em "Gerar Portfólio", mas existe resultado salvo,
+    # reexibe automaticamente o último (permite patches interativos como IA).
     if not gerar:
         rk = st.session_state.get("portfolio_last_run_key") or last_run_key(store_cfg)
         saved = load_run(store_cfg, rk) if rk else None
@@ -455,21 +512,24 @@ def render():
 
             st.markdown("<hr>", unsafe_allow_html=True)
             if empresas_lideres_finais:
-                _render_all_patches(
+                _ = _render_all_patches(
                     score_global=score_global,
                     lideres_global=lideres_global,
                     empresas_lideres_finais=empresas_lideres_finais,
                     precos_global=precos_global,
                     contrib_globais=contrib_globais,
                     show_patch6=True,
+                    show_patch7=PATCH7_ENABLED,  # ✅ neutralizado aqui
                 )
+                if not PATCH7_ENABLED:
+                    st.caption("Patch 7 neutralizado para diagnóstico de reinício.")
             else:
                 st.info("Resultado salvo não contém líderes finais.")
         else:
             st.info("Nenhum resultado salvo ainda. Clique em **Gerar Portfólio** para criar um.")
         st.stop()
 
-    # EXECUÇÃO NOVA
+    # >>> PATCH SCORE V2 (mapas ticker -> SEGMENTO/SUBSETOR/SETOR)
     _tmp = setores_df[["ticker", "SEGMENTO", "SUBSETOR", "SETOR"]].copy()
     _tmp["ticker"] = (
         _tmp["ticker"].astype(str)
@@ -484,6 +544,7 @@ def render():
     group_map = dict(zip(_tmp["ticker"], _tmp["SEGMENTO"]))
     subsetor_map = dict(zip(_tmp["ticker"], _tmp["SUBSETOR"]))
     setor_map = dict(zip(_tmp["ticker"], _tmp["SETOR"]))
+    # <<< PATCH SCORE V2
 
     setores_unicos = (
         setores_df[["SETOR", "SUBSETOR", "SEGMENTO"]]
@@ -492,6 +553,8 @@ def render():
     )
 
     empresas_lideres_finais: List[dict] = []
+
+    # Acumuladores globais para PATCHES
     score_global_parts: List[pd.DataFrame] = []
     lideres_global_parts: List[pd.DataFrame] = []
     precos_global: pd.DataFrame = pd.DataFrame()
@@ -510,6 +573,7 @@ def render():
 
         tickers_segmento = [_strip_sa(t) for t in empresas_segmento["ticker"].astype(str).tolist()]
         tickers_segmento = [t for t in tickers_segmento if t]
+
         if len(set(tickers_segmento)) <= 1:
             continue
 
@@ -569,7 +633,6 @@ def render():
             precos = baixar_precos([_norm_sa(e.ticker) for e in lista_empresas])
             if precos is None or precos.empty:
                 continue
-
             precos.index = pd.to_datetime(precos.index, errors="coerce")
             precos = precos.dropna(how="all")
             if precos.empty:
@@ -583,10 +646,7 @@ def render():
             if precos_global is None or precos_global.empty:
                 precos_global = precos_seg
             else:
-                precos_global = precos_global.join(precos_seg, how="outer", rsuffix="_dup")
-                dup_cols = [c for c in precos_global.columns if str(c).endswith("_dup")]
-                if dup_cols:
-                    precos_global = precos_global.drop(columns=dup_cols, errors="ignore")
+                precos_global = precos_global.join(precos_seg, how="outer")
 
             precos_mensal = precos.resample("M").last()
             score = penalizar_plato(score, precos_mensal, meses=12, penal=0.30)
@@ -636,14 +696,43 @@ def render():
         st.markdown(f"### {setor} > {subsetor} > {segmento}")
         st.markdown(f"**Valor final da estratégia:** R$ {final_empresas:,.2f} ({diff:.1f}% acima do Tesouro Selic)")
 
+        empresas_estrategia = patrimonio_empresas.columns.drop("Patrimônio", errors="ignore")
+        colunas_empresas = st.columns(min(3, len(empresas_estrategia)))
+
+        for idx, ticker_col in enumerate(empresas_estrategia):
+            col = colunas_empresas[idx % len(colunas_empresas)]
+            tk_clean = _strip_sa(str(ticker_col))
+            logo_url = get_logo_url(tk_clean)
+
+            nome = next((e.nome for e in lista_empresas if _strip_sa(e.ticker) == tk_clean), tk_clean)
+            valor_final = float(patrimonio_empresas[ticker_col].iloc[-1])
+            perc_part = (valor_final / final_empresas) * 100.0 if final_empresas != 0 else 0.0
+
+            anos_lider = lideres[lideres["ticker"].astype(str).apply(_strip_sa) == tk_clean]["Ano"].tolist()
+            anos_lider_str = f"{len(anos_lider)}x Líder: {', '.join(map(str, anos_lider))}" if anos_lider else ""
+
+            col.markdown(
+                f"""
+                <div style='border: 1px solid #ccc; border-radius: 8px; padding: 10px; margin-bottom: 10px; text-align: center;'>
+                    <img src='{logo_url}' width='40' />
+                    <p style='margin: 5px 0 0; font-weight: bold;'>{nome}</p>
+                    <p style='margin: 0; color: #666; font-size: 12px;'>({tk_clean})</p>
+                    <p style='font-size: 12px; color: #999;'>{anos_lider_str}</p>
+                    <p style='font-size: 12px; color: #2c3e50;'>Participação: {perc_part:.1f}%</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
         ultimo_ano = int(pd.to_numeric(score["Ano"], errors="coerce").max())
         lideres_ano_anterior = lideres[lideres["Ano"] == ultimo_ano]
+
         for _, row in lideres_ano_anterior.iterrows():
             tk = _strip_sa(str(row["ticker"]))
             empresas_lideres_finais.append(
                 {
                     "ticker": tk,
-                    "nome": tk,
+                    "nome": next((e.nome for e in lista_empresas if _strip_sa(e.ticker) == tk), tk),
                     "logo_url": get_logo_url(tk),
                     "ano_lider": int(row["Ano"]),
                     "ano_compra": int(row["Ano"]) + 1,
@@ -651,7 +740,66 @@ def render():
                 }
             )
 
-    # Consolida globais
+    # ---- Ano corrente (mantém, mas não sobrescreve 'precos')
+    if empresas_lideres_finais:
+        st.markdown("## 📊 Desempenho parcial das líderes (ano atual)")
+
+        ano_corrente = _now_sp().year
+        tickers_corrente = [e["ticker"] for e in empresas_lideres_finais if int(e["ano_compra"]) == ano_corrente]
+
+        if tickers_corrente:
+            tickers_corrente_yf = [_norm_sa(tk) for tk in tickers_corrente]
+            precos_corrente = baixar_precos_ano_corrente(tickers_corrente_yf)
+            if precos_corrente is None or precos_corrente.empty:
+                st.warning("⚠️ Dados de preço indisponíveis para as ações escolhidas no ano atual.")
+                st.stop()
+
+            precos_corrente.index = pd.to_datetime(precos_corrente.index, errors="coerce")
+            precos_corrente = precos_corrente.dropna(how="all")
+            precos_corrente = precos_corrente.resample("B").last().ffill()
+            if precos_corrente.empty:
+                st.warning("⚠️ Dados de preço indisponíveis para as ações escolhidas no ano atual.")
+                st.stop()
+
+            tickers_limpos = [_strip_sa(tk) for tk in tickers_corrente_yf]
+            dividendos_dict = coletar_dividendos(tickers_corrente_yf)
+
+            datas_potenciais = pd.date_range(start=f"{ano_corrente}-01-01", end=f"{ano_corrente}-12-31", freq="MS")
+            datas_aporte: List[pd.Timestamp] = []
+            for data in datas_potenciais:
+                data_valida = encontrar_proxima_data_valida(data, precos_corrente)
+                if data_valida is not None and data_valida in precos_corrente.index:
+                    datas_aporte.append(data_valida)
+
+            patrimonio_aporte = gerir_carteira_simples(
+                precos_corrente,
+                tickers_limpos,
+                datas_aporte,
+                dividendos_dict=dividendos_dict,
+            )
+
+            df_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aporte)
+            if df_selic is None or df_selic.empty:
+                st.warning("⚠️ Não foi possível calcular o benchmark Selic para o período.")
+                st.stop()
+
+            df_selic = df_selic.reindex(patrimonio_aporte.index).ffill()
+            df_final = pd.concat([patrimonio_aporte.rename("Estratégia de Aporte"), df_selic], axis=1).dropna()
+            if df_final.empty or df_final["Tesouro Selic"].isna().all():
+                st.warning("⚠️ Não foi possível construir gráfico com os dados disponíveis.")
+                st.stop()
+
+            st.markdown(f"### Comparativo de desempenho parcial em {ano_corrente}")
+            fig, ax = plt.subplots(figsize=(10, 5))
+            df_final["Estratégia de Aporte"].plot(ax=ax, label="Estratégia de Aporte")
+            df_final["Tesouro Selic"].plot(ax=ax, label="Tesouro Selic")
+            ax.set_ylabel("Valor acumulado (R$)")
+            ax.set_xlabel("Data")
+            ax.legend()
+            ax.grid(True, linestyle="--", alpha=0.5)
+            st.pyplot(fig)
+
+    # Consolida globais para patches e para salvar
     score_global = pd.concat(score_global_parts, ignore_index=True) if score_global_parts else pd.DataFrame()
     lideres_global = pd.concat(lideres_global_parts, ignore_index=True) if lideres_global_parts else pd.DataFrame()
 
@@ -661,10 +809,13 @@ def render():
     else:
         precos_global = pd.DataFrame()
 
+    # ✅ cards + pizza também na execução normal (não só no histórico)
     _render_bloco_final_portfolio(empresas_lideres_finais)
 
     st.markdown("<hr>", unsafe_allow_html=True)
-    patch6_resp, patch7_resp = (None, None)
+
+    patch6_resp = None
+    patch7_resp = None
 
     if empresas_lideres_finais:
         patch6_resp, patch7_resp = _render_all_patches(
@@ -674,19 +825,19 @@ def render():
             precos_global=precos_global,
             contrib_globais=contrib_globais,
             show_patch6=True,
+            show_patch7=PATCH7_ENABLED,  # ✅ Patch 7 neutralizado aqui
         )
+        if not PATCH7_ENABLED:
+            st.caption("Patch 7 neutralizado para diagnóstico de reinício.")
 
-    # Salva execução (Patch7 ficará None)
-    run_key = make_run_key(
-        store_cfg,
-        params={"margem_superior": float(margem_superior), "use_score_v2": bool(use_score_v2)},
-        setores_df=setores_df,
-        macro_df=dados_macro,
+    # Salva execução na sessão (para não perder ao trocar de página)
+    params = {"margem_superior": margem_superior, "use_score_v2": bool(use_score_v2)}
+    run_key = make_run_key(store_cfg, params=params, setores_df=setores_df, macro_df=dados_macro)
+
+    precos_salvar = _maybe_shrink_precos(
+        precos_global,
+        [e.get("ticker", "") for e in (empresas_lideres_finais or [])],
     )
-
-    precos_salvar = _maybe_shrink_precos(precos_global, [e.get("ticker", "") for e in (empresas_lideres_finais or [])])
-    score_salvar = _minify_score_global(score_global)
-    lideres_salvar = _minify_lideres_global(lideres_global)
 
     try:
         save_run(
@@ -702,18 +853,21 @@ def render():
                 "margem_superior": margem_superior,
                 "use_score_v2": bool(use_score_v2),
                 "empresas_lideres_finais": empresas_lideres_finais,
-                "score_global": score_salvar,
-                "lideres_global": lideres_salvar,
+                "score_global": score_global,
+                "lideres_global": lideres_global,
                 "precos_global": precos_salvar,
                 "contrib_globais": contrib_globais,
-                "ia_recomendacoes": patch6_resp,
-                "patch7_evidencias": None,
+                "ia_recomendacoes": patch6_resp,   # Patch 6 salvo
+                "patch7_evidencias": (patch7_resp if PATCH7_ENABLED else None),  # ✅ Patch 7 neutralizado
             },
         )
     except Exception as e:
         st.error(f"Falha ao salvar execução em sessão: {e}")
         st.stop()
 
+    # --- garante que o próximo rerun recupere exatamente esse run_key
     st.session_state["portfolio_last_run_key"] = run_key
-    st.success("Portfólio gerado e salvo (Patch 7 neutralizado). Reexibindo em modo interativo…")
+
+    # Reexibe em modo interativo após gerar/salvar
+    st.success("Portfólio gerado e salvo. Reexibindo em modo interativo…")
     st.rerun()
