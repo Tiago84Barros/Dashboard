@@ -1,5 +1,5 @@
 # =========================
-# page/criacao_portfolio.py  (COM persistência em sessão) - versão estável (anti-restart)
+# page/criacao_portfolio.py  (SEM persistência) - versão para diagnóstico
 # =========================
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Optional, Sequence, Tuple, Dict
+from typing import List, Optional, Sequence, Tuple
 
 import pandas as pd
 import streamlit as st
@@ -64,21 +64,6 @@ from page.portfolio_patches import (
 )
 
 from core.weights import get_pesos
-
-# >>> Persistência em sessão
-from core.session_store import (
-    RunStoreConfig,
-    make_run_key,
-    save_run,
-    load_run,
-    list_runs,
-    last_run_key,
-    last_run_label,
-    clear_runs,
-    set_force_render_saved,
-    consume_force_render_saved,
-)
-# <<< Persistência em sessão
 
 logger = logging.getLogger(__name__)
 
@@ -236,117 +221,7 @@ def _render_bloco_final_portfolio(empresas_lideres_finais: List[dict]) -> None:
 
 
 # ─────────────────────────────────────────────────────────────
-# Preços mínimos para Patch 5 (anti-OOM / anti-restart)
-# ─────────────────────────────────────────────────────────────
-
-@st.cache_data(show_spinner=False, ttl=60 * 60 * 6)  # 6h
-def _baixar_precos_minimos_para_patch5(
-    tickers_norm_sa: List[str],
-) -> pd.DataFrame:
-    """Baixa preços apenas do conjunto necessário e normaliza colunas para 'SEM .SA'."""
-    if not tickers_norm_sa:
-        return pd.DataFrame()
-
-    precos = baixar_precos(tickers_norm_sa)
-    if precos is None or not isinstance(precos, pd.DataFrame) or precos.empty:
-        return pd.DataFrame()
-
-    precos.index = pd.to_datetime(precos.index, errors="coerce")
-    precos = precos.dropna(how="all")
-    if precos.empty:
-        return pd.DataFrame()
-
-    precos.columns = [_strip_sa(str(c)) for c in precos.columns.astype(str).tolist()]
-    precos = precos.loc[~precos.index.isna()].sort_index()
-    precos = precos.dropna(how="all", axis=1)
-    return precos
-
-
-def _montar_precos_para_patch5(
-    score_global: pd.DataFrame,
-    empresas_lideres_finais: List[dict],
-    max_universe: int = 80,
-    max_total_tickers: int = 450,
-) -> pd.DataFrame:
-    """
-    Replica a lógica de universo do Patch 5, mas monta uma lista MINIMA de tickers,
-    baixa preços uma vez e retorna df de preços compacto.
-
-    max_total_tickers: teto de segurança para evitar OOM/restart.
-    """
-    if score_global is None or score_global.empty or not empresas_lideres_finais:
-        return pd.DataFrame()
-
-    required = {"Ano", "ticker", "SETOR", "SUBSETOR", "SEGMENTO"}
-    if not required.issubset(set(score_global.columns)):
-        return pd.DataFrame()
-
-    df = score_global.copy()
-    df["Ano"] = pd.to_numeric(df["Ano"], errors="coerce")
-    df["ticker"] = df["ticker"].astype(str).map(_strip_sa)
-    df["SETOR"] = df["SETOR"].astype(str).fillna("OUTROS")
-    df["SUBSETOR"] = df["SUBSETOR"].astype(str).fillna("OUTROS")
-    df["SEGMENTO"] = df["SEGMENTO"].astype(str).fillna("OUTROS")
-    df = df.dropna(subset=["Ano", "ticker"])
-    if df.empty:
-        return pd.DataFrame()
-
-    ultimo_ano = int(df["Ano"].max())
-    df_ano = df[df["Ano"] == ultimo_ano].copy()
-    if df_ano.empty:
-        return pd.DataFrame()
-
-    meta = (
-        df_ano[["ticker", "SETOR", "SUBSETOR", "SEGMENTO"]]
-        .drop_duplicates(subset=["ticker"])
-        .reset_index(drop=True)
-    )
-    meta_map = meta.set_index("ticker")[["SETOR", "SUBSETOR", "SEGMENTO"]].to_dict("index")
-
-    tickers_finais = sorted({_strip_sa(str(e.get("ticker", ""))) for e in empresas_lideres_finais if str(e.get("ticker", "")).strip()})
-    if not tickers_finais:
-        return pd.DataFrame()
-
-    df_ano["id_segmento"] = df_ano["SETOR"] + " > " + df_ano["SUBSETOR"] + " > " + df_ano["SEGMENTO"]
-    uni_segmento = (
-        df_ano.groupby("id_segmento")["ticker"]
-        .apply(lambda s: sorted(set(s.dropna().tolist())))
-        .to_dict()
-    )
-
-    needed: List[str] = []
-    for tk in tickers_finais:
-        info = meta_map.get(tk)
-        if not info:
-            continue
-        id_seg = f"{info['SETOR']} > {info['SUBSETOR']} > {info['SEGMENTO']}"
-        universo = uni_segmento.get(id_seg, [])
-        needed.extend(universo[:max_universe])
-        needed.append(tk)
-
-    needed = list(dict.fromkeys([_strip_sa(x) for x in needed if str(x).strip()]))
-
-    # Teto de segurança (anti-restart)
-    if len(needed) > max_total_tickers:
-        # reduz universo efetivo por ticker final
-        shrink = max(10, int(max_total_tickers / max(1, len(tickers_finais))) - 1)
-        needed2: List[str] = []
-        for tk in tickers_finais:
-            info = meta_map.get(tk)
-            if not info:
-                continue
-            id_seg = f"{info['SETOR']} > {info['SUBSETOR']} > {info['SEGMENTO']}"
-            universo = uni_segmento.get(id_seg, [])
-            needed2.extend(universo[:shrink])
-            needed2.append(tk)
-        needed = list(dict.fromkeys([_strip_sa(x) for x in needed2 if str(x).strip()]))
-
-    tickers_norm_sa = [_norm_sa(t) for t in needed]
-    return _baixar_precos_minimos_para_patch5(tickers_norm_sa)
-
-
-# ─────────────────────────────────────────────────────────────
-# Render patches (agora com preços compactos)
+# Render patches (sem persistência)
 # ─────────────────────────────────────────────────────────────
 
 def _render_all_patches(
@@ -408,10 +283,7 @@ def _render_all_patches(
 def render():
     st.markdown("<h1 style='text-align: center;'>Criação de Portfólio</h1>", unsafe_allow_html=True)
 
-    # ✅ limite de runs para não crescer sessão indefinidamente
-    store_cfg = RunStoreConfig(namespace="portfolio", max_runs=3)
-
-    # (opcional) debug leve para detectar restart de sessão
+    # debug leve (se reiniciar, esse id muda)
     if "boot_id" not in st.session_state:
         st.session_state["boot_id"] = _now_sp().isoformat(timespec="seconds")
     st.caption(f"boot_id={st.session_state['boot_id']}")
@@ -434,27 +306,10 @@ def render():
 
         gerar = st.button("Gerar Portfólio", key="portfolio_btn_gerar")
 
-    # Painel de persistência
-    with st.expander("Resultados salvos nesta sessão", expanded=True):
-        runs = list_runs(store_cfg)
-        lk_label = last_run_label(store_cfg)
-
-        if runs:
-            st.caption(f"Execuções salvas: {len(runs)}")
-            if lk_label:
-                st.write(f"Última execução: {lk_label}")
-
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("Reexibir último resultado (sem recalcular)", key="portfolio_show_saved"):
-                    set_force_render_saved(store_cfg, True)
-                    st.rerun()
-            with c2:
-                if st.button("Limpar resultados salvos", key="portfolio_clear_saved"):
-                    clear_runs(store_cfg)
-                    st.success("Resultados salvos removidos desta sessão.")
-        else:
-            st.caption("Nenhum resultado salvo ainda. Gere um portfólio para salvar.")
+        with st.expander("Diagnóstico", expanded=False):
+            show_patch6 = st.checkbox("Renderizar Patch 6 (IA)", value=True, key="diag_show_patch6")
+            show_patch7 = st.checkbox("Renderizar Patch 7 (Evidências)", value=True, key="diag_show_patch7")
+            st.caption("Use para isolar se o reset vem do Patch 6/7.")
 
     if not margem_input.strip():
         st.warning("Digite uma porcentagem no campo lateral e clique em 'Gerar Portfólio'.")
@@ -468,15 +323,17 @@ def render():
         st.error("Porcentagem inválida. Digite apenas números.")
         return
 
-    # ── Carrega setores (cache em sessão)
-    setores_df = st.session_state.get("setores_df")
-    if setores_df is None or getattr(setores_df, "empty", True):
-        setores_df = load_setores_from_db()
-        if setores_df is None or setores_df.empty:
-            st.error("Não foi possível carregar a base de setores do banco.")
-            st.stop()
-        setores_df = _clean_columns(setores_df)
-        st.session_state["setores_df"] = setores_df
+    # se não clicou, não roda nada (sem persistência)
+    if not gerar:
+        st.info("Clique em **Gerar Portfólio** para executar.")
+        return
+
+    # ── Carrega setores
+    setores_df = load_setores_from_db()
+    if setores_df is None or setores_df.empty:
+        st.error("Não foi possível carregar a base de setores do banco.")
+        st.stop()
+    setores_df = _clean_columns(setores_df)
 
     required_cols = {"SETOR", "SUBSETOR", "SEGMENTO", "ticker"}
     if not required_cols.issubset(setores_df.columns):
@@ -486,71 +343,6 @@ def render():
     dados_macro = _build_macro()
     if dados_macro is None or dados_macro.empty:
         st.error("Não foi possível carregar/normalizar os dados macroeconômicos.")
-        st.stop()
-
-    # Reexibir salvo (sem recalcular)
-    if consume_force_render_saved(store_cfg):
-        params = {"margem_superior": margem_superior, "use_score_v2": bool(use_score_v2)}
-        rk = make_run_key(store_cfg, params=params, setores_df=setores_df, macro_df=dados_macro)
-
-        saved = load_run(store_cfg, rk)
-        if saved is None:
-            saved = load_run(store_cfg, last_run_key(store_cfg))
-
-        if saved:
-            st.info("Reexibindo resultados salvos (sem recalcular).")
-
-            empresas_lideres_finais = saved.get("empresas_lideres_finais", [])
-            patch6_saved = saved.get("ia_recomendacoes", None)
-
-            _render_bloco_final_portfolio(empresas_lideres_finais)
-
-            st.markdown("<hr>", unsafe_allow_html=True)
-            st.info(
-                "Patches completos não foram persistidos (evita payload grande e restart). "
-                "Para ver patches 1–7, execute novamente."
-            )
-
-            st.markdown("<hr>", unsafe_allow_html=True)
-            st.markdown("## 🤖 Patch 6 — IA (salvo)")
-            if patch6_saved:
-                st.json(patch6_saved)
-            else:
-                st.caption("Nenhuma recomendação de IA foi salva nesta execução.")
-
-            st.stop()
-
-        st.warning("Não encontrei um resultado salvo compatível para reexibir.")
-        st.stop()
-
-    # Se não clicou em "Gerar Portfólio", reexibe último salvo (leve)
-    if not gerar:
-        rk = st.session_state.get("portfolio_last_run_key") or last_run_key(store_cfg)
-        saved = load_run(store_cfg, rk) if rk else None
-
-        if saved:
-            st.info("Reexibindo último resultado salvo (modo leve).")
-
-            empresas_lideres_finais = saved.get("empresas_lideres_finais", [])
-            patch6_saved = saved.get("ia_recomendacoes", None)
-
-            _render_bloco_final_portfolio(empresas_lideres_finais)
-
-            st.markdown("<hr>", unsafe_allow_html=True)
-            st.info(
-                "Modo leve: não reexibe patches 1–7 porque eles dependem de dados grandes "
-                "que não são persistidos (evita reset)."
-            )
-
-            st.markdown("<hr>", unsafe_allow_html=True)
-            st.markdown("## 🤖 Patch 6 — IA (salvo)")
-            if patch6_saved:
-                st.json(patch6_saved)
-            else:
-                st.caption("Nenhuma recomendação de IA foi salva nesta execução.")
-        else:
-            st.info("Nenhum resultado salvo ainda. Clique em **Gerar Portfólio** para criar um.")
-
         st.stop()
 
     # >>> PATCH SCORE V2 (mapas ticker -> SEGMENTO/SUBSETOR/SETOR)
@@ -577,8 +369,6 @@ def render():
     )
 
     empresas_lideres_finais: List[dict] = []
-
-    # Acumuladores globais para PATCHES (SEM precos_global aqui!)
     score_global_parts: List[pd.DataFrame] = []
     lideres_global_parts: List[pd.DataFrame] = []
     contrib_globais = None
@@ -626,10 +416,9 @@ def render():
 
         setores_empresa = {e.ticker: obter_setor_da_empresa(e.ticker, setores_df) for e in lista_empresas}
         pesos = get_pesos(setor)
-
         payload_empresas = [{"ticker": e.ticker, "nome": e.nome, "multiplos": e.multiplos, "dre": e.dre} for e in lista_empresas]
 
-        if ("use_score_v2" in locals()) and use_score_v2 and (calcular_score_acumulado_v2 is not None):
+        if use_score_v2 and (calcular_score_acumulado_v2 is not None):
             score = calcular_score_acumulado_v2(
                 lista_empresas=payload_empresas,
                 group_map=group_map,
@@ -661,7 +450,6 @@ def render():
             if precos.empty:
                 continue
 
-            # Penalidade de platô
             precos_mensal = precos.resample("M").last()
             score = penalizar_plato(score, precos_mensal, meses=12, penal=0.30)
         except Exception:
@@ -756,7 +544,7 @@ def render():
                 }
             )
 
-    # ---- Ano corrente (mantém)
+    # ---- Ano corrente
     if empresas_lideres_finais:
         st.markdown("## 📊 Desempenho parcial das líderes (ano atual)")
 
@@ -815,64 +603,34 @@ def render():
             ax.grid(True, linestyle="--", alpha=0.5)
             st.pyplot(fig)
 
-    # Consolida globais (somente para patches nesta execução)
+    # Consolida globais para patches (nesta execução)
     score_global = pd.concat(score_global_parts, ignore_index=True) if score_global_parts else pd.DataFrame()
     lideres_global = pd.concat(lideres_global_parts, ignore_index=True) if lideres_global_parts else pd.DataFrame()
 
-    # ✅ Render resumo final
     _render_bloco_final_portfolio(empresas_lideres_finais)
     st.markdown("<hr>", unsafe_allow_html=True)
 
-    # ✅ Monta preços compactos só pro Patch 5 (anti-restart)
-    precos_patch5 = _montar_precos_para_patch5(
-        score_global=score_global,
-        empresas_lideres_finais=empresas_lideres_finais,
-        max_universe=80,
-        max_total_tickers=450,
-    )
-
-    patch6_resp = None
-    patch7_resp = None
+    # Para o Patch 5: por enquanto, usa apenas preços dos tickers finais (mínimo necessário)
+    # (isso evita um universo grande e ajuda a testar estabilidade)
+    tickers_finais = sorted({_strip_sa(str(e.get("ticker", ""))) for e in empresas_lideres_finais if str(e.get("ticker", "")).strip()})
+    precos_patch5 = pd.DataFrame()
+    if tickers_finais:
+        precos_patch5 = baixar_precos([_norm_sa(t) for t in tickers_finais])
+        if isinstance(precos_patch5, pd.DataFrame) and not precos_patch5.empty:
+            precos_patch5.index = pd.to_datetime(precos_patch5.index, errors="coerce")
+            precos_patch5 = precos_patch5.dropna(how="all")
+            precos_patch5.columns = [_strip_sa(str(c)) for c in precos_patch5.columns.astype(str).tolist()]
+            precos_patch5 = precos_patch5.loc[~precos_patch5.index.isna()].sort_index()
 
     if empresas_lideres_finais:
-        patch6_resp, patch7_resp = _render_all_patches(
+        _render_all_patches(
             score_global=score_global,
             lideres_global=lideres_global,
             empresas_lideres_finais=empresas_lideres_finais,
             precos_patch5=precos_patch5,
             contrib_globais=None,
-            show_patch6=True,
-            show_patch7=True,
+            show_patch6=bool(show_patch6),
+            show_patch7=bool(show_patch7),
         )
 
-    # Salva execução na sessão (LEVE)
-    params = {"margem_superior": margem_superior, "use_score_v2": bool(use_score_v2)}
-    run_key = make_run_key(store_cfg, params=params, setores_df=setores_df, macro_df=dados_macro)
-
-    patch6_to_save = patch6_resp if isinstance(patch6_resp, (dict, list, str, type(None))) else None
-
-    try:
-        save_run(
-            store_cfg,
-            run_key,
-            payload={
-                "_meta": {
-                    "created_at": _now_sp().isoformat(timespec="seconds"),
-                    "margem_superior": margem_superior,
-                    "use_score_v2": bool(use_score_v2),
-                    "n_lideres": len(empresas_lideres_finais or []),
-                },
-                "margem_superior": margem_superior,
-                "use_score_v2": bool(use_score_v2),
-                "empresas_lideres_finais": empresas_lideres_finais,
-                "ia_recomendacoes": patch6_to_save,
-                # ❌ intencionalmente NÃO salvar dados grandes (anti-reset)
-            },
-        )
-    except Exception as e:
-        st.error(f"Falha ao salvar execução em sessão: {e}")
-        st.stop()
-
-    st.session_state["portfolio_last_run_key"] = run_key
-
-    st.success("Portfólio gerado e salvo (modo estável). Interaja com os patches acima nesta execução.")
+    st.success("Execução finalizada (sem persistência).")
