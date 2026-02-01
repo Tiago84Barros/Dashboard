@@ -297,7 +297,7 @@ def _render_all_patches(
     contrib_globais,
     show_patch6: bool = True,
     show_patch7: bool = True,
-) -> Tuple[Optional[dict], Optional[dict]]:
+):
     """
     Renderiza patches 1..7 (quando habilitados) e retorna (resp_patch6, resp_patch7).
     """
@@ -340,7 +340,6 @@ def _render_all_patches(
             max_items_per_ticker_default=10,
             cache_ttl_hours_default=12,
         )
-
 
     return patch6_resp, patch7_resp
 
@@ -813,7 +812,7 @@ def render():
             lideres_global=lideres_global,
             empresas_lideres_finais=empresas_lideres_finais,
             precos_global=precos_global,
-            contrib_globais=contrib_globais,
+            contrib_globais=None,
             show_patch6=True,
             show_patch7=True,
         )
@@ -844,7 +843,7 @@ def render():
                 "score_global": score_global,
                 "lideres_global": lideres_global,
                 "precos_global": precos_salvar,
-                "contrib_globais": contrib_globais,
+                "contrib_globais": None,
                 "ia_recomendacoes": patch6_resp,   # Patch 6 salvo
                 "patch7_evidencias": patch7_resp,  # Patch 7 salvo
             },
@@ -853,13 +852,9 @@ def render():
         st.error(f"Falha ao salvar execução em sessão: {e}")
         st.stop()
 
-    # --- garante que o próximo rerun recupere exatamente esse run_key
+    # garante que próximos reruns recuperem exatamente esse run_key
     st.session_state["portfolio_last_run_key"] = run_key
-
-    # Reexibe em modo interativo após gerar/salvar
-    st.success("Portfólio gerado e salvo. Reexibindo em modo interativo…")
 
     # ✅ NÃO forçar rerun aqui.
     # Streamlit já vai rerodar quando o usuário interagir (patches/botões/forms).
     st.success("Portfólio gerado e salvo. Você pode interagir com os patches abaixo sem recalcular.")
-
