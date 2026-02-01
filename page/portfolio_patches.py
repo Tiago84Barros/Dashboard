@@ -1006,6 +1006,7 @@ def _render_patch6_report(resp: Dict[str, Any], *, mostrar_tabela: bool = False)
 
 # =========================
 # PATCH 7 — Evidências externas + Resumo do Portfólio (UI premium)
+# (versão "blindada" contra reruns: session_state + checkpoints + cache de notícias)
 # =========================
 
 def _p7_strip_sa(ticker: str) -> str:
@@ -1171,6 +1172,27 @@ def _p7_badge_html(veredito: str) -> str:
     return '<span class="p7-badge p7-badge-neutral">NEUTRO</span>'
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _p7_fetch_news_cached(
+    tickers_and_names_tuples: List[tuple],
+    days: int,
+    max_items: int,
+) -> Dict[str, Any]:
+    """
+    Wrapper cacheado para reduzir reruns/re-execuções e evitar "sumir" em tarefas de rede.
+    """
+    from core.ai_models.pipelines.news_pipeline import build_news_for_portfolio
+
+    return (
+        build_news_for_portfolio(
+            tickers_and_names=tickers_and_names_tuples,
+            days=int(days),
+            max_items_per_ticker=int(max_items),
+        )
+        or {}
+    )
+
+
 def render_patch7_validacao_evidencias(
     score_global: pd.DataFrame,
     lideres_global: pd.DataFrame,
@@ -1182,6 +1204,12 @@ def render_patch7_validacao_evidencias(
 ) -> Optional[dict]:
 
     _p7_inject_css()
+
+    # Estado para não "evaporar" em reruns
+    if "patch7_run" not in st.session_state:
+        st.session_state["patch7_run"] = False
+    if "patch7_last_key" not in st.session_state:
+        st.session_state["patch7_last_key"] = None
 
     st.markdown(
         """
@@ -1209,7 +1237,7 @@ def render_patch7_validacao_evidencias(
         st.info("Patch 7 indisponível: tickers inválidos.")
         return None
 
-    # UI estável: form + submit
+    # UI estável: form + submit (evita múltiplos clicks e melhora rerun)
     with st.form("patch7_form", clear_on_submit=False):
         c1, c2, c3 = st.columns(3)
         with c1:
@@ -1219,58 +1247,84 @@ def render_patch7_validacao_evidencias(
         with c3:
             ttl_h = st.number_input("Cache (horas)", 1, 72, int(cache_ttl_hours_default), 1)
 
-        run = st.form_submit_button("Rodar Patch 7")
+        submitted = st.form_submit_button("Rodar Patch 7")
+
+    # Se clicou, trava execução na sessão (para não perder no rerun)
+    if submitted:
+        st.session_state["patch7_run"] = True
 
     cache_key = _p7_make_key(tickers_and_names=tickers_and_names, days=int(days), max_items=int(max_items))
+    st.session_state["patch7_last_key"] = cache_key
+
     cached = _p7_store_get(cache_key)
 
-    # ✅ sempre reexibe cache se existir (mesmo sem clicar)
-    if cached and not run:
+    # Sempre reexibe cache se existir (mesmo sem clicar)
+    if cached and not st.session_state["patch7_run"]:
         st.success("Mostrando último resultado do Patch 7 (cache).")
         _render_patch7_output(cached, empresas_lideres_finais)
         return cached
 
-    if not run:
+    if not st.session_state["patch7_run"]:
         st.info("Clique em **Rodar Patch 7** para gerar o relatório.")
         return None
 
+    # Checkpoints visíveis (debug rápido)
+    st.write("Patch7 checkpoint: antes dos imports IA ✅")
+
     # Imports reais do projeto (padrão do Patch 6)
     try:
-        from core.ai_models.pipelines.news_pipeline import build_news_for_portfolio
         from core.ai_models.llm_client.factory import get_llm_client
         from core.ai_models.prompts.system import SYSTEM_GUARDRAILS
+
         try:
             from core.ai_models.prompts.schemas import SCHEMA_PATCH7  # pode não existir
         except Exception:
             SCHEMA_PATCH7 = _p7_schema_fallback()
     except Exception as e:
         st.error(f"Patch 7 indisponível: erro ao importar módulos IA. {type(e).__name__}: {e}")
+        st.session_state["patch7_run"] = False
         return None
 
-    # 1) Coleta notícias
+    st.write("Patch7 checkpoint: imports IA OK ✅")
+
+    # 1) Coleta notícias (cacheada)
+    st.write("Patch7 checkpoint: vou coletar evidências ✅")
     with st.spinner("Coletando evidências recentes..."):
         try:
-            news_map = build_news_for_portfolio(
-                tickers_and_names=[(a[0], a[1]) for a in tickers_and_names],
+            news_map = _p7_fetch_news_cached(
+                tickers_and_names_tuples=[(a[0], a[1]) for a in tickers_and_names],
                 days=int(days),
-                max_items_per_ticker=int(max_items),
+                max_items=int(max_items),
             ) or {}
         except Exception as e:
             st.error(f"Falha ao coletar notícias: {type(e).__name__}: {e}")
+            st.session_state["patch7_run"] = False
             return None
 
+    st.write(f"Patch7 checkpoint: evidências coletadas ✅ (tickers={len(news_map)})")
+
     # 2) Cliente IA
+    st.write("Patch7 checkpoint: vou inicializar LLM ✅")
     try:
         llm = get_llm_client()
     except Exception as e:
         st.error(f"Falha ao inicializar IA: {type(e).__name__}: {e}")
+        st.session_state["patch7_run"] = False
         return None
+
+    st.write("Patch7 checkpoint: LLM OK ✅")
 
     resultados: Dict[str, dict] = {}
     falhas: List[Dict[str, str]] = []
 
-    # 3) Análise por ticker (cada um protegido)
-    for tk, nome in tickers_and_names:
+    # 3) Análise por ticker (cada um protegido) com progress bar
+    progress = st.progress(0)
+    total = max(1, len(tickers_and_names))
+
+    for i, (tk, nome) in enumerate(tickers_and_names, start=1):
+        progress.progress(min(i / total, 1.0))
+        st.write(f"Analisando: {nome} ({tk})…")
+
         items = news_map.get(tk, []) or []
         ctx_items = []
         for it in items:
@@ -1324,7 +1378,9 @@ def render_patch7_validacao_evidencias(
                 "evidencias": ctx_items,
             }
 
-    # 4) Resumo do portfólio (✅ protegido)
+    progress.progress(1.0)
+
+    # 4) Resumo do portfólio (protegido)
     resumo_portfolio: dict = {}
     try:
         resumo_portfolio = llm.generate_json(
@@ -1356,6 +1412,10 @@ def render_patch7_validacao_evidencias(
 
     _p7_store_set(cache_key, payload, int(ttl_h) * 3600)
     _render_patch7_output(payload, empresas_lideres_finais)
+
+    # Reseta o estado para não rerodar sem querer
+    st.session_state["patch7_run"] = False
+
     return payload
 
 
@@ -1479,6 +1539,25 @@ def _render_patch7_output(payload: dict, empresas_lideres_finais: List[Dict]) ->
                 for x in risks:
                     st.markdown(f"<li>{x}</li>", unsafe_allow_html=True)
                 st.markdown("</ul></div>", unsafe_allow_html=True)
+
+            evs = rep.get("evidencias", []) or []
+            if evs:
+                with st.expander("📰 Evidências usadas (títulos/fontes)", expanded=False):
+                    for it in evs[:20]:
+                        title = str(it.get("title") or "").strip()
+                        source = str(it.get("source") or "").strip()
+                        date = str(it.get("date") or "").strip()
+                        url = str(it.get("url") or "").strip()
+                        snippet = str(it.get("snippet") or "").strip()
+
+                        line = f"- **{title or 'Sem título'}**"
+                        if source or date:
+                            line += f" ({source}{' • ' if source and date else ''}{date})"
+                        if url:
+                            line += f"\n  - {url}"
+                        if snippet:
+                            line += f"\n  - {snippet[:240]}{'...' if len(snippet) > 240 else ''}"
+                        st.markdown(line)
 
     if falhas:
         with st.expander("🛠️ Detalhes de falhas (debug)", expanded=False):
