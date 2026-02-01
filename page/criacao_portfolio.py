@@ -1,5 +1,5 @@
 # =========================
-# page/criacao_portfolio.py  (COM persistência em sessão)
+# page/criacao_portfolio.py  (COM persistência em sessão) - versão estável
 # =========================
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ from page.portfolio_patches import (
     render_patch4_diversificacao,
     render_patch5_benchmark_segmento,
     render_patch6_ia_selecao_lideres,
-    render_patch7_validacao_evidencias,  # ✅ Patch 7
+    render_patch7_validacao_evidencias,  # Patch 7
 )
 
 from core.weights import get_pesos
@@ -82,18 +82,15 @@ from core.session_store import (
 
 logger = logging.getLogger(__name__)
 
-# Limite simples para evitar salvar preço gigante na sessão
+# Limite simples para evitar salvar payloads grandes
 MAX_PRECOS_COLS_SALVAR = 300
 
 
 # ─────────────────────────────────────────────────────────────
-# Helpers de tempo / label (sem depender do session_store)
+# Helpers de tempo
 # ─────────────────────────────────────────────────────────────
 
 def _now_sp() -> datetime:
-    """
-    Streamlit Cloud geralmente roda em UTC; aqui padronizamos para America/Sao_Paulo.
-    """
     if ZoneInfo is None:
         return datetime.now()
     try:
@@ -101,40 +98,6 @@ def _now_sp() -> datetime:
     except Exception:
         return datetime.now()
 
-
-def _fmt_dt(dt_str: str) -> str:
-    """
-    Normaliza string ISO para "YYYY-MM-DD HH:MM:SS" quando possível.
-    """
-    if not dt_str:
-        return ""
-    try:
-        dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-        if ZoneInfo is not None and dt.tzinfo is not None:
-            dt = dt.astimezone(ZoneInfo("America/Sao_Paulo"))
-        return dt.strftime("%Y-%m-%d %H:%M:%S")
-    except Exception:
-        return dt_str
-
-
-def _run_label_from_saved(saved: dict) -> str:
-    meta = (saved or {}).get("_meta", {}) or {}
-    when = _fmt_dt(str(meta.get("created_at", "")))
-    m = meta.get("margem_superior", "")
-    v2 = meta.get("use_score_v2", "")
-    n = len((saved or {}).get("empresas_lideres_finais", []) or [])
-    parts = []
-    if when:
-        parts.append(when)
-    parts.append(f"margem={m}")
-    parts.append(f"v2={v2}")
-    parts.append(f"líderes={n}")
-    return " | ".join(parts)
-
-
-# ─────────────────────────────────────────────────────────────
-# Utilitários internos
-# ─────────────────────────────────────────────────────────────
 
 def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
@@ -197,7 +160,11 @@ def _carregar_empresa(row: dict) -> Optional[EmpresaCarregada]:
         return None
 
 
-def _filtrar_tickers_com_min_anos(tickers: Sequence[str], min_anos: int = 10, max_workers: int = 12) -> List[str]:
+def _filtrar_tickers_com_min_anos(
+    tickers: Sequence[str],
+    min_anos: int = 10,
+    max_workers: int = 12
+) -> List[str]:
     tickers = [_strip_sa(t) for t in tickers if (t or "").strip()]
     if not tickers:
         return []
@@ -233,10 +200,6 @@ def _build_macro() -> Optional[pd.DataFrame]:
 
 
 def _maybe_shrink_precos(precos_global: pd.DataFrame, tickers_finais: List[str]) -> pd.DataFrame:
-    """
-    Evita salvar um dataframe enorme na sessão.
-    Se colunas > MAX_PRECOS_COLS_SALVAR, guarda apenas tickers finais.
-    """
     if not isinstance(precos_global, pd.DataFrame) or precos_global.empty:
         return pd.DataFrame()
 
@@ -247,13 +210,10 @@ def _maybe_shrink_precos(precos_global: pd.DataFrame, tickers_finais: List[str])
     tset = set([_strip_sa(t) for t in (tickers_finais or []) if str(t).strip()])
     keep = [c for c in cols if _strip_sa(c) in tset]
     keep = list(dict.fromkeys(keep))
-
-    out = precos_global[keep].copy() if keep else pd.DataFrame()
-    return out
+    return precos_global[keep].copy() if keep else pd.DataFrame()
 
 
 def _render_bloco_final_portfolio(empresas_lideres_finais: List[dict]) -> None:
-    """Cards + pizza (não depende do yfinance)."""
     if not empresas_lideres_finais:
         return
 
@@ -298,9 +258,6 @@ def _render_all_patches(
     show_patch6: bool = True,
     show_patch7: bool = True,
 ):
-    """
-    Renderiza patches 1..7 (quando habilitados) e retorna (resp_patch6, resp_patch7).
-    """
     if not empresas_lideres_finais:
         st.info("Sem líderes finais para análise de patches nesta execução.")
         return None, None
@@ -351,7 +308,13 @@ def _render_all_patches(
 def render():
     st.markdown("<h1 style='text-align: center;'>Criação de Portfólio</h1>", unsafe_allow_html=True)
 
-    store_cfg = RunStoreConfig(namespace="portfolio")
+    # ✅ limite de runs para não crescer sessão indefinidamente
+    store_cfg = RunStoreConfig(namespace="portfolio", max_runs=3)
+
+    # (opcional) debug leve para detectar restart de sessão
+    if "boot_id" not in st.session_state:
+        st.session_state["boot_id"] = _now_sp().isoformat(timespec="seconds")
+    st.caption(f"boot_id={st.session_state['boot_id']}")
 
     # Persistir último valor digitado na margem
     default_margem = st.session_state.get("portfolio_last_margem_input", "")
@@ -440,44 +403,22 @@ def render():
             st.info("Reexibindo resultados salvos (sem recalcular).")
 
             empresas_lideres_finais = saved.get("empresas_lideres_finais", [])
-            score_global = saved.get("score_global", pd.DataFrame())
-            lideres_global = saved.get("lideres_global", pd.DataFrame())
-            precos_global = saved.get("precos_global", pd.DataFrame())
-            contrib_globais = saved.get("contrib_globais", None)
-
             patch6_saved = saved.get("ia_recomendacoes", None)
-            patch7_saved = saved.get("patch7_evidencias", None)
 
             _render_bloco_final_portfolio(empresas_lideres_finais)
 
             st.markdown("<hr>", unsafe_allow_html=True)
-            if empresas_lideres_finais:
-                _ = _render_all_patches(
-                    score_global=score_global,
-                    lideres_global=lideres_global,
-                    empresas_lideres_finais=empresas_lideres_finais,
-                    precos_global=precos_global,
-                    contrib_globais=contrib_globais,
-                    show_patch6=False,  # não recalcula no modo salvo
-                    show_patch7=False,
-                )
+            st.info(
+                "Patches 1–5 e Patch 7 não foram persistidos para evitar reinício da sessão "
+                "(payload grande). Para ver patches completos, execute novamente."
+            )
 
-                st.markdown("<hr>", unsafe_allow_html=True)
-                st.markdown("## 🤖 Patch 6 — IA (salvo)")
-                if patch6_saved:
-                    st.json(patch6_saved)
-                else:
-                    st.caption("Nenhuma recomendação de IA foi salva nesta execução.")
-
-                st.markdown("<hr>", unsafe_allow_html=True)
-                st.markdown("## 🧾 Patch 7 — Evidências (salvo)")
-                if patch7_saved:
-                    rep = patch7_saved.get("report", patch7_saved) if isinstance(patch7_saved, dict) else patch7_saved
-                    st.json(rep)
-                else:
-                    st.caption("Nenhuma validação por evidências foi salva nesta execução.")
+            st.markdown("<hr>", unsafe_allow_html=True)
+            st.markdown("## 🤖 Patch 6 — IA (salvo)")
+            if patch6_saved:
+                st.json(patch6_saved)
             else:
-                st.info("Resultado salvo não contém líderes finais.")
+                st.caption("Nenhuma recomendação de IA foi salva nesta execução.")
 
             st.stop()
 
@@ -485,37 +426,34 @@ def render():
         st.stop()
 
     # Se não clicou em "Gerar Portfólio", mas existe resultado salvo,
-    # reexibe automaticamente o último (permite patches interativos como IA).
+    # reexibe automaticamente o último (leve).
     if not gerar:
         rk = st.session_state.get("portfolio_last_run_key") or last_run_key(store_cfg)
         saved = load_run(store_cfg, rk) if rk else None
 
         if saved:
-            st.info("Reexibindo último resultado salvo (modo interativo).")
+            st.info("Reexibindo último resultado salvo (modo leve).")
 
             empresas_lideres_finais = saved.get("empresas_lideres_finais", [])
-            score_global = saved.get("score_global", pd.DataFrame())
-            lideres_global = saved.get("lideres_global", pd.DataFrame())
-            precos_global = saved.get("precos_global", pd.DataFrame())
-            contrib_globais = saved.get("contrib_globais", None)
+            patch6_saved = saved.get("ia_recomendacoes", None)
 
             _render_bloco_final_portfolio(empresas_lideres_finais)
 
             st.markdown("<hr>", unsafe_allow_html=True)
-            if empresas_lideres_finais:
-                _ = _render_all_patches(
-                    score_global=score_global,
-                    lideres_global=lideres_global,
-                    empresas_lideres_finais=empresas_lideres_finais,
-                    precos_global=precos_global,
-                    contrib_globais=contrib_globais,
-                    show_patch6=True,
-                    show_patch7=True,
-                )
+            st.info(
+                "Modo leve: não reexibe patches 1–5/7 porque eles dependem de dados globais "
+                "que não são persistidos (evita reset)."
+            )
+
+            st.markdown("<hr>", unsafe_allow_html=True)
+            st.markdown("## 🤖 Patch 6 — IA (salvo)")
+            if patch6_saved:
+                st.json(patch6_saved)
             else:
-                st.info("Resultado salvo não contém líderes finais.")
+                st.caption("Nenhuma recomendação de IA foi salva nesta execução.")
         else:
             st.info("Nenhum resultado salvo ainda. Clique em **Gerar Portfólio** para criar um.")
+
         st.stop()
 
     # >>> PATCH SCORE V2 (mapas ticker -> SEGMENTO/SUBSETOR/SETOR)
@@ -543,7 +481,7 @@ def render():
 
     empresas_lideres_finais: List[dict] = []
 
-    # Acumuladores globais para PATCHES
+    # Acumuladores globais para PATCHES (somente em memória desta execução)
     score_global_parts: List[pd.DataFrame] = []
     lideres_global_parts: List[pd.DataFrame] = []
     precos_global: pd.DataFrame = pd.DataFrame()
@@ -729,7 +667,7 @@ def render():
                 }
             )
 
-    # ---- Ano corrente (mantém, mas não sobrescreve 'precos')
+    # ---- Ano corrente (mantém)
     if empresas_lideres_finais:
         st.markdown("## 📊 Desempenho parcial das líderes (ano atual)")
 
@@ -788,7 +726,7 @@ def render():
             ax.grid(True, linestyle="--", alpha=0.5)
             st.pyplot(fig)
 
-    # Consolida globais para patches e para salvar
+    # Consolida globais (somente para patches nesta execução)
     score_global = pd.concat(score_global_parts, ignore_index=True) if score_global_parts else pd.DataFrame()
     lideres_global = pd.concat(lideres_global_parts, ignore_index=True) if lideres_global_parts else pd.DataFrame()
 
@@ -798,7 +736,6 @@ def render():
     else:
         precos_global = pd.DataFrame()
 
-    # ✅ cards + pizza também na execução normal (não só no histórico)
     _render_bloco_final_portfolio(empresas_lideres_finais)
 
     st.markdown("<hr>", unsafe_allow_html=True)
@@ -814,17 +751,15 @@ def render():
             precos_global=precos_global,
             contrib_globais=None,
             show_patch6=True,
-            show_patch7=True,
+            show_patch7=True,  # aqui você ainda vê na execução atual
         )
 
-    # Salva execução na sessão (para não perder ao trocar de página)
+    # Salva execução na sessão (LEVE, para evitar reset)
     params = {"margem_superior": margem_superior, "use_score_v2": bool(use_score_v2)}
     run_key = make_run_key(store_cfg, params=params, setores_df=setores_df, macro_df=dados_macro)
 
-    precos_salvar = _maybe_shrink_precos(
-        precos_global,
-        [e.get("ticker", "") for e in (empresas_lideres_finais or [])],
-    )
+    # Tenta salvar IA do patch6 somente se for leve
+    patch6_to_save = patch6_resp if isinstance(patch6_resp, (dict, list, str, type(None))) else None
 
     try:
         save_run(
@@ -835,26 +770,23 @@ def render():
                     "created_at": _now_sp().isoformat(timespec="seconds"),
                     "margem_superior": margem_superior,
                     "use_score_v2": bool(use_score_v2),
-                    "precos_cols_salvos": int(precos_salvar.shape[1]) if isinstance(precos_salvar, pd.DataFrame) else 0,
+                    "n_lideres": len(empresas_lideres_finais or []),
                 },
                 "margem_superior": margem_superior,
                 "use_score_v2": bool(use_score_v2),
                 "empresas_lideres_finais": empresas_lideres_finais,
-                "score_global": score_global,
-                "lideres_global": lideres_global,
-                "precos_global": precos_salvar,
-                "contrib_globais": contrib_globais,
-                "ia_recomendacoes": patch6_resp,   # Patch 6 salvo
-                "patch7_evidencias": patch7_resp,  # Patch 7 salvo
+
+                # ✅ persistência leve
+                "ia_recomendacoes": patch6_to_save,
+
+                # ❌ intencionalmente NÃO salvar:
+                # score_global / lideres_global / precos_global / patch7_evidencias
             },
         )
     except Exception as e:
         st.error(f"Falha ao salvar execução em sessão: {e}")
         st.stop()
 
-    # --- garante que o próximo rerun recupere exatamente esse run_key
     st.session_state["portfolio_last_run_key"] = run_key
 
-    # ✅ NÃO forçar rerun aqui.
-    # Streamlit já fará rerun quando o usuário interagir (patches, botões etc.).
-    st.success("Portfólio gerado e salvo. Você pode interagir com os patches abaixo sem recalcular.")
+    st.success("Portfólio gerado e salvo (modo estável). Interaja com os patches acima nesta execução.")
