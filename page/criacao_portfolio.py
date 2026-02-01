@@ -60,7 +60,7 @@ from page.portfolio_patches import (
     render_patch4_diversificacao,
     render_patch5_benchmark_segmento,
     render_patch6_ia_selecao_lideres,
-    render_patch7_validacao_evidencias,  # Patch 7 (mantido, mas neutralizado abaixo)
+    render_patch7_validacao_evidencias,  # ✅ Patch 7
 )
 
 from core.weights import get_pesos
@@ -84,12 +84,6 @@ logger = logging.getLogger(__name__)
 
 # Limite simples para evitar salvar preço gigante na sessão
 MAX_PRECOS_COLS_SALVAR = 300
-
-# ─────────────────────────────────────────────────────────────
-# CONTROLE DE DIAGNÓSTICO
-# ─────────────────────────────────────────────────────────────
-# Neutraliza o Patch 7 para verificar se ele é o gatilho do "reiniciar".
-PATCH7_ENABLED = False
 
 
 # ─────────────────────────────────────────────────────────────
@@ -347,6 +341,7 @@ def _render_all_patches(
             cache_ttl_hours_default=12,
         )
 
+
     return patch6_resp, patch7_resp
 
 
@@ -465,7 +460,7 @@ def render():
                     precos_global=precos_global,
                     contrib_globais=contrib_globais,
                     show_patch6=False,  # não recalcula no modo salvo
-                    show_patch7=False,  # mantido como antes
+                    show_patch7=False,
                 )
 
                 st.markdown("<hr>", unsafe_allow_html=True)
@@ -477,14 +472,11 @@ def render():
 
                 st.markdown("<hr>", unsafe_allow_html=True)
                 st.markdown("## 🧾 Patch 7 — Evidências (salvo)")
-                if PATCH7_ENABLED:
-                    if patch7_saved:
-                        rep = patch7_saved.get("report", patch7_saved) if isinstance(patch7_saved, dict) else patch7_saved
-                        st.json(rep)
-                    else:
-                        st.caption("Nenhuma validação por evidências foi salva nesta execução.")
+                if patch7_saved:
+                    rep = patch7_saved.get("report", patch7_saved) if isinstance(patch7_saved, dict) else patch7_saved
+                    st.json(rep)
                 else:
-                    st.caption("Patch 7 está neutralizado neste módulo para diagnóstico de reinício.")
+                    st.caption("Nenhuma validação por evidências foi salva nesta execução.")
             else:
                 st.info("Resultado salvo não contém líderes finais.")
 
@@ -519,10 +511,8 @@ def render():
                     precos_global=precos_global,
                     contrib_globais=contrib_globais,
                     show_patch6=True,
-                    show_patch7=PATCH7_ENABLED,  # ✅ neutralizado aqui
+                    show_patch7=True,
                 )
-                if not PATCH7_ENABLED:
-                    st.caption("Patch 7 neutralizado para diagnóstico de reinício.")
             else:
                 st.info("Resultado salvo não contém líderes finais.")
         else:
@@ -825,10 +815,8 @@ def render():
             precos_global=precos_global,
             contrib_globais=contrib_globais,
             show_patch6=True,
-            show_patch7=PATCH7_ENABLED,  # ✅ Patch 7 neutralizado aqui
+            show_patch7=True,
         )
-        if not PATCH7_ENABLED:
-            st.caption("Patch 7 neutralizado para diagnóstico de reinício.")
 
     # Salva execução na sessão (para não perder ao trocar de página)
     params = {"margem_superior": margem_superior, "use_score_v2": bool(use_score_v2)}
@@ -858,7 +846,7 @@ def render():
                 "precos_global": precos_salvar,
                 "contrib_globais": contrib_globais,
                 "ia_recomendacoes": patch6_resp,   # Patch 6 salvo
-                "patch7_evidencias": (patch7_resp if PATCH7_ENABLED else None),  # ✅ Patch 7 neutralizado
+                "patch7_evidencias": patch7_resp,  # Patch 7 salvo
             },
         )
     except Exception as e:
