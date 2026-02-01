@@ -1,13 +1,15 @@
 # =========================
-# page/criacao_portfolio.py  (COM persistência em sessão)
+# page/criacao_portfolio.py  (COM persistência em sessão + patches 6/7)
 # =========================
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 import streamlit as st
@@ -60,7 +62,7 @@ from page.portfolio_patches import (
     render_patch4_diversificacao,
     render_patch5_benchmark_segmento,
     render_patch6_ia_selecao_lideres,
-    render_patch7_validacao_evidencias,  # ✅ Patch 7
+    render_patch7_validacao_evidencias,
 )
 
 from core.weights import get_pesos
@@ -87,13 +89,9 @@ MAX_PRECOS_COLS_SALVAR = 300
 
 
 # ─────────────────────────────────────────────────────────────
-# Helpers de tempo / label (sem depender do session_store)
+# Helpers de tempo / label
 # ─────────────────────────────────────────────────────────────
-
 def _now_sp() -> datetime:
-    """
-    Streamlit Cloud geralmente roda em UTC; aqui padronizamos para America/Sao_Paulo.
-    """
     if ZoneInfo is None:
         return datetime.now()
     try:
@@ -103,9 +101,6 @@ def _now_sp() -> datetime:
 
 
 def _fmt_dt(dt_str: str) -> str:
-    """
-    Normaliza string ISO para "YYYY-MM-DD HH:MM:SS" quando possível.
-    """
     if not dt_str:
         return ""
     try:
@@ -135,7 +130,6 @@ def _run_label_from_saved(saved: dict) -> str:
 # ─────────────────────────────────────────────────────────────
 # Utilitários internos
 # ─────────────────────────────────────────────────────────────
-
 def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     out.columns = out.columns.astype(str).str.strip().str.replace("\ufeff", "", regex=False)
@@ -160,6 +154,101 @@ def _safe_year_count_from_dre(dre: pd.DataFrame) -> int:
     return int(years.dropna().nunique())
 
 
+def _stable_join_cols(df_left: pd.DataFrame, df_right: pd.DataFrame) -> pd.DataFrame:
+    """
+    Join robusto para evitar colunas duplicadas e efeitos estranhos no join do pandas.
+    """
+    if df_left is None or df_left.empty:
+        return df_right
+    if df_right is None or df_right.empty:
+        return df_left
+
+    right = df_right.copy()
+    # remove colunas repetidas no RIGHT que já existam no LEFT
+    left_cols = set(map(str, df_left.columns))
+    keep_cols = [c for c in right.columns if str(c) not in left_cols]
+    right = right[keep_cols] if keep_cols else pd.DataFrame(index=right.index)
+    if right.empty:
+        return df_left
+    return df_left.join(right, how="outer")
+
+
+def _build_run_params(margem_superior: float, use_score_v2: bool) -> dict:
+    return {"margem_superior": float(margem_superior), "use_score_v2": bool(use_score_v2)}
+
+
+def _make_run_key_for_page(
+    store_cfg: RunStoreConfig,
+    *,
+    margem_superior: float,
+    use_score_v2: bool,
+    setores_df: pd.DataFrame,
+    macro_df: pd.DataFrame,
+) -> str:
+    params = _build_run_params(margem_superior, use_score_v2)
+    return make_run_key(store_cfg, params=params, setores_df=setores_df, macro_df=macro_df)
+
+
+def _maybe_shrink_precos(precos_global: pd.DataFrame, tickers_finais: List[str]) -> pd.DataFrame:
+    """
+    Evita salvar um dataframe enorme na sessão.
+    Se colunas > MAX_PRECOS_COLS_SALVAR, guarda apenas tickers finais.
+    """
+    if not isinstance(precos_global, pd.DataFrame) or precos_global.empty:
+        return pd.DataFrame()
+
+    cols = [str(c) for c in precos_global.columns]
+    if len(cols) <= MAX_PRECOS_COLS_SALVAR:
+        return precos_global
+
+    tset = set([_strip_sa(t) for t in (tickers_finais or []) if str(t).strip()])
+    keep = [c for c in cols if _strip_sa(c) in tset]
+    keep = list(dict.fromkeys(keep))
+    return precos_global[keep].copy() if keep else pd.DataFrame()
+
+
+def _minify_score_global(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Reduz o payload salvo em sessão (mitiga restart por memória).
+    Mantém apenas colunas úteis para patches e inspeção.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    base_cols = ["ticker", "Ano", "SETOR", "SUBSETOR", "SEGMENTO"]
+    candidates = base_cols + [
+        "Score_Final", "score_final", "Score", "score", "score_total",
+        "Alpha_vs_Segmento_pp", "alpha_vs_segmento_pp",
+        "DY", "PVP", "ROE", "ROIC",
+        "Margem_Liquida", "Margem_EBITDA", "Margem_Bruta",
+    ]
+    keep = [c for c in candidates if c in df.columns]
+    if not keep:
+        keep = [c for c in base_cols if c in df.columns]
+    return df[keep].copy() if keep else pd.DataFrame()
+
+
+def _minify_lideres_global(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    cols = ["ticker", "Ano", "SETOR", "SUBSETOR", "SEGMENTO"]
+    keep = [c for c in cols if c in df.columns]
+    return df[keep].copy() if keep else pd.DataFrame()
+
+
+def _build_macro() -> Optional[pd.DataFrame]:
+    dados_macro = load_macro_summary()
+    if dados_macro is None or dados_macro.empty:
+        return None
+    dados_macro = _clean_columns(dados_macro)
+    if "Data" not in dados_macro.columns:
+        return None
+
+    dados_macro["Data"] = pd.to_datetime(dados_macro["Data"], errors="coerce")
+    dados_macro = dados_macro.dropna(subset=["Data"]).sort_values("Data").reset_index(drop=True)
+    return dados_macro
+
+
 @dataclass(frozen=True)
 class EmpresaCarregada:
     ticker: str     # sem .SA
@@ -176,7 +265,6 @@ def _carregar_empresa(row: dict) -> Optional[EmpresaCarregada]:
             return None
 
         tk_sa = _norm_sa(tk)
-
         mult = load_multiplos_from_db(tk_sa)
         dre = load_data_from_db(tk_sa)
 
@@ -218,73 +306,7 @@ def _filtrar_tickers_com_min_anos(tickers: Sequence[str], min_anos: int = 10, ma
     return sorted(set(ok))
 
 
-def _build_macro() -> Optional[pd.DataFrame]:
-    dados_macro = load_macro_summary()
-    if dados_macro is None or dados_macro.empty:
-        return None
-    dados_macro = _clean_columns(dados_macro)
-
-    if "Data" not in dados_macro.columns:
-        return None
-
-    dados_macro["Data"] = pd.to_datetime(dados_macro["Data"], errors="coerce")
-    dados_macro = dados_macro.dropna(subset=["Data"]).sort_values("Data").reset_index(drop=True)
-    return dados_macro
-
-
-def _maybe_shrink_precos(precos_global: pd.DataFrame, tickers_finais: List[str]) -> pd.DataFrame:
-    """
-    Evita salvar um dataframe enorme na sessão.
-    Se colunas > MAX_PRECOS_COLS_SALVAR, guarda apenas tickers finais.
-    """
-    if not isinstance(precos_global, pd.DataFrame) or precos_global.empty:
-        return pd.DataFrame()
-
-    cols = [str(c) for c in precos_global.columns]
-    if len(cols) <= MAX_PRECOS_COLS_SALVAR:
-        return precos_global
-
-    tset = set([_strip_sa(t) for t in (tickers_finais or []) if str(t).strip()])
-    keep = [c for c in cols if _strip_sa(c) in tset]
-    keep = list(dict.fromkeys(keep))
-
-    out = precos_global[keep].copy() if keep else pd.DataFrame()
-    return out
-
-
-def _minify_score_global(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Reduz o payload salvo em sessão (evita reset/restart por memória).
-    Mantém apenas colunas mais úteis para patches e inspeção.
-    """
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    # tenta manter o que existe
-    base_cols = ["ticker", "Ano", "SETOR", "SUBSETOR", "SEGMENTO"]
-    candidate_cols = base_cols + [
-        "Score_Final", "score_final", "Score", "score", "score_total",
-        "Alpha_vs_Segmento_pp", "alpha_vs_segmento_pp",
-        "DY", "PVP", "ROE", "ROIC", "Margem_Liquida", "Margem_EBITDA",
-    ]
-    keep = [c for c in candidate_cols if c in df.columns]
-    if not keep:
-        keep = [c for c in base_cols if c in df.columns]
-    out = df[keep].copy() if keep else pd.DataFrame()
-    return out
-
-
-def _minify_lideres_global(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame()
-    cols = ["ticker", "Ano", "SETOR", "SUBSETOR", "SEGMENTO"]
-    keep = [c for c in cols if c in df.columns]
-    out = df[keep].copy() if keep else pd.DataFrame()
-    return out
-
-
 def _render_bloco_final_portfolio(empresas_lideres_finais: List[dict]) -> None:
-    """Cards + pizza (não depende do yfinance)."""
     if not empresas_lideres_finais:
         return
 
@@ -329,9 +351,6 @@ def _render_all_patches(
     show_patch6: bool = True,
     show_patch7: bool = True,
 ) -> Tuple[Optional[dict], Optional[dict]]:
-    """
-    Renderiza patches 1..7 (quando habilitados) e retorna (resp_patch6, resp_patch7).
-    """
     if not empresas_lideres_finais:
         st.info("Sem líderes finais para análise de patches nesta execução.")
         return None, None
@@ -378,7 +397,6 @@ def _render_all_patches(
 # ─────────────────────────────────────────────────────────────
 # Render Streamlit
 # ─────────────────────────────────────────────────────────────
-
 def render():
     st.markdown("<h1 style='text-align: center;'>Criação de Portfólio</h1>", unsafe_allow_html=True)
 
@@ -429,7 +447,6 @@ def render():
         st.warning("Digite uma porcentagem no campo lateral e clique em 'Gerar Portfólio'.")
         return
 
-    # Guarda o último valor digitado
     st.session_state["portfolio_last_margem_input"] = margem_input.strip()
 
     try:
@@ -458,10 +475,17 @@ def render():
         st.error("Não foi possível carregar/normalizar os dados macroeconômicos.")
         st.stop()
 
-    # Reexibir salvo (sem recalcular) - botão explícito
+    # ==========================================================
+    # MODO SALVO (sem recalcular) — apenas quando usuário pede
+    # ==========================================================
     if consume_force_render_saved(store_cfg):
-        params = {"margem_superior": margem_superior, "use_score_v2": bool(use_score_v2)}
-        rk = make_run_key(store_cfg, params=params, setores_df=setores_df, macro_df=dados_macro)
+        rk = _make_run_key_for_page(
+            store_cfg,
+            margem_superior=margem_superior,
+            use_score_v2=bool(use_score_v2),
+            setores_df=setores_df,
+            macro_df=dados_macro,
+        )
 
         saved = load_run(store_cfg, rk)
         if saved is None:
@@ -483,13 +507,15 @@ def render():
 
             st.markdown("<hr>", unsafe_allow_html=True)
             if empresas_lideres_finais:
-                _ = _render_all_patches(
+                # patches 1..5 podem renderizar com dados salvos;
+                # 6/7 ficam como "salvo" (sem recalcular)
+                _render_all_patches(
                     score_global=score_global,
                     lideres_global=lideres_global,
                     empresas_lideres_finais=empresas_lideres_finais,
                     precos_global=precos_global,
                     contrib_globais=contrib_globais,
-                    show_patch6=False,  # não recalcula no modo salvo
+                    show_patch6=False,
                     show_patch7=False,
                 )
 
@@ -515,8 +541,10 @@ def render():
         st.warning("Não encontrei um resultado salvo compatível para reexibir.")
         st.stop()
 
-    # Se não clicou em "Gerar Portfólio", mas existe resultado salvo,
-    # reexibe automaticamente o último (permite patches interativos como IA).
+    # ==========================================================
+    # MODO INTERATIVO (padrão): se não clicou gerar,
+    # tenta reexibir último salvo e permite rodar Patch 6/7.
+    # ==========================================================
     if not gerar:
         rk = st.session_state.get("portfolio_last_run_key") or last_run_key(store_cfg)
         saved = load_run(store_cfg, rk) if rk else None
@@ -534,7 +562,7 @@ def render():
 
             st.markdown("<hr>", unsafe_allow_html=True)
             if empresas_lideres_finais:
-                _ = _render_all_patches(
+                _render_all_patches(
                     score_global=score_global,
                     lideres_global=lideres_global,
                     empresas_lideres_finais=empresas_lideres_finais,
@@ -549,7 +577,9 @@ def render():
             st.info("Nenhum resultado salvo ainda. Clique em **Gerar Portfólio** para criar um.")
         st.stop()
 
-    # >>> PATCH SCORE V2 (mapas ticker -> SEGMENTO/SUBSETOR/SETOR)
+    # ==========================================================
+    # EXECUÇÃO NOVA (Gerar Portfólio)
+    # ==========================================================
     _tmp = setores_df[["ticker", "SEGMENTO", "SUBSETOR", "SETOR"]].copy()
     _tmp["ticker"] = (
         _tmp["ticker"].astype(str)
@@ -564,7 +594,6 @@ def render():
     group_map = dict(zip(_tmp["ticker"], _tmp["SEGMENTO"]))
     subsetor_map = dict(zip(_tmp["ticker"], _tmp["SUBSETOR"]))
     setor_map = dict(zip(_tmp["ticker"], _tmp["SETOR"]))
-    # <<< PATCH SCORE V2
 
     setores_unicos = (
         setores_df[["SETOR", "SUBSETOR", "SEGMENTO"]]
@@ -574,11 +603,14 @@ def render():
 
     empresas_lideres_finais: List[dict] = []
 
-    # Acumuladores globais para PATCHES
     score_global_parts: List[pd.DataFrame] = []
     lideres_global_parts: List[pd.DataFrame] = []
     precos_global: pd.DataFrame = pd.DataFrame()
     contrib_globais = None
+
+    # Debug/telemetria básica
+    dropped_segments = 0
+    used_segments = 0
 
     for _, seg in setores_unicos.iterrows():
         setor = str(seg["SETOR"])
@@ -595,10 +627,12 @@ def render():
         tickers_segmento = [t for t in tickers_segmento if t]
 
         if len(set(tickers_segmento)) <= 1:
+            dropped_segments += 1
             continue
 
         tickers_validos = _filtrar_tickers_com_min_anos(tickers_segmento, min_anos=10, max_workers=12)
         if len(tickers_validos) <= 1:
+            dropped_segments += 1
             continue
 
         tickers_validos_set = set(tickers_validos)
@@ -606,6 +640,7 @@ def render():
             empresas_segmento["ticker"].astype(str).apply(lambda x: _strip_sa(x) in tickers_validos_set)
         ]
         if empresas_validas.empty or len(empresas_validas) <= 1:
+            dropped_segments += 1
             continue
 
         lista_empresas: List[EmpresaCarregada] = []
@@ -619,7 +654,10 @@ def render():
                     lista_empresas.append(item)
 
         if len(lista_empresas) <= 1:
+            dropped_segments += 1
             continue
+
+        used_segments += 1
 
         setores_empresa = {e.ticker: obter_setor_da_empresa(e.ticker, setores_df) for e in lista_empresas}
         pesos = get_pesos(setor)
@@ -641,6 +679,7 @@ def render():
             score = calcular_score_acumulado(payload_empresas, setores_empresa, pesos, dados_macro, anos_minimos=4)
 
         if score is None or score.empty:
+            dropped_segments += 1
             continue
 
         if "ticker" in score.columns:
@@ -652,10 +691,13 @@ def render():
         try:
             precos = baixar_precos([_norm_sa(e.ticker) for e in lista_empresas])
             if precos is None or precos.empty:
+                dropped_segments += 1
                 continue
+
             precos.index = pd.to_datetime(precos.index, errors="coerce")
             precos = precos.dropna(how="all")
             if precos.empty:
+                dropped_segments += 1
                 continue
 
             precos_seg = precos.copy()
@@ -663,36 +705,32 @@ def render():
             precos_seg = precos_seg.dropna(how="all")
             precos_seg.columns = [_strip_sa(str(c)) for c in precos_seg.columns.astype(str).tolist()]
 
-            if precos_global is None or precos_global.empty:
-                precos_global = precos_seg
-            else:
-                # evita colunas duplicadas explode/join estranho
-                precos_global = precos_global.join(precos_seg, how="outer", rsuffix="_dup")
-
-                # remove duplicatas por rsuffix (mantém a primeira)
-                dup_cols = [c for c in precos_global.columns if str(c).endswith("_dup")]
-                if dup_cols:
-                    precos_global = precos_global.drop(columns=dup_cols, errors="ignore")
+            precos_global = _stable_join_cols(precos_global, precos_seg)
 
             precos_mensal = precos.resample("M").last()
             score = penalizar_plato(score, precos_mensal, meses=12, penal=0.30)
         except Exception as e:
             logger.exception("Falha ao processar preços/plato no segmento %s > %s > %s", setor, subsetor, segmento)
+            dropped_segments += 1
             continue
 
         if score.empty:
+            dropped_segments += 1
             continue
 
         tickers_score = [str(t) for t in score["ticker"].dropna().unique().tolist()]
         tickers_score_yf = [_norm_sa(t) for t in tickers_score]
+
         try:
             dividendos = coletar_dividendos(tickers_score_yf)
         except Exception:
             logger.exception("Falha ao coletar dividendos no segmento %s > %s > %s", setor, subsetor, segmento)
+            dropped_segments += 1
             continue
 
         lideres = determinar_lideres(score)
         if lideres is None or lideres.empty:
+            dropped_segments += 1
             continue
 
         lideres2 = lideres.copy()
@@ -709,9 +747,11 @@ def render():
             patrimonio_empresas, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
         except Exception:
             logger.exception("Falha ao gerir carteira no segmento %s > %s > %s", setor, subsetor, segmento)
+            dropped_segments += 1
             continue
 
         if patrimonio_empresas is None or patrimonio_empresas.empty:
+            dropped_segments += 1
             continue
 
         patrimonio_empresas = patrimonio_empresas.apply(pd.to_numeric, errors="coerce")
@@ -719,14 +759,17 @@ def render():
 
         patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aportes)
         if patrimonio_selic is None or patrimonio_selic.empty:
+            dropped_segments += 1
             continue
 
         final_selic = float(patrimonio_selic.iloc[-1]["Tesouro Selic"])
         if final_selic <= 0:
+            dropped_segments += 1
             continue
 
         diff = ((final_empresas / final_selic) - 1) * 100.0
         if diff < margem_superior:
+            dropped_segments += 1
             continue
 
         st.markdown(f"### {setor} > {subsetor} > {segmento}")
@@ -802,7 +845,10 @@ def render():
 
             if not pular_ano_corrente:
                 tickers_limpos = [_strip_sa(tk) for tk in tickers_corrente_yf]
-                dividendos_dict = coletar_dividendos(tickers_corrente_yf)
+                try:
+                    dividendos_dict = coletar_dividendos(tickers_corrente_yf)
+                except Exception:
+                    dividendos_dict = {}
 
                 datas_potenciais = pd.date_range(start=f"{ano_corrente}-01-01", end=f"{ano_corrente}-12-31", freq="MS")
                 datas_aporte: List[pd.Timestamp] = []
@@ -851,14 +897,13 @@ def render():
     else:
         precos_global = pd.DataFrame()
 
-    # ✅ cards + pizza também na execução normal (não só no histórico)
+    # Cards + pizza
     _render_bloco_final_portfolio(empresas_lideres_finais)
 
+    # Patches (inclui 6/7)
     st.markdown("<hr>", unsafe_allow_html=True)
-
     patch6_resp = None
     patch7_resp = None
-
     if empresas_lideres_finais:
         patch6_resp, patch7_resp = _render_all_patches(
             score_global=score_global,
@@ -870,16 +915,19 @@ def render():
             show_patch7=True,
         )
 
-    # Salva execução na sessão (para não perder ao trocar de página)
-    params = {"margem_superior": margem_superior, "use_score_v2": bool(use_score_v2)}
-    run_key = make_run_key(store_cfg, params=params, setores_df=setores_df, macro_df=dados_macro)
+    # Observabilidade leve (ajuda a entender “sumiu tudo”)
+    st.caption(f"Nota técnica: segmentos processados={used_segments} | descartados={dropped_segments}.")
 
-    precos_salvar = _maybe_shrink_precos(
-        precos_global,
-        [e.get("ticker", "") for e in (empresas_lideres_finais or [])],
+    # Salva execução na sessão (mitigando restart: payload reduzido)
+    run_key = _make_run_key_for_page(
+        store_cfg,
+        margem_superior=margem_superior,
+        use_score_v2=bool(use_score_v2),
+        setores_df=setores_df,
+        macro_df=dados_macro,
     )
 
-    # ✅ minifica payloads pesados antes de salvar
+    precos_salvar = _maybe_shrink_precos(precos_global, [e.get("ticker", "") for e in (empresas_lideres_finais or [])])
     score_global_salvar = _minify_score_global(score_global)
     lideres_global_salvar = _minify_lideres_global(lideres_global)
 
@@ -903,20 +951,17 @@ def render():
                 "lideres_global": lideres_global_salvar,
                 "precos_global": precos_salvar,
                 "contrib_globais": contrib_globais,
-                "ia_recomendacoes": patch6_resp,   # Patch 6 salvo
-                "patch7_evidencias": patch7_resp,  # Patch 7 salvo
+                "ia_recomendacoes": patch6_resp,
+                "patch7_evidencias": patch7_resp,
             },
         )
     except Exception as e:
         st.error(f"Falha ao salvar execução em sessão: {e}")
         st.stop()
 
-    # --- garante que o próximo rerun recupere exatamente esse run_key
+    # garante que o próximo rerun recupere exatamente esse run_key (modo interativo)
     st.session_state["portfolio_last_run_key"] = run_key
 
-    # ✅ ancora a próxima renderização no salvo (mais robusto)
-    set_force_render_saved(store_cfg, True)
-
-    # Reexibe em modo salvo/estável após gerar/salvar
-    st.success("Portfólio gerado e salvo. Reexibindo em modo estável…")
+    # ✅ NÃO força modo salvo aqui, para manter Patch 6/7 disponíveis como antes.
+    st.success("Portfólio gerado e salvo. Reexibindo em modo interativo…")
     st.rerun()
