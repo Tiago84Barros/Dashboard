@@ -843,7 +843,7 @@ def render():
                 "score_global": score_global,
                 "lideres_global": lideres_global,
                 "precos_global": precos_salvar,
-                "contrib_globais": None,
+                "contrib_globais": contrib_globais,
                 "ia_recomendacoes": patch6_resp,   # Patch 6 salvo
                 "patch7_evidencias": patch7_resp,  # Patch 7 salvo
             },
@@ -852,9 +852,9 @@ def render():
         st.error(f"Falha ao salvar execução em sessão: {e}")
         st.stop()
 
-    # garante que próximos reruns recuperem exatamente esse run_key
+    # --- garante que o próximo rerun recupere exatamente esse run_key
     st.session_state["portfolio_last_run_key"] = run_key
 
     # ✅ NÃO forçar rerun aqui.
-    # Streamlit já vai rerodar quando o usuário interagir (patches/botões/forms).
+    # Streamlit já fará rerun quando o usuário interagir (patches, botões etc.).
     st.success("Portfólio gerado e salvo. Você pode interagir com os patches abaixo sem recalcular.")
