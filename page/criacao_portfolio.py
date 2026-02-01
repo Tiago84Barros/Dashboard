@@ -858,4 +858,8 @@ def render():
 
     # Reexibe em modo interativo após gerar/salvar
     st.success("Portfólio gerado e salvo. Reexibindo em modo interativo…")
-    st.rerun()
+
+    # ✅ NÃO forçar rerun aqui.
+    # Streamlit já vai rerodar quando o usuário interagir (patches/botões/forms).
+    st.success("Portfólio gerado e salvo. Você pode interagir com os patches abaixo sem recalcular.")
+
