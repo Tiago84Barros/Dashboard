@@ -290,15 +290,11 @@ def render():
                 else:
                     use_score_v2 = st.checkbox("Usar Score v2 (robusto)", value=True)
 
-            with st.expander("Diagnóstico", expanded=False):
-                show_patch6 = st.checkbox("Renderizar Patch 6 (IA)", value=True)
-                show_patch7 = st.checkbox("Renderizar Patch 7 (Evidências)", value=True)
-
             gerar = st.form_submit_button("Gerar Portfólio")
 
-        if st.button("Limpar último resultado", key="portfolio_clear_result"):
-            st.session_state["portfolio_result"] = None
-            st.success("Resultado limpo.")
+    # FIXO em produção: sem diagnóstico no sidebar
+    show_patch6 = True
+    show_patch7 = True
 
     # renderiza último resultado (se existir), independentemente do botão
     saved: Optional[Dict[str, Any]] = st.session_state.get("portfolio_result")
@@ -312,8 +308,8 @@ def render():
             empresas_lideres_finais=saved["empresas_lideres_finais"],
             precos_patch5=saved["precos_patch5"],
             contrib_globais=None,
-            show_patch6=bool(saved.get("show_patch6", True)),
-            show_patch7=bool(saved.get("show_patch7", True)),
+            show_patch6=True,
+            show_patch7=True,
         )
         return
 
@@ -534,8 +530,8 @@ def render():
     st.session_state["portfolio_result"] = {
         "margem_superior": margem_superior,
         "use_score_v2": bool(use_score_v2),
-        "show_patch6": bool(show_patch6),
-        "show_patch7": bool(show_patch7),
+        "show_patch6": True,
+        "show_patch7": True,
         "empresas_lideres_finais": empresas_lideres_finais,
         "score_global": score_global,
         "lideres_global": lideres_global,
@@ -554,6 +550,6 @@ def render():
             empresas_lideres_finais=empresas_lideres_finais,
             precos_patch5=precos_patch5,
             contrib_globais=None,
-            show_patch6=bool(show_patch6),
-            show_patch7=bool(show_patch7),
+            show_patch6=True,
+            show_patch7=True,
         )
