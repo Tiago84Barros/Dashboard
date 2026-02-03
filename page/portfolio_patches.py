@@ -1269,7 +1269,7 @@ def render_patch7_validacao_evidencias(
         return None
 
     # Checkpoints visíveis (debug rápido)
-    st.write("Patch7 checkpoint: antes dos imports IA ✅")
+  #  st.write("Patch7 checkpoint: antes dos imports IA ✅")
 
     # Imports reais do projeto (padrão do Patch 6)
     try:
@@ -1285,10 +1285,10 @@ def render_patch7_validacao_evidencias(
         st.session_state["patch7_run"] = False
         return None
 
-    st.write("Patch7 checkpoint: imports IA OK ✅")
+#    st.write("Patch7 checkpoint: imports IA OK ✅")
 
     # 1) Coleta notícias (cacheada)
-    st.write("Patch7 checkpoint: vou coletar evidências ✅")
+   # st.write("Patch7 checkpoint: vou coletar evidências ✅")
     with st.spinner("Coletando evidências recentes..."):
         try:
             news_map = _p7_fetch_news_cached(
@@ -1301,7 +1301,7 @@ def render_patch7_validacao_evidencias(
             st.session_state["patch7_run"] = False
             return None
 
-    st.write(f"Patch7 checkpoint: evidências coletadas ✅ (tickers={len(news_map)})")
+#    st.write(f"Patch7 checkpoint: evidências coletadas ✅ (tickers={len(news_map)})")
 
     # 2) Cliente IA
     st.write("Patch7 checkpoint: vou inicializar LLM ✅")
@@ -1312,7 +1312,7 @@ def render_patch7_validacao_evidencias(
         st.session_state["patch7_run"] = False
         return None
 
-    st.write("Patch7 checkpoint: LLM OK ✅")
+   # st.write("Patch7 checkpoint: LLM OK ✅")
 
     resultados: Dict[str, dict] = {}
     falhas: List[Dict[str, str]] = []
