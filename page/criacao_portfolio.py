@@ -1,205 +1,734 @@
-# ============================================================
-# page/criacao_portfolio.py
-# (MODELO BASE + PATCHES 1 A 7 EMBUTIDOS)
-# ============================================================
-
 from __future__ import annotations
 
-import time
-import math
-import json
-import hashlib
 import logging
-from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Optional, Sequence, Tuple, Dict, Any
 
 import numpy as np
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 
-# ============================================================
-# Imports internos do projeto (mantidos)
-# ============================================================
-
 from core.db_loader import (
     load_setores_from_db,
     load_data_from_db,
     load_multiplos_from_db,
+    load_macro_summary,
 )
-
 from core.helpers import (
     obter_setor_da_empresa,
     determinar_lideres,
+    get_logo_url,
 )
-
 from core.scoring import (
     calcular_score_acumulado,
     penalizar_plato,
 )
 
-# ============================================================
-# Utilitários internos
-# ============================================================
+# >>> PATCH SCORE V2 (import opcional)
+try:
+    from core.scoring_v2 import calcular_score_acumulado_v2
+except Exception:
+    calcular_score_acumulado_v2 = None
+# <<< PATCH SCORE V2
 
-def _norm_tk(t: str) -> str:
-    return (t or "").upper().replace(".SA", "").strip()
+from core.portfolio import (
+    calcular_patrimonio_selic_macro,
+    gerir_carteira,
+    encontrar_proxima_data_valida,
+    gerir_carteira_simples,
+)
+from core.yf_data import (
+    baixar_precos,
+    coletar_dividendos,
+    baixar_precos_ano_corrente,
+)
+from core.weights import get_pesos
 
-def _safe_df(df):
-    return df if isinstance(df, pd.DataFrame) else pd.DataFrame()
+logger = logging.getLogger(__name__)
 
-# ============================================================
-# PATCH 1 — Régua de Convicção
-# ============================================================
-
-def patch1_regua_conviccao(df: pd.DataFrame):
-    st.subheader("📏 Patch 1 — Régua de Convicção")
-
-    if df.empty or "score" not in df.columns:
-        st.info("Dados insuficientes para aplicar a régua.")
-        return
-
-    bins = [-np.inf, -0.5, 0.5, np.inf]
-    labels = ["Baixa", "Média", "Alta"]
-
-    df["conviccao"] = pd.cut(df["score"], bins=bins, labels=labels)
-
-    st.dataframe(df[["ticker", "score", "conviccao"]])
-
-# ============================================================
-# PATCH 2 — Dominância
-# ============================================================
-
-def patch2_dominancia(df: pd.DataFrame):
-    st.subheader("🏆 Patch 2 — Dominância")
-
-    if df.empty:
-        st.info("Dados insuficientes.")
-        return
-
-    dom = df.groupby("segmento")["score"].agg(["mean", "std"])
-    dom["dominancia"] = dom["mean"] / dom["std"].replace(0, np.nan)
-
-    st.dataframe(dom)
-
-# ============================================================
-# PATCH 3 — Stress Test
-# ============================================================
-
-def patch3_stress_test(df: pd.DataFrame):
-    st.subheader("⚠️ Patch 3 — Stress Test Simplificado")
-
-    if df.empty or "score" not in df.columns:
-        st.info("Dados insuficientes.")
-        return
-
-    stressed = df.copy()
-    stressed["score_stress"] = stressed["score"] * 0.7
-
-    st.dataframe(stressed[["ticker", "score", "score_stress"]])
-
-# ============================================================
-# PATCH 4 — Diversificação
-# ============================================================
-
-def patch4_diversificacao(df: pd.DataFrame):
-    st.subheader("🌐 Patch 4 — Diversificação")
-
-    if df.empty:
-        st.info("Dados insuficientes.")
-        return
-
-    dist = df["segmento"].value_counts(normalize=True)
-    st.bar_chart(dist)
-
-# ============================================================
-# PATCH 5 — Benchmark por Segmento
-# ============================================================
-
-def patch5_benchmark(df: pd.DataFrame):
-    st.subheader("📊 Patch 5 — Benchmark Interno por Segmento")
-
-    if df.empty:
-        st.info("Dados insuficientes.")
-        return
-
-    bench = df.groupby("segmento")["score"].mean().sort_values(ascending=False)
-    st.bar_chart(bench)
-
-# ============================================================
-# PATCH 6 — IA (Placeholder seguro)
-# ============================================================
-
-def patch6_ia_selecao(df: pd.DataFrame):
-    st.subheader("🤖 Patch 6 — IA Seleção (Modo Seguro)")
-
-    if df.empty:
-        st.info("IA indisponível — sem dados.")
-        return
-
-    st.success("IA validaria riscos qualitativos e coerência setorial aqui.")
-
-# ============================================================
-# PATCH 7 — Evidências Externas (Placeholder)
-# ============================================================
-
-def patch7_evidencias(df: pd.DataFrame):
-    st.subheader("🧠 Patch 7 — Evidências & Narrativa")
-
-    if df.empty:
-        st.info("Sem evidências externas disponíveis.")
-        return
-
-    st.write(
-        "Este patch consolida notícias, riscos e catalisadores "
-        "em uma narrativa explicável ao investidor."
+# ─────────────────────────────────────────────────────────────
+# PATCHES: tenta importar o módulo portfolio_patches.py
+# (mantém seu fluxo principal; só adiciona o painel de patches no final)
+# ─────────────────────────────────────────────────────────────
+_PATCHES_OK = False
+try:
+    # Ajuste se o seu arquivo estiver em outro caminho.
+    # Ex.: from portfolio_patches import ...
+    from page.portfolio_patches import (
+        render_patch1_regua_conviccao,
+        render_patch2_dominancia,
+        render_patch3_stress_test,
+        render_patch4_diversificacao,
+        render_patch5_benchmark_segmento,
+        render_patch6_ia_selecao_lideres,
+        render_patch7_validacao_evidencias,
     )
+    _PATCHES_OK = True
+except Exception:
+    try:
+        from portfolio_patches import (
+            render_patch1_regua_conviccao,
+            render_patch2_dominancia,
+            render_patch3_stress_test,
+            render_patch4_diversificacao,
+            render_patch5_benchmark_segmento,
+            render_patch6_ia_selecao_lideres,
+            render_patch7_validacao_evidencias,
+        )
+        _PATCHES_OK = True
+    except Exception as e:
+        _PATCHES_OK = False
+        _PATCHES_IMPORT_ERR = e
 
-# ============================================================
-# RENDER PRINCIPAL
-# ============================================================
+
+# ─────────────────────────────────────────────────────────────
+# Utilitários internos (sem mexer em outros módulos)
+# ─────────────────────────────────────────────────────────────
+
+def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out.columns = out.columns.astype(str).str.strip().str.replace("\ufeff", "", regex=False)
+    return out
+
+
+def _norm_sa(ticker: str) -> str:
+    t = (ticker or "").strip().upper()
+    return t if t.endswith(".SA") else f"{t}.SA"
+
+
+def _strip_sa(ticker: str) -> str:
+    return (ticker or "").strip().upper().replace(".SA", "").strip()
+
+
+def _ensure_prices_df(precos: Optional[pd.DataFrame]) -> pd.DataFrame:
+    """Normaliza índice datetime, ordena e limpa colunas vazias; strip .SA nas colunas."""
+    if precos is None or not isinstance(precos, pd.DataFrame) or precos.empty:
+        return pd.DataFrame()
+
+    df = precos.copy()
+    df.index = pd.to_datetime(df.index, errors="coerce")
+    df = df[~df.index.isna()].sort_index()
+    df.columns = [_strip_sa(str(c)) for c in df.columns.astype(str).tolist()]
+    df = df.dropna(how="all", axis=0)
+    df = df.dropna(how="all", axis=1)
+    return df
+
+
+def _safe_year_count_from_dre(dre: pd.DataFrame) -> int:
+    if dre is None or dre.empty:
+        return 0
+    if "Data" not in dre.columns:
+        return 0
+    years = pd.to_datetime(dre["Data"], errors="coerce").dt.year
+    return int(years.dropna().nunique())
+
+
+@dataclass(frozen=True)
+class EmpresaCarregada:
+    ticker: str     # sem .SA
+    nome: str
+    multiplos: pd.DataFrame
+    dre: pd.DataFrame
+
+
+def _carregar_empresa(row: dict) -> Optional[EmpresaCarregada]:
+    """
+    Carrega multiplos + dre para uma empresa, retornando estrutura padronizada.
+    """
+    try:
+        tk = _strip_sa(str(row.get("ticker", "")))
+        nome = str(row.get("nome_empresa", tk))
+        if not tk:
+            return None
+
+        tk_sa = _norm_sa(tk)
+
+        mult = load_multiplos_from_db(tk_sa)
+        dre = load_data_from_db(tk_sa)
+
+        if mult is None or dre is None or mult.empty or dre.empty:
+            return None
+
+        mult = _clean_columns(mult)
+        dre = _clean_columns(dre)
+
+        # adiciona Ano quando possível (compatível com scoring)
+        if "Data" in mult.columns and "Ano" not in mult.columns:
+            mult["Ano"] = pd.to_datetime(mult["Data"], errors="coerce").dt.year
+        if "Data" in dre.columns and "Ano" not in dre.columns:
+            dre["Ano"] = pd.to_datetime(dre["Data"], errors="coerce").dt.year
+
+        return EmpresaCarregada(ticker=tk, nome=nome, multiplos=mult, dre=dre)
+    except Exception as e:
+        logger.debug("Falha ao carregar empresa %s: %s", row.get("ticker"), e)
+        return None
+
+
+def _filtrar_tickers_com_min_anos(tickers: Sequence[str], min_anos: int = 10, max_workers: int = 12) -> List[str]:
+    """
+    Filtra tickers que têm pelo menos `min_anos` anos de DRE.
+    Usa paralelismo para acelerar.
+    """
+    tickers = [_strip_sa(t) for t in tickers if (t or "").strip()]
+    if not tickers:
+        return []
+
+    def _check(tk: str) -> Tuple[str, bool]:
+        dre = load_data_from_db(_norm_sa(tk))
+        return tk, (_safe_year_count_from_dre(dre) >= min_anos)
+
+    ok: List[str] = []
+    max_workers = min(max_workers, max(2, len(tickers)))
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futs = {ex.submit(_check, tk): tk for tk in tickers}
+        for fut in as_completed(futs):
+            tk, good = fut.result()
+            if good:
+                ok.append(tk)
+
+    return sorted(set(ok))
+
+
+def _build_macro() -> Optional[pd.DataFrame]:
+    """
+    Retorna macro com coluna 'Data' (não index), alinhado ao padrão das outras páginas.
+    """
+    dados_macro = load_macro_summary()
+    if dados_macro is None or dados_macro.empty:
+        return None
+    dados_macro = _clean_columns(dados_macro)
+
+    if "Data" not in dados_macro.columns:
+        return None
+
+    dados_macro["Data"] = pd.to_datetime(dados_macro["Data"], errors="coerce")
+    dados_macro = dados_macro.dropna(subset=["Data"]).sort_values("Data").reset_index(drop=True)
+    return dados_macro
+
+
+def _maybe_merge_segment_cols(score_df: pd.DataFrame, *, setor: str, subsetor: str, segmento: str) -> pd.DataFrame:
+    """Garante colunas SETOR/SUBSETOR/SEGMENTO no score (p/ patches, especialmente Patch 5)."""
+    if score_df is None or score_df.empty:
+        return pd.DataFrame()
+
+    out = score_df.copy()
+    if "ticker" in out.columns:
+        out["ticker"] = out["ticker"].astype(str).map(_strip_sa)
+    if "SETOR" not in out.columns:
+        out["SETOR"] = str(setor)
+    if "SUBSETOR" not in out.columns:
+        out["SUBSETOR"] = str(subsetor)
+    if "SEGMENTO" not in out.columns:
+        out["SEGMENTO"] = str(segmento)
+
+    # normaliza
+    out["SETOR"] = out["SETOR"].fillna("OUTROS").astype(str)
+    out["SUBSETOR"] = out["SUBSETOR"].fillna("OUTROS").astype(str)
+    out["SEGMENTO"] = out["SEGMENTO"].fillna("OUTROS").astype(str)
+    return out
+
+
+def _normalize_lideres(lideres_df: pd.DataFrame) -> pd.DataFrame:
+    if lideres_df is None or lideres_df.empty:
+        return pd.DataFrame()
+    out = lideres_df.copy()
+    if "ticker" in out.columns:
+        out["ticker"] = out["ticker"].astype(str).map(_strip_sa)
+    if "Ano" in out.columns:
+        out["Ano"] = pd.to_numeric(out["Ano"], errors="coerce")
+    return out.dropna(subset=["ticker", "Ano"])
+
+
+# ─────────────────────────────────────────────────────────────
+# Render Streamlit
+# ─────────────────────────────────────────────────────────────
 
 def render():
-    st.title("📌 Criação de Portfólio — Modelo Integrado")
+    st.markdown("<h1 style='text-align: center;'>Criação de Portfólio</h1>", unsafe_allow_html=True)
 
-    setores = load_setores_from_db()
-    if not setores:
-        st.warning("Nenhum setor encontrado.")
+    with st.sidebar:
+        margem_input = st.text_input("% acima do Tesouro Selic para destacar (obrigatório):", value="")
+
+        # >>> PATCH SCORE V2 (controle opcional, não quebra nada)
+        with st.expander("Scoring (opções)", expanded=False):
+            if calcular_score_acumulado_v2 is None:
+                st.caption("Score v2 indisponível (core/scoring_v2.py não encontrado).")
+                use_score_v2 = False
+            else:
+                use_score_v2 = st.checkbox("Usar Score v2 (robusto)", value=True)
+        # <<< PATCH SCORE V2
+
+        gerar = st.button("Gerar Portfólio")
+
+    if not margem_input.strip():
+        st.warning("Digite uma porcentagem no campo lateral e clique em 'Gerar Portfólio'.")
         return
 
-    score_global = []
-    lideres_global = []
+    try:
+        margem_superior = float(margem_input.strip())
+    except ValueError:
+        st.error("Porcentagem inválida. Digite apenas números.")
+        return
 
-    for setor in setores:
-        df = load_data_from_db(setor)
-        df_mult = load_multiplos_from_db(setor)
+    if not gerar:
+        st.stop()
 
-        if df.empty:
+    # ── Carrega setores (cache em sessão) — corrigido p/ evitar truth-value ambíguo
+    setores_df = st.session_state.get("setores_df")
+    if setores_df is None or (isinstance(setores_df, pd.DataFrame) and setores_df.empty):
+        setores_df = load_setores_from_db()
+
+        # defensivo: alguns loaders podem retornar list/series
+        if setores_df is None:
+            st.error("Não foi possível carregar a base de setores do banco.")
+            st.stop()
+
+        if isinstance(setores_df, pd.Series):
+            setores_df = setores_df.to_frame()
+
+        if not isinstance(setores_df, pd.DataFrame):
+            try:
+                setores_df = pd.DataFrame(setores_df)
+            except Exception:
+                st.error("Base de setores retornou um formato inesperado (não é DataFrame).")
+                st.stop()
+
+        if setores_df.empty:
+            st.error("Não foi possível carregar a base de setores do banco (vazia).")
+            st.stop()
+
+        setores_df = _clean_columns(setores_df)
+        st.session_state["setores_df"] = setores_df
+
+    # valida colunas esperadas
+    required_cols = {"SETOR", "SUBSETOR", "SEGMENTO", "ticker"}
+    if not required_cols.issubset(setores_df.columns):
+        st.error(f"Base de setores não contém as colunas esperadas: {sorted(required_cols)}")
+        st.stop()
+
+    # >>> PATCH SCORE V2 (mapas ticker -> SEGMENTO/SUBSETOR/SETOR)
+    _tmp = setores_df[["ticker", "SEGMENTO", "SUBSETOR", "SETOR"]].copy()
+    _tmp["ticker"] = (
+        _tmp["ticker"].astype(str)
+        .str.upper()
+        .str.replace(".SA", "", regex=False)
+        .str.strip()
+    )
+    _tmp["SEGMENTO"] = _tmp["SEGMENTO"].fillna("OUTROS").astype(str)
+    _tmp["SUBSETOR"] = _tmp["SUBSETOR"].fillna("OUTROS").astype(str)
+    _tmp["SETOR"] = _tmp["SETOR"].fillna("OUTROS").astype(str)
+
+    group_map = dict(zip(_tmp["ticker"], _tmp["SEGMENTO"]))
+    subsetor_map = dict(zip(_tmp["ticker"], _tmp["SUBSETOR"]))
+    setor_map = dict(zip(_tmp["ticker"], _tmp["SETOR"]))
+    # <<< PATCH SCORE V2
+
+    dados_macro = _build_macro()
+    if dados_macro is None or dados_macro.empty:
+        st.error("Não foi possível carregar/normalizar os dados macroeconômicos.")
+        st.stop()
+
+    # grupos únicos por segmento
+    setores_unicos = (
+        setores_df[["SETOR", "SUBSETOR", "SEGMENTO"]]
+        .drop_duplicates()
+        .sort_values(["SETOR", "SUBSETOR", "SEGMENTO"])
+    )
+
+    empresas_lideres_finais: List[dict] = []
+
+    # ── Acumuladores “globais” para os patches (1..7)
+    score_global_parts: List[pd.DataFrame] = []
+    lideres_global_parts: List[pd.DataFrame] = []
+    contrib_globais: List[Dict[str, Any]] = []
+
+    # ─────────────────────────────────────────────────────────
+    # Loop por segmento (pipeline leve)
+    # ─────────────────────────────────────────────────────────
+    for _, seg in setores_unicos.iterrows():
+        setor = str(seg["SETOR"])
+        subsetor = str(seg["SUBSETOR"])
+        segmento = str(seg["SEGMENTO"])
+
+        empresas_segmento = setores_df[
+            (setores_df["SETOR"] == setor)
+            & (setores_df["SUBSETOR"] == subsetor)
+            & (setores_df["SEGMENTO"] == segmento)
+        ].copy()
+
+        tickers_segmento = [_strip_sa(t) for t in empresas_segmento["ticker"].astype(str).tolist()]
+        tickers_segmento = [t for t in tickers_segmento if t]
+
+        # ignora segmentos com poucos tickers
+        if len(set(tickers_segmento)) <= 1:
             continue
 
-        df_score = calcular_score_acumulado(df, df_mult)
-        df_score = penalizar_plato(df_score)
+        # filtro de histórico mínimo (>=10 anos)
+        tickers_validos = _filtrar_tickers_com_min_anos(tickers_segmento, min_anos=10, max_workers=12)
+        if len(tickers_validos) <= 1:
+            continue
 
-        lideres = determinar_lideres(df_score)
-        lideres["segmento"] = setor
+        tickers_validos_set = set(tickers_validos)
+        empresas_validas = empresas_segmento[
+            empresas_segmento["ticker"].astype(str).apply(lambda x: _strip_sa(x) in tickers_validos_set)
+        ]
 
-        score_global.append(df_score)
-        lideres_global.append(lideres)
+        if empresas_validas.empty or len(empresas_validas) <= 1:
+            continue
 
-    score_global = pd.concat(score_global, ignore_index=True) if score_global else pd.DataFrame()
-    lideres_global = pd.concat(lideres_global, ignore_index=True) if lideres_global else pd.DataFrame()
+        # carrega dados completos (multiplos + dre) em paralelo
+        lista_empresas: List[EmpresaCarregada] = []
+        rows = empresas_validas.to_dict("records")
 
-    st.subheader("🏗️ Empresas Selecionadas")
-    st.dataframe(lideres_global)
+        with ThreadPoolExecutor(max_workers=12) as ex:
+            futs = [ex.submit(_carregar_empresa, r) for r in rows]
+            for fut in as_completed(futs):
+                item = fut.result()
+                if item is not None:
+                    lista_empresas.append(item)
 
-    st.markdown("---")
-    st.header("🧩 Patches Avançados do Portfólio")
+        if len(lista_empresas) <= 1:
+            continue
 
-    patch1_regua_conviccao(lideres_global)
-    patch2_dominancia(lideres_global)
-    patch3_stress_test(lideres_global)
-    patch4_diversificacao(lideres_global)
-    patch5_benchmark(lideres_global)
-    patch6_ia_selecao(lideres_global)
-    patch7_evidencias(lideres_global)
+        # mapeia setor por empresa
+        setores_empresa = {e.ticker: obter_setor_da_empresa(e.ticker, setores_df) for e in lista_empresas}
+
+        # pesos por SETOR (regra existente)
+        pesos = get_pesos(setor)
+
+        # score acumulado
+        payload_empresas = [
+            {"ticker": e.ticker, "nome": e.nome, "multiplos": e.multiplos, "dre": e.dre}
+            for e in lista_empresas
+        ]
+
+        # >>> PATCH SCORE V2 (switch v1/v2)
+        if ("use_score_v2" in locals()) and use_score_v2 and (calcular_score_acumulado_v2 is not None):
+            score = calcular_score_acumulado_v2(
+                lista_empresas=payload_empresas,
+                group_map=group_map,
+                subsetor_map=subsetor_map,
+                setor_map=setor_map,
+                pesos_utilizados=pesos,
+                anos_minimos=4,
+                prefer_group_col="SEGMENTO",
+                min_n_group=7,
+            )
+        else:
+            score = calcular_score_acumulado(payload_empresas, setores_empresa, pesos, dados_macro, anos_minimos=4)
+        # <<< PATCH SCORE V2
+
+        if score is None or score.empty:
+            continue
+
+        # garante colunas de segmentação para patches/benchmark
+        score = _maybe_merge_segment_cols(score, setor=setor, subsetor=subsetor, segmento=segmento)
+
+        # preços + penalização de platô (mensal)
+        try:
+            precos = baixar_precos([_norm_sa(e.ticker) for e in lista_empresas])
+            if precos is None or precos.empty:
+                continue
+            precos.index = pd.to_datetime(precos.index, errors="coerce")
+            precos = precos.dropna(how="all")
+            if precos.empty:
+                continue
+            precos_mensal = precos.resample("M").last()
+            score = penalizar_plato(score, precos_mensal, meses=12, penal=0.30)
+        except Exception:
+            continue
+
+        if score.empty:
+            continue
+
+        # dividendos (normaliza para .SA) + líderes + backtest
+        tickers_score = [str(t) for t in score["ticker"].dropna().unique().tolist()]
+        tickers_score_yf = [_norm_sa(t) for t in tickers_score]
+        dividendos = coletar_dividendos(tickers_score_yf)
+
+        lideres = determinar_lideres(score)
+        if lideres is None or lideres.empty:
+            continue
+
+        patrimonio_empresas, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
+        if patrimonio_empresas is None or patrimonio_empresas.empty:
+            continue
+
+        patrimonio_empresas = patrimonio_empresas.apply(pd.to_numeric, errors="coerce")
+        final_empresas = float(patrimonio_empresas.iloc[-1].drop("Patrimônio", errors="ignore").sum())
+
+        patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aportes)
+        if patrimonio_selic is None or patrimonio_selic.empty:
+            continue
+
+        final_selic = float(patrimonio_selic.iloc[-1]["Tesouro Selic"])
+        if final_selic <= 0:
+            continue
+
+        diff = ((final_empresas / final_selic) - 1) * 100.0
+        if diff < margem_superior:
+            continue
+
+        # ── Exibição do segmento destacado
+        st.markdown(f"### {setor} > {subsetor} > {segmento}")
+        st.markdown(f"**Valor final da estratégia:** R$ {final_empresas:,.2f} ({diff:.1f}% acima do Tesouro Selic)")
+
+        empresas_estrategia = patrimonio_empresas.columns.drop("Patrimônio", errors="ignore")
+        colunas_empresas = st.columns(min(3, len(empresas_estrategia)))
+
+        for idx, ticker_col in enumerate(empresas_estrategia):
+            col = colunas_empresas[idx % len(colunas_empresas)]
+
+            tk_clean = _strip_sa(str(ticker_col))
+            logo_url = get_logo_url(tk_clean)
+
+            nome = next((e.nome for e in lista_empresas if _strip_sa(e.ticker) == tk_clean), tk_clean)
+            valor_final = float(patrimonio_empresas[ticker_col].iloc[-1])
+            perc_part = (valor_final / final_empresas) * 100.0 if final_empresas != 0 else 0.0
+
+            # para Patch 4 (pesos por contribuição)
+            contrib_globais.append({"ticker": tk_clean, "valor_final": valor_final})
+
+            anos_lider = lideres[lideres["ticker"].astype(str).apply(_strip_sa) == tk_clean]["Ano"].tolist()
+            anos_lider_str = f"{len(anos_lider)}x Líder: {', '.join(map(str, anos_lider))}" if anos_lider else ""
+
+            col.markdown(
+                f"""
+                <div style='border: 1px solid #ccc; border-radius: 8px; padding: 10px; margin-bottom: 10px; text-align: center;'>
+                    <img src='{logo_url}' width='40' />
+                    <p style='margin: 5px 0 0; font-weight: bold;'>{nome}</p>
+                    <p style='margin: 0; color: #666; font-size: 12px;'>({tk_clean})</p>
+                    <p style='font-size: 12px; color: #999;'>{anos_lider_str}</p>
+                    <p style='font-size: 12px; color: #2c3e50;'>Participação: {perc_part:.1f}%</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        # líderes do último ano de score (para sugerir compra no próximo ano)
+        ultimo_ano = int(pd.to_numeric(score["Ano"], errors="coerce").max())
+        lideres_ano_anterior = lideres[lideres["Ano"] == ultimo_ano]
+
+        # acumula globais (para Patch 1..3)
+        score_global_parts.append(score.copy())
+        lideres_global_parts.append(_normalize_lideres(lideres.copy()))
+
+        for _, row in lideres_ano_anterior.iterrows():
+            tk = _strip_sa(str(row["ticker"]))
+            empresas_lideres_finais.append(
+                {
+                    "ticker": tk,
+                    "nome": next((e.nome for e in lista_empresas if _strip_sa(e.ticker) == tk), tk),
+                    "logo_url": get_logo_url(tk),
+                    "ano_lider": int(row["Ano"]),
+                    "ano_compra": int(row["Ano"]) + 1,
+                    "setor": setor,
+                    "subsetor": subsetor,
+                    "segmento": segmento,
+                }
+            )
+
+    # ─────────────────────────────────────────────────────────
+    # Bloco final: líderes para o próximo ano + distribuição setorial
+    # ─────────────────────────────────────────────────────────
+    if empresas_lideres_finais:
+        st.markdown("## 📑 Empresas líderes para o próximo ano")
+        colunas_lideres = st.columns(3)
+        for idx, emp in enumerate(empresas_lideres_finais):
+            col = colunas_lideres[idx % 3]
+            col.markdown(
+                f"""
+                <div style='border: 2px solid #28a745; border-radius: 10px; padding: 12px; margin-bottom: 10px; background-color: #f0fff4; text-align: center;'>
+                    <img src="{emp['logo_url']}" width="45" />
+                    <h5 style="margin: 5px 0 0;">{emp['nome']}</h5>
+                    <p style="margin: 0; color: #666; font-size: 13px;">({emp['ticker']})</p>
+                    <p style="font-size: 12px; color: #333;">Líder em {emp['ano_lider']}<br>Para compra em {emp['ano_compra']}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("## 📊 Distribuição setorial do portfólio sugerido")
+        setores_portfolio = pd.Series([e.get("setor", "OUTROS") for e in empresas_lideres_finais]).value_counts()
+        fig, ax = plt.subplots()
+        ax.pie(
+            setores_portfolio.values,
+            labels=setores_portfolio.index,
+            autopct="%1.1f%%",
+            startangle=90,
+            textprops={"fontsize": 10},
+        )
+        ax.axis("equal")
+        st.pyplot(fig)
+
+    # ─────────────────────────────────────────────────────────
+    # Etapa: Desempenho parcial no ano corrente (líderes do ano)
+    # ─────────────────────────────────────────────────────────
+    if empresas_lideres_finais:
+        st.markdown("## 📊 Desempenho parcial das líderes (ano atual)")
+
+        ano_corrente = datetime.now().year
+        tickers_corrente = [e["ticker"] for e in empresas_lideres_finais if int(e["ano_compra"]) == ano_corrente]
+
+        if tickers_corrente:
+            tickers_corrente_yf = [_norm_sa(tk) for tk in tickers_corrente]
+
+            precos = baixar_precos_ano_corrente(tickers_corrente_yf)
+            if precos is None or precos.empty:
+                st.warning("⚠️ Dados de preço indisponíveis para as ações escolhidas no ano atual.")
+                st.stop()
+
+            precos.index = pd.to_datetime(precos.index, errors="coerce")
+            precos = precos.dropna(how="all")
+            precos = precos.resample("B").last().ffill()
+
+            if precos.empty:
+                st.warning("⚠️ Dados de preço indisponíveis para as ações escolhidas no ano atual.")
+                st.stop()
+
+            tickers_limpos = [_strip_sa(tk) for tk in tickers_corrente_yf]
+            dividendos_dict = coletar_dividendos(tickers_corrente_yf)
+
+            datas_potenciais = pd.date_range(start=f"{ano_corrente}-01-01", end=f"{ano_corrente}-12-31", freq="MS")
+            datas_aporte: List[pd.Timestamp] = []
+            for data in datas_potenciais:
+                data_valida = encontrar_proxima_data_valida(data, precos)
+                if data_valida is not None and data_valida in precos.index:
+                    datas_aporte.append(data_valida)
+
+            patrimonio_aporte = gerir_carteira_simples(precos, tickers_limpos, datas_aporte, dividendos_dict=dividendos_dict)
+
+            # Selic benchmark (no mesmo índice do patrimônio da estratégia)
+            df_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aporte)
+            if df_selic is None or df_selic.empty:
+                st.warning("⚠️ Não foi possível calcular o benchmark Selic para o período.")
+                st.stop()
+
+            df_selic = df_selic.reindex(patrimonio_aporte.index).ffill()
+
+            df_final = pd.concat(
+                [
+                    patrimonio_aporte.rename("Estratégia de Aporte"),
+                    df_selic,
+                ],
+                axis=1,
+            ).dropna()
+
+            if df_final.empty or df_final["Tesouro Selic"].isna().all():
+                st.warning("⚠️ Não foi possível construir gráfico com os dados disponíveis.")
+                st.stop()
+
+            st.markdown(f"### Comparativo de desempenho parcial em {ano_corrente}")
+            fig, ax = plt.subplots(figsize=(10, 5))
+            df_final["Estratégia de Aporte"].plot(ax=ax, label="Estratégia de Aporte")
+            df_final["Tesouro Selic"].plot(ax=ax, label="Tesouro Selic")
+            ax.set_ylabel("Valor acumulado (R$)")
+            ax.set_xlabel("Data")
+            ax.legend()
+            ax.grid(True, linestyle="--", alpha=0.5)
+            st.pyplot(fig)
+
+            valor_estrategia_final = float(df_final["Estratégia de Aporte"].iloc[-1])
+            valor_selic_final = float(df_final["Tesouro Selic"].iloc[-1])
+            desempenho = ((valor_estrategia_final / valor_selic_final) - 1) * 100.0 if valor_selic_final > 0 else 0.0
+
+            patrimonio_total_aplicado = 1000.0 * len(datas_aporte)
+            retorno_estrategia = ((valor_estrategia_final / patrimonio_total_aplicado) - 1) * 100.0 if patrimonio_total_aplicado > 0 else 0.0
+
+            if desempenho > 0:
+                cor = "green"
+                mensagem = f"A estratégia de aportes nas empresas líderes superou o Tesouro Selic em {desempenho:.2f}% no ano de {ano_corrente}."
+            else:
+                cor = "red"
+                mensagem = f"A estratégia de aportes nas empresas líderes ficou {abs(desempenho):.2f}% abaixo do Tesouro Selic no ano de {ano_corrente}."
+
+            st.markdown(
+                f"""
+                <div style="margin-top: 20px; padding: 15px; border-radius: 8px; background-color: #f9f9f9; border-left: 5px solid {cor};">
+                    <h4 style="margin: 0;">📊 Resultado Comparativo</h4>
+                    <p style="font-size: 16px; color: #333;">{mensagem}</p>
+                    <p style="font-size: 14px; color: #666;">Retorno total da estratégia sobre o capital aportado no ano: <strong>{retorno_estrategia:.2f}%</strong></p>
+                    <p style="font-size: 14px; color: #999;">Baseado nas empresas líderes selecionadas com score fundamentalista ajustado.</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    # ─────────────────────────────────────────────────────────
+    # PAINEL FINAL — Patches do portfolio_patches.py (1..7)
+    # ─────────────────────────────────────────────────────────
+    st.markdown("<hr>", unsafe_allow_html=True)
+
+    if not empresas_lideres_finais:
+        st.info("Sem líderes finais — painel de patches não será exibido.")
+        return
+
+    if not _PATCHES_OK:
+        st.warning(
+            "Patches não puderam ser importados. Verifique o caminho do arquivo `portfolio_patches.py`.\n\n"
+            f"Erro: {type(_PATCHES_IMPORT_ERR).__name__}: {_PATCHES_IMPORT_ERR}"
+        )
+        return
+
+    # monta score_global e lideres_global (a partir dos segmentos que passaram no filtro)
+    score_global = pd.concat(score_global_parts, ignore_index=True) if score_global_parts else pd.DataFrame()
+    lideres_global = pd.concat(lideres_global_parts, ignore_index=True) if lideres_global_parts else pd.DataFrame()
+
+    # carrega preços apenas para os tickers finais (baixo custo; Patch 5 não usa yfinance internamente)
+    tickers_final = sorted({str(e.get("ticker", "")).strip() for e in empresas_lideres_finais if str(e.get("ticker", "")).strip()})
+    precos_global = pd.DataFrame()
+    try:
+        if tickers_final:
+            precos_tmp = baixar_precos([_norm_sa(tk) for tk in tickers_final])
+            precos_global = _ensure_prices_df(precos_tmp)
+    except Exception as e:
+        st.warning(f"Falha ao carregar preços globais para Patch 5: {type(e).__name__}: {e}")
+        precos_global = pd.DataFrame()
+
+    # garante colunas mínimas
+    if not score_global.empty:
+        score_global = _clean_columns(score_global)
+        if "ticker" in score_global.columns:
+            score_global["ticker"] = score_global["ticker"].astype(str).map(_strip_sa)
+
+    if not lideres_global.empty:
+        lideres_global = _clean_columns(lideres_global)
+        if "ticker" in lideres_global.columns:
+            lideres_global["ticker"] = lideres_global["ticker"].astype(str).map(_strip_sa)
+
+    # Renderiza patches
+    try:
+        render_patch1_regua_conviccao(score_global, lideres_global, empresas_lideres_finais)
+        render_patch2_dominancia(score_global, lideres_global, empresas_lideres_finais)
+        render_patch3_stress_test(score_global, lideres_global, empresas_lideres_finais)
+        render_patch4_diversificacao(empresas_lideres_finais, contrib_globais=contrib_globais)
+
+        render_patch5_benchmark_segmento(
+            score_global=score_global,
+            empresas_lideres_finais=empresas_lideres_finais,
+            precos=precos_global,
+            max_universe=80,
+        )
+
+        render_patch6_ia_selecao_lideres(
+            score_global=score_global,
+            lideres_global=lideres_global,
+            empresas_lideres_finais=empresas_lideres_finais,
+            max_recs_default=10,
+        )
+
+        render_patch7_validacao_evidencias(
+            score_global=score_global,
+            lideres_global=lideres_global,
+            empresas_lideres_finais=empresas_lideres_finais,
+            days_default=60,
+            max_items_per_ticker_default=10,
+            cache_ttl_hours_default=12,
+        )
+
+    except Exception as e:
+        st.error(f"Falha ao renderizar patches: {type(e).__name__}: {e}")
+        return
