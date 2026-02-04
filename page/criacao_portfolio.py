@@ -41,12 +41,14 @@ try:
         render_patch2_dominancia,
         render_patch3_stress_test,
         render_patch4_diversificacao,
+        render_patch5_benchmark_segmento,
     )
 except Exception:
     render_patch1_regua_conviccao = None  # type: ignore
     render_patch2_dominancia = None  # type: ignore
     render_patch3_stress_test = None  # type: ignore
     render_patch4_diversificacao = None  # type: ignore
+    render_patch5_benchmark_segmento = None  # type: ignore
 # <<< PATCHES (portfolio_patches)
 
 from core.portfolio import (
@@ -278,6 +280,7 @@ def render():
     # Acumuladores para Patches 1-3 (histórico global, leve)
     score_global_parts: List[pd.DataFrame] = []
     lideres_global_parts: List[pd.DataFrame] = []
+    precos_global_parts: List[pd.DataFrame] = []  # para Patch 5 (sem baixar novamente)
 
     # ─────────────────────────────────────────────────────────
     # Loop por segmento (pipeline leve)
@@ -367,6 +370,11 @@ def render():
             precos = precos.dropna(how="all")
             if precos.empty:
                 continue
+            # acumula preços (evita novos downloads nos patches)
+            try:
+                precos_global_parts.append(precos.copy())
+            except Exception:
+                pass
             precos_mensal = precos.resample("M").last()
             score = penalizar_plato(score, precos_mensal, meses=12, penal=0.30)
         except Exception:
@@ -605,6 +613,17 @@ def render():
         score_global = pd.DataFrame()
         lideres_global = pd.DataFrame()
 
+    # Preços globais (para Patch 5) — sem baixar novamente
+    try:
+        df_prices_global = pd.concat(precos_global_parts, axis=1) if precos_global_parts else pd.DataFrame()
+        if not df_prices_global.empty:
+            df_prices_global = df_prices_global.loc[:, ~df_prices_global.columns.duplicated()].copy()
+            df_prices_global.index = pd.to_datetime(df_prices_global.index, errors="coerce")
+            df_prices_global = df_prices_global.dropna(how="all")
+            df_prices_global = df_prices_global.dropna(how="all", axis=1)
+    except Exception:
+        df_prices_global = pd.DataFrame()
+
     if empresas_lideres_finais:
         st.markdown("---")
         st.caption("🧪 Teste incremental: habilite os patches um a um para detectar reinícios (reruns) anormais.")
@@ -637,6 +656,18 @@ def render():
                     render_patch4_diversificacao(empresas_lideres_finais, contrib_globais=None)
                 except Exception as e:
                     st.error(f"Patch 4 falhou: {type(e).__name__}: {e}")
+
+        if render_patch5_benchmark_segmento is not None and empresas_lideres_finais:
+            with st.expander("🧩 Patch 5 — Benchmark do Segmento (último ano do score)", expanded=False):
+                try:
+                    render_patch5_benchmark_segmento(
+                        score_global=score_global,
+                        empresas_lideres_finais=empresas_lideres_finais,
+                        precos=df_prices_global,
+                        max_universe=80,
+                    )
+                except Exception as e:
+                    st.error(f"Patch 5 falhou: {type(e).__name__}: {e}")
 
 
     # Desarma a execução após rodar (evita “auto-rerun armado”)
