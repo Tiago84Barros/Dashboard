@@ -606,17 +606,31 @@ def render():
             except Exception as e:
                 st.error(f'Patch 1 falhou: {type(e).__name__}: {e}')
 # ─────────────────────────────────────────────────────────
-# PATCH 2 (teste incremental): Dominância
+# PATCHES (teste incremental) — Patch 1 e Patch 2
 # ─────────────────────────────────────────────────────────
+
+# Patch 1 — Régua de Convicção
+if render_patch1_regua_conviccao is not None and empresas_lideres_finais:
+    st.markdown('---')
+    with st.expander('🧩 Patches — Teste incremental (Patch 1)', expanded=False):
+        try:
+            render_patch1_regua_conviccao(score_global, lideres_global, empresas_lideres_finais)
+        except Exception as e:
+            st.error(f'Patch 1 falhou: {type(e).__name__}: {e}')
+
+# Patch 2 — Dominância
 if render_patch2_dominancia is not None and empresas_lideres_finais:
+    st.markdown('---')
     with st.expander('🧩 Patches — Teste incremental (Patch 2)', expanded=False):
         try:
             render_patch2_dominancia(score_global, lideres_global, empresas_lideres_finais)
         except Exception as e:
             st.error(f'Patch 2 falhou: {type(e).__name__}: {e}')
 
-    elif empresas_lideres_finais:
-        st.markdown('---')
-        st.caption('Patches não carregados (portfolio_patches.py não importado).')
+# Fallback (quando portfolio_patches.py não está disponível)
+if (render_patch1_regua_conviccao is None and render_patch2_dominancia is None) and empresas_lideres_finais:
+    st.markdown('---')
+    st.caption('Patches não carregados (portfolio_patches.py não importado ou indisponível no deploy).')
 
-    st.markdown("<hr>", unsafe_allow_html=True)
+st.markdown("<hr>", unsafe_allow_html=True)
+
