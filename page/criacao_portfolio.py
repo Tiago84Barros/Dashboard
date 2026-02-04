@@ -49,14 +49,22 @@ from core.weights import get_pesos
 # >>> PATCHES (portfolio_patches) — import opcional (para teste incremental)
 try:
     # Quando o projeto está em pacote (ex.: dashboard/page)
-    from page.portfolio_patches import render_patch1_regua_conviccao
+    from page.portfolio_patches import (
+        render_patch1_regua_conviccao,
+        render_patch2_dominancia,
+    )
 except Exception:
     try:
         # Quando roda como módulo solto (mesma pasta)
-        from portfolio_patches import render_patch1_regua_conviccao  # type: ignore
+        from portfolio_patches import (  # type: ignore
+            render_patch1_regua_conviccao,
+            render_patch2_dominancia,
+        )
     except Exception:
         render_patch1_regua_conviccao = None  # type: ignore
+        render_patch2_dominancia = None  # type: ignore
 # <<< PATCHES
+
 
 logger = logging.getLogger(__name__)
 
@@ -597,6 +605,16 @@ def render():
                 render_patch1_regua_conviccao(score_global, lideres_global, empresas_lideres_finais)
             except Exception as e:
                 st.error(f'Patch 1 falhou: {type(e).__name__}: {e}')
+# ─────────────────────────────────────────────────────────
+# PATCH 2 (teste incremental): Dominância
+# ─────────────────────────────────────────────────────────
+if render_patch2_dominancia is not None and empresas_lideres_finais:
+    with st.expander('🧩 Patches — Teste incremental (Patch 2)', expanded=False):
+        try:
+            render_patch2_dominancia(score_global, lideres_global, empresas_lideres_finais)
+        except Exception as e:
+            st.error(f'Patch 2 falhou: {type(e).__name__}: {e}')
+
     elif empresas_lideres_finais:
         st.markdown('---')
         st.caption('Patches não carregados (portfolio_patches.py não importado).')
