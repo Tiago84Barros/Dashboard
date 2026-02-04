@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple, Dict, Any
 
 import pandas as pd
 import streamlit as st
@@ -45,6 +45,18 @@ from core.yf_data import (
     baixar_precos_ano_corrente,
 )
 from core.weights import get_pesos
+
+# >>> PATCHES (portfolio_patches) — import opcional (para teste incremental)
+try:
+    # Quando o projeto está em pacote (ex.: dashboard/page)
+    from page.portfolio_patches import render_patch1_regua_conviccao
+except Exception:
+    try:
+        # Quando roda como módulo solto (mesma pasta)
+        from portfolio_patches import render_patch1_regua_conviccao  # type: ignore
+    except Exception:
+        render_patch1_regua_conviccao = None  # type: ignore
+# <<< PATCHES
 
 logger = logging.getLogger(__name__)
 
@@ -241,6 +253,11 @@ def render():
 
     empresas_lideres_finais: List[dict] = []
 
+    # >>> PATCHES (acumuladores globais para patches)
+    score_global_parts: List[pd.DataFrame] = []
+    lideres_global_parts: List[pd.DataFrame] = []
+    # <<< PATCHES
+
     # ─────────────────────────────────────────────────────────
     # Loop por segmento (pipeline leve)
     # ─────────────────────────────────────────────────────────
@@ -346,6 +363,30 @@ def render():
         if lideres is None or lideres.empty:
             continue
 
+        # >>> PATCHES: acumula histórico global (score + líderes) para uso nos patches
+        try:
+            sg_part = score.copy()
+            # garante metadados de agrupamento (usados em patch5/benchmark e outros)
+            if 'SETOR' not in sg_part.columns:
+                sg_part['SETOR'] = setor
+            if 'SUBSETOR' not in sg_part.columns:
+                sg_part['SUBSETOR'] = subsetor
+            if 'SEGMENTO' not in sg_part.columns:
+                sg_part['SEGMENTO'] = segmento
+            score_global_parts.append(sg_part)
+
+            lg_part = lideres.copy()
+            if 'SETOR' not in lg_part.columns:
+                lg_part['SETOR'] = setor
+            if 'SUBSETOR' not in lg_part.columns:
+                lg_part['SUBSETOR'] = subsetor
+            if 'SEGMENTO' not in lg_part.columns:
+                lg_part['SEGMENTO'] = segmento
+            lideres_global_parts.append(lg_part)
+        except Exception:
+            pass
+        # <<< PATCHES
+
         patrimonio_empresas, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
         if patrimonio_empresas is None or patrimonio_empresas.empty:
             continue
@@ -414,6 +455,11 @@ def render():
                     "setor": setor,
                 }
             )
+
+    # >>> PATCHES: monta dataframes globais (1x) para patches
+    score_global = pd.concat(score_global_parts, ignore_index=True) if score_global_parts else pd.DataFrame()
+    lideres_global = pd.concat(lideres_global_parts, ignore_index=True) if lideres_global_parts else pd.DataFrame()
+    # <<< PATCHES
 
     # ─────────────────────────────────────────────────────────
     # Bloco final: líderes para o próximo ano + distribuição setorial
@@ -540,5 +586,19 @@ def render():
                 """,
                 unsafe_allow_html=True,
             )
+
+    # ─────────────────────────────────────────────────────────
+    # PATCH 1 (teste incremental): Régua de Convicção
+    # ─────────────────────────────────────────────────────────
+    if render_patch1_regua_conviccao is not None and empresas_lideres_finais:
+        st.markdown('---')
+        with st.expander('🧩 Patches — Teste incremental (Patch 1)', expanded=False):
+            try:
+                render_patch1_regua_conviccao(score_global, lideres_global, empresas_lideres_finais)
+            except Exception as e:
+                st.error(f'Patch 1 falhou: {type(e).__name__}: {e}')
+    elif empresas_lideres_finais:
+        st.markdown('---')
+        st.caption('Patches não carregados (portfolio_patches.py não importado).')
 
     st.markdown("<hr>", unsafe_allow_html=True)
