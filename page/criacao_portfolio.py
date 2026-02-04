@@ -38,10 +38,12 @@ try:
     from page.portfolio_patches import (
         render_patch1_regua_conviccao,
         render_patch2_dominancia,
+        render_patch3_stress_test,
     )
 except Exception:
     render_patch1_regua_conviccao = None  # type: ignore
     render_patch2_dominancia = None  # type: ignore
+    render_patch3_stress_test = None  # type: ignore 
 # <<< PATCHES (portfolio_patches)
 
 from core.portfolio import (
@@ -170,16 +172,43 @@ def _carregar_empresa(row: dict) -> Optional[EmpresaCarregada]:
 
 def render() -> None:
     st.title("📌 Criação de Portfólio (Modelo Estável)")
-    st.caption("Versão estável + inserção incremental de patches (Patch 1 e Patch 2).")
+ 
+      st.sidebar.markdown("### ▶️ Execução")
+    
+    if "cp_last_params" not in st.session_state:
+        st.session_state["cp_last_params"] = {"margem_superior": 10.0, "use_score_v2": False}
+    if "cp_should_run" not in st.session_state:
+        st.session_state["cp_should_run"] = False
+    
+    with st.sidebar.form("cp_run_form", clear_on_submit=False):
+        margem_superior = st.number_input(
+            "Margem mínima vs Tesouro Selic (%)",
+            min_value=-1000.0,
+            max_value=10000.0,
+            value=float(st.session_state["cp_last_params"].get("margem_superior", 10.0)),
+            step=0.1,
+            format="%.2f",
+            help="Digite a % e clique em RODAR. Ex.: 7.5, 12, 33.33",
+        )
+        use_score_v2 = st.checkbox(
+            "Usar Score V2 (se disponível)",
+            value=bool(st.session_state["cp_last_params"].get("use_score_v2", False)),
+        )
+    
+        run_clicked = st.form_submit_button("🚀 Rodar Criação de Portfólio")
+    
+    if run_clicked:
+        st.session_state["cp_last_params"] = {
+            "margem_superior": float(margem_superior),
+            "use_score_v2": bool(use_score_v2),
+        }
+        st.session_state["cp_should_run"] = True
+    
+    # ✅ trava a execução até clicar
+    if not st.session_state["cp_should_run"]:
+        st.info("Defina a margem (%) na barra lateral e clique em **🚀 Rodar Criação de Portfólio**.")
+        return
 
-    # parâmetros / controles que você já tinha (mantidos)
-    margem_superior = st.sidebar.slider(
-        "Margem mínima vs Tesouro Selic (%)",
-        min_value=0.0,
-        max_value=200.0,
-        value=10.0,
-        step=1.0,
-    )
 
     # toggle score v2 (se existir no seu projeto)
     use_score_v2 = st.sidebar.checkbox("Usar Score V2 (se disponível)", value=False)
@@ -558,5 +587,13 @@ def render() -> None:
                     render_patch2_dominancia(score_global, lideres_global, empresas_lideres_finais)
                 except Exception as e:
                     st.error(f"Patch 2 falhou: {type(e).__name__}: {e}")
+
+        if render_patch3_stress_test is not None and empresas_lideres_finais:
+            with st.expander("🧩 Patch 3 — Stress Test de Robustez", expanded=False):
+                try:
+                    render_patch3_stress_test(score_global, lideres_global, empresas_lideres_finais)
+                except Exception as e:
+                    st.error(f"Patch 3 falhou: {type(e).__name__}: {e}")
+
 
     st.markdown("<hr>", unsafe_allow_html=True)
