@@ -36,17 +36,31 @@ except Exception:
 
 # >>> PATCHES (portfolio_patches) — import opcional (teste incremental)
 try:
+    # Patch 1 e 2 (estáveis)
     from page.portfolio_patches import (
         render_patch1_regua_conviccao,
         render_patch2_dominancia,
-        render_patch4_diversificacao,
-        render_patch5_benchmark_segmento,
     )
+
+    # Patch 3 (novo): diversificação (antigo Patch 4)
+    try:
+        from page.portfolio_patches import render_patch3_diversificacao
+    except Exception:
+        # compat: se você ainda não renomeou no portfolio_patches.py
+        from page.portfolio_patches import render_patch4_diversificacao as render_patch3_diversificacao  # type: ignore
+
+    # Patch 4 (novo): benchmark do segmento (antigo Patch 5)
+    try:
+        from page.portfolio_patches import render_patch4_benchmark_segmento
+    except Exception:
+        from page.portfolio_patches import render_patch5_benchmark_segmento as render_patch4_benchmark_segmento  # type: ignore
+
 except Exception:
     render_patch1_regua_conviccao = None  # type: ignore
     render_patch2_dominancia = None  # type: ignore
-    render_patch4_diversificacao = None  # type: ignore
-    render_patch5_benchmark_segmento = None  # type: ignore
+    render_patch3_diversificacao = None  # type: ignore
+    render_patch4_benchmark_segmento = None  # type: ignore
+
 # <<< PATCHES (portfolio_patches)
 
 from core.portfolio import (
@@ -640,32 +654,26 @@ def render():
                 except Exception as e:
                     st.error(f"Patch 2 falhou: {type(e).__name__}: {e}")
 
-        if render_patch3_stress_test is not None:
-            with st.expander("🧩 Patch 3 — Stress Test de Robustez", expanded=False):
+        if render_patch3_diversificacao is not None and empresas_lideres_finais:
+
+    with st.expander("🧩 Patch 3 — Diversificação e Concentração de Risco", expanded=False):
                 try:
-                    render_patch3_stress_test(score_global, lideres_global, empresas_lideres_finais)
+                    # contrib_globais é opcional; aqui usamos apenas pesos iguais por padrão
+                    render_patch3_diversificacao(empresas_lideres_finais, contrib_globais=None)
                 except Exception as e:
                     st.error(f"Patch 3 falhou: {type(e).__name__}: {e}")
 
-        if render_patch4_diversificacao is not None:
-            with st.expander("🧩 Patch 4 — Diversificação e Concentração de Risco", expanded=False):
+        if render_patch4_benchmark_segmento is not None and empresas_lideres_finais:
+            with st.expander("🧩 Patch 4 — Benchmark do Segmento (último ano do score)", expanded=False):
                 try:
-                    # contrib_globais é opcional; aqui usamos apenas pesos iguais por padrão
-                    render_patch4_diversificacao(empresas_lideres_finais, contrib_globais=None)
-                except Exception as e:
-                    st.error(f"Patch 4 falhou: {type(e).__name__}: {e}")
-
-        if render_patch5_benchmark_segmento is not None and empresas_lideres_finais:
-            with st.expander("🧩 Patch 5 — Benchmark do Segmento (último ano do score)", expanded=False):
-                try:
-                    render_patch5_benchmark_segmento(
+                    render_patch4_benchmark_segmento(
                         score_global=score_global,
                         empresas_lideres_finais=empresas_lideres_finais,
                         precos=df_prices_global,
                         max_universe=80,
                     )
                 except Exception as e:
-                    st.error(f"Patch 5 falhou: {type(e).__name__}: {e}")
+                    st.error(f"Patch 4 falhou: {type(e).__name__}: {e}")
 
 
     # Desarma a execução após rodar (evita “auto-rerun armado”)
