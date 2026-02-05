@@ -39,14 +39,12 @@ try:
     from page.portfolio_patches import (
         render_patch1_regua_conviccao,
         render_patch2_dominancia,
-        render_patch3_stress_test,
-        render_patch4_diversificacao,
+render_patch4_diversificacao,
         render_patch5_benchmark_segmento,
-    )
+)
 except Exception:
     render_patch1_regua_conviccao = None  # type: ignore
     render_patch2_dominancia = None  # type: ignore
-    render_patch3_stress_test = None  # type: ignore
     render_patch4_diversificacao = None  # type: ignore
     render_patch5_benchmark_segmento = None  # type: ignore
 # <<< PATCHES (portfolio_patches)
@@ -642,13 +640,6 @@ def render():
                 except Exception as e:
                     st.error(f"Patch 2 falhou: {type(e).__name__}: {e}")
 
-        if render_patch3_stress_test is not None:
-            with st.expander("🧩 Patch 3 — Stress Test de Robustez", expanded=False):
-                try:
-                    render_patch3_stress_test(score_global, lideres_global, empresas_lideres_finais)
-                except Exception as e:
-                    st.error(f"Patch 3 falhou: {type(e).__name__}: {e}")
-
         if render_patch4_diversificacao is not None:
             with st.expander("🧩 Patch 4 — Diversificação e Concentração de Risco", expanded=False):
                 try:
@@ -668,7 +659,6 @@ def render():
                     )
                 except Exception as e:
                     st.error(f"Patch 5 falhou: {type(e).__name__}: {e}")
-
 
     # Desarma a execução após rodar (evita “auto-rerun armado”)
     st.session_state["cp_should_run"] = False
