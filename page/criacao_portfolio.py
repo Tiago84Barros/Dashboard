@@ -42,7 +42,6 @@ try:
         render_patch3_stress_test,
         render_patch4_diversificacao,
         render_patch5_benchmark_segmento,
-        render_patch6_ia_selecao_lideres,
     )
 except Exception:
     render_patch1_regua_conviccao = None  # type: ignore
@@ -50,7 +49,6 @@ except Exception:
     render_patch3_stress_test = None  # type: ignore
     render_patch4_diversificacao = None  # type: ignore
     render_patch5_benchmark_segmento = None  # type: ignore
-    render_patch6_ia_selecao_lideres = None  # type: ignore
 # <<< PATCHES (portfolio_patches)
 
 from core.portfolio import (
@@ -670,18 +668,6 @@ def render():
                     )
                 except Exception as e:
                     st.error(f"Patch 5 falhou: {type(e).__name__}: {e}")
-
-        if render_patch6_ia_selecao_lideres is not None and empresas_lideres_finais:
-            with st.expander("🧩 Patch 6 — Validação por IA (relatório amigável)", expanded=False):
-                try:
-                    render_patch6_ia_selecao_lideres(
-                        score_global=score_global,
-                        lideres_global=lideres_global,
-                        empresas_lideres_finais=empresas_lideres_finais,
-                        max_recs_default=10,
-                    )
-                except Exception as e:
-                    st.error(f"Patch 6 falhou: {type(e).__name__}: {e}")
 
 
     # Desarma a execução após rodar (evita “auto-rerun armado”)
