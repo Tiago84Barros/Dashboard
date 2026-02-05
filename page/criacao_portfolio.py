@@ -655,8 +655,7 @@ def render():
                     st.error(f"Patch 2 falhou: {type(e).__name__}: {e}")
 
         if render_patch3_diversificacao is not None and empresas_lideres_finais:
-
-    with st.expander("🧩 Patch 3 — Diversificação e Concentração de Risco", expanded=False):
+            with st.expander("🧩 Patch 3 — Diversificação e Concentração de Risco", expanded=False):
                 try:
                     # contrib_globais é opcional; aqui usamos apenas pesos iguais por padrão
                     render_patch3_diversificacao(empresas_lideres_finais, contrib_globais=None)
