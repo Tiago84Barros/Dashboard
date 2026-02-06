@@ -21,9 +21,49 @@ except Exception:
 
 
 # ─────────────────────────────────────────────────────────────
+# Format helpers
+# ─────────────────────────────────────────────────────────────
+def format_brl(v) -> str:
+    try:
+        if v is None or (isinstance(v, float) and (pd.isna(v) or np.isinf(v))):
+            return "-"
+        return f"R$ {float(v):,.2f}"
+    except Exception:
+        return "-"
+
+
+def format_brl_compacto(v) -> str:
+    try:
+        if v is None or (isinstance(v, float) and (pd.isna(v) or np.isinf(v))):
+            return "-"
+        x = float(v)
+        ax = abs(x)
+        if ax >= 1e9:
+            return f"R$ {x/1e9:,.2f}B"
+        if ax >= 1e6:
+            return f"R$ {x/1e6:,.2f}M"
+        if ax >= 1e3:
+            return f"R$ {x/1e3:,.2f}K"
+        return f"R$ {x:,.2f}"
+    except Exception:
+        return "-"
+
+
+def format_percent(v, signed: bool = False) -> str:
+    try:
+        if v is None or (isinstance(v, float) and (pd.isna(v) or np.isinf(v))):
+            return "-"
+        x = float(v)
+        if signed:
+            return f"{x:+.2f}%"
+        return f"{x:.2f}%"
+    except Exception:
+        return "-"
+
+
+# ─────────────────────────────────────────────────────────────
 # Crescimento (médio anual) com regressão em log
 # ─────────────────────────────────────────────────────────────
-
 def calculate_growth_rate(df: pd.DataFrame, column: str) -> float:
     try:
         if df is None or df.empty or "Data" not in df.columns or column not in df.columns:
@@ -57,34 +97,6 @@ def format_growth_rate(value: float) -> str:
 # ─────────────────────────────────────────────────────────────
 # Demonstrações Financeiras — gráficos do histórico do Supabase
 # ─────────────────────────────────────────────────────────────
-
-def _fmt_brl_compacto(x) -> str:
-    try:
-        if x is None or (isinstance(x, float) and (pd.isna(x) or np.isinf(x))):
-            return "-"
-        v = float(x)
-        # compacto: B / M / K
-        av = abs(v)
-        if av >= 1e9:
-            return f"R$ {v/1e9:,.2f}B"
-        if av >= 1e6:
-            return f"R$ {v/1e6:,.2f}M"
-        if av >= 1e3:
-            return f"R$ {v/1e3:,.2f}K"
-        return f"R$ {v:,.2f}"
-    except Exception:
-        return "-"
-
-
-def _fmt_brl_full(x) -> str:
-    try:
-        if x is None or (isinstance(x, float) and (pd.isna(x) or np.isinf(x))):
-            return "-"
-        return f"R$ {float(x):,.2f}"
-    except Exception:
-        return "-"
-
-
 def render_graficos_demonstracoes_financeiras(df: pd.DataFrame, ticker: str) -> None:
     st.markdown("---")
     st.markdown("### Demonstrações Financeiras (Histórico do Banco)")
@@ -109,7 +121,6 @@ def render_graficos_demonstracoes_financeiras(df: pd.DataFrame, ticker: str) -> 
         ("Caixa_Liquido", "Caixa Líquido"),
     ]
     existentes = [(c, lbl) for (c, lbl) in candidatos if c in dff.columns]
-
     if not existentes:
         st.info("Não encontrei colunas financeiras esperadas para plotar no DataFrame.")
         return
@@ -155,7 +166,6 @@ def render_graficos_demonstracoes_financeiras(df: pd.DataFrame, ticker: str) -> 
     fig = px.line(melt, x="Data", y="Valor", color="Indicador", markers=True)
     if escala.startswith("Log"):
         fig.update_yaxes(type="log")
-
     st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("#### Últimos valores disponíveis (mais recente no banco)")
@@ -164,135 +174,272 @@ def render_graficos_demonstracoes_financeiras(df: pd.DataFrame, ticker: str) -> 
     for i, c in enumerate(cols_sel[:4]):
         lbl = {col: lbl for col, lbl in existentes}.get(c, c)
         with cols[i % len(cols)]:
-            st.metric(lbl, _fmt_brl_compacto(last.get(c)))
+            st.metric(lbl, format_brl_compacto(last.get(c)))
 
 
 # ─────────────────────────────────────────────────────────────
-# Blocos coloridos (NOVO) — estilo “Controle Financeiro”
+# CSS / Header / Cards no padrão "Controle Financeiro"
 # ─────────────────────────────────────────────────────────────
+def _inject_cf_css() -> None:
+    st.markdown(
+        """
+        <style>
+          .cf-header{
+            display:flex; justify-content:space-between; align-items:flex-start;
+            padding: 6px 0 6px 0;
+          }
+          .cf-title{ margin:0; font-size: 34px; line-height: 1.1; }
+          .cf-subtitle{ margin:8px 0 0 0; opacity:.85; }
 
-def _kpi_css() -> str:
-    return """
-    <style>
-      .kpi-grid { display:flex; flex-wrap:wrap; gap:14px; }
-      .kpi-card{
-        border-radius:16px;
-        padding:14px 16px;
-        border:1px solid rgba(255,255,255,0.10);
-        background: rgba(255,255,255,0.04);
-        box-shadow: 0 0 0 1px rgba(255,255,255,0.06) inset;
-        min-width: 220px;
-        flex: 1 1 240px;
-      }
-      .kpi-title{
-        font-size: 12px;
-        letter-spacing: .08em;
-        text-transform: uppercase;
-        opacity: .85;
-        margin-bottom: 6px;
-      }
-      .kpi-value{
-        font-size: 28px;
-        font-weight: 800;
-        line-height: 1.05;
-        margin-bottom: 6px;
-      }
-      .kpi-sub{
-        font-size: 12px;
-        opacity: .80;
-      }
-      .kpi-green{ background: rgba(34,197,94,0.12); border-color: rgba(34,197,94,0.30); }
-      .kpi-red{ background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.30); }
-      .kpi-blue{ background: rgba(59,130,246,0.12); border-color: rgba(59,130,246,0.30); }
-      .kpi-amber{ background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.30); }
-      .kpi-slate{ background: rgba(148,163,184,0.10); border-color: rgba(148,163,184,0.22); }
-    </style>
-    """
+          .cf-pill{
+            display:inline-block;
+            padding: 8px 12px;
+            border-radius: 999px;
+            border: 1px solid rgba(255,255,255,.14);
+            background: rgba(255,255,255,.06);
+            font-size: 12px;
+            opacity: .95;
+          }
 
+          .cf-card{
+            border-radius: 18px;
+            padding: 14px 16px;
+            border: 1px solid rgba(255,255,255,0.14);
+            background: rgba(255,255,255,0.05);
+            box-shadow: 0 0 0 1px rgba(255,255,255,0.06) inset;
+            min-height: 112px;
+          }
+          .cf-card-label{
+            font-size: 12px;
+            letter-spacing: .10em;
+            text-transform: uppercase;
+            opacity: .85;
+            margin-bottom: 6px;
+          }
+          .cf-card-value{
+            font-size: 30px;
+            font-weight: 850;
+            line-height: 1.05;
+            margin-bottom: 6px;
+          }
+          .cf-card-extra{
+            font-size: 12px;
+            opacity: .85;
+            line-height: 1.25;
+          }
 
-def _kpi_class_from_value(v: float | None, kind: str = "signed") -> str:
-    """
-    kind:
-      - signed: >=0 verde, <0 vermelho
-      - neutral: sempre slate
-    """
-    if kind == "neutral":
-        return "kpi-slate"
-    try:
-        if v is None or (isinstance(v, float) and (pd.isna(v) or np.isinf(v))):
-            return "kpi-slate"
-        return "kpi-green" if float(v) >= 0 else "kpi-red"
-    except Exception:
-        return "kpi-slate"
+          .cf-card-income{ background: rgba(59,130,246,0.12); border-color: rgba(59,130,246,0.30); }
+          .cf-card-expense{ background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.30); }
+          .cf-card-ratio{ background: rgba(148,163,184,0.10); border-color: rgba(148,163,184,0.24); }
+          .cf-card-balance-positive{ background: rgba(34,197,94,0.12); border-color: rgba(34,197,94,0.30); }
+          .cf-card-balance-negative{ background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.30); }
 
-
-def _kpi_card(title: str, value: str, sub: str, klass: str) -> str:
-    return f"""
-      <div class="kpi-card {klass}">
-        <div class="kpi-title">{title}</div>
-        <div class="kpi-value">{value}</div>
-        <div class="kpi-sub">{sub}</div>
-      </div>
-    """
+          /* compacta dataframes */
+          div[data-testid="stDataFrame"] { border-radius: 14px; overflow: hidden; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
-def render_kpi_blocks(
-    df_fin: pd.DataFrame,
-    ticker: str,
-    avg_yoy: float | None,
-    cagr: float | None,
-) -> None:
-    st.markdown("---")
-    st.markdown(_kpi_css(), unsafe_allow_html=True)
-    st.markdown("### Resumo em blocos")
+def _latest_financial_row(df: pd.DataFrame) -> pd.Series | None:
+    if df is None or df.empty or "Data" not in df.columns:
+        return None
+    tmp = df.copy()
+    tmp["Data"] = pd.to_datetime(tmp["Data"], errors="coerce")
+    tmp = tmp.dropna(subset=["Data"]).sort_values("Data")
+    if tmp.empty:
+        return None
+    return tmp.iloc[-1]
 
-    last = None
-    if df_fin is not None and not df_fin.empty and "Data" in df_fin.columns:
-        tmp = df_fin.copy()
-        tmp["Data"] = pd.to_datetime(tmp["Data"], errors="coerce")
-        tmp = tmp.dropna(subset=["Data"]).sort_values("Data")
-        if not tmp.empty:
-            last = tmp.iloc[-1]
 
-    # valores absolutos (últimos)
-    receita = float(last.get("Receita_Liquida")) if last is not None and "Receita_Liquida" in last.index and pd.notna(last.get("Receita_Liquida")) else np.nan
-    lucro = float(last.get("Lucro_Liquido")) if last is not None and "Lucro_Liquido" in last.index and pd.notna(last.get("Lucro_Liquido")) else np.nan
-    divs = float(last.get("Dividendos")) if last is not None and "Dividendos" in last.index and pd.notna(last.get("Dividendos")) else np.nan
+def render_header_empresa(nome: str | None, website: str | None, price: float | None, ticker: str) -> None:
+    st.markdown(
+        f"""
+        <div class="cf-header">
+            <div>
+                <h1 class="cf-title">📊 Empresa • <span style="opacity:.92">{ticker}</span></h1>
+                <p class="cf-subtitle">
+                    <strong>{(nome or "-")}</strong> • {(website or "-")} • Preço atual: <strong>{("R$ " + f"{price:,.2f}") if price else "-"}</strong>
+                </p>
+            </div>
+            <div>
+                <span class="cf-pill">Fonte de preço: yfinance • Dados financeiros: Supabase</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    # crescimento médio anual (%)
+
+def render_cards_resumo(df_fin: pd.DataFrame, perf_price: pd.DataFrame, avg_yoy: float, cagr: float) -> None:
+    last = _latest_financial_row(df_fin)
+
+    receita = float(last.get("Receita_Liquida")) if last is not None and pd.notna(last.get("Receita_Liquida")) else np.nan
+    ebit = float(last.get("EBIT")) if last is not None and pd.notna(last.get("EBIT")) else np.nan
+    lucro = float(last.get("Lucro_Liquido")) if last is not None and pd.notna(last.get("Lucro_Liquido")) else np.nan
+    divs = float(last.get("Dividendos")) if last is not None and pd.notna(last.get("Dividendos")) else np.nan
+
     g_receita = calculate_growth_rate(df_fin, "Receita_Liquida")
     g_ebit = calculate_growth_rate(df_fin, "EBIT")
     g_lucro = calculate_growth_rate(df_fin, "Lucro_Liquido")
     g_divs = calculate_growth_rate(df_fin, "Dividendos")
 
-    # monta cards
-    cards = []
+    # linha 1 (valores absolutos + preço)
+    col1, col2, col3, col4 = st.columns(4)
 
-    # absolutos (azul / âmbar / verde neutro)
-    cards.append(_kpi_card("Receita (último)", _fmt_brl_compacto(receita), "Último valor disponível no banco", "kpi-blue"))
-    cards.append(_kpi_card("Lucro (último)", _fmt_brl_compacto(lucro), "Último valor disponível no banco", "kpi-green" if (not pd.isna(lucro) and lucro >= 0) else "kpi-red"))
-    cards.append(_kpi_card("Dividendos (último)", _fmt_brl_compacto(divs), "Último valor disponível no banco", "kpi-amber"))
+    col1.markdown(
+        f"""
+        <div class="cf-card cf-card-income">
+            <div class="cf-card-label">Receita (último)</div>
+            <div class="cf-card-value">{format_brl_compacto(receita)}</div>
+            <div class="cf-card-extra">Último valor disponível no banco.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    # percentuais (cores por sinal)
-    cards.append(_kpi_card("Crescimento Receita (médio a.a.)", format_growth_rate(g_receita), "Base: histórico no Supabase", _kpi_class_from_value(g_receita)))
-    cards.append(_kpi_card("Crescimento EBIT (médio a.a.)", format_growth_rate(g_ebit), "Base: histórico no Supabase", _kpi_class_from_value(g_ebit)))
-    cards.append(_kpi_card("Crescimento Lucro (médio a.a.)", format_growth_rate(g_lucro), "Base: histórico no Supabase", _kpi_class_from_value(g_lucro)))
-    cards.append(_kpi_card("Crescimento Dividendos (médio a.a.)", format_growth_rate(g_divs), "Base: histórico no Supabase", _kpi_class_from_value(g_divs)))
+    lucro_class = "cf-card-balance-positive" if (not pd.isna(lucro) and lucro >= 0) else "cf-card-balance-negative"
+    col2.markdown(
+        f"""
+        <div class="cf-card {lucro_class}">
+            <div class="cf-card-label">Lucro (último)</div>
+            <div class="cf-card-value">{format_brl_compacto(lucro)}</div>
+            <div class="cf-card-extra">Último valor disponível no banco.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    # preço (média variação anual e CAGR)
-    cards.append(_kpi_card("Média variação anual (preço)", format_growth_rate(avg_yoy if avg_yoy is not None else np.nan), "1º x último pregão por ano", _kpi_class_from_value(avg_yoy)))
-    cards.append(_kpi_card("CAGR (preço)", format_growth_rate(cagr if cagr is not None else np.nan), "Crescimento composto do período", _kpi_class_from_value(cagr)))
+    col3.markdown(
+        f"""
+        <div class="cf-card cf-card-expense">
+            <div class="cf-card-label">Dividendos (último)</div>
+            <div class="cf-card-value">{format_brl_compacto(divs)}</div>
+            <div class="cf-card-extra">Último valor disponível no banco.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    st.markdown(f'<div class="kpi-grid">{"".join(cards)}</div>', unsafe_allow_html=True)
+    cagr_class = "cf-card-balance-positive" if (not pd.isna(cagr) and cagr >= 0) else "cf-card-balance-negative"
+    col4.markdown(
+        f"""
+        <div class="cf-card {cagr_class}">
+            <div class="cf-card-label">CAGR (preço)</div>
+            <div class="cf-card-value">{format_growth_rate(cagr)}</div>
+            <div class="cf-card-extra">Crescimento composto do preço no período.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # linha 2 (crescimentos + média variação anual)
+    col5, col6, col7, col8 = st.columns(4)
+
+    r1_class = "cf-card-balance-positive" if (not pd.isna(g_receita) and g_receita >= 0) else "cf-card-balance-negative"
+    col5.markdown(
+        f"""
+        <div class="cf-card {r1_class}">
+            <div class="cf-card-label">Cresc. Receita (médio a.a.)</div>
+            <div class="cf-card-value">{format_growth_rate(g_receita)}</div>
+            <div class="cf-card-extra">Base: histórico no Supabase.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    r2_class = "cf-card-balance-positive" if (not pd.isna(g_ebit) and g_ebit >= 0) else "cf-card-balance-negative"
+    col6.markdown(
+        f"""
+        <div class="cf-card {r2_class}">
+            <div class="cf-card-label">Cresc. EBIT (médio a.a.)</div>
+            <div class="cf-card-value">{format_growth_rate(g_ebit)}</div>
+            <div class="cf-card-extra">Base: histórico no Supabase.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    r3_class = "cf-card-balance-positive" if (not pd.isna(g_lucro) and g_lucro >= 0) else "cf-card-balance-negative"
+    col7.markdown(
+        f"""
+        <div class="cf-card {r3_class}">
+            <div class="cf-card-label">Cresc. Lucro (médio a.a.)</div>
+            <div class="cf-card-value">{format_growth_rate(g_lucro)}</div>
+            <div class="cf-card-extra">Base: histórico no Supabase.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    yoy_class = "cf-card-balance-positive" if (not pd.isna(avg_yoy) and avg_yoy >= 0) else "cf-card-balance-negative"
+    col8.markdown(
+        f"""
+        <div class="cf-card {yoy_class}">
+            <div class="cf-card-label">Média variação anual (preço)</div>
+            <div class="cf-card-value">{format_growth_rate(avg_yoy)}</div>
+            <div class="cf-card-extra">1º × último pregão por ano.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # linha 3 (extra: lucro/dividendos crescimento + EBIT absoluto)
+    col9, col10, col11, col12 = st.columns(4)
+
+    col9.markdown(
+        f"""
+        <div class="cf-card cf-card-ratio">
+            <div class="cf-card-label">EBIT (último)</div>
+            <div class="cf-card-value">{format_brl_compacto(ebit)}</div>
+            <div class="cf-card-extra">Último valor disponível no banco.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    div_class = "cf-card-balance-positive" if (not pd.isna(g_divs) and g_divs >= 0) else "cf-card-balance-negative"
+    col10.markdown(
+        f"""
+        <div class="cf-card {div_class}">
+            <div class="cf-card-label">Cresc. Dividendos (médio a.a.)</div>
+            <div class="cf-card-value">{format_growth_rate(g_divs)}</div>
+            <div class="cf-card-extra">Base: histórico no Supabase.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # (reservas) deixa dois cards “neutros” para futuras métricas sem quebrar layout
+    col11.markdown(
+        f"""
+        <div class="cf-card cf-card-ratio">
+            <div class="cf-card-label">Janela de preço (anos)</div>
+            <div class="cf-card-value">{int(perf_price["Ano"].nunique()) if perf_price is not None and not perf_price.empty else "-"}</div>
+            <div class="cf-card-extra">Quantidade de anos com cálculo anual disponível.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    col12.markdown(
+        f"""
+        <div class="cf-card cf-card-ratio">
+            <div class="cf-card-label">Base</div>
+            <div class="cf-card-value">Supabase + YF</div>
+            <div class="cf-card-extra">Financeiro do banco + preços via yfinance.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 # ─────────────────────────────────────────────────────────────
 # Preço (yfinance) — histórico + retornos anuais
 # ─────────────────────────────────────────────────────────────
-
 @st.cache_data(show_spinner=False, ttl=60 * 60)  # 1h
 def _get_price_history_cached(ticker: str, start: str) -> pd.Series:
-    """Baixa histórico de preço (Close) via yfinance e devolve Series com índice datetime."""
     if baixar_precos is None:
         return pd.Series(dtype="float64")
 
@@ -312,7 +459,6 @@ def _get_price_history_cached(ticker: str, start: str) -> pd.Series:
 
 
 def _infer_price_start_from_financials(df_fin: pd.DataFrame) -> str:
-    """Define o start do yfinance com base no histórico financeiro do Supabase (Demonstracoes_Financeiras)."""
     if df_fin is None or df_fin.empty or "Data" not in df_fin.columns:
         return "2010-01-01"
     d = pd.to_datetime(df_fin["Data"], errors="coerce").dropna()
@@ -323,7 +469,6 @@ def _infer_price_start_from_financials(df_fin: pd.DataFrame) -> str:
 
 
 def _annual_price_performance(price: pd.Series) -> pd.DataFrame:
-    """Tabela anual: preço inicial/final do ano e variação % (1º x último pregão do ano)."""
     if price is None or price.empty:
         return pd.DataFrame(columns=["Ano", "Preço inicial", "Preço final", "Variação %"])
 
@@ -336,18 +481,13 @@ def _annual_price_performance(price: pd.Series) -> pd.DataFrame:
     fim = grp.last()
 
     out = pd.DataFrame(
-        {
-            "Ano": ini.index.astype(int),
-            "Preço inicial": ini.values,
-            "Preço final": fim.values,
-        }
+        {"Ano": ini.index.astype(int), "Preço inicial": ini.values, "Preço final": fim.values}
     )
     out["Variação %"] = (out["Preço final"] / out["Preço inicial"] - 1.0) * 100.0
     return out.sort_values("Ano").reset_index(drop=True)
 
 
 def _cagr_from_series(price: pd.Series) -> float:
-    """CAGR do período (crescimento composto)."""
     if price is None or price.empty:
         return float("nan")
     s = price.dropna().sort_index()
@@ -366,7 +506,6 @@ def _cagr_from_series(price: pd.Series) -> float:
 # ─────────────────────────────────────────────────────────────
 # Helpers internos (multiplos / display)
 # ─────────────────────────────────────────────────────────────
-
 def _latest_row_by_date(df: pd.DataFrame, date_col: str = "Data") -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
@@ -394,15 +533,7 @@ def _is_missing(x) -> bool:
     return False
 
 
-def _merge_display_multiplos_db_primary(
-    db_latest: pd.DataFrame,
-    yf_latest: pd.DataFrame | None,
-) -> pd.DataFrame:
-    """
-    DF final (1 linha) para exibição:
-      - Base: DB
-      - Complemento: YF somente nos campos faltantes
-    """
+def _merge_display_multiplos_db_primary(db_latest: pd.DataFrame, yf_latest: pd.DataFrame | None) -> pd.DataFrame:
     db1 = _latest_row_by_date(db_latest) if db_latest is not None else pd.DataFrame()
     if db1 is None or db1.empty:
         if isinstance(yf_latest, pd.DataFrame) and not yf_latest.empty:
@@ -410,7 +541,6 @@ def _merge_display_multiplos_db_primary(
         return pd.DataFrame([{}])
 
     df_disp = db1.copy()
-
     if isinstance(yf_latest, pd.DataFrame) and not yf_latest.empty:
         yf1 = yf_latest.head(1).copy()
         for c in yf1.columns:
@@ -421,7 +551,6 @@ def _merge_display_multiplos_db_primary(
                 dbv = df_disp.at[0, c]
                 if _is_missing(dbv) and not _is_missing(yv):
                     df_disp.at[0, c] = yv
-
     return df_disp
 
 
@@ -432,7 +561,6 @@ def _fmt_metric(label: str, value) -> str:
         v = float(value)
     except Exception:
         return "-"
-
     if "Margem" in label or label in ["ROE", "ROIC", "Payout", "Dividend Yield", "Endividamento Total"]:
         return f"{v:.2f}%"
     return f"{v:.2f}"
@@ -441,7 +569,6 @@ def _fmt_metric(label: str, value) -> str:
 def _needs_yf_fundamentals(mult_db_latest: pd.DataFrame) -> bool:
     if mult_db_latest is None or mult_db_latest.empty:
         return True
-
     row = mult_db_latest.iloc[0]
     needed = ["DY", "P/VP", "P/L", "Payout"]
     for c in needed:
@@ -453,9 +580,8 @@ def _needs_yf_fundamentals(mult_db_latest: pd.DataFrame) -> bool:
 # ─────────────────────────────────────────────────────────────
 # View principal
 # ─────────────────────────────────────────────────────────────
-
 def render_empresa_view(ticker: str) -> None:
-    st.subheader(f"Visão Geral — {ticker}")
+    _inject_cf_css()
 
     df = load_data_from_db(ticker)
     if df is None or df.empty:
@@ -466,58 +592,24 @@ def render_empresa_view(ticker: str) -> None:
         df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
 
     nome, website = get_company_info(ticker)
-    price = get_price(ticker)
+    price_now = get_price(ticker)
 
-    # CSS existente
-    st.markdown(
-        """
-        <style>
-        .logo-box {
-            background-color: #ffffff;
-            border-radius: 10px;
-            margin-bottom: 10px;
-            display: flex;
-            justify-content: center;
-            justify-items: center;
-            align-items: center;
-            height: 100px;
-            width: 100%;
-            text-align: center;
-            font-size: 20px;
-            font-weight: bold;
-            color: #333;
-            background-color: #f9f9f9;
-        }
-        .metric-box {
-            background-color: #f9f9f9;
-            border-radius: 10px;
-            padding: 10px;
-            text-align: center;
-            margin-bottom: 15px;
-            border: 1px solid #e0e0e0;
-        }
-        .metric-value { font-size: 24px; font-weight: bold; color: #222; }
-        .metric-label { font-size: 14px; color: #ff6600; font-weight: bold; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    # Header no padrão "Controle Financeiro"
+    render_header_empresa(nome, website, price_now, ticker)
 
-    col1, col2 = st.columns([1, 4])
-    with col1:
+    # logo (mantido)
+    colL, colR = st.columns([1, 5])
+    with colL:
         st.image(get_logo_url(ticker), width=80)
-    with col2:
-        st.markdown(f"**Empresa:** {nome or '-'}")
-        st.markdown(f"**Site:** {website or '-'}")
-        st.markdown(f"**Preço atual (yfinance):** {('R$ ' + f'{price:,.2f}') if price else '-'}")
+    with colR:
+        st.caption(" ")
 
     st.markdown("---")
 
     # ─────────────────────────────────────────────────────────
-    # Crescimento (médio anual) — cards simples (mantido)
+    # Crescimento (médio anual) — (mantido)
     # ─────────────────────────────────────────────────────────
     st.markdown("### Crescimento (médio anual) — baseado no histórico do Supabase")
-
     cols = st.columns(4)
     metrics = [
         ("Receita Líquida", calculate_growth_rate(df, "Receita_Liquida")),
@@ -535,7 +627,7 @@ def render_empresa_view(ticker: str) -> None:
     render_graficos_demonstracoes_financeiras(df, ticker)
 
     # ─────────────────────────────────────────────────────────
-    # Indicadores Financeiros (cards) — DB + fallback silencioso (mantido)
+    # Indicadores Financeiros (cards) — DB + fallback (mantido)
     # ─────────────────────────────────────────────────────────
     st.markdown("---")
     st.markdown("### Indicadores Financeiros")
@@ -579,6 +671,7 @@ def render_empresa_view(ticker: str) -> None:
         ("Liquidez_Corrente", "Liquidez Corrente"),
     ]
 
+    # layout existente de expander (mantido)
     c1, c2, c3 = st.columns(3)
     cols_cards = [c1, c2, c3]
     for i, (col_key, label) in enumerate(valores):
@@ -589,12 +682,9 @@ def render_empresa_view(ticker: str) -> None:
             with st.expander(label, expanded=False):
                 st.markdown(
                     f"""
-                    <div class='metric-box'>
-                        <div class='metric-value'>{_fmt_metric(label, v)}</div>
-                        <div class='metric-label'><strong>{label}</strong></div>
-                    </div>
-                    <div style='font-size: 13px; color: #555;'>
-                        {descricoes.get(label, "-")}
+                    <div style="border-radius:14px;padding:10px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12)">
+                        <div style="font-size:22px;font-weight:800">{_fmt_metric(label, v)}</div>
+                        <div style="font-size:12px;opacity:.9;margin-top:6px">{descricoes.get(label, "-")}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -697,13 +787,11 @@ def render_empresa_view(ticker: str) -> None:
         use_container_width=True,
     )
 
-    # ─────────────────────────────────────────────────────────
-    # Tabela anual (compacta + profissional)
-    # ─────────────────────────────────────────────────────────
+    # tabela anual + métricas
     st.markdown("#### Desempenho anual do preço (1º x último pregão do ano)")
     perf = _annual_price_performance(price_hist)
 
-    # restringe a anos compatíveis com o histórico financeiro do Supabase, quando existir
+    # restringe a anos compatíveis com o histórico financeiro do Supabase
     if df is not None and not df.empty and "Data" in df.columns:
         dd = pd.to_datetime(df["Data"], errors="coerce").dropna()
         if not dd.empty:
@@ -715,15 +803,26 @@ def render_empresa_view(ticker: str) -> None:
         st.info("Não foi possível calcular o desempenho anual com o histórico disponível.")
         return
 
+    # métricas de preço
+    avg_yoy = float(np.nanmean(perf["Variação %"].values)) / 100.0 if not perf.empty else float("nan")
+    cagr = _cagr_from_series(price_hist)
+
+    # ─────────────────────────────────────────────────────────
+    # BLOCO PROFISSIONAL (CARDS CF) — exatamente no padrão do seu exemplo
+    # ─────────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### Resumo (blocos)")
+    render_cards_resumo(df, perf, avg_yoy=avg_yoy, cagr=cagr)
+
+    # ─────────────────────────────────────────────────────────
+    # Tabela anual compacta (padding menor + col widths)
+    # ─────────────────────────────────────────────────────────
     perf_num = perf.copy()
     perf_num["Preço inicial"] = pd.to_numeric(perf_num["Preço inicial"], errors="coerce")
     perf_num["Preço final"] = pd.to_numeric(perf_num["Preço final"], errors="coerce")
     perf_num["Variação %"] = pd.to_numeric(perf_num["Variação %"], errors="coerce")
 
-    def _brl(x):
-        return _fmt_brl_full(x)
-
-    def _pct(x):
+    def _pct_signed(x):
         if x is None or (isinstance(x, float) and (pd.isna(x) or np.isinf(x))):
             return "-"
         try:
@@ -735,7 +834,7 @@ def render_empresa_view(ticker: str) -> None:
         try:
             if pd.isna(v):
                 return ""
-            return "color: #16a34a; font-weight: 800;" if float(v) >= 0 else "color: #dc2626; font-weight: 800;"
+            return "color: #22c55e; font-weight: 850;" if float(v) >= 0 else "color: #ef4444; font-weight: 850;"
         except Exception:
             return ""
 
@@ -749,54 +848,41 @@ def render_empresa_view(ticker: str) -> None:
             v = float(v)
             w = min(abs(v) / max_abs, 1.0) * 100.0
             if v >= 0:
-                return f"background: linear-gradient(90deg, rgba(22,163,74,0.22) {w}%, transparent {w}%);"
-            return f"background: linear-gradient(90deg, rgba(220,38,38,0.18) {w}%, transparent {w}%);"
+                return f"background: linear-gradient(90deg, rgba(34,197,94,0.20) {w}%, transparent {w}%);"
+            return f"background: linear-gradient(90deg, rgba(239,68,68,0.16) {w}%, transparent {w}%);"
         except Exception:
             return ""
 
-    # ↓↓ AQUI está o “compactador” da tabela (padding menor + widths fixas)
     styler = (
         perf_num.style
-        .format({
-            "Ano": "{:d}",
-            "Preço inicial": _brl,
-            "Preço final": _brl,
-            "Variação %": _pct,
-        })
-        .set_properties(**{
-            "text-align": "right",
-            "white-space": "nowrap",
-            "font-size": "0.90rem",
-        })
-        .set_table_styles([
-            {"selector": "table", "props": [("table-layout", "fixed"), ("width", "100%")]},
-            {"selector": "th", "props": [("text-align", "right"), ("font-weight", "800"), ("padding", "4px 6px")]},
-            {"selector": "td", "props": [("padding", "4px 6px")]},
-            # larguras aproximadas por coluna (funciona bem com fixed layout)
-            {"selector": "th:nth-child(1), td:nth-child(1)", "props": [("width", "70px")]},   # Ano
-            {"selector": "th:nth-child(2), td:nth-child(2)", "props": [("width", "150px")]},  # Preço inicial
-            {"selector": "th:nth-child(3), td:nth-child(3)", "props": [("width", "150px")]},  # Preço final
-            {"selector": "th:nth-child(4), td:nth-child(4)", "props": [("width", "120px")]},  # Variação
-        ])
+        .format(
+            {
+                "Ano": "{:d}",
+                "Preço inicial": format_brl,
+                "Preço final": format_brl,
+                "Variação %": _pct_signed,
+            }
+        )
+        .set_properties(
+            **{
+                "text-align": "right",
+                "white-space": "nowrap",
+                "font-size": "0.88rem",
+            }
+        )
+        .set_table_styles(
+            [
+                {"selector": "table", "props": [("table-layout", "fixed"), ("width", "100%")]},
+                {"selector": "th", "props": [("text-align", "right"), ("font-weight", "900"), ("padding", "3px 6px")]},
+                {"selector": "td", "props": [("padding", "3px 6px")]},
+                {"selector": "th:nth-child(1), td:nth-child(1)", "props": [("width", "62px")]},
+                {"selector": "th:nth-child(2), td:nth-child(2)", "props": [("width", "132px")]},
+                {"selector": "th:nth-child(3), td:nth-child(3)", "props": [("width", "132px")]},
+                {"selector": "th:nth-child(4), td:nth-child(4)", "props": [("width", "112px")]},
+            ]
+        )
         .applymap(_color_return, subset=["Variação %"])
         .applymap(_bar_css, subset=["Variação %"])
     )
 
     st.dataframe(styler, use_container_width=True, hide_index=True)
-
-    # métricas de preço
-    avg_yoy = float(np.nanmean(perf["Variação %"].values)) / 100.0 if not perf.empty else float("nan")
-    cagr = _cagr_from_series(price_hist)
-
-    # ─────────────────────────────────────────────────────────
-    # Blocos coloridos (NOVO) com Receita/Lucro/Dividendos + % + preço
-    # (coloquei aqui ao final porque você pediu incluir também média anual e CAGR)
-    # ─────────────────────────────────────────────────────────
-    render_kpi_blocks(df, ticker, avg_yoy=avg_yoy, cagr=cagr)
-
-    # mantém também os dois cards simples (se você quiser tirar depois, é só remover)
-    c1, c2 = st.columns(2)
-    with c1:
-        st.metric("Média de variação anual (preço)", format_growth_rate(avg_yoy))
-    with c2:
-        st.metric("CAGR (crescimento composto)", format_growth_rate(cagr))
