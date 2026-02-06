@@ -96,7 +96,7 @@ def format_growth_rate(value: float) -> str:
 
 # ─────────────────────────────────────────────────────────────
 # Demonstrações Financeiras — gráficos do histórico do Supabase
-# (REMOVIDO: bloco "Últimos valores disponíveis")
+# (sem bloco "Últimos valores disponíveis")
 # ─────────────────────────────────────────────────────────────
 def render_graficos_demonstracoes_financeiras(df: pd.DataFrame, ticker: str) -> None:
     st.markdown("---")
@@ -219,6 +219,12 @@ def _inject_cf_css() -> None:
             font-size: 12px;
             opacity: .85;
             line-height: 1.25;
+
+            /* clamp em 2 linhas */
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
           }
 
           .cf-card-income{ background: rgba(59,130,246,0.12); border-color: rgba(59,130,246,0.30); }
@@ -258,6 +264,67 @@ def render_header_empresa(nome: str | None, website: str | None, price: float | 
             <div>
                 <span class="cf-pill">Fonte de preço: yfinance • Dados financeiros: Supabase</span>
             </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+# Crescimento (médio anual) em blocos (como os de baixo)
+# ─────────────────────────────────────────────────────────────
+def render_cards_crescimento_supabase(df_fin: pd.DataFrame) -> None:
+    st.markdown("---")
+    st.markdown("### Crescimento (médio anual) — baseado no histórico do Supabase")
+
+    g_receita = calculate_growth_rate(df_fin, "Receita_Liquida")
+    g_ebit = calculate_growth_rate(df_fin, "EBIT")
+    g_lucro = calculate_growth_rate(df_fin, "Lucro_Liquido")
+    g_divs = calculate_growth_rate(df_fin, "Dividendos")
+
+    def _cls(v: float) -> str:
+        if v is None or pd.isna(v) or np.isinf(v):
+            return "cf-card-ratio"
+        return "cf-card-balance-positive" if float(v) >= 0 else "cf-card-balance-negative"
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    c1.markdown(
+        f"""
+        <div class="cf-card {_cls(g_receita)}">
+            <div class="cf-card-label">Cresc. Receita (médio a.a.)</div>
+            <div class="cf-card-value">{format_growth_rate(g_receita)}</div>
+            <div class="cf-card-extra">Regressão em log no histórico do Supabase.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    c2.markdown(
+        f"""
+        <div class="cf-card {_cls(g_ebit)}">
+            <div class="cf-card-label">Cresc. EBIT (médio a.a.)</div>
+            <div class="cf-card-value">{format_growth_rate(g_ebit)}</div>
+            <div class="cf-card-extra">Regressão em log no histórico do Supabase.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    c3.markdown(
+        f"""
+        <div class="cf-card {_cls(g_lucro)}">
+            <div class="cf-card-label">Cresc. Lucro (médio a.a.)</div>
+            <div class="cf-card-value">{format_growth_rate(g_lucro)}</div>
+            <div class="cf-card-extra">Regressão em log no histórico do Supabase.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    c4.markdown(
+        f"""
+        <div class="cf-card {_cls(g_divs)}">
+            <div class="cf-card-label">Cresc. Dividendos (médio a.a.)</div>
+            <div class="cf-card-value">{format_growth_rate(g_divs)}</div>
+            <div class="cf-card-extra">Regressão em log no histórico do Supabase.</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -588,21 +655,10 @@ def render_empresa_view(ticker: str) -> None:
     with colR:
         st.caption(" ")
 
-    st.markdown("---")
+    # ✅ Crescimento médio anual em blocos (como você pediu)
+    render_cards_crescimento_supabase(df)
 
-    st.markdown("### Crescimento (médio anual) — baseado no histórico do Supabase")
-    cols = st.columns(4)
-    metrics = [
-        ("Receita Líquida", calculate_growth_rate(df, "Receita_Liquida")),
-        ("EBIT", calculate_growth_rate(df, "EBIT")),
-        ("Lucro Líquido", calculate_growth_rate(df, "Lucro_Liquido")),
-        ("Dividendos", calculate_growth_rate(df, "Dividendos")),
-    ]
-    for i, (label, v) in enumerate(metrics):
-        with cols[i]:
-            st.metric(label, format_growth_rate(v))
-
-    # Demonstrações Financeiras (sem "Últimos valores disponíveis")
+    # Demonstrações Financeiras (gráfico)
     render_graficos_demonstracoes_financeiras(df, ticker)
 
     st.markdown("---")
