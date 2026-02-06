@@ -24,7 +24,6 @@ except Exception:
 # Crescimento (médio anual) com regressão em log
 # ─────────────────────────────────────────────────────────────
 
-
 def calculate_growth_rate(df: pd.DataFrame, column: str) -> float:
     try:
         if df is None or df.empty or "Data" not in df.columns or column not in df.columns:
@@ -556,9 +555,13 @@ def render_empresa_view(ticker: str) -> None:
         use_container_width=True,
     )
 
+    # ─────────────────────────────────────────────────────────
+    # Tabela anual (PROFISSIONAL) — sem mudar cálculo, só exibição
+    # ─────────────────────────────────────────────────────────
     st.markdown("#### Desempenho anual do preço (1º x último pregão do ano)")
     perf = _annual_price_performance(price_hist)
 
+    # restringe a anos compatíveis com o histórico financeiro do Supabase, quando existir
     if df is not None and not df.empty and "Data" in df.columns:
         dd = pd.to_datetime(df["Data"], errors="coerce").dropna()
         if not dd.empty:
@@ -570,12 +573,72 @@ def render_empresa_view(ticker: str) -> None:
         st.info("Não foi possível calcular o desempenho anual com o histórico disponível.")
         return
 
-    perf_show = perf.copy()
-    perf_show["Preço inicial"] = perf_show["Preço inicial"].map(lambda x: f"R$ {x:,.2f}")
-    perf_show["Preço final"] = perf_show["Preço final"].map(lambda x: f"R$ {x:,.2f}")
-    perf_show["Variação %"] = perf_show["Variação %"].map(lambda x: f"{x:.2f}%")
+    perf_num = perf.copy()
+    perf_num["Preço inicial"] = pd.to_numeric(perf_num["Preço inicial"], errors="coerce")
+    perf_num["Preço final"] = pd.to_numeric(perf_num["Preço final"], errors="coerce")
+    perf_num["Variação %"] = pd.to_numeric(perf_num["Variação %"], errors="coerce")
 
-    st.dataframe(perf_show, use_container_width=True, hide_index=True)
+    def _brl(x):
+        if x is None or (isinstance(x, float) and (pd.isna(x) or np.isinf(x))):
+            return "-"
+        try:
+            return f"R$ {float(x):,.2f}"
+        except Exception:
+            return "-"
+
+    def _pct(x):
+        if x is None or (isinstance(x, float) and (pd.isna(x) or np.isinf(x))):
+            return "-"
+        try:
+            return f"{float(x):+.2f}%"
+        except Exception:
+            return "-"
+
+    def _color_return(v):
+        try:
+            if pd.isna(v):
+                return ""
+            return "color: #16a34a; font-weight: 700;" if float(v) >= 0 else "color: #dc2626; font-weight: 700;"
+        except Exception:
+            return ""
+
+    max_abs = float(np.nanmax(np.abs(perf_num["Variação %"].values))) if perf_num["Variação %"].notna().any() else 1.0
+    max_abs = max(max_abs, 1.0)
+
+    def _bar_css(v):
+        try:
+            if pd.isna(v):
+                return ""
+            v = float(v)
+            w = min(abs(v) / max_abs, 1.0) * 100.0
+            if v >= 0:
+                return f"background: linear-gradient(90deg, rgba(22,163,74,0.22) {w}%, transparent {w}%);"
+            return f"background: linear-gradient(90deg, rgba(220,38,38,0.18) {w}%, transparent {w}%);"
+        except Exception:
+            return ""
+
+    styler = (
+        perf_num.style
+        .format({
+            "Ano": "{:d}",
+            "Preço inicial": _brl,
+            "Preço final": _brl,
+            "Variação %": _pct,
+        })
+        .set_properties(**{
+            "text-align": "right",
+            "white-space": "nowrap",
+            "font-size": "0.95rem",
+        })
+        .set_table_styles([
+            {"selector": "th", "props": [("text-align", "right"), ("font-weight", "700")]},
+            {"selector": "td", "props": [("padding", "6px 10px")]},
+        ])
+        .applymap(_color_return, subset=["Variação %"])
+        .applymap(_bar_css, subset=["Variação %"])
+    )
+
+    st.dataframe(styler, use_container_width=True, hide_index=True)
 
     avg_yoy = float(np.nanmean(perf["Variação %"].values)) / 100.0
     cagr = _cagr_from_series(price_hist)
