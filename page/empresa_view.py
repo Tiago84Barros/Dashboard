@@ -271,7 +271,7 @@ def render_header_empresa(nome: str | None, website: str | None, price: float | 
 # ─────────────────────────────────────────────────────────────
 def render_cards_crescimento_supabase(df_fin: pd.DataFrame) -> None:
     st.markdown("---")
-    st.markdown("### Crescimento (médio anual) — baseado no histórico do Supabase")
+    st.markdown("### Crescimento (médio anual)")
 
     g_receita = calculate_growth_rate(df_fin, "Receita_Liquida")
     g_ebit = calculate_growth_rate(df_fin, "EBIT")
@@ -805,7 +805,7 @@ def render_empresa_view(ticker: str) -> None:
                 st.info("Nenhuma variável válida selecionada.")
 
     st.markdown("---")
-    st.markdown("### Preço da Ação (Histórico via yfinance)")
+    st.markdown("### Preço da Ação")
 
     start_price = _infer_price_start_from_financials(df)
 
@@ -879,5 +879,5 @@ def render_empresa_view(ticker: str) -> None:
     cagr = _cagr_from_series(price_hist)
 
     st.markdown("---")
-    st.markdown("### Resumo (blocos)")
+    st.markdown("### Resumo")
     render_cards_resumo(df, perf, avg_yoy=avg_yoy, cagr=cagr)
