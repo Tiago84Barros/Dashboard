@@ -56,6 +56,101 @@ def format_growth_rate(value: float) -> str:
 
 
 # ─────────────────────────────────────────────────────────────
+# Demonstrações Financeiras (NOVO) — gráficos do histórico do Supabase
+# ─────────────────────────────────────────────────────────────
+
+def _fmt_brl(x) -> str:
+    try:
+        if x is None or (isinstance(x, float) and (pd.isna(x) or np.isinf(x))):
+            return "-"
+        return f"R$ {float(x):,.0f}"
+    except Exception:
+        return "-"
+
+
+def render_graficos_demonstracoes_financeiras(df: pd.DataFrame, ticker: str) -> None:
+    st.markdown("---")
+    st.markdown("### Demonstrações Financeiras (Histórico do Banco)")
+
+    if df is None or df.empty or "Data" not in df.columns:
+        st.info("Sem dados de Demonstrações Financeiras para exibir.")
+        return
+
+    dff = df.copy()
+    dff["Data"] = pd.to_datetime(dff["Data"], errors="coerce")
+    dff = dff.dropna(subset=["Data"]).sort_values("Data")
+
+    candidatos = [
+        ("Receita_Liquida", "Receita Líquida"),
+        ("EBIT", "EBIT"),
+        ("Lucro_Liquido", "Lucro Líquido"),
+        ("Dividendos", "Dividendos"),
+        ("Ativo_Total", "Ativo Total"),
+        ("Patrimonio_Liquido", "Patrimônio Líquido"),
+        ("Divida_Total", "Dívida Total"),
+        ("Divida_Liquida", "Dívida Líquida"),
+        ("Caixa_Liquido", "Caixa Líquido"),
+    ]
+    existentes = [(c, lbl) for (c, lbl) in candidatos if c in dff.columns]
+
+    if not existentes:
+        st.info("Não encontrei colunas financeiras esperadas para plotar no DataFrame.")
+        return
+
+    col_a, col_b = st.columns([3, 2])
+    with col_a:
+        opcoes = [lbl for _, lbl in existentes]
+        default = [x for x in ["Receita Líquida", "Lucro Líquido", "Dividendos"] if x in opcoes]
+        selecionados_lbl = st.multiselect(
+            "Escolha as linhas para visualizar",
+            options=opcoes,
+            default=default if default else opcoes[:2],
+            key=f"df_demonstracoes_sel_{ticker}",
+        )
+    with col_b:
+        escala = st.radio(
+            "Escala",
+            options=["Normal", "Log (visual)"],
+            horizontal=True,
+            index=0,
+            key=f"df_demonstracoes_scale_{ticker}",
+        )
+
+    if not selecionados_lbl:
+        st.info("Selecione pelo menos um indicador.")
+        return
+
+    lbl_to_col = {lbl: col for col, lbl in existentes}
+    cols_sel = [lbl_to_col[lbl] for lbl in selecionados_lbl if lbl in lbl_to_col]
+
+    plot = dff[["Data"] + cols_sel].copy()
+    for c in cols_sel:
+        plot[c] = pd.to_numeric(plot[c], errors="coerce")
+
+    plot = plot.dropna(subset=["Data"], how="any")
+    if plot.empty:
+        st.info("Sem dados suficientes para plotar após limpeza.")
+        return
+
+    melt = plot.melt(id_vars=["Data"], value_vars=cols_sel, var_name="Indicador", value_name="Valor")
+    melt["Indicador"] = melt["Indicador"].map({col: lbl for col, lbl in existentes})
+
+    fig = px.line(melt, x="Data", y="Valor", color="Indicador", markers=True)
+    if escala.startswith("Log"):
+        fig.update_yaxes(type="log")
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("#### Últimos valores disponíveis (mais recente no banco)")
+    last = dff.sort_values("Data").iloc[-1]
+    cols = st.columns(min(4, len(cols_sel)))
+    for i, c in enumerate(cols_sel[:4]):
+        lbl = {col: lbl for col, lbl in existentes}.get(c, c)
+        with cols[i % len(cols)]:
+            st.metric(lbl, _fmt_brl(last.get(c)))
+
+
+# ─────────────────────────────────────────────────────────────
 # Preço (yfinance) — histórico + retornos anuais
 # ─────────────────────────────────────────────────────────────
 
@@ -69,7 +164,6 @@ def _get_price_history_cached(ticker: str, start: str) -> pd.Series:
     if dfp is None or dfp.empty:
         return pd.Series(dtype="float64")
 
-    # `baixar_precos` normalmente retorna coluna sem .SA (ex.: PETR4)
     col = (ticker or "").upper().replace(".SA", "").strip()
     if col not in dfp.columns:
         col = dfp.columns[0]
@@ -88,7 +182,7 @@ def _infer_price_start_from_financials(df_fin: pd.DataFrame) -> str:
     d = pd.to_datetime(df_fin["Data"], errors="coerce").dropna()
     if d.empty:
         return "2010-01-01"
-    y = max(int(d.min().year) - 1, 1990)  # 1 ano de folga
+    y = max(int(d.min().year) - 1, 1990)
     return f"{y}-01-01"
 
 
@@ -175,7 +269,6 @@ def _merge_display_multiplos_db_primary(
     """
     db1 = _latest_row_by_date(db_latest) if db_latest is not None else pd.DataFrame()
     if db1 is None or db1.empty:
-        # se não há DB, usa YF (se existir)
         if isinstance(yf_latest, pd.DataFrame) and not yf_latest.empty:
             return yf_latest.head(1).copy()
         return pd.DataFrame([{}])
@@ -210,9 +303,6 @@ def _fmt_metric(label: str, value) -> str:
 
 
 def _needs_yf_fundamentals(mult_db_latest: pd.DataFrame) -> bool:
-    """
-    Só consulta Yahoo se os campos típicos do Yahoo estiverem faltando no DB.
-    """
     if mult_db_latest is None or mult_db_latest.empty:
         return True
 
@@ -235,13 +325,9 @@ def render_empresa_view(ticker: str) -> None:
     if "Data" in df.columns:
         df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
 
-    # infos yfinance
     nome, website = get_company_info(ticker)
     price = get_price(ticker)
 
-    # ─────────────────────────────────────────────────────────
-    # CSS / estilos
-    # ─────────────────────────────────────────────────────────
     st.markdown(
         """
         <style>
@@ -251,6 +337,7 @@ def render_empresa_view(ticker: str) -> None:
             margin-bottom: 10px;
             display: flex;
             justify-content: center;
+            justify-items: center;
             align-items: center;
             height: 100px;
             width: 100%;
@@ -275,7 +362,6 @@ def render_empresa_view(ticker: str) -> None:
         unsafe_allow_html=True,
     )
 
-    # layout topo
     col1, col2 = st.columns([1, 4])
     with col1:
         st.image(get_logo_url(ticker), width=80)
@@ -303,6 +389,11 @@ def render_empresa_view(ticker: str) -> None:
             st.metric(label, format_growth_rate(v))
 
     # ─────────────────────────────────────────────────────────
+    # Demonstrações Financeiras (NOVO) — gráficos do histórico
+    # ─────────────────────────────────────────────────────────
+    render_graficos_demonstracoes_financeiras(df, ticker)
+
+    # ─────────────────────────────────────────────────────────
     # Indicadores Financeiros (cards) — DB + fallback silencioso
     # ─────────────────────────────────────────────────────────
     st.markdown("---")
@@ -311,10 +402,8 @@ def render_empresa_view(ticker: str) -> None:
     mult_db_recent = load_multiplos_limitado_from_db(ticker, limite=12)
     mult_db_latest = _latest_row_by_date(mult_db_recent) if mult_db_recent is not None else pd.DataFrame()
 
-    # Só consulta yfinance se realmente faltar algo (DY/PVP/PL/Payout) no DB
     mult_yf_latest = None
     if _needs_yf_fundamentals(mult_db_latest):
-        # get_fundamentals_yf pode retornar DF (e não dict) — tratamos como DF sempre
         mult_yf_latest = get_fundamentals_yf(ticker)
         if isinstance(mult_yf_latest, dict):
             mult_yf_latest = pd.DataFrame([mult_yf_latest])
@@ -380,7 +469,6 @@ def render_empresa_view(ticker: str) -> None:
     if mult_hist is None or mult_hist.empty:
         st.info("Histórico de múltiplos não encontrado no banco.")
     else:
-
         mult_hist = mult_hist.copy()
         mult_hist["Data"] = pd.to_datetime(mult_hist["Data"], errors="coerce")
         mult_hist = mult_hist.dropna(subset=["Data"]).sort_values("Data")
@@ -471,7 +559,6 @@ def render_empresa_view(ticker: str) -> None:
     st.markdown("#### Desempenho anual do preço (1º x último pregão do ano)")
     perf = _annual_price_performance(price_hist)
 
-    # restringe a anos compatíveis com o histórico financeiro do Supabase, quando existir
     if df is not None and not df.empty and "Data" in df.columns:
         dd = pd.to_datetime(df["Data"], errors="coerce").dropna()
         if not dd.empty:
