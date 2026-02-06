@@ -55,14 +55,32 @@ def format_growth_rate(value: float) -> str:
 
 
 # ─────────────────────────────────────────────────────────────
-# Demonstrações Financeiras (NOVO) — gráficos do histórico do Supabase
+# Demonstrações Financeiras — gráficos do histórico do Supabase
 # ─────────────────────────────────────────────────────────────
 
-def _fmt_brl(x) -> str:
+def _fmt_brl_compacto(x) -> str:
     try:
         if x is None or (isinstance(x, float) and (pd.isna(x) or np.isinf(x))):
             return "-"
-        return f"R$ {float(x):,.0f}"
+        v = float(x)
+        # compacto: B / M / K
+        av = abs(v)
+        if av >= 1e9:
+            return f"R$ {v/1e9:,.2f}B"
+        if av >= 1e6:
+            return f"R$ {v/1e6:,.2f}M"
+        if av >= 1e3:
+            return f"R$ {v/1e3:,.2f}K"
+        return f"R$ {v:,.2f}"
+    except Exception:
+        return "-"
+
+
+def _fmt_brl_full(x) -> str:
+    try:
+        if x is None or (isinstance(x, float) and (pd.isna(x) or np.isinf(x))):
+            return "-"
+        return f"R$ {float(x):,.2f}"
     except Exception:
         return "-"
 
@@ -146,7 +164,126 @@ def render_graficos_demonstracoes_financeiras(df: pd.DataFrame, ticker: str) -> 
     for i, c in enumerate(cols_sel[:4]):
         lbl = {col: lbl for col, lbl in existentes}.get(c, c)
         with cols[i % len(cols)]:
-            st.metric(lbl, _fmt_brl(last.get(c)))
+            st.metric(lbl, _fmt_brl_compacto(last.get(c)))
+
+
+# ─────────────────────────────────────────────────────────────
+# Blocos coloridos (NOVO) — estilo “Controle Financeiro”
+# ─────────────────────────────────────────────────────────────
+
+def _kpi_css() -> str:
+    return """
+    <style>
+      .kpi-grid { display:flex; flex-wrap:wrap; gap:14px; }
+      .kpi-card{
+        border-radius:16px;
+        padding:14px 16px;
+        border:1px solid rgba(255,255,255,0.10);
+        background: rgba(255,255,255,0.04);
+        box-shadow: 0 0 0 1px rgba(255,255,255,0.06) inset;
+        min-width: 220px;
+        flex: 1 1 240px;
+      }
+      .kpi-title{
+        font-size: 12px;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+        opacity: .85;
+        margin-bottom: 6px;
+      }
+      .kpi-value{
+        font-size: 28px;
+        font-weight: 800;
+        line-height: 1.05;
+        margin-bottom: 6px;
+      }
+      .kpi-sub{
+        font-size: 12px;
+        opacity: .80;
+      }
+      .kpi-green{ background: rgba(34,197,94,0.12); border-color: rgba(34,197,94,0.30); }
+      .kpi-red{ background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.30); }
+      .kpi-blue{ background: rgba(59,130,246,0.12); border-color: rgba(59,130,246,0.30); }
+      .kpi-amber{ background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.30); }
+      .kpi-slate{ background: rgba(148,163,184,0.10); border-color: rgba(148,163,184,0.22); }
+    </style>
+    """
+
+
+def _kpi_class_from_value(v: float | None, kind: str = "signed") -> str:
+    """
+    kind:
+      - signed: >=0 verde, <0 vermelho
+      - neutral: sempre slate
+    """
+    if kind == "neutral":
+        return "kpi-slate"
+    try:
+        if v is None or (isinstance(v, float) and (pd.isna(v) or np.isinf(v))):
+            return "kpi-slate"
+        return "kpi-green" if float(v) >= 0 else "kpi-red"
+    except Exception:
+        return "kpi-slate"
+
+
+def _kpi_card(title: str, value: str, sub: str, klass: str) -> str:
+    return f"""
+      <div class="kpi-card {klass}">
+        <div class="kpi-title">{title}</div>
+        <div class="kpi-value">{value}</div>
+        <div class="kpi-sub">{sub}</div>
+      </div>
+    """
+
+
+def render_kpi_blocks(
+    df_fin: pd.DataFrame,
+    ticker: str,
+    avg_yoy: float | None,
+    cagr: float | None,
+) -> None:
+    st.markdown("---")
+    st.markdown(_kpi_css(), unsafe_allow_html=True)
+    st.markdown("### Resumo em blocos")
+
+    last = None
+    if df_fin is not None and not df_fin.empty and "Data" in df_fin.columns:
+        tmp = df_fin.copy()
+        tmp["Data"] = pd.to_datetime(tmp["Data"], errors="coerce")
+        tmp = tmp.dropna(subset=["Data"]).sort_values("Data")
+        if not tmp.empty:
+            last = tmp.iloc[-1]
+
+    # valores absolutos (últimos)
+    receita = float(last.get("Receita_Liquida")) if last is not None and "Receita_Liquida" in last.index and pd.notna(last.get("Receita_Liquida")) else np.nan
+    lucro = float(last.get("Lucro_Liquido")) if last is not None and "Lucro_Liquido" in last.index and pd.notna(last.get("Lucro_Liquido")) else np.nan
+    divs = float(last.get("Dividendos")) if last is not None and "Dividendos" in last.index and pd.notna(last.get("Dividendos")) else np.nan
+
+    # crescimento médio anual (%)
+    g_receita = calculate_growth_rate(df_fin, "Receita_Liquida")
+    g_ebit = calculate_growth_rate(df_fin, "EBIT")
+    g_lucro = calculate_growth_rate(df_fin, "Lucro_Liquido")
+    g_divs = calculate_growth_rate(df_fin, "Dividendos")
+
+    # monta cards
+    cards = []
+
+    # absolutos (azul / âmbar / verde neutro)
+    cards.append(_kpi_card("Receita (último)", _fmt_brl_compacto(receita), "Último valor disponível no banco", "kpi-blue"))
+    cards.append(_kpi_card("Lucro (último)", _fmt_brl_compacto(lucro), "Último valor disponível no banco", "kpi-green" if (not pd.isna(lucro) and lucro >= 0) else "kpi-red"))
+    cards.append(_kpi_card("Dividendos (último)", _fmt_brl_compacto(divs), "Último valor disponível no banco", "kpi-amber"))
+
+    # percentuais (cores por sinal)
+    cards.append(_kpi_card("Crescimento Receita (médio a.a.)", format_growth_rate(g_receita), "Base: histórico no Supabase", _kpi_class_from_value(g_receita)))
+    cards.append(_kpi_card("Crescimento EBIT (médio a.a.)", format_growth_rate(g_ebit), "Base: histórico no Supabase", _kpi_class_from_value(g_ebit)))
+    cards.append(_kpi_card("Crescimento Lucro (médio a.a.)", format_growth_rate(g_lucro), "Base: histórico no Supabase", _kpi_class_from_value(g_lucro)))
+    cards.append(_kpi_card("Crescimento Dividendos (médio a.a.)", format_growth_rate(g_divs), "Base: histórico no Supabase", _kpi_class_from_value(g_divs)))
+
+    # preço (média variação anual e CAGR)
+    cards.append(_kpi_card("Média variação anual (preço)", format_growth_rate(avg_yoy if avg_yoy is not None else np.nan), "1º x último pregão por ano", _kpi_class_from_value(avg_yoy)))
+    cards.append(_kpi_card("CAGR (preço)", format_growth_rate(cagr if cagr is not None else np.nan), "Crescimento composto do período", _kpi_class_from_value(cagr)))
+
+    st.markdown(f'<div class="kpi-grid">{"".join(cards)}</div>', unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -313,6 +450,10 @@ def _needs_yf_fundamentals(mult_db_latest: pd.DataFrame) -> bool:
     return False
 
 
+# ─────────────────────────────────────────────────────────────
+# View principal
+# ─────────────────────────────────────────────────────────────
+
 def render_empresa_view(ticker: str) -> None:
     st.subheader(f"Visão Geral — {ticker}")
 
@@ -327,6 +468,7 @@ def render_empresa_view(ticker: str) -> None:
     nome, website = get_company_info(ticker)
     price = get_price(ticker)
 
+    # CSS existente
     st.markdown(
         """
         <style>
@@ -372,7 +514,7 @@ def render_empresa_view(ticker: str) -> None:
     st.markdown("---")
 
     # ─────────────────────────────────────────────────────────
-    # Crescimento (médio anual) — baseado no histórico do Supabase
+    # Crescimento (médio anual) — cards simples (mantido)
     # ─────────────────────────────────────────────────────────
     st.markdown("### Crescimento (médio anual) — baseado no histórico do Supabase")
 
@@ -388,12 +530,12 @@ def render_empresa_view(ticker: str) -> None:
             st.metric(label, format_growth_rate(v))
 
     # ─────────────────────────────────────────────────────────
-    # Demonstrações Financeiras (NOVO) — gráficos do histórico
+    # Demonstrações Financeiras — gráfico (mantido)
     # ─────────────────────────────────────────────────────────
     render_graficos_demonstracoes_financeiras(df, ticker)
 
     # ─────────────────────────────────────────────────────────
-    # Indicadores Financeiros (cards) — DB + fallback silencioso
+    # Indicadores Financeiros (cards) — DB + fallback silencioso (mantido)
     # ─────────────────────────────────────────────────────────
     st.markdown("---")
     st.markdown("### Indicadores Financeiros")
@@ -459,7 +601,7 @@ def render_empresa_view(ticker: str) -> None:
                 )
 
     # ─────────────────────────────────────────────────────────
-    # Gráfico de múltiplos (histórico do DB)
+    # Gráfico de múltiplos (histórico do DB) — mantido
     # ─────────────────────────────────────────────────────────
     st.markdown("---")
     st.markdown("### Gráfico de Múltiplos (Histórico do Banco)")
@@ -556,7 +698,7 @@ def render_empresa_view(ticker: str) -> None:
     )
 
     # ─────────────────────────────────────────────────────────
-    # Tabela anual (PROFISSIONAL) — sem mudar cálculo, só exibição
+    # Tabela anual (compacta + profissional)
     # ─────────────────────────────────────────────────────────
     st.markdown("#### Desempenho anual do preço (1º x último pregão do ano)")
     perf = _annual_price_performance(price_hist)
@@ -579,12 +721,7 @@ def render_empresa_view(ticker: str) -> None:
     perf_num["Variação %"] = pd.to_numeric(perf_num["Variação %"], errors="coerce")
 
     def _brl(x):
-        if x is None or (isinstance(x, float) and (pd.isna(x) or np.isinf(x))):
-            return "-"
-        try:
-            return f"R$ {float(x):,.2f}"
-        except Exception:
-            return "-"
+        return _fmt_brl_full(x)
 
     def _pct(x):
         if x is None or (isinstance(x, float) and (pd.isna(x) or np.isinf(x))):
@@ -598,7 +735,7 @@ def render_empresa_view(ticker: str) -> None:
         try:
             if pd.isna(v):
                 return ""
-            return "color: #16a34a; font-weight: 700;" if float(v) >= 0 else "color: #dc2626; font-weight: 700;"
+            return "color: #16a34a; font-weight: 800;" if float(v) >= 0 else "color: #dc2626; font-weight: 800;"
         except Exception:
             return ""
 
@@ -617,6 +754,7 @@ def render_empresa_view(ticker: str) -> None:
         except Exception:
             return ""
 
+    # ↓↓ AQUI está o “compactador” da tabela (padding menor + widths fixas)
     styler = (
         perf_num.style
         .format({
@@ -628,11 +766,17 @@ def render_empresa_view(ticker: str) -> None:
         .set_properties(**{
             "text-align": "right",
             "white-space": "nowrap",
-            "font-size": "0.95rem",
+            "font-size": "0.90rem",
         })
         .set_table_styles([
-            {"selector": "th", "props": [("text-align", "right"), ("font-weight", "700")]},
-            {"selector": "td", "props": [("padding", "6px 10px")]},
+            {"selector": "table", "props": [("table-layout", "fixed"), ("width", "100%")]},
+            {"selector": "th", "props": [("text-align", "right"), ("font-weight", "800"), ("padding", "4px 6px")]},
+            {"selector": "td", "props": [("padding", "4px 6px")]},
+            # larguras aproximadas por coluna (funciona bem com fixed layout)
+            {"selector": "th:nth-child(1), td:nth-child(1)", "props": [("width", "70px")]},   # Ano
+            {"selector": "th:nth-child(2), td:nth-child(2)", "props": [("width", "150px")]},  # Preço inicial
+            {"selector": "th:nth-child(3), td:nth-child(3)", "props": [("width", "150px")]},  # Preço final
+            {"selector": "th:nth-child(4), td:nth-child(4)", "props": [("width", "120px")]},  # Variação
         ])
         .applymap(_color_return, subset=["Variação %"])
         .applymap(_bar_css, subset=["Variação %"])
@@ -640,11 +784,19 @@ def render_empresa_view(ticker: str) -> None:
 
     st.dataframe(styler, use_container_width=True, hide_index=True)
 
-    avg_yoy = float(np.nanmean(perf["Variação %"].values)) / 100.0
+    # métricas de preço
+    avg_yoy = float(np.nanmean(perf["Variação %"].values)) / 100.0 if not perf.empty else float("nan")
     cagr = _cagr_from_series(price_hist)
 
+    # ─────────────────────────────────────────────────────────
+    # Blocos coloridos (NOVO) com Receita/Lucro/Dividendos + % + preço
+    # (coloquei aqui ao final porque você pediu incluir também média anual e CAGR)
+    # ─────────────────────────────────────────────────────────
+    render_kpi_blocks(df, ticker, avg_yoy=avg_yoy, cagr=cagr)
+
+    # mantém também os dois cards simples (se você quiser tirar depois, é só remover)
     c1, c2 = st.columns(2)
     with c1:
-        st.metric("Média de variação anual", format_growth_rate(avg_yoy))
+        st.metric("Média de variação anual (preço)", format_growth_rate(avg_yoy))
     with c2:
         st.metric("CAGR (crescimento composto)", format_growth_rate(cagr))
