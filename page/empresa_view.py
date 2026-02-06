@@ -11,7 +11,7 @@ from core.db_loader import (
     load_multiplos_from_db,
     load_multiplos_limitado_from_db,
 )
-from core.yf_data import get_price, get_fundamentals_yf
+from core.yf_data import get_price, get_fundamentals_yf, baixar_precos
 
 
 # ─────────────────────────────────────────────────────────────
@@ -50,6 +50,81 @@ def format_growth_rate(value: float) -> str:
 
 
 # ─────────────────────────────────────────────────────────────
+# Preço (yfinance) — histórico + retornos anuais
+# ─────────────────────────────────────────────────────────────
+
+@st.cache_data(show_spinner=False, ttl=60 * 60)  # 1h
+def _get_price_history_cached(ticker: str, start: str) -> pd.Series:
+    """Baixa histórico de preço ajustado (Close) via yfinance e devolve Series com índice datetime."""
+    dfp = baixar_precos(ticker, start=start)
+    if dfp is None or dfp.empty:
+        return pd.Series(dtype="float64")
+    # `baixar_precos` retorna colunas sem .SA (ex.: PETR4)
+    col = (ticker or "").upper().replace(".SA", "").strip()
+    if col not in dfp.columns:
+        # fallback: primeira coluna
+        col = dfp.columns[0]
+    s = pd.to_numeric(dfp[col], errors="coerce").dropna()
+    s.index = pd.to_datetime(s.index, errors="coerce")
+    s = s.dropna()
+    s.name = "Preço (ajust.)"
+    return s
+
+
+def _infer_price_start_from_financials(df_fin: pd.DataFrame) -> str:
+    """Define o start do yfinance baseado no histórico financeiro disponível no Supabase."""
+    if df_fin is None or df_fin.empty or "Data" not in df_fin.columns:
+        return "2010-01-01"
+    d = pd.to_datetime(df_fin["Data"], errors="coerce").dropna()
+    if d.empty:
+        return "2010-01-01"
+    # Um ano a mais para pegar 'início do ano' com mais chance de ter pregões
+    y = int(d.min().year) - 1
+    y = max(y, 1990)
+    return f"{y}-01-01"
+
+
+def _annual_price_performance(price: pd.Series) -> pd.DataFrame:
+    """Tabela de desempenho anual (1º e último pregão do ano)."""
+    if price is None or price.empty:
+        return pd.DataFrame(columns=["Ano", "Preço inicial", "Preço final", "Variação %"])
+
+    s = price.sort_index().dropna()
+    df = s.to_frame("close")
+    df["Ano"] = df.index.year
+
+    grp = df.groupby("Ano")["close"]
+    ini = grp.first()
+    fim = grp.last()
+
+    out = pd.DataFrame(
+        {
+            "Ano": ini.index.astype(int),
+            "Preço inicial": ini.values,
+            "Preço final": fim.values,
+        }
+    )
+    out["Variação %"] = (out["Preço final"] / out["Preço inicial"] - 1.0) * 100.0
+    return out.sort_values("Ano").reset_index(drop=True)
+
+
+def _cagr_from_series(price: pd.Series) -> float:
+    if price is None or price.empty:
+        return float("nan")
+    s = price.sort_index().dropna()
+    if s.shape[0] < 2:
+        return float("nan")
+    start_val = float(s.iloc[0])
+    end_val = float(s.iloc[-1])
+    if start_val <= 0 or end_val <= 0:
+        return float("nan")
+    years = (s.index[-1] - s.index[0]).days / 365.25
+    if years <= 0:
+        return float("nan")
+    return (end_val / start_val) ** (1.0 / years) - 1.0
+
+
+# ─────────────────────────────────────────────────────────────
 # Helpers de múltiplos (display)
 # ─────────────────────────────────────────────────────────────
 
@@ -61,278 +136,101 @@ def _latest_row_by_date(df: pd.DataFrame, date_col: str = "Data") -> pd.DataFram
     if date_col in out.columns:
         out[date_col] = pd.to_datetime(out[date_col], errors="coerce")
         out = out.dropna(subset=[date_col]).sort_values(date_col)
-        if out.empty:
-            return pd.DataFrame()
-        return out.tail(1).reset_index(drop=True)
-    return out.head(1).reset_index(drop=True)
-
-
-def _is_missing(x) -> bool:
-    try:
-        if x is None:
-            return True
-        if isinstance(x, (float, int)):
-            if pd.isna(x) or np.isinf(x) or float(x) == 0.0:
-                return True
-        if isinstance(x, str) and not x.strip():
-            return True
-    except Exception:
-        return True
-    return False
-
-
-def _merge_display_multiplos_db_primary(
-    db_latest: pd.DataFrame,
-    yf_latest: pd.DataFrame | None,
-) -> pd.DataFrame:
-    """
-    DF final (1 linha) para exibição:
-      - Base: DB
-      - Complemento: YF somente nos campos faltantes
-    """
-    db1 = _latest_row_by_date(db_latest) if db_latest is not None else pd.DataFrame()
-    if db1 is None or db1.empty:
-        # se não há DB, usa YF (se existir)
-        if isinstance(yf_latest, pd.DataFrame) and not yf_latest.empty:
-            return yf_latest.head(1).copy()
-        return pd.DataFrame([{}])
-
-    df_disp = db1.copy()
-
-    if isinstance(yf_latest, pd.DataFrame) and not yf_latest.empty:
-        yf1 = yf_latest.head(1).copy()
-        for c in yf1.columns:
-            yv = yf1.at[0, c]
-            if c not in df_disp.columns:
-                df_disp[c] = yv
-            else:
-                dbv = df_disp.at[0, c]
-                if _is_missing(dbv) and not _is_missing(yv):
-                    df_disp.at[0, c] = yv
-
-    return df_disp
+        return out.iloc[[-1]].copy()
+    return out.iloc[[-1]].copy()
 
 
 def _fmt_metric(label: str, value) -> str:
-    if value is None or (isinstance(value, float) and (pd.isna(value) or np.isinf(value))) or value == 0:
+    if value is None or (isinstance(value, float) and (pd.isna(value) or np.isinf(value))):
         return "-"
     try:
-        v = float(value)
+        if "P/" in label or label in {"P/L", "P/VP", "P/EBIT", "EV/EBITDA"}:
+            return f"{float(value):.2f}"
+        if "DY" in label or "Yield" in label:
+            return f"{float(value):.2%}"
+        if "Margem" in label:
+            return f"{float(value):.2%}"
+        if label in {"ROE", "ROIC"}:
+            return f"{float(value):.2%}"
+        return f"{float(value):,.2f}"
     except Exception:
-        return "-"
-
-    if "Margem" in label or label in ["ROE", "ROIC", "Payout", "Dividend Yield", "Endividamento Total"]:
-        return f"{v:.2f}%"
-    return f"{v:.2f}"
+        return str(value)
 
 
-def _needs_yf_fundamentals(mult_db_latest: pd.DataFrame) -> bool:
-    """
-    Só consulta Yahoo se os campos típicos do Yahoo estiverem faltando no DB.
-    """
-    if mult_db_latest is None or mult_db_latest.empty:
-        return True
+def render_empresa_view(ticker: str) -> None:
+    st.subheader(f"Visão Geral — {ticker}")
 
-    row = mult_db_latest.iloc[0]
-    needed = ["DY", "P/VP", "P/L", "Payout"]
-    for c in needed:
-        if c not in mult_db_latest.columns or _is_missing(row.get(c)):
-            return True
-    return False
-
-
-# ─────────────────────────────────────────────────────────────
-# Página principal
-# ─────────────────────────────────────────────────────────────
-
-def render_empresa_view(ticker: str):
-    if not ticker or not str(ticker).strip():
-        st.warning("Informe um ticker válido.")
+    df = load_data_from_db(ticker)
+    if df is None or df.empty:
+        st.warning("Dados financeiros não encontrados para este ticker.")
         return
 
-    ticker = str(ticker).strip().upper()
+    # garante Data em datetime
+    if "Data" in df.columns:
+        df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
 
-    # ── DRE / indicadores do DB (fonte primária)
-    indicadores = load_data_from_db(ticker)
-    if indicadores is None or indicadores.empty:
-        st.error("Indicadores financeiros (DRE) não encontrados no banco.")
-        return
+    # infos yfinance
+    nome, website = get_company_info(ticker)
+    price = get_price(ticker)
+    fundamentals = get_fundamentals_yf(ticker)
 
-    indicadores = indicadores.drop(columns=["Ticker"], errors="ignore")
-    indicadores["Data"] = pd.to_datetime(indicadores["Data"], errors="coerce")
-    indicadores = indicadores.dropna(subset=["Data"]).sort_values("Data")
-
-    # ── Cabeçalho (sem mencionar Yahoo)
-    company_name, company_website = get_company_info(ticker)
-    company_name = company_name or ticker.replace(".SA", "").upper()
-    current_price = get_price(ticker)
-    logo_url = get_logo_url(ticker)
-
-    col1, col2 = st.columns([4, 1])
+    # layout topo (logo + infos)
+    col1, col2 = st.columns([1, 4])
     with col1:
-        if current_price is None:
-            st.subheader(f"{company_name} — Preço atual indisponível")
-        else:
-            st.subheader(
-                f"{company_name} — Preço Atual: R$ {current_price:,.2f}"
-                .replace(",", "X").replace(".", ",").replace("X", ".")
-            )
-        if company_website:
-            st.caption(company_website)
-        st.caption(f"Ticker: {ticker}")
+        st.image(get_logo_url(ticker), width=80)
     with col2:
-        st.image(logo_url, width=80)
+        st.markdown(f"**Empresa:** {nome or '-'}")
+        st.markdown(f"**Site:** {website or '-'}")
+        st.markdown(f"**Preço atual (yfinance):** {('R$ ' + f'{price:,.2f}') if price else '-'}")
 
-    # ── Crescimentos
-    growth_rates = {col: calculate_growth_rate(indicadores, col) for col in indicadores.columns if col != "Data"}
-
-    st.markdown("## Visão Geral (Taxa de Crescimento Médio Anual)")
-    st.markdown(
-        """
-        <style>
-        .growth-box {
-            border: 2px solid #ddd;
-            padding: 20px;
-            border-radius: 10px;
-            margin-bottom: 10px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100px;
-            width: 100%;
-            text-align: center;
-            font-size: 20px;
-            font-weight: bold;
-            color: #333;
-            background-color: #f9f9f9;
-        }
-        .metric-box {
-            background-color: #f9f9f9;
-            border-radius: 10px;
-            padding: 10px;
-            text-align: center;
-            margin-bottom: 15px;
-            border: 1px solid #e0e0e0;
-        }
-        .metric-value { font-size: 24px; font-weight: bold; color: #222; }
-        .metric-label { font-size: 14px; color: #ff6600; font-weight: bold; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.markdown(
-            f"<div class='growth-box'>Receita Líquida: {format_growth_rate(growth_rates.get('Receita_Liquida'))}</div>",
-            unsafe_allow_html=True,
-        )
-    with c2:
-        st.markdown(
-            f"<div class='growth-box'>Lucro Líquido: {format_growth_rate(growth_rates.get('Lucro_Liquido'))}</div>",
-            unsafe_allow_html=True,
-        )
-    with c3:
-        st.markdown(
-            f"<div class='growth-box'>Patrimônio Líquido: {format_growth_rate(growth_rates.get('Patrimonio_Liquido'))}</div>",
-            unsafe_allow_html=True,
-        )
+    st.markdown("---")
 
     # ─────────────────────────────────────────────────────────
-    # Demonstrações Financeiras (DRE)
+    # Indicadores financeiros (crescimento)
+    # ─────────────────────────────────────────────────────────
+    st.markdown("### Crescimento (médio anual) — baseado no histórico do Supabase")
+
+    cols = st.columns(4)
+    metrics = [
+        ("Receita Líquida", calculate_growth_rate(df, "Receita_Liquida")),
+        ("EBIT", calculate_growth_rate(df, "EBIT")),
+        ("Lucro Líquido", calculate_growth_rate(df, "Lucro_Liquido")),
+        ("Dividendos", calculate_growth_rate(df, "Dividendos")),
+    ]
+    for i, (label, v) in enumerate(metrics):
+        with cols[i]:
+            st.metric(label, format_growth_rate(v))
+
+    # ─────────────────────────────────────────────────────────
+    # Múltiplos (yfinance atual)
     # ─────────────────────────────────────────────────────────
     st.markdown("---")
-    st.markdown("### Demonstrações Financeiras")
+    st.markdown("### Múltiplos (yfinance — atual)")
 
-    friendly = {
-        "Receita_Liquida": "Receita Líquida",
-        "Lucro_Liquido": "Lucro Líquido",
-        "EBIT": "EBIT",
-        "LPA": "LPA",
-        "Divida_Liquida": "Dívida Líquida",
-        "Patrimonio_Liquido": "Patrimônio Líquido",
-        "Caixa_Liquido": "Caixa Líquido",
-    }
-
-    opcoes = [friendly.get(c, c.replace("_", " ")) for c in indicadores.columns if c != "Data"]
-    default_sel = [x for x in ["Receita Líquida", "Lucro Líquido", "Dívida Líquida"] if x in opcoes]
-    sel = st.multiselect("Escolha os Indicadores:", opcoes, default=default_sel)
-
-    if sel:
-        rev = {v: k for k, v in friendly.items()}
-        cols_sel = [rev.get(x, x.replace(" ", "_")) for x in sel if x]
-        cols_sel = [c for c in cols_sel if c in indicadores.columns]
-
-        if cols_sel:
-            dfm = indicadores.melt(id_vars=["Data"], value_vars=cols_sel, var_name="Indicador", value_name="Valor")
-            dfm["Indicador"] = dfm["Indicador"].map(lambda x: friendly.get(x, x.replace("_", " ")))
-            st.plotly_chart(px.bar(dfm, x="Data", y="Valor", color="Indicador", barmode="group"), use_container_width=True)
-        else:
-            st.info("Sem colunas válidas para o gráfico (dados insuficientes no banco).")
-
-    # ─────────────────────────────────────────────────────────
-    # Indicadores Financeiros (cards) — DB + fallback silencioso
-    # ─────────────────────────────────────────────────────────
-    st.markdown("---")
-    st.markdown("### Indicadores Financeiros")
-
-    mult_db_recent = load_multiplos_limitado_from_db(ticker, limite=12)
-    mult_db_latest = _latest_row_by_date(mult_db_recent) if mult_db_recent is not None else pd.DataFrame()
-
-    # Só consulta yfinance se realmente faltar algo (DY/PVP/PL/Payout) no DB
-    mult_yf_latest = None
-    if _needs_yf_fundamentals(mult_db_latest):
-        mult_yf_latest = get_fundamentals_yf(ticker)
-
-    multiplos_display = _merge_display_multiplos_db_primary(mult_db_latest, mult_yf_latest)
-
-    descricoes = {
-        "Margem Líquida": "Lucro Líquido ÷ Receita Líquida — quanto sobra do faturamento como lucro final.",
-        "Margem Operacional": "EBIT ÷ Receita Líquida — eficiência operacional antes de juros e impostos.",
-        "ROE": "Lucro Líquido ÷ Patrimônio Líquido — rentabilidade ao acionista.",
-        "ROIC": "NOPAT ÷ Capital Investido — eficiência do capital operacional.",
-        "Dividend Yield": "Dividendos por ação ÷ Preço da ação — rentabilidade via proventos.",
-        "P/VP": "Preço ÷ Valor patrimonial por ação — quanto se paga pelo patrimônio.",
-        "Payout": "Dividendos ÷ Lucro Líquido — parcela do lucro distribuída.",
-        "P/L": "Preço ÷ Lucro por ação — quantos anos o lucro ‘paga’ o preço.",
-        "Endividamento Total": "Dívida Total ÷ Patrimônio — grau de alavancagem financeira.",
-        "Alavancagem Financeira": "Indicador de endividamento (depende da fonte).",
-        "Liquidez Corrente": "Ativo Circulante ÷ Passivo Circulante — fôlego de curto prazo.",
-    }
-
-    valores = [
-        ("Margem_Liquida", "Margem Líquida"),
-        ("Margem_Operacional", "Margem Operacional"),
-        ("ROE", "ROE"),
-        ("ROIC", "ROIC"),
-        ("DY", "Dividend Yield"),
-        ("P/VP", "P/VP"),
-        ("Payout", "Payout"),
-        ("P/L", "P/L"),
-        ("Endividamento_Total", "Endividamento Total"),
-        ("Alavancagem_Financeira", "Alavancagem Financeira"),
-        ("Liquidez_Corrente", "Liquidez Corrente"),
+    mult = fundamentals or {}
+    multiplos_show = [
+        ("P/L", mult.get("pe_ratio")),
+        ("P/VP", mult.get("pb_ratio")),
+        ("DY", mult.get("dividend_yield")),
+        ("ROE", mult.get("roe")),
+        ("ROIC", mult.get("roic")),
+        ("Margem Líquida", mult.get("profit_margin")),
+        ("Margem Operacional", mult.get("operating_margin")),
+        ("EV/EBITDA", mult.get("ev_ebitda")),
     ]
 
-    if multiplos_display is None or multiplos_display.empty:
-        st.info("Indicadores financeiros indisponíveis.")
-    else:
-        rows = (len(valores) + 3) // 4
-        for i in range(rows):
-            cols = st.columns(4)
-            for j, (col_key, label) in enumerate(valores[i * 4 : (i + 1) * 4]):
-                with cols[j]:
-                    v = multiplos_display.at[0, col_key] if col_key in multiplos_display.columns else None
-                    tooltip = descricoes.get(label, "")
-                    st.markdown(
-                        f"""
-                        <div class='metric-box' title="{tooltip}">
-                            <div class='metric-value'>{_fmt_metric(label, v)}</div>
-                            <div class='metric-label'><strong>{label}</strong></div>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
+    cols = st.columns(4)
+    for i, (label, v) in enumerate(multiplos_show):
+        with cols[i % 4]:
+            st.markdown(
+                f"""
+                <div style='padding:12px;border-radius:10px;border:1px solid #eee'>
+                    <div class='metric-value'>{_fmt_metric(label, v)}</div>
+                    <div class='metric-label'><strong>{label}</strong></div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
     # ─────────────────────────────────────────────────────────
     # Gráfico de múltiplos (histórico do DB)
@@ -367,3 +265,86 @@ def render_empresa_view(ticker: str):
             st.plotly_chart(px.bar(dfm_mult, x="Data", y="Valor", color="Indicador", barmode="group"), use_container_width=True)
         else:
             st.info("Nenhuma variável válida selecionada.")
+
+    # ─────────────────────────────────────────────────────────
+    # Gráfico de Preço (yfinance) + Desempenho anual
+    # ─────────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### Preço da Ação (Histórico via yfinance)")
+
+    # define start com base no histórico financeiro do Supabase
+    start_price = _infer_price_start_from_financials(df)
+
+    with st.expander("Configurações do gráfico de preço", expanded=False):
+        modo = st.radio(
+            "Visualização",
+            options=["Total", "Anual", "Mensal"],
+            horizontal=True,
+            index=0,
+            key=f"price_view_mode_{ticker}",
+        )
+        # opcional: permitir ajustar janelas (sem obrigar)
+        lookback_anos = st.slider("Anual: últimos N meses", min_value=3, max_value=24, value=12, step=1, key=f"price_lookback_y_{ticker}")
+        lookback_dias = st.slider("Mensal: últimos N dias", min_value=7, max_value=120, value=30, step=1, key=f"price_lookback_m_{ticker}")
+
+    price_hist = _get_price_history_cached(ticker, start=start_price)
+    if price_hist.empty:
+        st.info("Não foi possível obter histórico de preços via yfinance para este ticker.")
+        return
+
+    s_plot = price_hist.copy()
+
+    if modo == "Anual":
+        cutoff = pd.Timestamp.today().normalize() - pd.Timedelta(days=int(lookback_anos * 30.44))
+        s_plot = s_plot[s_plot.index >= cutoff]
+    elif modo == "Mensal":
+        cutoff = pd.Timestamp.today().normalize() - pd.Timedelta(days=int(lookback_dias))
+        s_plot = s_plot[s_plot.index >= cutoff]
+
+    df_price_plot = s_plot.reset_index()
+    df_price_plot.columns = ["Data", "Preço"]
+
+    st.plotly_chart(
+        px.line(df_price_plot, x="Data", y="Preço", title=f"{ticker} — {modo}"),
+        use_container_width=True,
+    )
+
+    st.markdown("#### Desempenho anual do preço (1º x último pregão do ano)")
+    perf = _annual_price_performance(price_hist)
+
+    if perf.empty:
+        st.info("Não foi possível calcular o desempenho anual com o histórico disponível.")
+        return
+
+    # restringe a anos compatíveis com o histórico financeiro do Supabase, quando existir
+    if df is not None and not df.empty and "Data" in df.columns:
+        dmin = pd.to_datetime(df["Data"], errors="coerce").dropna()
+        if not dmin.empty:
+            y_min = int(dmin.min().year)
+            y_max = int(pd.to_datetime(df["Data"], errors="coerce").dropna().max().year)
+            perf = perf[(perf["Ano"] >= y_min) & (perf["Ano"] <= y_max)]
+
+    perf_show = perf.copy()
+    perf_show["Preço inicial"] = perf_show["Preço inicial"].map(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    perf_show["Preço final"] = perf_show["Preço final"].map(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    perf_show["Variação %"] = perf_show["Variação %"].map(lambda x: f"{x:,.2f}%".replace(",", "X").replace(".", ",").replace("X", "."))
+
+    st.dataframe(perf_show, use_container_width=True, hide_index=True)
+
+    # métricas resumo
+    perf_num = _annual_price_performance(price_hist)
+    if df is not None and not df.empty and "Data" in df.columns:
+        dmin = pd.to_datetime(df["Data"], errors="coerce").dropna()
+        if not dmin.empty:
+            y_min = int(dmin.min().year)
+            y_max = int(pd.to_datetime(df["Data"], errors="coerce").dropna().max().year)
+            perf_num = perf_num[(perf_num["Ano"] >= y_min) & (perf_num["Ano"] <= y_max)]
+
+    avg_yoy = float(np.nanmean(perf_num["Variação %"].values)) / 100.0 if not perf_num.empty else float("nan")
+    cagr = _cagr_from_series(price_hist)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.metric("Média de variação anual", format_growth_rate(avg_yoy))
+    with c2:
+        st.metric("CAGR (crescimento composto)", format_growth_rate(cagr))
