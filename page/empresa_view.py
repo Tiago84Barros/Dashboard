@@ -96,6 +96,7 @@ def format_growth_rate(value: float) -> str:
 
 # ─────────────────────────────────────────────────────────────
 # Demonstrações Financeiras — gráficos do histórico do Supabase
+# (REMOVIDO: bloco "Últimos valores disponíveis")
 # ─────────────────────────────────────────────────────────────
 def render_graficos_demonstracoes_financeiras(df: pd.DataFrame, ticker: str) -> None:
     st.markdown("---")
@@ -168,14 +169,6 @@ def render_graficos_demonstracoes_financeiras(df: pd.DataFrame, ticker: str) -> 
         fig.update_yaxes(type="log")
     st.plotly_chart(fig, use_container_width=True)
 
-    st.markdown("#### Últimos valores disponíveis (mais recente no banco)")
-    last = dff.sort_values("Data").iloc[-1]
-    cols = st.columns(min(4, len(cols_sel)))
-    for i, c in enumerate(cols_sel[:4]):
-        lbl = {col: lbl for col, lbl in existentes}.get(c, c)
-        with cols[i % len(cols)]:
-            st.metric(lbl, format_brl_compacto(last.get(c)))
-
 
 # ─────────────────────────────────────────────────────────────
 # CSS / Header / Cards no padrão "Controle Financeiro"
@@ -234,7 +227,6 @@ def _inject_cf_css() -> None:
           .cf-card-balance-positive{ background: rgba(34,197,94,0.12); border-color: rgba(34,197,94,0.30); }
           .cf-card-balance-negative{ background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.30); }
 
-          /* compacta dataframes */
           div[data-testid="stDataFrame"] { border-radius: 14px; overflow: hidden; }
         </style>
         """,
@@ -285,7 +277,6 @@ def render_cards_resumo(df_fin: pd.DataFrame, perf_price: pd.DataFrame, avg_yoy:
     g_lucro = calculate_growth_rate(df_fin, "Lucro_Liquido")
     g_divs = calculate_growth_rate(df_fin, "Dividendos")
 
-    # linha 1 (valores absolutos + preço)
     col1, col2, col3, col4 = st.columns(4)
 
     col1.markdown(
@@ -334,7 +325,6 @@ def render_cards_resumo(df_fin: pd.DataFrame, perf_price: pd.DataFrame, avg_yoy:
         unsafe_allow_html=True,
     )
 
-    # linha 2 (crescimentos + média variação anual)
     col5, col6, col7, col8 = st.columns(4)
 
     r1_class = "cf-card-balance-positive" if (not pd.isna(g_receita) and g_receita >= 0) else "cf-card-balance-negative"
@@ -385,7 +375,6 @@ def render_cards_resumo(df_fin: pd.DataFrame, perf_price: pd.DataFrame, avg_yoy:
         unsafe_allow_html=True,
     )
 
-    # linha 3 (extra: lucro/dividendos crescimento + EBIT absoluto)
     col9, col10, col11, col12 = st.columns(4)
 
     col9.markdown(
@@ -411,13 +400,12 @@ def render_cards_resumo(df_fin: pd.DataFrame, perf_price: pd.DataFrame, avg_yoy:
         unsafe_allow_html=True,
     )
 
-    # (reservas) deixa dois cards “neutros” para futuras métricas sem quebrar layout
     col11.markdown(
         f"""
         <div class="cf-card cf-card-ratio">
             <div class="cf-card-label">Janela de preço (anos)</div>
             <div class="cf-card-value">{int(perf_price["Ano"].nunique()) if perf_price is not None and not perf_price.empty else "-"}</div>
-            <div class="cf-card-extra">Quantidade de anos com cálculo anual disponível.</div>
+            <div class="cf-card-extra">Anos com cálculo anual disponível.</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -480,9 +468,7 @@ def _annual_price_performance(price: pd.Series) -> pd.DataFrame:
     ini = grp.first()
     fim = grp.last()
 
-    out = pd.DataFrame(
-        {"Ano": ini.index.astype(int), "Preço inicial": ini.values, "Preço final": fim.values}
-    )
+    out = pd.DataFrame({"Ano": ini.index.astype(int), "Preço inicial": ini.values, "Preço final": fim.values})
     out["Variação %"] = (out["Preço final"] / out["Preço inicial"] - 1.0) * 100.0
     return out.sort_values("Ano").reset_index(drop=True)
 
@@ -594,10 +580,8 @@ def render_empresa_view(ticker: str) -> None:
     nome, website = get_company_info(ticker)
     price_now = get_price(ticker)
 
-    # Header no padrão "Controle Financeiro"
     render_header_empresa(nome, website, price_now, ticker)
 
-    # logo (mantido)
     colL, colR = st.columns([1, 5])
     with colL:
         st.image(get_logo_url(ticker), width=80)
@@ -606,9 +590,6 @@ def render_empresa_view(ticker: str) -> None:
 
     st.markdown("---")
 
-    # ─────────────────────────────────────────────────────────
-    # Crescimento (médio anual) — (mantido)
-    # ─────────────────────────────────────────────────────────
     st.markdown("### Crescimento (médio anual) — baseado no histórico do Supabase")
     cols = st.columns(4)
     metrics = [
@@ -621,14 +602,9 @@ def render_empresa_view(ticker: str) -> None:
         with cols[i]:
             st.metric(label, format_growth_rate(v))
 
-    # ─────────────────────────────────────────────────────────
-    # Demonstrações Financeiras — gráfico (mantido)
-    # ─────────────────────────────────────────────────────────
+    # Demonstrações Financeiras (sem "Últimos valores disponíveis")
     render_graficos_demonstracoes_financeiras(df, ticker)
 
-    # ─────────────────────────────────────────────────────────
-    # Indicadores Financeiros (cards) — DB + fallback (mantido)
-    # ─────────────────────────────────────────────────────────
     st.markdown("---")
     st.markdown("### Indicadores Financeiros")
 
@@ -671,7 +647,6 @@ def render_empresa_view(ticker: str) -> None:
         ("Liquidez_Corrente", "Liquidez Corrente"),
     ]
 
-    # layout existente de expander (mantido)
     c1, c2, c3 = st.columns(3)
     cols_cards = [c1, c2, c3]
     for i, (col_key, label) in enumerate(valores):
@@ -690,9 +665,6 @@ def render_empresa_view(ticker: str) -> None:
                     unsafe_allow_html=True,
                 )
 
-    # ─────────────────────────────────────────────────────────
-    # Gráfico de múltiplos (histórico do DB) — mantido
-    # ─────────────────────────────────────────────────────────
     st.markdown("---")
     st.markdown("### Gráfico de Múltiplos (Histórico do Banco)")
 
@@ -731,9 +703,6 @@ def render_empresa_view(ticker: str) -> None:
             else:
                 st.info("Nenhuma variável válida selecionada.")
 
-    # ─────────────────────────────────────────────────────────
-    # Preço da ação (yfinance) + desempenho anual
-    # ─────────────────────────────────────────────────────────
     st.markdown("---")
     st.markdown("### Preço da Ação (Histórico via yfinance)")
 
@@ -787,11 +756,9 @@ def render_empresa_view(ticker: str) -> None:
         use_container_width=True,
     )
 
-    # tabela anual + métricas
     st.markdown("#### Desempenho anual do preço (1º x último pregão do ano)")
     perf = _annual_price_performance(price_hist)
 
-    # restringe a anos compatíveis com o histórico financeiro do Supabase
     if df is not None and not df.empty and "Data" in df.columns:
         dd = pd.to_datetime(df["Data"], errors="coerce").dropna()
         if not dd.empty:
@@ -803,20 +770,13 @@ def render_empresa_view(ticker: str) -> None:
         st.info("Não foi possível calcular o desempenho anual com o histórico disponível.")
         return
 
-    # métricas de preço
     avg_yoy = float(np.nanmean(perf["Variação %"].values)) / 100.0 if not perf.empty else float("nan")
     cagr = _cagr_from_series(price_hist)
 
-    # ─────────────────────────────────────────────────────────
-    # BLOCO PROFISSIONAL (CARDS CF) — exatamente no padrão do seu exemplo
-    # ─────────────────────────────────────────────────────────
     st.markdown("---")
     st.markdown("### Resumo (blocos)")
     render_cards_resumo(df, perf, avg_yoy=avg_yoy, cagr=cagr)
 
-    # ─────────────────────────────────────────────────────────
-    # Tabela anual compacta (padding menor + col widths)
-    # ─────────────────────────────────────────────────────────
     perf_num = perf.copy()
     perf_num["Preço inicial"] = pd.to_numeric(perf_num["Preço inicial"], errors="coerce")
     perf_num["Preço final"] = pd.to_numeric(perf_num["Preço final"], errors="coerce")
@@ -863,13 +823,7 @@ def render_empresa_view(ticker: str) -> None:
                 "Variação %": _pct_signed,
             }
         )
-        .set_properties(
-            **{
-                "text-align": "right",
-                "white-space": "nowrap",
-                "font-size": "0.88rem",
-            }
-        )
+        .set_properties(**{"text-align": "right", "white-space": "nowrap", "font-size": "0.88rem"})
         .set_table_styles(
             [
                 {"selector": "table", "props": [("table-layout", "fixed"), ("width", "100%")]},
