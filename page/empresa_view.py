@@ -219,8 +219,6 @@ def _inject_cf_css() -> None:
             font-size: 12px;
             opacity: .85;
             line-height: 1.25;
-
-            /* clamp em 2 linhas */
             display: -webkit-box;
             -webkit-line-clamp: 2;
             -webkit-box-orient: vertical;
@@ -232,8 +230,6 @@ def _inject_cf_css() -> None:
           .cf-card-ratio{ background: rgba(148,163,184,0.10); border-color: rgba(148,163,184,0.24); }
           .cf-card-balance-positive{ background: rgba(34,197,94,0.12); border-color: rgba(34,197,94,0.30); }
           .cf-card-balance-negative{ background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.30); }
-
-          div[data-testid="stDataFrame"] { border-radius: 14px; overflow: hidden; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -271,7 +267,7 @@ def render_header_empresa(nome: str | None, website: str | None, price: float | 
 
 
 # ─────────────────────────────────────────────────────────────
-# Crescimento (médio anual) em blocos (como os de baixo)
+# Crescimento (médio anual) em blocos
 # ─────────────────────────────────────────────────────────────
 def render_cards_crescimento_supabase(df_fin: pd.DataFrame) -> None:
     st.markdown("---")
@@ -631,6 +627,55 @@ def _needs_yf_fundamentals(mult_db_latest: pd.DataFrame) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────
+# NOVO: gráfico de barras divergente (retorno anual)
+# ─────────────────────────────────────────────────────────────
+def render_grafico_retorno_anual_barras(perf: pd.DataFrame, ticker: str) -> None:
+    st.markdown("#### Retorno anual do preço (ganho à direita / perda à esquerda)")
+
+    if perf is None or perf.empty or "Ano" not in perf.columns or "Variação %" not in perf.columns:
+        st.info("Sem dados suficientes para exibir o retorno anual em barras.")
+        return
+
+    d = perf.copy()
+    d["Variação %"] = pd.to_numeric(d["Variação %"], errors="coerce")
+    d = d.dropna(subset=["Variação %", "Ano"])
+    if d.empty:
+        st.info("Sem dados suficientes para exibir o retorno anual em barras.")
+        return
+
+    d["Ano"] = d["Ano"].astype(int)
+    d = d.sort_values("Ano")
+    d["Sinal"] = np.where(d["Variação %"] >= 0, "Ganho", "Perda")
+
+    # Para ficar “bonito” e legível
+    max_abs = float(np.nanmax(np.abs(d["Variação %"].values))) if d["Variação %"].notna().any() else 10.0
+    max_abs = max(max_abs, 10.0)
+
+    fig = px.bar(
+        d,
+        y="Ano",
+        x="Variação %",
+        orientation="h",
+        color="Sinal",
+        color_discrete_map={"Ganho": "#22c55e", "Perda": "#ef4444"},
+        text=d["Variação %"].map(lambda v: f"{v:+.2f}%"),
+    )
+
+    fig.update_traces(textposition="outside", cliponaxis=False)
+    fig.update_layout(
+        height=min(520, 260 + 18 * d.shape[0]),
+        margin=dict(l=10, r=10, t=10, b=10),
+        xaxis_title="Retorno anual (%)",
+        yaxis_title="Ano",
+        legend_title_text="",
+    )
+    fig.update_xaxes(range=[-max_abs * 1.15, max_abs * 1.15], zeroline=True, zerolinewidth=2)
+    fig.update_yaxes(categoryorder="category ascending")
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# ─────────────────────────────────────────────────────────────
 # View principal
 # ─────────────────────────────────────────────────────────────
 def render_empresa_view(ticker: str) -> None:
@@ -655,7 +700,7 @@ def render_empresa_view(ticker: str) -> None:
     with colR:
         st.caption(" ")
 
-    # ✅ Crescimento médio anual em blocos (como você pediu)
+    # Crescimento (médio anual) em blocos
     render_cards_crescimento_supabase(df)
 
     # Demonstrações Financeiras (gráfico)
@@ -812,9 +857,10 @@ def render_empresa_view(ticker: str) -> None:
         use_container_width=True,
     )
 
-    st.markdown("#### Desempenho anual do preço (1º x último pregão do ano)")
+    # ✅ NOVO: gráfico de barras divergente imediatamente abaixo do gráfico de preços
     perf = _annual_price_performance(price_hist)
 
+    # Filtra anos conforme janela do Supabase (para casar "tempo de histórico")
     if df is not None and not df.empty and "Data" in df.columns:
         dd = pd.to_datetime(df["Data"], errors="coerce").dropna()
         if not dd.empty:
@@ -826,73 +872,12 @@ def render_empresa_view(ticker: str) -> None:
         st.info("Não foi possível calcular o desempenho anual com o histórico disponível.")
         return
 
-    avg_yoy = float(np.nanmean(perf["Variação %"].values)) / 100.0 if not perf.empty else float("nan")
+    render_grafico_retorno_anual_barras(perf, ticker)
+
+    # ✅ Agora empurra os blocos de resumo para a parte mais baixa do dashboard (depois do gráfico anual)
+    avg_yoy = float(np.nanmean(pd.to_numeric(perf["Variação %"], errors="coerce").values)) / 100.0
     cagr = _cagr_from_series(price_hist)
 
     st.markdown("---")
     st.markdown("### Resumo (blocos)")
     render_cards_resumo(df, perf, avg_yoy=avg_yoy, cagr=cagr)
-
-    perf_num = perf.copy()
-    perf_num["Preço inicial"] = pd.to_numeric(perf_num["Preço inicial"], errors="coerce")
-    perf_num["Preço final"] = pd.to_numeric(perf_num["Preço final"], errors="coerce")
-    perf_num["Variação %"] = pd.to_numeric(perf_num["Variação %"], errors="coerce")
-
-    def _pct_signed(x):
-        if x is None or (isinstance(x, float) and (pd.isna(x) or np.isinf(x))):
-            return "-"
-        try:
-            return f"{float(x):+.2f}%"
-        except Exception:
-            return "-"
-
-    def _color_return(v):
-        try:
-            if pd.isna(v):
-                return ""
-            return "color: #22c55e; font-weight: 850;" if float(v) >= 0 else "color: #ef4444; font-weight: 850;"
-        except Exception:
-            return ""
-
-    max_abs = float(np.nanmax(np.abs(perf_num["Variação %"].values))) if perf_num["Variação %"].notna().any() else 1.0
-    max_abs = max(max_abs, 1.0)
-
-    def _bar_css(v):
-        try:
-            if pd.isna(v):
-                return ""
-            v = float(v)
-            w = min(abs(v) / max_abs, 1.0) * 100.0
-            if v >= 0:
-                return f"background: linear-gradient(90deg, rgba(34,197,94,0.20) {w}%, transparent {w}%);"
-            return f"background: linear-gradient(90deg, rgba(239,68,68,0.16) {w}%, transparent {w}%);"
-        except Exception:
-            return ""
-
-    styler = (
-        perf_num.style
-        .format(
-            {
-                "Ano": "{:d}",
-                "Preço inicial": format_brl,
-                "Preço final": format_brl,
-                "Variação %": _pct_signed,
-            }
-        )
-        .set_properties(**{"text-align": "right", "white-space": "nowrap", "font-size": "0.88rem"})
-        .set_table_styles(
-            [
-                {"selector": "table", "props": [("table-layout", "fixed"), ("width", "100%")]},
-                {"selector": "th", "props": [("text-align", "right"), ("font-weight", "900"), ("padding", "3px 6px")]},
-                {"selector": "td", "props": [("padding", "3px 6px")]},
-                {"selector": "th:nth-child(1), td:nth-child(1)", "props": [("width", "62px")]},
-                {"selector": "th:nth-child(2), td:nth-child(2)", "props": [("width", "132px")]},
-                {"selector": "th:nth-child(3), td:nth-child(3)", "props": [("width", "132px")]},
-                {"selector": "th:nth-child(4), td:nth-child(4)", "props": [("width", "112px")]},
-            ]
-        )
-        .applymap(_color_return, subset=["Variação %"])
-        .applymap(_bar_css, subset=["Variação %"])
-    )
-
-    st.dataframe(styler, use_container_width=True, hide_index=True)
