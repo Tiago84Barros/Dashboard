@@ -37,7 +37,6 @@ except Exception:
 from core.portfolio import (
     gerir_carteira,
     gerir_carteira_modulada,
-    PortfolioPolicy,
     gerir_carteira_todas_empresas,
     calcular_patrimonio_selic_macro,
 )
@@ -166,43 +165,6 @@ def render() -> None:
 
     # ── Sidebar filtros
     with st.sidebar:
-        with st.expander("Carteira (modo)", expanded=False):
-            carteira_modo = st.radio(
-                "Modelo:",
-                [
-                    "Padrão (aporte igual)",
-                    "Ajustado (heurística: N dinâmico + aporte modulado)",
-                    "Ajustado (manual: N/γ/cap/soft)",
-                    "Ajustado (heurística simples: automático)",
-                ],
-                index=0,
-            )
-
-        use_modulated = carteira_modo.startswith("Ajustado")
-        use_manual = "manual" in carteira_modo.lower()
-        use_heuristica_simples = "heurística simples" in carteira_modo.lower()
-
-        # policy: heurística/heurística simples travadas; manual configurável (diagnóstico)
-        policy = PortfolioPolicy()
-        if use_manual:
-            st.caption("⚠️ Modo manual: use apenas para diagnóstico (evite otimizar olhando o passado).")
-            top_n = st.select_slider("Faixa superior (N fixo)", options=[1, 2, 3], value=3)
-            gamma = st.slider("γ (concentração do aporte)", 0.5, 2.0, 1.0, 0.1)
-            cap_pct = st.slider("Cap máximo por ativo (%)", 5, 40, 25, 1)
-            soft_pp = st.slider("Zona suave do cap (pp)", 0, 10, 5, 1)
-
-            policy = PortfolioPolicy(
-                mode="manual",
-                fixed_top_n=int(top_n),
-                gamma=float(gamma),
-                cap_max=float(cap_pct) / 100.0,
-                cap_soft=float(soft_pp) / 100.0,
-            )
-        elif use_heuristica_simples:
-            policy = PortfolioPolicy(mode="heuristica_simples")
-        elif use_modulated:
-            policy = PortfolioPolicy(mode="heuristica")
-
         setor = st.selectbox("Setor:", sorted(setores["SETOR"].dropna().unique().tolist()))
         subsetores = setores.loc[setores["SETOR"] == setor, "SUBSETOR"].dropna().unique().tolist()
         subsetor = st.selectbox("Subsetor:", sorted(subsetores))
@@ -221,7 +183,32 @@ def render() -> None:
             else:
                 use_score_v2 = st.checkbox("Usar Score v2 (robusto)", value=True)
         # <<< PATCH SCORE V2
+        # ── Carteira (modo)
+        with st.expander("Carteira (modo)", expanded=False):
+            modos = [
+                "Padrão (aporte igual)",
+                "Ajustado (heurística: N dinâmico + aporte modulado)",
+                "Ajustado (manual: N/γ/cap/soft)",
+                "Ajustado (heurística simples: automático)",
+            ]
+            modo_carteira = st.radio("Selecione o modo:", modos, index=0)
 
+            policy: Dict = {"mode": "heuristica", "eps": 0.35, "gamma": 0.90, "cap": 0.25, "soft": 0.05}
+
+            if modo_carteira == "Padrão (aporte igual)":
+                policy = {"mode": "padrao"}  # placeholder (não utilizado)
+            elif modo_carteira == "Ajustado (heurística: N dinâmico + aporte modulado)":
+                policy = {"mode": "heuristica", "eps": 0.35, "gamma": 0.90, "cap": 0.25, "soft": 0.05}
+                st.caption("N é dinâmico por ano-ref (heurística de gaps). γ/cap/soft fixos (padrão).")
+            elif modo_carteira == "Ajustado (manual: N/γ/cap/soft)":
+                n_fix = st.slider("N (nº de empresas líderes)", min_value=1, max_value=3, value=2, step=1)
+                gamma = st.slider("γ (concentração do aporte)", min_value=0.30, max_value=1.50, value=0.90, step=0.05)
+                cap = st.slider("Cap máximo por ativo (%)", min_value=10, max_value=60, value=25, step=1) / 100.0
+                soft = st.slider("Zona suave do cap (pp)", min_value=0, max_value=20, value=5, step=1) / 100.0
+                policy = {"mode": "manual", "N": int(n_fix), "gamma": float(gamma), "cap": float(cap), "soft": float(soft), "eps": 0.35}
+            else:
+                policy = {"mode": "heuristica_simples", "eps": 0.35}
+                st.caption("Parâmetros automáticos por ano-ref: N dinâmico + regras discretas para γ/cap/soft.")
     # ── filtra tickers do segmento
     seg_df = setores[
         (setores["SETOR"] == setor) &
@@ -401,8 +388,10 @@ def render() -> None:
         st.warning("Não foi possível determinar líderes com o score calculado.")
         return
 
-    if use_modulated:
-        patrimonio_estrategia, datas_aportes = gerir_carteira_modulada(precos, score, lideres, dividendos, policy=policy)
+    if "modo_carteira" in locals() and modo_carteira != "Padrão (aporte igual)":
+        patrimonio_estrategia, datas_aportes = gerir_carteira_modulada(
+            precos, score, lideres, dividendos, policy=policy
+        )
     else:
         patrimonio_estrategia, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
     if patrimonio_estrategia is None or patrimonio_estrategia.empty:
