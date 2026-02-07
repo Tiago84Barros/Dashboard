@@ -707,6 +707,237 @@ def _params_heuristica_simples(
     return 0.90, 0.25, 0.05
 
 
+
+
+# ─────────────────────────────────────────────────────────────
+# Heurística calibrada (auto-tuning com walk-back no passado)
+# ─────────────────────────────────────────────────────────────
+
+def _candidate_policies() -> List[Tuple[float, float, float]]:
+    """Grade pequena de (gamma, cap, soft) com valores plausíveis."""
+    gammas = [0.80, 0.90, 1.00, 1.10]
+    caps = [0.20, 0.25, 0.30]
+    softs = [0.05, 0.07, 0.09]
+    out: List[Tuple[float, float, float]] = []
+    for g in gammas:
+        for c in caps:
+            for s in softs:
+                # sanidade: soft não pode ser >= cap
+                if s >= c:
+                    continue
+                out.append((float(g), float(c), float(s)))
+    return out
+
+
+def _eval_nav_metrics(nav: pd.Series) -> Tuple[float, float, float]:
+    """Retorna (CAGR, vol_mensal, max_drawdown) para uma série de NAV mensal."""
+    nav = nav.dropna()
+    if len(nav) < 6:
+        return 0.0, 0.0, 0.0
+
+    # CAGR
+    nav0 = float(nav.iloc[0])
+    nav1 = float(nav.iloc[-1])
+    if nav0 <= 0 or nav1 <= 0:
+        cagr = 0.0
+    else:
+        years = max(1e-9, (nav.index[-1] - nav.index[0]).days / 365.25)
+        cagr = (nav1 / nav0) ** (1.0 / years) - 1.0
+
+    # vol de retornos mensais (log)
+    r = np.log(nav / nav.shift(1)).dropna()
+    vol = float(r.std(ddof=0)) if len(r) >= 2 else 0.0
+
+    # max drawdown
+    roll_max = nav.cummax()
+    dd = (nav / roll_max) - 1.0
+    mdd = float(dd.min()) if not dd.empty else 0.0
+
+    return float(cagr), float(vol), float(mdd)
+
+
+def _simulate_window_nav(
+    precos: pd.DataFrame,
+    divs: Dict[str, pd.Series],
+    tickers_cols: List[str],
+    weights: Dict[str, float],
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    aporte_mensal: float,
+    cf: float,
+) -> pd.Series:
+    """
+    Simula NAV mensal com aportes mensais e reinvestimento de dividendos
+    para um conjunto FIXO de ativos e pesos FIXOS, dentro da janela [start, end).
+    """
+    # agenda mensal (primeiro dia útil disponível no mês)
+    idx = precos.index
+    if idx.tz is not None:
+        # normaliza para naive comparável
+        start = start.tz_localize(None)
+        end = end.tz_localize(None)
+
+    datas = []
+    cur = pd.Timestamp(year=int(start.year), month=int(start.month), day=1)
+    end0 = pd.Timestamp(year=int(end.year), month=int(end.month), day=1)
+    while cur < end0:
+        # pega primeiro dia disponível >= cur
+        loc = idx.searchsorted(cur, side="left")
+        if loc < len(idx):
+            datas.append(pd.Timestamp(idx[loc]))
+        cur = (cur + pd.offsets.MonthBegin(1))
+
+    if len(datas) < 3:
+        return pd.Series(dtype="float64")
+
+    carteira = defaultdict(float)
+    nav_list = []
+    aporte_acum = 0.0
+
+    for dt in datas:
+        # reinvestir dividendos
+        for col in list(carteira.keys()):
+            if carteira[col] <= 0:
+                continue
+            s = divs.get(col, pd.Series(dtype="float64"))
+            if s.empty:
+                continue
+            px = _get_price(precos, dt, col)
+            if px is None or px <= 0:
+                continue
+            # dividendos do mês (último valor disponível até dt)
+            dv = float(s.loc[:dt].iloc[-1]) if not s.loc[:dt].empty else 0.0
+            dv = max(0.0, min(dv, 10.0))  # sanitização defensiva (R$/ação)
+            if dv > 0:
+                carteira[col] += (carteira[col] * dv) / px
+
+        # aporte mensal conforme pesos (com custos)
+        aporte_acum += float(aporte_mensal)
+        for col, w in weights.items():
+            if col not in tickers_cols:
+                continue
+            px = _get_price(precos, dt, col)
+            if px is None or px <= 0:
+                continue
+            valor = float(aporte_mensal) * float(w)
+            valor_liq = float(valor) * float(cf)
+            carteira[col] += valor_liq / px
+
+        # NAV no fechamento de dt
+        nav = 0.0
+        for col, qtd in carteira.items():
+            if qtd <= 0:
+                continue
+            px = _get_price(precos, dt, col)
+            if px is None or px <= 0:
+                continue
+            nav += float(qtd) * float(px)
+        nav_list.append((dt, nav if nav > 0 else np.nan))
+
+    nav_s = pd.Series({d: v for d, v in nav_list}).sort_index()
+    return nav_s
+
+
+def _calibrate_gamma_cap_soft(
+    precos: pd.DataFrame,
+    divs: Dict[str, pd.Series],
+    tickers_cols: List[str],
+    tickers_score: List[str],
+    score_map: Dict[Tuple[int, str], float],
+    ano_ref: int,
+    gamma_default: float,
+    cap_default: float,
+    soft_default: float,
+    aporte_mensal: float,
+    cf: float,
+) -> Tuple[float, float, float]:
+    """
+    Seleciona (gamma, cap, soft) por auto-tuning em janela passada (walk-back).
+    - Usa o TOP-N do ano_ref (já decidido fora).
+    - Avalia uma grade pequena de políticas na janela de treino.
+    - Aplica shrinkage em direção ao default.
+    """
+    # janela de treino: últimos 36 meses encerrando em 01/jan do ano_ref
+    end = pd.Timestamp(year=int(ano_ref), month=1, day=1)
+    start = end - pd.DateOffset(months=36)
+
+    # limita à disponibilidade de dados
+    if precos.index.tz is not None:
+        idx_min = pd.Timestamp(precos.index.min()).tz_localize(None)
+        idx_max = pd.Timestamp(precos.index.max()).tz_localize(None)
+    else:
+        idx_min = pd.Timestamp(precos.index.min())
+        idx_max = pd.Timestamp(precos.index.max())
+
+    start = max(start, idx_min)
+    end = min(end, idx_max)
+    if end <= start + pd.DateOffset(months=6):
+        return float(gamma_default), float(cap_default), float(soft_default)
+
+    best = (float(gamma_default), float(cap_default), float(soft_default))
+    best_obj = -1e18
+
+    # pesos base (por score) recalculados por candidato (gamma muda pesos)
+    for gamma, cap, soft in _candidate_policies():
+        # calcula pesos por score (ticker_score)
+        w_score = _weights_from_scores(tickers_score, score_map, ano_ref, gamma=float(gamma))
+        w_score = _apply_cap_soft(w_score, cap=float(cap), soft=float(soft))
+
+        # converte para colunas executáveis
+        w_exec: Dict[str, float] = {}
+        for tk, ws in w_score.items():
+            col = _resolve_ticker_col(precos, tk) or _resolve_ticker_col(precos, tk + ".SA")
+            if col is None:
+                continue
+            w_exec[col] = float(ws)
+
+        if len(w_exec) < 1:
+            continue
+
+        nav = _simulate_window_nav(
+            precos=precos,
+            divs=divs,
+            tickers_cols=tickers_cols,
+            weights=w_exec,
+            start=start,
+            end=end,
+            aporte_mensal=aporte_mensal,
+            cf=cf,
+        )
+        if nav.empty:
+            continue
+
+        cagr, vol, mdd = _eval_nav_metrics(nav)
+
+        # função objetivo robusta (penaliza risco)
+        obj = float(cagr) - 0.60 * float(vol) + 0.40 * float(mdd)  # mdd é negativo
+
+        if obj > best_obj:
+            best_obj = obj
+            best = (float(gamma), float(cap), float(soft))
+
+    # shrinkage em direção ao default quando pouca evidência
+    nav_len_months = 36
+    if precos.index.tz is not None:
+        nav_len_months = int(max(1, (end - start).days / 30.0))
+    else:
+        nav_len_months = int(max(1, (end - start).days / 30.0))
+
+    # quanto mais meses e mais ativos, mais confiável
+    k = float(nav_len_months) / 36.0
+    m = float(max(1, len(tickers_cols))) / 3.0
+    conf = max(0.0, min(1.0, 0.35 + 0.35 * k + 0.30 * m))  # 0.35..1.0
+
+    gamma = (1.0 - conf) * float(gamma_default) + conf * float(best[0])
+    cap = (1.0 - conf) * float(cap_default) + conf * float(best[1])
+    soft = (1.0 - conf) * float(soft_default) + conf * float(best[2])
+
+    # clamp final
+    gamma = float(max(0.60, min(1.40, gamma)))
+    cap = float(max(0.10, min(0.45, cap)))
+    soft = float(max(0.02, min(cap - 0.01, soft)))
+
+    return gamma, cap, soft
 def gerir_carteira_modulada(
     precos: pd.DataFrame,
     df_scores: pd.DataFrame,
@@ -838,6 +1069,21 @@ def gerir_carteira_modulada(
             gamma = float(policy.get("gamma", gamma_default))
             cap = float(policy.get("cap", cap_default))
             soft = float(policy.get("soft", soft_default))
+        elif mode == "heuristica_calibrada":
+            # Auto-tuning com janela passada (walk-back) + shrinkage em direção ao default
+            gamma, cap, soft = _calibrate_gamma_cap_soft(
+                precos=precos,
+                divs=divs,
+                tickers_cols=tickers_cols,
+                tickers_score=tickers_keep,
+                score_map=score_map,
+                ano_ref=ano_ref,
+                gamma_default=gamma_default,
+                cap_default=cap_default,
+                soft_default=soft_default,
+                aporte_mensal=aporte_mensal,
+                cf=cf,
+            )
         elif mode == "heuristica_simples":
             n, vol_mean, vol_p70, corr_mean, _ = _metrics_ano_ref(precos, tickers_cols, ano_ref)
             gamma, cap, soft = _params_heuristica_simples(n=n, vol_mean=vol_mean, vol_p70=vol_p70, corr_mean=corr_mean, gap12=gap12)
