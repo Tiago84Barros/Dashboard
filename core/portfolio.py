@@ -472,10 +472,10 @@ def gerir_carteira(
     if "Patrimônio" in df_patrimonio.columns:
         df_patrimonio = df_patrimonio[df_patrimonio["Patrimônio"].fillna(0) != 0]
 
-    if registrar_eventos:
+       if registrar_eventos:
         return df_patrimonio, datas_aportes, eventos
 
-    retu
+    return df_patrimonio, datas_aportes
 # ==========================================================
 # PortfolioPolicy + Aporte Modulado (V16)
 # ==========================================================
