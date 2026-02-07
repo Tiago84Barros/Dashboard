@@ -169,10 +169,29 @@ def render() -> None:
         with st.expander("Carteira (modo)", expanded=False):
             carteira_modo = st.radio(
                 "Modelo:",
-                ["Padrão (aporte igual)", "Ajustado (heurística: N dinâmico + aporte modulado)"],
+                ["Padrão (aporte igual)", "Ajustado (heurística: N dinâmico + aporte modulado)", "Ajustado (manual: N/γ/cap/soft)"],
                 index=0,
             )
         use_modulated = carteira_modo.startswith("Ajustado")
+        use_manual = "manual" in carteira_modo.lower()
+
+        # policy: no modo heurístico fica travada; no modo manual vira configurável (para diagnóstico)
+        policy = PortfolioPolicy()
+        if use_manual:
+            st.caption("Modo manual (teste): use apenas para diagnóstico (evite otimizar olhando o passado).")
+            top_n = st.select_slider("Faixa superior (N fixo)", options=[1, 2, 3], value=3)
+            gamma = st.slider("γ (concentração do aporte)", 0.5, 2.0, 1.0, 0.1)
+            cap_pct = st.slider("Cap máximo por ativo (%)", 5, 40, 25, 1)
+            soft_pp = st.slider("Zona suave do cap (pp)", 0, 10, 5, 1)
+
+            policy = PortfolioPolicy(
+                gamma=float(gamma),
+                cap_max=float(cap_pct) / 100.0,
+                cap_soft_zone=float(soft_pp) / 100.0,
+                dynamic_top_n=False,
+                fixed_top_n=int(top_n),
+            )
+
 
         setor = st.selectbox("Setor:", sorted(setores["SETOR"].dropna().unique().tolist()))
         subsetores = setores.loc[setores["SETOR"] == setor, "SUBSETOR"].dropna().unique().tolist()
@@ -372,8 +391,10 @@ def render() -> None:
         st.warning("Não foi possível determinar líderes com o score calculado.")
         return
 
-    patrimonio_estrategia, datas_aportes = (gerir_carteira_modulada(precos, score, lideres, dividendos, policy=PortfolioPolicy())
-        if use_modulated else gerir_carteira(precos, score, lideres, dividendos))
+    if use_modulated:
+        patrimonio_estrategia, datas_aportes = gerir_carteira_modulada(precos, score, lideres, dividendos, policy=policy)
+    else:
+        patrimonio_estrategia, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
     if patrimonio_estrategia is None or patrimonio_estrategia.empty:
         st.warning("Falha ao simular a carteira da estratégia.")
         return
