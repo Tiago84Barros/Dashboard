@@ -14,26 +14,6 @@ logger = logging.getLogger(__name__)
 # Se uma fonte retornar "Dividendos totais" (CVM/DFC) por engano,
 # isso evita explosões irreais no backtest.
 DIV_POR_ACAO_MAX = 20.0
-@dataclass(frozen=True)
-class PortfolioPolicy:
-    """Parâmetros do aporte modulado (heurística de produção).
-
-    Observação: não expor sliders no Advanced evita overfitting operacional.
-    """
-    gamma: float = 0.9                 # concentração do aporte (0.8–1.0 recomendado)
-    tau: float = 0.0                   # corte: scores <= tau recebem peso 0
-    cap_max: float = 0.25              # cap máximo por ativo (fração)
-    cap_soft_zone: float = 0.05        # zona suave (fração, ex.: 0.05 = 5pp)
-
-    # Heurística do N (faixa superior dinâmica) — decide N∈{1,2,3} por ano-ref usando gaps do score
-    dynamic_top_n: bool = True
-    eps_min: float = 0.35              # piso do limiar de "próximo" (unidades do score)
-    eps_iqr_mult: float = 0.35         # eps = max(eps_min, eps_iqr_mult * IQR_ano_ref)
-    n3_relax: float = 1.50             # permite N=3 se g23 <= n3_relax * eps (mais pró-diversificação)
-    max_top_n: int = 3                 # no máximo 3 por ano-ref
-
-    fixed_top_n: Optional[int] = None   # se definido (1..3), força N fixo e ignora heurística
-
 
 
 def _ensure_dt_index(df: pd.DataFrame) -> pd.DataFrame:
@@ -159,46 +139,6 @@ def _build_monthly_schedule(precos: pd.DataFrame, anos: Sequence[int], start_yea
                 datas.append(d)
     return sorted(set(datas))
 
-
-
-
-
-def _dynamic_top_n_from_scores(
-    sorted_scores: List[float],
-    eps: float,
-    max_n: int = 3,
-    n3_relax: float = 1.50,
-) -> int:
-    """Decide N (1/2/3) a partir dos gaps do ranking (scores já ordenados desc).
-
-    - n>=3:
-        * se g12 > eps              -> N=1
-        * se g12 <= eps e g23 <= n3_relax*eps -> N=3
-        * se g12 <= eps e g23 >  n3_relax*eps -> N=2
-    - n==2:
-        * se g12 <= eps -> N=2, senão N=1
-    - n<=1: N=1
-
-    Observação: n3_relax>1 torna a regra mais pró-N=3 (mais robusta), sem tunagem manual.
-    """
-    vals = [float(x) for x in sorted_scores if x is not None and np.isfinite(x)]
-    n = len(vals)
-    if n <= 1:
-        return 1
-    eps = float(eps)
-    max_n = max(1, int(max_n))
-    if n == 2 or max_n == 2:
-        g12 = vals[0] - vals[1]
-        return min(2, max_n) if g12 <= eps else 1
-
-    # n>=3
-    g12 = vals[0] - vals[1]
-    if g12 > eps:
-        return 1
-    g23 = vals[1] - vals[2]
-    if max_n >= 3 and g23 <= (float(n3_relax) * eps):
-        return 3
-    return 2
 
 def gerir_carteira_simples(
     precos: pd.DataFrame,
@@ -535,259 +475,269 @@ def gerir_carteira(
     if registrar_eventos:
         return df_patrimonio, datas_aportes, eventos
 
-    return df_patrimonio, datas_aportes
+    retu
+# ==========================================================
+# PortfolioPolicy + Aporte Modulado (V16)
+# ==========================================================
 
+@dataclass(frozen=True)
+class PortfolioPolicy:
+    """
+    mode:
+      - 'manual'              : usa fixed_top_n e parâmetros configuráveis (diagnóstico)
+      - 'heuristica'          : N dinâmico, parâmetros fixos do policy
+      - 'heuristica_simples'  : N dinâmico + γ/cap/soft automáticos (regras discretas)
+      - 'padrao'              : não usado aqui (gerir_carteira já cobre)
+    """
+    mode: str = "heuristica"
+    fixed_top_n: Optional[int] = None
+    gamma: float = 0.9
+    cap_max: float = 0.25
+    cap_soft: float = 0.05
+    eps_topn: float = 0.35
+
+
+def _decidir_top_n_por_score(scores: pd.Series, eps: float) -> int:
+    s = scores.dropna().sort_values(ascending=False).values
+    n = int(len(s))
+    if n <= 1:
+        return 1
+    if n == 2:
+        return 2 if (s[0] - s[1]) <= eps else 1
+    g12 = float(s[0] - s[1])
+    g23 = float(s[1] - s[2])
+    if g12 <= eps and g23 <= eps:
+        return 3
+    if g12 <= eps and g23 > eps:
+        return 2
+    return 1
+
+
+def _auto_params_simples(scores_top: pd.Series, precos_top: pd.DataFrame) -> Tuple[float, float, float]:
+    """
+    Heurística simples (discreta), por segmento/ano-ref:
+      - Se n <= 3 OU corr >= 0.60: gamma=0.80 cap=0.20 soft=0.08
+      - Se vol alto (p70):         gamma=0.85 cap=0.22 soft=0.07
+      - Se gap12 >= 0.75:          gamma=1.05 cap=0.28 soft=0.05
+      - Caso geral:                gamma=0.90 cap=0.25 soft=0.05
+    """
+    scores_top = scores_top.dropna()
+    n = int(len(scores_top))
+
+    precos_top = _ensure_dt_index(precos_top).dropna(how="all")
+    if precos_top is None or precos_top.empty or precos_top.shape[1] == 0:
+        # fallback conservador
+        return 0.90, 0.25, 0.05
+
+    rets = np.log(precos_top / precos_top.shift(1)).dropna(how="all")
+    vol = float(rets.std().mean()) if not rets.empty else 0.0
+
+    if rets.shape[1] > 1:
+        c = rets.corr()
+        corr = float(np.nanmean(c.values))
+    else:
+        corr = 0.0
+
+    s_ord = scores_top.sort_values(ascending=False)
+    gap12 = float(s_ord.iloc[0] - s_ord.iloc[1]) if len(s_ord) >= 2 else 0.0
+
+    if n <= 3 or corr >= 0.60:
+        return 0.80, 0.20, 0.08
+
+    try:
+        vol_p70 = float(rets.std().quantile(0.70))
+    except Exception:
+        vol_p70 = vol
+
+    if vol >= vol_p70 and vol_p70 > 0:
+        return 0.85, 0.22, 0.07
+
+    if gap12 >= 0.75:
+        return 1.05, 0.28, 0.05
+
+    return 0.90, 0.25, 0.05
 
 
 def gerir_carteira_modulada(
-        precos: pd.DataFrame,
-        df_scores: pd.DataFrame,
-        lideres_por_ano: pd.DataFrame,
-        dividendos_dict: Dict[str, Union[pd.Series, pd.DataFrame]],
-        policy: Optional[PortfolioPolicy] = None,
-        aporte_mensal: float = 1000.0,
-        registrar_eventos: bool = False,
-        fee_bps: float = 0.0,
-        slippage_bps: float = 0.0,
-    ):
-        """Estratégia de líderes com camada de controle de aporte (produção).
+    precos: pd.DataFrame,
+    df_scores: pd.DataFrame,
+    lideres_por_ano: pd.DataFrame,
+    dividendos_dict: Dict[str, Union[pd.Series, pd.DataFrame]],
+    aporte_mensal: float = 1000.0,
+    deterioracao_limite: float = 0.0,
+    registrar_eventos: bool = False,
+    fee_bps: float = 0.0,
+    slippage_bps: float = 0.0,
+    policy: Optional[PortfolioPolicy] = None,
+):
+    """
+    Aporte modulado por score (top N do ano-ref) com cap e zona suave.
+    - Mantém interface de gerir_carteira para compatibilidade com advanced.py.
+    - Usa apenas informações do ano-ref para decidir N e parâmetros.
+    """
+    policy = policy or PortfolioPolicy()
+    precos = _ensure_dt_index(precos)
+    df_scores = df_scores.copy()
+    df_scores["Ano"] = pd.to_numeric(df_scores.get("Ano"), errors="coerce")
+    df_scores = df_scores.dropna(subset=["Ano", "ticker"])
+    df_scores["ticker"] = df_scores["ticker"].astype(str)
 
-        - Ano de referência: ano_ref = ano_atual - 1 (sem look-ahead).
-        - Universo elegível por ano_ref:
-            * líder(es) do ranking do score do ano_ref
-            * N é dinâmico (1/2/3) via gaps entre s1,s2,s3, se policy.dynamic_top_n=True
-        - Aporte mensal distribuído proporcionalmente ao score (com expoente gamma),
-          e limitado por cap de concentração (cap_max com zona suave).
-        - Dividendos: reinvestimento POR AÇÃO (R$/ação), sanitizado (mesma lógica do motor padrão).
+    # carteira em quantidade de ações
+    carteira_qtd = defaultdict(float)
+    registros: List[Dict[str, float]] = []
+    eventos: List[Dict[str, str]] = []
+    datas_aportes: List[pd.Timestamp] = []
 
-        Observação:
-        - Este motor NÃO vende vencedores e NÃO altera o score.
-        - Se não houver elegíveis com preço no mês, acumula o aporte para o próximo mês útil.
-        """
-        precos = _ensure_dt_index(precos)
+    # determinar anos de referência
+    anos_ref = sorted(df_scores["Ano"].dropna().astype(int).unique().tolist())
 
-        if precos is None or precos.empty:
-            return (pd.DataFrame(), []) if not registrar_eventos else (pd.DataFrame(), [], [])
+    # custo efetivo (fee+slippage)
+    custo_bps = float(fee_bps) + float(slippage_bps)
+    custo_mul = max(0.0, 1.0 - custo_bps / 10000.0)
 
-        if df_scores is None or df_scores.empty:
-            return (pd.DataFrame(), []) if not registrar_eventos else (pd.DataFrame(), [], [])
+    # normaliza dividendos como Series por ticker
+    div_series: Dict[str, pd.Series] = {}
+    for tk, dv in (dividendos_dict or {}).items():
+        try:
+            div_series[tk] = _as_div_series(dv)
+        except Exception:
+            continue
 
-        if lideres_por_ano is None or lideres_por_ano.empty:
-            return (pd.DataFrame(), []) if not registrar_eventos else (pd.DataFrame(), [], [])
+    for ano_ref in anos_ref:
+        # scores do ano-ref
+        s_ano = df_scores[df_scores["Ano"].astype(int) == int(ano_ref)].copy()
+        if s_ano.empty:
+            continue
+        if "Score_Ajustado" not in s_ano.columns:
+            continue
+        s_ano["Score_Ajustado"] = pd.to_numeric(s_ano["Score_Ajustado"], errors="coerce")
+        s_ano = s_ano.dropna(subset=["Score_Ajustado", "ticker"])
+        if s_ano.empty:
+            continue
 
-        policy = policy or PortfolioPolicy()
+        scores = s_ano.set_index("ticker")["Score_Ajustado"]
 
-        gamma = float(policy.gamma)
-        tau = float(policy.tau)
-        cap_max = float(policy.cap_max)
-        cap_soft = max(0.0, float(policy.cap_soft_zone))
+        # top_n
+        if policy.mode in ("heuristica", "heuristica_simples"):
+            top_n = _decidir_top_n_por_score(scores, policy.eps_topn)
+        elif policy.mode == "manual" and policy.fixed_top_n:
+            top_n = int(policy.fixed_top_n)
+        else:
+            top_n = 1
 
-        divs = {t: _as_div_series(dividendos_dict.get(t)) for t in precos.columns}
-        cf = _cost_factor(fee_bps, slippage_bps)
+        top_tickers = scores.sort_values(ascending=False).head(top_n).index.tolist()
+        if not top_tickers:
+            continue
 
-        anos_scores = sorted(int(a) for a in pd.to_numeric(df_scores.get("Ano"), errors="coerce").dropna().unique())
-        if not anos_scores:
-            return (pd.DataFrame(), []) if not registrar_eventos else (pd.DataFrame(), [], [])
+        # parâmetros (γ/cap/soft)
+        if policy.mode == "heuristica_simples":
+            gamma, cap_max, cap_soft = _auto_params_simples(scores.loc[top_tickers], precos[top_tickers])
+        else:
+            gamma, cap_max, cap_soft = float(policy.gamma), float(policy.cap_max), float(policy.cap_soft)
 
-        datas_aportes = _build_monthly_schedule(precos, anos_scores, start_year_offset=1)
-        if not datas_aportes:
-            return (pd.DataFrame(), []) if not registrar_eventos else (pd.DataFrame(), [], [])
+        # janela de aportes: ano seguinte ao ano_ref
+        ano_aporte = int(ano_ref) + 1
+        # vamos aportar mensalmente na última data de cada mês do ano_aporte
+        px_year = precos[precos.index.year == ano_aporte]
+        if px_year is None or px_year.empty:
+            continue
+        meses = px_year.resample("M").last().index
 
-        # Normaliza df_scores
-        df_scores2 = df_scores.copy()
-        df_scores2["Ano"] = pd.to_numeric(df_scores2["Ano"], errors="coerce")
-        df_scores2["ticker"] = df_scores2["ticker"].astype(str)
-        df_scores2["Score_Ajustado"] = pd.to_numeric(df_scores2["Score_Ajustado"], errors="coerce")
-
-        # score map (Ano,ticker) -> score
-        score_map: Dict[Tuple[int, str], float] = {}
-        for _, r in df_scores2.dropna(subset=["Ano", "ticker", "Score_Ajustado"]).iterrows():
-            score_map[(int(r["Ano"]), str(r["ticker"]))] = float(r["Score_Ajustado"])
-
-        # rank map por ano (tickers ordenados desc)
-        rank_map: Dict[int, List[str]] = {}
-        score_sorted_map: Dict[int, List[float]] = {}
-        for ano in anos_scores:
-            dfy = df_scores2[df_scores2["Ano"] == ano].dropna(subset=["ticker", "Score_Ajustado"]).copy()
-            if dfy.empty:
+        for data_aporte in meses:
+            data_exec = encontrar_proxima_data_valida(pd.Timestamp(data_aporte), precos)
+            if data_exec is None:
                 continue
-            dfy = dfy.sort_values("Score_Ajustado", ascending=False)
-            rank_map[int(ano)] = dfy["ticker"].astype(str).tolist()
-            score_sorted_map[int(ano)] = dfy["Score_Ajustado"].astype(float).tolist()
 
-        # eps dinâmico por ano-ref (robusto): eps = max(eps_min, eps_iqr_mult * IQR)
-        eps_by_year: Dict[int, float] = {}
-        for _ano, _scores in score_sorted_map.items():
-            _vals = np.array([float(x) for x in _scores if x is not None and np.isfinite(x)], dtype=float)
-            if _vals.size >= 5:
-                q75, q25 = np.percentile(_vals, [75, 25])
-                iqr = float(q75 - q25)
-                eps = max(float(policy.eps_min), float(policy.eps_iqr_mult) * iqr)
-            else:
-                eps = float(policy.eps_min)
-            eps_by_year[int(_ano)] = float(eps)
-
-        carteira = defaultdict(float)  # ticker -> qtd ações
-        aporte_acumulado = 0.0
-        registros: List[dict] = []
-        eventos = [] if registrar_eventos else None
-
-        elegiveis_atuais: List[str] = []
-        ano_ref_atual: Optional[int] = None
-
-        def _cap_factor(w: float) -> float:
-            if not np.isfinite(w) or w < 0:
-                return 1.0
-            if cap_max <= 0 or cap_max >= 1:
-                return 1.0
-            if w <= cap_max:
-                return 1.0
-            if cap_soft <= 0:
-                return 0.0
-            return max(0.0, 1.0 - (w - cap_max) / cap_soft)
-
-        for data_sinal in datas_aportes:
-            ano_ref = int(data_sinal.year - 1)
-
-            # ao virar o ano-ref, define novos elegíveis (1/2/3) do ranking daquele ano_ref
-            if ano_ref != ano_ref_atual:
-                ano_ref_atual = ano_ref
-
-                ranking = rank_map.get(ano_ref, [])
-                scores_sorted = score_sorted_map.get(ano_ref, [])
-
-                # define N (faixa superior) por ano-ref
-                if policy.fixed_top_n is not None:
-                    n = int(policy.fixed_top_n)
-                elif policy.dynamic_top_n:
-                    n = _dynamic_top_n_from_scores(
-                        sorted_scores=scores_sorted[:3],
-                        eps=float(eps_by_year.get(int(ano_ref), float(policy.eps_min))),
-                        max_n=int(policy.max_top_n),
-                        n3_relax=float(policy.n3_relax),
-                    )
-                else:
-                    n = 1
-
-                n = max(1, min(int(n), len(ranking))) if ranking else 0
-                novos = ranking[:n] if n > 0 else []
-
-                for tk in novos:
-                    if tk and (tk not in elegiveis_atuais):
-                        elegiveis_atuais.append(tk)
-                        if registrar_eventos:
-                            eventos.append({"data": data_sinal.strftime("%Y-%m"), "tipo": "entrada", "ticker": tk})
-
-            # Reinvestimento de dividendos (POR AÇÃO), sanitizado
-            for tk in list(carteira.keys()):
-                if carteira[tk] <= 0:
+            # reinvestir dividendos do mês (se houver)
+            for tk, qtd in list(carteira_qtd.items()):
+                if qtd <= 0:
                     continue
-                s = divs.get(tk, pd.Series(dtype="float64"))
-                if s.empty:
-                    continue
-                px = _get_price(precos, data_sinal, tk)
-                if px is None:
-                    continue
-                div_mes = _div_mes_por_acao_sanitizado(
-                    s=s,
-                    ano=int(data_sinal.year),
-                    mes=int(data_sinal.month),
-                    ticker=tk,
-                    px_ref=px,
-                )
-                if div_mes <= 0:
-                    continue
-                valor_reinvestido = div_mes * carteira[tk]
-                carteira[tk] += valor_reinvestido / px
+                if tk in div_series:
+                    dv = float(div_series[tk].get(data_exec, 0.0) or 0.0)
+                    if dv > 0 and dv <= DIV_POR_ACAO_MAX:
+                        px = _get_price(precos, data_exec, tk)
+                        if px:
+                            # dividendos por ação * qtd -> caixa, reinveste no próprio tk
+                            caixa = dv * float(qtd)
+                            carteira_qtd[tk] += (caixa * custo_mul) / px
 
-            # aporte do mês (com acumulo)
-            total_a_aportar = float(aporte_mensal) + float(aporte_acumulado)
-            aporte_acumulado = 0.0
-
-            # elegíveis com preço no mês
-            eleg = [t for t in elegiveis_atuais if _get_price(precos, data_sinal, t) is not None]
-
-            if not eleg:
-                aporte_acumulado += total_a_aportar
-            else:
-                # calcula pesos atuais para cap
-                valores = {}
-                total_val = 0.0
-                for tk in list(carteira.keys()):
-                    px = _get_price(precos, data_sinal, tk)
-                    if px is None:
-                        continue
-                    v = float(carteira[tk]) * float(px)
-                    if np.isfinite(v) and v > 0:
-                        valores[tk] = v
-                        total_val += v
-
-                cap_f = {}
-                if total_val > 0:
-                    for tk, v in valores.items():
-                        cap_f[tk] = _cap_factor(v / total_val)
-
-                # omegas por score (ano_ref)
-                omegas: Dict[str, float] = {}
-                for tk in eleg:
-                    sc = score_map.get((ano_ref, tk))
-                    if sc is None or not np.isfinite(sc):
-                        sc = 0.0
-                    s_plus = max(float(sc) - tau, 0.0)
-                    w = (float(s_plus) ** gamma) if s_plus > 0 else 0.0
-                    w *= float(cap_f.get(tk, 1.0))
-                    omegas[tk] = w
-
-                sumw = float(sum(omegas.values()))
-                if sumw <= 0:
-                    # fallback: pesos iguais em quem não está totalmente capado
-                    eleg2 = [t for t in eleg if cap_f.get(t, 1.0) > 0]
-                    if not eleg2:
-                        aporte_acumulado += total_a_aportar
-                    else:
-                        w_eq = 1.0 / len(eleg2)
-                        for tk in eleg2:
-                            px = _get_price(precos, data_sinal, tk)
-                            if px is None:
-                                aporte_acumulado += total_a_aportar * w_eq
-                                continue
-                            carteira[tk] += ((total_a_aportar * w_eq) * cf) / px
-                else:
-                    for tk in eleg:
-                        w = float(omegas.get(tk, 0.0)) / sumw
-                        if w <= 0:
-                            continue
-                        px = _get_price(precos, data_sinal, tk)
-                        if px is None:
-                            aporte_acumulado += total_a_aportar * w
-                            continue
-                        carteira[tk] += ((total_a_aportar * w) * cf) / px
-
-            # snapshot mensal
-            registro = {"date": data_sinal}
+            # calcular valor atual por ativo
+            valores: Dict[str, float] = {}
             total = 0.0
-            for tk, qtd in carteira.items():
-                px = _get_price(precos, data_sinal, tk)
+            for tk, qtd in carteira_qtd.items():
+                px = _get_price(precos, data_exec, tk)
+                if px is None or qtd <= 0:
+                    continue
+                v = float(qtd) * px
+                valores[tk] = v
+                total += v
+
+            # pesos por score (apenas top_tickers)
+            pesos_raw: Dict[str, float] = {}
+            for tk in top_tickers:
+                sc = float(scores.get(tk, 0.0))
+                sc = max(sc, 0.0)
+                pesos_raw[tk] = sc ** float(gamma)
+
+            soma_p = float(sum(pesos_raw.values()))
+            if soma_p <= 0:
+                continue
+
+            # aplicar aporte com cap + zona suave
+            for tk in top_tickers:
+                w = pesos_raw[tk] / soma_p
+                atual = (valores.get(tk, 0.0) / total) if total > 0 else 0.0
+
+                if atual >= cap_max:
+                    if cap_soft > 0:
+                        fator = max(0.0, 1.0 - (atual - cap_max) / cap_soft)
+                    else:
+                        fator = 0.0
+                else:
+                    fator = 1.0
+
+                aporte = float(aporte_mensal) * w * fator
+                if aporte <= 0:
+                    continue
+
+                px = _get_price(precos, data_exec, tk)
                 if px is None:
                     continue
-                val = float(qtd) * float(px)
-                registro[tk] = val
-                total += val
-            registro["Patrimônio"] = total
-            registros.append(registro)
 
-        if not registros:
-            return (pd.DataFrame(), datas_aportes) if not registrar_eventos else (pd.DataFrame(), datas_aportes, eventos)
+                carteira_qtd[tk] += (aporte * custo_mul) / px
 
-        df_patrimonio = pd.DataFrame(registros).set_index("date").sort_index().ffill()
-        if "Patrimônio" in df_patrimonio.columns:
-            df_patrimonio = df_patrimonio[df_patrimonio["Patrimônio"].fillna(0) != 0]
+                if registrar_eventos:
+                    eventos.append(
+                        {
+                            "date": str(pd.Timestamp(data_exec).date()),
+                            "ticker": tk,
+                            "tipo": "APORTE_MODULADO",
+                            "valor": f"{aporte:.2f}",
+                        }
+                    )
 
-        if registrar_eventos:
-            return df_patrimonio, datas_aportes, eventos
+            # registrar patrimônio
+            total_new = 0.0
+            for tk, qtd in carteira_qtd.items():
+                px = _get_price(precos, data_exec, tk)
+                if px is None or qtd <= 0:
+                    continue
+                total_new += float(qtd) * px
 
-        return df_patrimonio, datas_aportes
+            registros.append({"date": data_exec, "Patrimônio": total_new})
+            datas_aportes.append(pd.Timestamp(data_exec))
 
+    df_patrimonio = pd.DataFrame(registros).set_index("date").sort_index().ffill()
+    if "Patrimônio" in df_patrimonio.columns:
+        df_patrimonio = df_patrimonio[df_patrimonio["Patrimônio"].fillna(0) != 0]
+
+    if registrar_eventos:
+        return df_patrimonio, datas_aportes, eventos
+
+    return df_patrimonio, datas_aportes
+
+
+rn df_patrimonio, datas_aportes
 
 
 __all__ = [
@@ -796,7 +746,6 @@ __all__ = [
     "gerir_carteira_todas_empresas",
     "calcular_patrimonio_selic_macro",
     "gerir_carteira",
-    "gerir_carteira_modulada",
     "PortfolioPolicy",
+    "gerir_carteira_modulada",
 ]
-
