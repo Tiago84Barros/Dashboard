@@ -32,6 +32,8 @@ class PortfolioPolicy:
     n3_relax: float = 1.50             # permite N=3 se g23 <= n3_relax * eps (mais pró-diversificação)
     max_top_n: int = 3                 # no máximo 3 por ano-ref
 
+    fixed_top_n: Optional[int] = None   # se definido (1..3), força N fixo e ignora heurística
+
 
 
 def _ensure_dt_index(df: pd.DataFrame) -> pd.DataFrame:
@@ -654,7 +656,10 @@ def gerir_carteira_modulada(
                 ranking = rank_map.get(ano_ref, [])
                 scores_sorted = score_sorted_map.get(ano_ref, [])
 
-                if policy.dynamic_top_n:
+                # define N (faixa superior) por ano-ref
+                if policy.fixed_top_n is not None:
+                    n = int(policy.fixed_top_n)
+                elif policy.dynamic_top_n:
                     n = _dynamic_top_n_from_scores(
                         sorted_scores=scores_sorted[:3],
                         eps=float(eps_by_year.get(int(ano_ref), float(policy.eps_min))),
