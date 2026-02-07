@@ -35,6 +35,19 @@ except Exception:
     calcular_score_acumulado_v2 = None
 # <<< PATCH SCORE V2
 
+        # >>> CARTEIRA (modo)
+        with st.expander("Carteira (modo)", expanded=False):
+            carteira_modelo = st.radio(
+                "Modelo:",
+                ["Padrão (aporte igual)", "Ajustado (heurística: N dinâmico + aporte modulado)"],
+                index=1,
+            )
+            use_modulated = carteira_modelo.startswith("Ajustado")
+            if use_modulated:
+                st.caption("Parâmetros travados de produção (sem sliders) para evitar overfitting operacional.")
+        # <<< CARTEIRA (modo)
+
+
 with st.expander("Carteira (modo)", expanded=False):
     carteira_modo = st.radio(
         "Selecione o modo de carteira:",
@@ -167,6 +180,19 @@ def render() -> None:
     setor_map = dict(zip(_tmp["ticker"], _tmp["SETOR"]))
     # <<< PATCH SCORE V2
 
+        # >>> CARTEIRA (modo)
+        with st.expander("Carteira (modo)", expanded=False):
+            carteira_modelo = st.radio(
+                "Modelo:",
+                ["Padrão (aporte igual)", "Ajustado (heurística: N dinâmico + aporte modulado)"],
+                index=1,
+            )
+            use_modulated = carteira_modelo.startswith("Ajustado")
+            if use_modulated:
+                st.caption("Parâmetros travados de produção (sem sliders) para evitar overfitting operacional.")
+        # <<< CARTEIRA (modo)
+
+
     dados_macro = _safe_macro()
     if dados_macro is None or dados_macro.empty:
         st.error("Não foi possível carregar os dados macroeconômicos (info_economica).")
@@ -192,6 +218,19 @@ def render() -> None:
             else:
                 use_score_v2 = st.checkbox("Usar Score v2 (robusto)", value=True)
         # <<< PATCH SCORE V2
+
+        # >>> CARTEIRA (modo)
+        with st.expander("Carteira (modo)", expanded=False):
+            carteira_modelo = st.radio(
+                "Modelo:",
+                ["Padrão (aporte igual)", "Ajustado (heurística: N dinâmico + aporte modulado)"],
+                index=1,
+            )
+            use_modulated = carteira_modelo.startswith("Ajustado")
+            if use_modulated:
+                st.caption("Parâmetros travados de produção (sem sliders) para evitar overfitting operacional.")
+        # <<< CARTEIRA (modo)
+
 
     # ── filtra tickers do segmento
     seg_df = setores[
@@ -336,6 +375,19 @@ def render() -> None:
     else:
         score = calcular_score_acumulado(payload, setores_empresa, pesos, dados_macro, anos_minimos=4)
     # <<< PATCH SCORE V2
+
+        # >>> CARTEIRA (modo)
+        with st.expander("Carteira (modo)", expanded=False):
+            carteira_modelo = st.radio(
+                "Modelo:",
+                ["Padrão (aporte igual)", "Ajustado (heurística: N dinâmico + aporte modulado)"],
+                index=1,
+            )
+            use_modulated = carteira_modelo.startswith("Ajustado")
+            if use_modulated:
+                st.caption("Parâmetros travados de produção (sem sliders) para evitar overfitting operacional.")
+        # <<< CARTEIRA (modo)
+
 
     if score is None or score.empty:
         st.warning("Score vazio: não há dados suficientes após os filtros e janela mínima.")
