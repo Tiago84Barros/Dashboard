@@ -499,6 +499,27 @@ def _resolve_ticker_col(precos: pd.DataFrame, ticker: str) -> Optional[str]:
     return None
 
 
+def _align_ts_to_index(dt_like: Any, index: pd.Index) -> pd.Timestamp:
+    """Alinha um timestamp (dt_like) ao fuso horário do índice (DatetimeIndex).
+
+    Evita erro: 'Cannot compare tz-naive and tz-aware datetime-like objects'.
+    - Se index é tz-naive: retorna dt tz-naive.
+    - Se index é tz-aware: retorna dt tz-aware no mesmo tz do index.
+    """
+    ts = pd.Timestamp(dt_like)
+    if not isinstance(index, pd.DatetimeIndex):
+        # fallback: apenas retorna Timestamp sem tz
+        return ts.tz_localize(None) if ts.tzinfo is not None else ts
+
+    idx_tz = index.tz
+    if idx_tz is None:
+        return ts.tz_localize(None) if ts.tzinfo is not None else ts
+    # index tz-aware
+    if ts.tzinfo is None:
+        return ts.tz_localize(idx_tz)
+    return ts.tz_convert(idx_tz)
+
+
 def _resolve_div_key(dividendos_dict: Dict[str, Union[pd.Series, pd.DataFrame]], ticker: str) -> Optional[str]:
     if dividendos_dict is None:
         return None
@@ -806,7 +827,8 @@ def _simulate_window_nav(
             if px is None or px <= 0:
                 continue
             # dividendos do mês (último valor disponível até dt)
-            dv = float(s.loc[:dt].iloc[-1]) if not s.loc[:dt].empty else 0.0
+            dt_aligned = _align_ts_to_index(dt, s.index)
+            dv = float(s.loc[:dt_aligned].iloc[-1]) if not s.loc[:dt_aligned].empty else 0.0
             dv = max(0.0, min(dv, 10.0))  # sanitização defensiva (R$/ação)
             if dv > 0:
                 carteira[col] += (carteira[col] * dv) / px
