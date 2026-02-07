@@ -190,6 +190,7 @@ def render() -> None:
                 "Ajustado (heurística: N dinâmico + aporte modulado)",
                 "Ajustado (manual: N/γ/cap/soft)",
                 "Ajustado (heurística simples: automático)",
+                "Ajustado (heurística calibrada: auto-tuning)",
             ]
             modo_carteira = st.radio("Selecione o modo:", modos, index=0)
 
@@ -206,9 +207,12 @@ def render() -> None:
                 cap = st.slider("Cap máximo por ativo (%)", min_value=10, max_value=60, value=25, step=1) / 100.0
                 soft = st.slider("Zona suave do cap (pp)", min_value=0, max_value=20, value=5, step=1) / 100.0
                 policy = {"mode": "manual", "N": int(n_fix), "gamma": float(gamma), "cap": float(cap), "soft": float(soft), "eps": 0.35}
-            else:
+            elif modo_carteira == "Ajustado (heurística simples: automático)":
                 policy = {"mode": "heuristica_simples", "eps": 0.35}
                 st.caption("Parâmetros automáticos por ano-ref: N dinâmico + regras discretas para γ/cap/soft.")
+            else:
+                policy = {"mode": "heuristica_calibrada", "eps": 0.35, "gamma": 0.90, "cap": 0.25, "soft": 0.05}
+                st.caption("Auto-tuning por segmento/ano-ref: escolhe γ/cap/soft com janela passada (walk-back) + regularização.")
     # ── filtra tickers do segmento
     seg_df = setores[
         (setores["SETOR"] == setor) &
