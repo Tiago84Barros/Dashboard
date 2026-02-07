@@ -34,27 +34,6 @@ try:
 except Exception:
     calcular_score_acumulado_v2 = None
 # <<< PATCH SCORE V2
-
-        # >>> CARTEIRA (modo)
-        with st.expander("Carteira (modo)", expanded=False):
-            carteira_modelo = st.radio(
-                "Modelo:",
-                ["Padrão (aporte igual)", "Ajustado (heurística: N dinâmico + aporte modulado)"],
-                index=1,
-            )
-            use_modulated = carteira_modelo.startswith("Ajustado")
-            if use_modulated:
-                st.caption("Parâmetros travados de produção (sem sliders) para evitar overfitting operacional.")
-        # <<< CARTEIRA (modo)
-
-
-with st.expander("Carteira (modo)", expanded=False):
-    carteira_modo = st.radio(
-        "Selecione o modo de carteira:",
-        ["Padrão (aporte igual)", "Ajustado (heurística: N dinâmico + aporte modulado)"],
-        index=0,
-    )
-
 from core.portfolio import (
     gerir_carteira,
     gerir_carteira_modulada,
@@ -180,19 +159,6 @@ def render() -> None:
     setor_map = dict(zip(_tmp["ticker"], _tmp["SETOR"]))
     # <<< PATCH SCORE V2
 
-        # >>> CARTEIRA (modo)
-        with st.expander("Carteira (modo)", expanded=False):
-            carteira_modelo = st.radio(
-                "Modelo:",
-                ["Padrão (aporte igual)", "Ajustado (heurística: N dinâmico + aporte modulado)"],
-                index=1,
-            )
-            use_modulated = carteira_modelo.startswith("Ajustado")
-            if use_modulated:
-                st.caption("Parâmetros travados de produção (sem sliders) para evitar overfitting operacional.")
-        # <<< CARTEIRA (modo)
-
-
     dados_macro = _safe_macro()
     if dados_macro is None or dados_macro.empty:
         st.error("Não foi possível carregar os dados macroeconômicos (info_economica).")
@@ -200,6 +166,14 @@ def render() -> None:
 
     # ── Sidebar filtros
     with st.sidebar:
+        with st.expander("Carteira (modo)", expanded=False):
+            carteira_modo = st.radio(
+                "Modelo:",
+                ["Padrão (aporte igual)", "Ajustado (heurística: N dinâmico + aporte modulado)"],
+                index=0,
+            )
+        use_modulated = carteira_modo.startswith("Ajustado")
+
         setor = st.selectbox("Setor:", sorted(setores["SETOR"].dropna().unique().tolist()))
         subsetores = setores.loc[setores["SETOR"] == setor, "SUBSETOR"].dropna().unique().tolist()
         subsetor = st.selectbox("Subsetor:", sorted(subsetores))
@@ -218,19 +192,6 @@ def render() -> None:
             else:
                 use_score_v2 = st.checkbox("Usar Score v2 (robusto)", value=True)
         # <<< PATCH SCORE V2
-
-        # >>> CARTEIRA (modo)
-        with st.expander("Carteira (modo)", expanded=False):
-            carteira_modelo = st.radio(
-                "Modelo:",
-                ["Padrão (aporte igual)", "Ajustado (heurística: N dinâmico + aporte modulado)"],
-                index=1,
-            )
-            use_modulated = carteira_modelo.startswith("Ajustado")
-            if use_modulated:
-                st.caption("Parâmetros travados de produção (sem sliders) para evitar overfitting operacional.")
-        # <<< CARTEIRA (modo)
-
 
     # ── filtra tickers do segmento
     seg_df = setores[
@@ -376,19 +337,6 @@ def render() -> None:
         score = calcular_score_acumulado(payload, setores_empresa, pesos, dados_macro, anos_minimos=4)
     # <<< PATCH SCORE V2
 
-        # >>> CARTEIRA (modo)
-        with st.expander("Carteira (modo)", expanded=False):
-            carteira_modelo = st.radio(
-                "Modelo:",
-                ["Padrão (aporte igual)", "Ajustado (heurística: N dinâmico + aporte modulado)"],
-                index=1,
-            )
-            use_modulated = carteira_modelo.startswith("Ajustado")
-            if use_modulated:
-                st.caption("Parâmetros travados de produção (sem sliders) para evitar overfitting operacional.")
-        # <<< CARTEIRA (modo)
-
-
     if score is None or score.empty:
         st.warning("Score vazio: não há dados suficientes após os filtros e janela mínima.")
         return
@@ -424,17 +372,13 @@ def render() -> None:
         st.warning("Não foi possível determinar líderes com o score calculado.")
         return
 
-
-    if ("carteira_modo" in locals()) and (carteira_modo == "Ajustado (heurística: N dinâmico + aporte modulado)"):
-        policy = PortfolioPolicy()  # valores travados de produção (sem sliders)
-        patrimonio_estrategia, datas_aportes = gerir_carteira_modulada(precos, score, lideres, dividendos, policy=policy)
-    else:
-        patrimonio_estrategia, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
-
+    patrimonio_estrategia, datas_aportes = (gerir_carteira_modulada(precos, score, lideres, dividendos, policy=PortfolioPolicy())
+        if use_modulated else gerir_carteira(precos, score, lideres, dividendos))
     if patrimonio_estrategia is None or patrimonio_estrategia.empty:
         st.warning("Falha ao simular a carteira da estratégia.")
         return
     patrimonio_estrategia = patrimonio_estrategia[["Patrimônio"]]
+
     patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aportes)
     if patrimonio_selic is None or patrimonio_selic.empty:
         st.warning("Falha ao calcular o benchmark Tesouro Selic.")
