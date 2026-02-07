@@ -24,10 +24,13 @@ class PortfolioPolicy:
     tau: float = 0.0                   # corte: scores <= tau recebem peso 0
     cap_max: float = 0.25              # cap máximo por ativo (fração)
     cap_soft_zone: float = 0.05        # zona suave (fração, ex.: 0.05 = 5pp)
-    # Heurística do N (faixa superior dinâmica)
+
+    # Heurística do N (faixa superior dinâmica) — decide N∈{1,2,3} por ano-ref usando gaps do score
     dynamic_top_n: bool = True
-    eps_gap: float = 0.35              # limiar de "próximo" para gaps do score
-    max_top_n: int = 3                 # no máximo 3 por ano-ref (N ∈ {1,2,3})
+    eps_min: float = 0.35              # piso do limiar de "próximo" (unidades do score)
+    eps_iqr_mult: float = 0.35         # eps = max(eps_min, eps_iqr_mult * IQR_ano_ref)
+    n3_relax: float = 1.50             # permite N=3 se g23 <= n3_relax * eps (mais pró-diversificação)
+    max_top_n: int = 3                 # no máximo 3 por ano-ref
 
 
 
@@ -158,36 +161,42 @@ def _build_monthly_schedule(precos: pd.DataFrame, anos: Sequence[int], start_yea
 
 
 
-def _dynamic_top_n_from_scores(sorted_scores: List[float], eps: float, max_n: int = 3) -> int:
-        """Decide N (1/2/3) a partir dos gaps do ranking.
+def _dynamic_top_n_from_scores(
+    sorted_scores: List[float],
+    eps: float,
+    max_n: int = 3,
+    n3_relax: float = 1.50,
+) -> int:
+    """Decide N (1/2/3) a partir dos gaps do ranking (scores já ordenados desc).
 
-        Regras:
-        - n>=3:
-            * se (s1-s2)<=eps e (s2-s3)<=eps -> N=3
-            * se (s1-s2)<=eps e (s2-s3)> eps -> N=2
-            * se (s1-s2)> eps -> N=1
-        - n==2:
-            * se (s1-s2)<=eps -> N=2
-            * senão -> N=1
-        - n==1: N=1
-        """
-        vals = [float(x) for x in sorted_scores if x is not None and np.isfinite(x)]
-        n = len(vals)
-        if n <= 1:
-            return 1
-        eps = float(eps)
-        max_n = max(1, int(max_n))
-        if n == 2 or max_n == 2:
-            g12 = vals[0] - vals[1]
-            return min(2, max_n) if g12 <= eps else 1
-        # n>=3
+    - n>=3:
+        * se g12 > eps              -> N=1
+        * se g12 <= eps e g23 <= n3_relax*eps -> N=3
+        * se g12 <= eps e g23 >  n3_relax*eps -> N=2
+    - n==2:
+        * se g12 <= eps -> N=2, senão N=1
+    - n<=1: N=1
+
+    Observação: n3_relax>1 torna a regra mais pró-N=3 (mais robusta), sem tunagem manual.
+    """
+    vals = [float(x) for x in sorted_scores if x is not None and np.isfinite(x)]
+    n = len(vals)
+    if n <= 1:
+        return 1
+    eps = float(eps)
+    max_n = max(1, int(max_n))
+    if n == 2 or max_n == 2:
         g12 = vals[0] - vals[1]
-        if g12 > eps:
-            return 1
-        g23 = vals[1] - vals[2]
-        if g23 <= eps and max_n >= 3:
-            return 3
-        return 2
+        return min(2, max_n) if g12 <= eps else 1
+
+    # n>=3
+    g12 = vals[0] - vals[1]
+    if g12 > eps:
+        return 1
+    g23 = vals[1] - vals[2]
+    if max_n >= 3 and g23 <= (float(n3_relax) * eps):
+        return 3
+    return 2
 
 def gerir_carteira_simples(
     precos: pd.DataFrame,
@@ -604,6 +613,18 @@ def gerir_carteira_modulada(
             rank_map[int(ano)] = dfy["ticker"].astype(str).tolist()
             score_sorted_map[int(ano)] = dfy["Score_Ajustado"].astype(float).tolist()
 
+        # eps dinâmico por ano-ref (robusto): eps = max(eps_min, eps_iqr_mult * IQR)
+        eps_by_year: Dict[int, float] = {}
+        for _ano, _scores in score_sorted_map.items():
+            _vals = np.array([float(x) for x in _scores if x is not None and np.isfinite(x)], dtype=float)
+            if _vals.size >= 5:
+                q75, q25 = np.percentile(_vals, [75, 25])
+                iqr = float(q75 - q25)
+                eps = max(float(policy.eps_min), float(policy.eps_iqr_mult) * iqr)
+            else:
+                eps = float(policy.eps_min)
+            eps_by_year[int(_ano)] = float(eps)
+
         carteira = defaultdict(float)  # ticker -> qtd ações
         aporte_acumulado = 0.0
         registros: List[dict] = []
@@ -636,8 +657,9 @@ def gerir_carteira_modulada(
                 if policy.dynamic_top_n:
                     n = _dynamic_top_n_from_scores(
                         sorted_scores=scores_sorted[:3],
-                        eps=float(policy.eps_gap),
+                        eps=float(eps_by_year.get(int(ano_ref), float(policy.eps_min))),
                         max_n=int(policy.max_top_n),
+                        n3_relax=float(policy.n3_relax),
                     )
                 else:
                     n = 1
