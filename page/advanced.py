@@ -34,6 +34,14 @@ try:
 except Exception:
     calcular_score_acumulado_v2 = None
 # <<< PATCH SCORE V2
+
+with st.expander("Carteira (modo)", expanded=False):
+    carteira_modo = st.radio(
+        "Selecione o modo de carteira:",
+        ["Padrão (aporte igual)", "Ajustado (heurística: N dinâmico + aporte modulado)"],
+        index=0,
+    )
+
 from core.portfolio import (
     gerir_carteira,
     gerir_carteira_modulada,
@@ -184,24 +192,6 @@ def render() -> None:
             else:
                 use_score_v2 = st.checkbox("Usar Score v2 (robusto)", value=True)
         # <<< PATCH SCORE V2
-
-        with st.expander("Carteira (aportes)", expanded=False):
-            portfolio_modo = st.radio(
-                "Modo de aporte:",
-                ["Aporte igual (padrão)", "Aporte modulado (Score + Cap)"],
-                index=0,
-            )
-            if portfolio_modo == "Aporte modulado (Score + Cap)":
-                st.caption("Camada de controle: score → pesos, com limite de concentração por ativo.")
-                top_n_por_ano = st.slider("Faixa superior (top N por ano-ref):", 1, 5, 1, 1)
-                gamma_aporte = st.slider("γ (concentração do aporte):", 0.5, 2.0, 1.0, 0.1)
-                cap_max = st.slider("Cap máximo por ativo (% do portfólio):", 5, 40, 25, 1) / 100.0
-                cap_soft = st.slider("Zona suave do cap (pp):", 0, 10, 0, 1) / 100.0
-            else:
-                top_n_por_ano = 1
-                gamma_aporte = 1.0
-                cap_max = 1.0
-                cap_soft = 0.0
 
     # ── filtra tickers do segmento
     seg_df = setores[
@@ -382,15 +372,10 @@ def render() -> None:
         st.warning("Não foi possível determinar líderes com o score calculado.")
         return
 
-    # ── Simulação da estratégia (padrão vs modulado)
-    if ("portfolio_modo" in locals()) and (portfolio_modo == "Aporte modulado (Score + Cap)"):
-        pol = PortfolioPolicy(
-            top_n_por_ano=int(top_n_por_ano),
-            gamma=float(gamma_aporte),
-            cap_max=float(cap_max),
-            cap_soft_zone=float(cap_soft),
-        )
-        patrimonio_estrategia, datas_aportes = gerir_carteira_modulada(precos, score, lideres, dividendos, policy=pol)
+
+    if ("carteira_modo" in locals()) and (carteira_modo == "Ajustado (heurística: N dinâmico + aporte modulado)"):
+        policy = PortfolioPolicy()  # valores travados de produção (sem sliders)
+        patrimonio_estrategia, datas_aportes = gerir_carteira_modulada(precos, score, lideres, dividendos, policy=policy)
     else:
         patrimonio_estrategia, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
 
@@ -398,7 +383,6 @@ def render() -> None:
         st.warning("Falha ao simular a carteira da estratégia.")
         return
     patrimonio_estrategia = patrimonio_estrategia[["Patrimônio"]]
-
     patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aportes)
     if patrimonio_selic is None or patrimonio_selic.empty:
         st.warning("Falha ao calcular o benchmark Tesouro Selic.")
@@ -525,7 +509,6 @@ def render() -> None:
         "DY",
         "Liquidez Corrente",
         "Alavancagem Financeira",
-        "Endividamento Total",
         "Endividamento Total",
     ]
 
