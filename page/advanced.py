@@ -191,11 +191,11 @@ def render() -> None:
             st.caption("A contagem usa apenas empresas elegíveis após filtros (setor/subsetor/segmento + histórico de DRE + dados disponíveis).")
             policy_calibrada: Dict = {"mode": "heuristica_calibrada", "eps": 0.35}
 
+    seg_df = setores[
         (setores["SETOR"] == setor) &
         (setores["SUBSETOR"] == subsetor) &
         (setores["SEGMENTO"] == segmento)
     ].copy()
-
     if seg_df.empty:
         st.warning("Nenhuma empresa encontrada para os filtros escolhidos.")
         return
