@@ -185,36 +185,12 @@ def render() -> None:
         # <<< PATCH SCORE V2
         # ── Carteira (modo)
         with st.expander("Carteira (modo)", expanded=False):
-            modos = [
-                "Padrão (aporte igual)",
-                "Ajustado (heurística: N dinâmico + aporte modulado)",
-                "Ajustado (manual: N/γ/cap/soft)",
-                "Ajustado (heurística simples: automático)",
-                "Ajustado (heurística calibrada: auto-tuning)",
-            ]
-            modo_carteira = st.radio("Selecione o modo:", modos, index=0)
+            st.markdown("**Modo automático (binário)**:")
+            st.write("• Se **nº de empresas elegíveis** no segmento ≤ **4** → **Modelo Padrão (aportes iguais)**")
+            st.write("• Se **nº de empresas elegíveis** no segmento ≥ **5** → **Ajuste Calibrado (auto-tuning)**")
+            st.caption("A contagem usa apenas empresas elegíveis após filtros (setor/subsetor/segmento + histórico de DRE + dados disponíveis).")
+            policy_calibrada: Dict = {"mode": "heuristica_calibrada", "eps": 0.35}
 
-            policy: Dict = {"mode": "heuristica", "eps": 0.35, "gamma": 0.90, "cap": 0.25, "soft": 0.05}
-
-            if modo_carteira == "Padrão (aporte igual)":
-                policy = {"mode": "padrao"}  # placeholder (não utilizado)
-            elif modo_carteira == "Ajustado (heurística: N dinâmico + aporte modulado)":
-                policy = {"mode": "heuristica", "eps": 0.35, "gamma": 0.90, "cap": 0.25, "soft": 0.05}
-                st.caption("N é dinâmico por ano-ref (heurística de gaps). γ/cap/soft fixos (padrão).")
-            elif modo_carteira == "Ajustado (manual: N/γ/cap/soft)":
-                n_fix = st.slider("N (nº de empresas líderes)", min_value=1, max_value=3, value=2, step=1)
-                gamma = st.slider("γ (concentração do aporte)", min_value=0.30, max_value=1.50, value=0.90, step=0.05)
-                cap = st.slider("Cap máximo por ativo (%)", min_value=10, max_value=60, value=25, step=1) / 100.0
-                soft = st.slider("Zona suave do cap (pp)", min_value=0, max_value=20, value=5, step=1) / 100.0
-                policy = {"mode": "manual", "N": int(n_fix), "gamma": float(gamma), "cap": float(cap), "soft": float(soft), "eps": 0.35}
-            elif modo_carteira == "Ajustado (heurística simples: automático)":
-                policy = {"mode": "heuristica_simples", "eps": 0.35}
-                st.caption("Parâmetros automáticos por ano-ref: N dinâmico + regras discretas para γ/cap/soft.")
-            else:
-                policy = {"mode": "heuristica_calibrada", "eps": 0.35, "gamma": 0.90, "cap": 0.25, "soft": 0.05}
-                st.caption("Auto-tuning por segmento/ano-ref: escolhe γ/cap/soft com janela passada (walk-back) + regularização.")
-    # ── filtra tickers do segmento
-    seg_df = setores[
         (setores["SETOR"] == setor) &
         (setores["SUBSETOR"] == subsetor) &
         (setores["SEGMENTO"] == segmento)
@@ -362,6 +338,18 @@ def render() -> None:
         return
 
     # ─────────────────────────────────────────────────────────
+    # 2.1) Decisão automática do modo (binário) por nº de empresas elegíveis
+    # ─────────────────────────────────────────────────────────
+    score = score.dropna(axis=1, how="all")
+    n_empresas_elegiveis = int(score.shape[1])
+    usar_calibrado = n_empresas_elegiveis >= 5
+
+    if usar_calibrado:
+        st.sidebar.success(f"Modo aplicado: **Ajuste Calibrado** (n={n_empresas_elegiveis} empresas elegíveis)")
+    else:
+        st.sidebar.info(f"Modo aplicado: **Padrão (aportes iguais)** (n={n_empresas_elegiveis} empresas elegíveis)")
+
+    # ─────────────────────────────────────────────────────────
     # 3) Preços + penalização de platô + dividendos
     # ─────────────────────────────────────────────────────────
     tickers_scores = sorted(score["ticker"].dropna().astype(str).unique().tolist())
@@ -392,9 +380,9 @@ def render() -> None:
         st.warning("Não foi possível determinar líderes com o score calculado.")
         return
 
-    if "modo_carteira" in locals() and modo_carteira != "Padrão (aporte igual)":
+    if usar_calibrado:
         patrimonio_estrategia, datas_aportes = gerir_carteira_modulada(
-            precos, score, lideres, dividendos, policy=policy
+            precos, score, lideres, dividendos, policy=policy_calibrada
         )
     else:
         patrimonio_estrategia, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
