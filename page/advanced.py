@@ -188,7 +188,7 @@ def render() -> None:
             st.markdown("**Modo automático (binário)**:")
             st.write("• Se **nº de empresas elegíveis** no segmento ≤ **4** → **Modelo Padrão (aportes iguais)**")
             st.write("• Se **nº de empresas elegíveis** no segmento ≥ **5** → **Ajuste Calibrado (auto-tuning)**")
-            st.caption("A contagem usa apenas empresas elegíveis após filtros (setor/subsetor/segmento + histórico de DRE + dados disponíveis).")
+            st.caption("Gate binário: usa o total de empresas do segmento após o filtro de histórico (tipo). Se n≤4 → padrão; se n≥5 → calibrado.")
             policy_calibrada: Dict = {"mode": "heuristica_calibrada", "eps": 0.35}
 
     seg_df = setores[
@@ -202,7 +202,7 @@ def render() -> None:
 
     # normaliza tickers e nomes
     seg_df["ticker"] = seg_df["ticker"].astype(str).apply(_strip_sa)
-    n_total_segmento = int(seg_df["ticker"].nunique())  # OPÇÃO 2: tamanho estrutural do segmento (antes da elegibilidade)
+    n_total_segmento_raw = int(seg_df["ticker"].nunique())  # tamanho bruto do segmento (antes do filtro de histórico)
     if "nome_empresa" not in seg_df.columns:
         seg_df["nome_empresa"] = seg_df["ticker"]
 
@@ -261,6 +261,7 @@ def render() -> None:
         return n > 0
 
     seg_df = seg_df[seg_df["ticker"].apply(_pass_tipo)]
+    n_total_segmento = int(seg_df["ticker"].nunique())  # OPÇÃO 2: tamanho do segmento condicionado ao filtro de histórico (tipo)
     if seg_df.empty:
         st.warning("Nenhuma empresa atende ao filtro de histórico escolhido.")
         return
