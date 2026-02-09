@@ -202,6 +202,7 @@ def render() -> None:
 
     # normaliza tickers e nomes
     seg_df["ticker"] = seg_df["ticker"].astype(str).apply(_strip_sa)
+    n_total_segmento = int(seg_df["ticker"].nunique())  # OPÇÃO 2: tamanho estrutural do segmento (antes da elegibilidade)
     if "nome_empresa" not in seg_df.columns:
         seg_df["nome_empresa"] = seg_df["ticker"]
 
@@ -338,16 +339,24 @@ def render() -> None:
         return
 
     # ─────────────────────────────────────────────────────────
-    # 2.1) Decisão automática do modo (binário) por nº de empresas elegíveis
+    # 2.1) Decisão automática do modo (binário) por tamanho estrutural do segmento (OPÇÃO 2)
     # ─────────────────────────────────────────────────────────
+    # Regra:
+    #   - se n_total_segmento <= 4  -> Modelo Padrão (aportes iguais)
+    #   - se n_total_segmento >= 5  -> Ajuste Calibrado
+    # Observação: n_total_segmento é calculado ANTES dos filtros de elegibilidade do ano-ref.
     score = score.dropna(axis=1, how="all")
     n_empresas_elegiveis = int(score.shape[1])
-    usar_calibrado = n_empresas_elegiveis >= 5
+    usar_calibrado = n_total_segmento >= 5
 
     if usar_calibrado:
-        st.sidebar.success(f"Modo aplicado: **Ajuste Calibrado** (n={n_empresas_elegiveis} empresas elegíveis)")
+        st.sidebar.success(
+            f"Modo aplicado: **Ajuste Calibrado** (segmento com n={n_total_segmento}; elegíveis no ano-ref: {n_empresas_elegiveis})"
+        )
     else:
-        st.sidebar.info(f"Modo aplicado: **Padrão (aportes iguais)** (n={n_empresas_elegiveis} empresas elegíveis)")
+        st.sidebar.info(
+            f"Modo aplicado: **Modelo Padrão** (segmento com n={n_total_segmento}; elegíveis no ano-ref: {n_empresas_elegiveis})"
+        )
 
     # ─────────────────────────────────────────────────────────
     # 3) Preços + penalização de platô + dividendos
