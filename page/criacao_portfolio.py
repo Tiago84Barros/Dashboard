@@ -229,15 +229,15 @@ def render():
             )
 
 
-estrategia_aporte = st.selectbox(
-    "Estratégia de aporte (nova regra automática)",
-    options=[
-        "Padrão (sempre)",
-        "Auto (Padrão/Calibrado por segmento)",
-    ],
-    index=0,
-    help="Auto aplica Padrão para segmentos com até 4 empresas (após filtro automático de >=10 anos) e Calibrado para segmentos maiores.",
-)
+            estrategia_aporte = st.selectbox(
+                "Estratégia de aporte (nova regra automática)",
+                options=[
+                    "Padrão (sempre)",
+                    "Auto (Padrão/Calibrado por segmento)",
+                ],
+                index=0,
+                help="Auto aplica Padrão para segmentos com até 4 empresas (após filtro automático de >=10 anos) e Calibrado para segmentos maiores.",
+            )
 
             gerar = st.form_submit_button("🚀 Rodar Criação de Portfólio")
 
@@ -437,45 +437,45 @@ estrategia_aporte = st.selectbox(
 
 
 # ─────────────────────────────────────────────────────────
-# Gate binário (regra de ouro): decide Padrão vs Calibrado
-# n_total_segmento = tamanho estrutural pós-filtro automático (>=10 anos)
-# ─────────────────────────────────────────────────────────
-estrategia_aporte_sel = str(st.session_state.get("cp_last_params", {}).get("estrategia_aporte", "Padrão (sempre)"))
-n_total_segmento = int(len(set(tickers_validos)))  # pós-filtro >=10 anos
-# elegíveis do ano-ref (somente auditoria)
-try:
-    ultimo_ano_aud = int(pd.to_numeric(score["Ano"], errors="coerce").max())
-    n_elegiveis_ano_ref = int(score.loc[score["Ano"] == ultimo_ano_aud, "ticker"].nunique())
-except Exception:
-    ultimo_ano_aud = None
-    n_elegiveis_ano_ref = None
+        # Gate binário (regra de ouro): decide Padrão vs Calibrado
+        # n_total_segmento = tamanho estrutural pós-filtro automático (>=10 anos)
+        # ─────────────────────────────────────────────────────────
+        estrategia_aporte_sel = str(st.session_state.get("cp_last_params", {}).get("estrategia_aporte", "Padrão (sempre)"))
+        n_total_segmento = int(len(set(tickers_validos)))  # pós-filtro >=10 anos
+        # elegíveis do ano-ref (somente auditoria)
+        try:
+            ultimo_ano_aud = int(pd.to_numeric(score["Ano"], errors="coerce").max())
+            n_elegiveis_ano_ref = int(score.loc[score["Ano"] == ultimo_ano_aud, "ticker"].nunique())
+        except Exception:
+            ultimo_ano_aud = None
+            n_elegiveis_ano_ref = None
 
-usar_calibrado = (estrategia_aporte_sel.startswith("Auto") and n_total_segmento > 4)
+        usar_calibrado = (estrategia_aporte_sel.startswith("Auto") and n_total_segmento > 4)
 
-if usar_calibrado:
-    patrimonio_empresas, datas_aportes = gerir_carteira_modulada(
-        precos,
-        score,
-        lideres,
-        dividendos,
-        policy={"mode": "heuristica_calibrada"},
-    )
-    modo_aplicado = "Calibrado"
-else:
-    patrimonio_empresas, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
-    modo_aplicado = "Padrão"
+        if usar_calibrado:
+            patrimonio_empresas, datas_aportes = gerir_carteira_modulada(
+                precos,
+                score,
+                lideres,
+                dividendos,
+                policy={"mode": "heuristica_calibrada"},
+            )
+            modo_aplicado = "Calibrado"
+        else:
+            patrimonio_empresas, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
+            modo_aplicado = "Padrão"
 
-auditoria_gate.append(
-    {
-        "SETOR": setor,
-        "SUBSETOR": subsetor,
-        "SEGMENTO": segmento,
-        "n_total_segmento_pos_filtro": n_total_segmento,
-        "n_elegiveis_ano_ref": n_elegiveis_ano_ref,
-        "ano_ref_auditoria": ultimo_ano_aud,
-        "modo_aplicado": modo_aplicado,
-    }
-)
+        auditoria_gate.append(
+            {
+                "SETOR": setor,
+                "SUBSETOR": subsetor,
+                "SEGMENTO": segmento,
+                "n_total_segmento_pos_filtro": n_total_segmento,
+                "n_elegiveis_ano_ref": n_elegiveis_ano_ref,
+                "ano_ref_auditoria": ultimo_ano_aud,
+                "modo_aplicado": modo_aplicado,
+            }
+        )
         if patrimonio_empresas is None or patrimonio_empresas.empty:
             continue
 
@@ -719,139 +719,136 @@ if auditoria_gate:
     except Exception:
         df_prices_global = pd.DataFrame()
 
-    if empresas_lideres_finais:
-        
+    # ─────────────────────────────────────────────────────────
+    # Etapa B — Execução Mensal (ordem de compra do próximo mês)
+    # ─────────────────────────────────────────────────────────
+    st.markdown("## 🗓️ Execução mensal — ordem de compra")
+    plan = st.session_state.get("portfolio_plan")
+    plan_hash = st.session_state.get("plan_hash")
 
-# ─────────────────────────────────────────────────────────
-# Etapa B — Execução Mensal (ordem de compra do próximo mês)
-# ─────────────────────────────────────────────────────────
-st.markdown("## 🗓️ Execução mensal — ordem de compra")
-plan = st.session_state.get("portfolio_plan")
-plan_hash = st.session_state.get("plan_hash")
+    if not plan or not plan.get("empresas_lideres_finais"):
+        st.info("Crie/congele o Portfólio primeiro (clique em **🚀 Rodar Criação de Portfólio**).")
+    else:
+        with st.expander("Gerar ordem de compra do próximo mês", expanded=True):
+            col1, col2, col3 = st.columns([1, 1, 1])
+            with col1:
+                mes_alvo = st.date_input(
+                    "Mês-alvo (qualquer dia do mês)",
+                    value=datetime.now().date(),
+                    help="A ordem será gerada para o mês selecionado (você pode escolher qualquer dia dentro do mês).",
+                )
+            with col2:
+                aporte_mes = st.number_input("Aporte do mês (R$)", min_value=0.0, value=1000.0, step=50.0)
+            with col3:
+                reinvestir_dividendos = st.checkbox("Reinvestir dividendos (ordem teórica)", value=True)
 
-if not plan or not plan.get("empresas_lideres_finais"):
-    st.info("Crie/congele o Portfólio primeiro (clique em **🚀 Rodar Criação de Portfólio**).")
-else:
-    with st.expander("Gerar ordem de compra do próximo mês", expanded=True):
-        col1, col2, col3 = st.columns([1, 1, 1])
-        with col1:
-            mes_alvo = st.date_input(
-                "Mês-alvo (qualquer dia do mês)",
-                value=datetime.now().date(),
-                help="A ordem será gerada para o mês selecionado (você pode escolher qualquer dia dentro do mês).",
-            )
-        with col2:
-            aporte_mes = st.number_input("Aporte do mês (R$)", min_value=0.0, value=1000.0, step=50.0)
-        with col3:
-            reinvestir_dividendos = st.checkbox("Reinvestir dividendos (ordem teórica)", value=True)
+            gerar_ordem = st.button("🧾 Gerar ordem do mês", type="primary")
 
-        gerar_ordem = st.button("🧾 Gerar ordem do mês", type="primary")
+            # segurança: detectar mudança de plano (hash)
+            current_hash = plan_hash
+            if gerar_ordem:
+                tickers = [e.get("ticker") for e in plan.get("empresas_lideres_finais", []) if e.get("ticker")]
+                tickers = [_strip_sa(str(t)) for t in tickers]
+                tickers = [t for t in tickers if t]
 
-        # segurança: detectar mudança de plano (hash)
-        current_hash = plan_hash
-        if gerar_ordem:
-            tickers = [e.get("ticker") for e in plan.get("empresas_lideres_finais", []) if e.get("ticker")]
-            tickers = [_strip_sa(str(t)) for t in tickers]
-            tickers = [t for t in tickers if t]
+                if not tickers:
+                    st.warning("⚠️ Plano sem tickers válidos para ordem de compra.")
+                elif aporte_mes <= 0:
+                    st.warning("⚠️ Informe um aporte mensal maior que zero.")
+                else:
+                    # Regra simples e robusta para execução real:
+                    # - distribuição igualitária entre os ativos do plano
+                    # (sem mudar universo; ajuste fino mensal será incorporado ao motor depois,
+                    # quando você plugar a execução mensal em `gerir_carteira(_modulada)` por data).
+                    n = len(tickers)
+                    valor_por_ativo = float(aporte_mes) / float(n) if n else 0.0
+                    df_ordem = pd.DataFrame(
+                        {
+                            "Ticker": tickers,
+                            "Valor (R$)": [valor_por_ativo] * n,
+                            "% do aporte": [100.0 / n] * n,
+                            "Mês-alvo": [mes_alvo.strftime("%Y-%m")] * n,
+                            "Plan Hash": [current_hash] * n,
+                            "Reinvestir dividendos": [bool(reinvestir_dividendos)] * n,
+                        }
+                    )
 
-            if not tickers:
-                st.warning("⚠️ Plano sem tickers válidos para ordem de compra.")
-            elif aporte_mes <= 0:
-                st.warning("⚠️ Informe um aporte mensal maior que zero.")
-            else:
-                # Regra simples e robusta para execução real:
-                # - distribuição igualitária entre os ativos do plano
-                # (sem mudar universo; ajuste fino mensal será incorporado ao motor depois,
-                # quando você plugar a execução mensal em `gerir_carteira(_modulada)` por data).
-                n = len(tickers)
-                valor_por_ativo = float(aporte_mes) / float(n) if n else 0.0
-                df_ordem = pd.DataFrame(
-                    {
-                        "Ticker": tickers,
-                        "Valor (R$)": [valor_por_ativo] * n,
-                        "% do aporte": [100.0 / n] * n,
-                        "Mês-alvo": [mes_alvo.strftime("%Y-%m")] * n,
-                        "Plan Hash": [current_hash] * n,
-                        "Reinvestir dividendos": [bool(reinvestir_dividendos)] * n,
+                    st.session_state["last_month_orders"] = {
+                        "month": mes_alvo.strftime("%Y-%m"),
+                        "aporte": float(aporte_mes),
+                        "plan_hash": current_hash,
+                        "orders": df_ordem.to_dict(orient="records"),
                     }
+
+                    st.success(f"Ordem gerada para {mes_alvo.strftime('%Y-%m')} — plano {current_hash}")
+                    st.dataframe(df_ordem, use_container_width=True, hide_index=True)
+
+                    # downloads
+                    csv_bytes = df_ordem.to_csv(index=False).encode("utf-8")
+                    json_bytes = json.dumps(st.session_state["last_month_orders"], ensure_ascii=False, indent=2).encode("utf-8")
+
+                    cdl1, cdl2 = st.columns(2)
+                    with cdl1:
+                        st.download_button(
+                            "⬇️ Baixar CSV da ordem",
+                            data=csv_bytes,
+                            file_name=f"ordem_{mes_alvo.strftime('%Y-%m')}_{current_hash}.csv",
+                            mime="text/csv",
+                        )
+                    with cdl2:
+                        st.download_button(
+                            "⬇️ Baixar JSON (auditoria)",
+                            data=json_bytes,
+                            file_name=f"ordem_{mes_alvo.strftime('%Y-%m')}_{current_hash}.json",
+                            mime="application/json",
+                        )
+
+            # mostrar última ordem (se existir)
+            last = st.session_state.get("last_month_orders")
+            if last and last.get("orders"):
+                st.caption(
+                    f"Última ordem em memória: {last.get('month')} | aporte R$ {last.get('aporte'):.2f} | plano {last.get('plan_hash')}"
                 )
 
-                st.session_state["last_month_orders"] = {
-                    "month": mes_alvo.strftime("%Y-%m"),
-                    "aporte": float(aporte_mes),
-                    "plan_hash": current_hash,
-                    "orders": df_ordem.to_dict(orient="records"),
-                }
+    st.markdown("---")
+    st.caption("🧪 Teste incremental: habilite os patches um a um para detectar reinícios (reruns) anormais.")
 
-                st.success(f"Ordem gerada para {mes_alvo.strftime('%Y-%m')} — plano {current_hash}")
-                st.dataframe(df_ordem, use_container_width=True, hide_index=True)
+    if render_patch1_regua_conviccao is not None:
+        with st.expander("🧩 Patch 1 — Régua de Convicção", expanded=False):
+            try:
+                render_patch1_regua_conviccao(score_global, lideres_global, empresas_lideres_finais)
+            except Exception as e:
+                st.error(f"Patch 1 falhou: {type(e).__name__}: {e}")
 
-                # downloads
-                csv_bytes = df_ordem.to_csv(index=False).encode("utf-8")
-                json_bytes = json.dumps(st.session_state["last_month_orders"], ensure_ascii=False, indent=2).encode("utf-8")
+    if render_patch2_dominancia is not None:
+        with st.expander("🧩 Patch 2 — Dominância", expanded=False):
+            try:
+                render_patch2_dominancia(score_global, lideres_global, empresas_lideres_finais)
+            except Exception as e:
+                st.error(f"Patch 2 falhou: {type(e).__name__}: {e}")
 
-                cdl1, cdl2 = st.columns(2)
-                with cdl1:
-                    st.download_button(
-                        "⬇️ Baixar CSV da ordem",
-                        data=csv_bytes,
-                        file_name=f"ordem_{mes_alvo.strftime('%Y-%m')}_{current_hash}.csv",
-                        mime="text/csv",
-                    )
-                with cdl2:
-                    st.download_button(
-                        "⬇️ Baixar JSON (auditoria)",
-                        data=json_bytes,
-                        file_name=f"ordem_{mes_alvo.strftime('%Y-%m')}_{current_hash}.json",
-                        mime="application/json",
-                    )
+    if render_patch3_diversificacao is not None and empresas_lideres_finais:
+        with st.expander("🧩 Patch 3 — Diversificação e Concentração de Risco", expanded=False):
+            try:
+                # contrib_globais é opcional; aqui usamos apenas pesos iguais por padrão
+                render_patch3_diversificacao(empresas_lideres_finais, contrib_globais=None)
+            except Exception as e:
+                st.error(f"Patch 3 falhou: {type(e).__name__}: {e}")
 
-        # mostrar última ordem (se existir)
-        last = st.session_state.get("last_month_orders")
-        if last and last.get("orders"):
-            st.caption(
-                f"Última ordem em memória: {last.get('month')} | aporte R$ {last.get('aporte'):.2f} | plano {last.get('plan_hash')}"
-            )
-
-st.markdown("---")
-        st.caption("🧪 Teste incremental: habilite os patches um a um para detectar reinícios (reruns) anormais.")
-
-        if render_patch1_regua_conviccao is not None:
-            with st.expander("🧩 Patch 1 — Régua de Convicção", expanded=False):
-                try:
-                    render_patch1_regua_conviccao(score_global, lideres_global, empresas_lideres_finais)
-                except Exception as e:
-                    st.error(f"Patch 1 falhou: {type(e).__name__}: {e}")
-
-        if render_patch2_dominancia is not None:
-            with st.expander("🧩 Patch 2 — Dominância", expanded=False):
-                try:
-                    render_patch2_dominancia(score_global, lideres_global, empresas_lideres_finais)
-                except Exception as e:
-                    st.error(f"Patch 2 falhou: {type(e).__name__}: {e}")
-
-        if render_patch3_diversificacao is not None and empresas_lideres_finais:
-            with st.expander("🧩 Patch 3 — Diversificação e Concentração de Risco", expanded=False):
-                try:
-                    # contrib_globais é opcional; aqui usamos apenas pesos iguais por padrão
-                    render_patch3_diversificacao(empresas_lideres_finais, contrib_globais=None)
-                except Exception as e:
-                    st.error(f"Patch 3 falhou: {type(e).__name__}: {e}")
-
-        if render_patch4_benchmark_segmento is not None and empresas_lideres_finais:
-            with st.expander("🧩 Patch 4 — Benchmark do Segmento (último ano do score)", expanded=False):
-                try:
-                    render_patch4_benchmark_segmento(
-                        score_global=score_global,
-                        empresas_lideres_finais=empresas_lideres_finais,
-                        precos=df_prices_global,
-                        max_universe=80,
-                    )
-                except Exception as e:
-                    st.error(f"Patch 4 falhou: {type(e).__name__}: {e}")
+    if render_patch4_benchmark_segmento is not None and empresas_lideres_finais:
+        with st.expander("🧩 Patch 4 — Benchmark do Segmento (último ano do score)", expanded=False):
+            try:
+                render_patch4_benchmark_segmento(
+                    score_global=score_global,
+                    empresas_lideres_finais=empresas_lideres_finais,
+                    precos=df_prices_global,
+                    max_universe=80,
+                )
+            except Exception as e:
+                st.error(f"Patch 4 falhou: {type(e).__name__}: {e}")
 
 
-    # Desarma a execução após rodar (evita “auto-rerun armado”)
-    st.session_state["cp_should_run"] = False
+# Desarma a execução após rodar (evita “auto-rerun armado”)
+st.session_state["cp_should_run"] = False
 
-    st.markdown("<hr>", unsafe_allow_html=True)
+st.markdown("<hr>", unsafe_allow_html=True)
