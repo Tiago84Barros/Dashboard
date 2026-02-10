@@ -1,487 +1,515 @@
 # core/scoring_v3.py
 from __future__ import annotations
 
-import math
+"""
+core/scoring_v3.py
+
+Score v3 (robusto + não-linear + opcional blocos) para seleção comparativa intra-setor/segmento,
+mantendo compatibilidade com o pipeline do Score v2:
+
+- resolve_group_col: fallback SEGMENTO -> SUBSETOR -> SETOR (amostra mínima).
+- Instabilidade: CV em janela histórica + penalidade progressiva (mesmo do v2).
+- Crowding: aplicado após score consolidado, com cap mínimo.
+- Decay: aplicado ao score final, com cap.
+
+Diferença principal v3 vs v2:
+- v2: percentil por métrica + soma ponderada
+- v3: winsor + robust z (mediana/MAD) + tanh (saturação) + soma ponderada (ou por blocos),
+      e no final converte para 0..1 via percentil intra-grupo para manter a escala do core.
+
+Funções públicas:
+- calcular_score_ajustado_v3(...)
+- calcular_score_acumulado_v3(...)
+"""
+
+import logging
 from dataclasses import dataclass
-from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 
+# Reuso de helpers do scoring v1 (mantém consistência com v2)
+from core.scoring import (
+    _ensure_year,
+    _to_numeric_series,
+    calc_crowding_penalty,
+    calcular_metricas_historicas_simplificadas,
+)
 
-# =========================
-# Configs / Types
-# =========================
+# Reuso direto de utilitários do v2 (mesma semântica de fallback e instabilidade)
+from core.scoring_v2 import (
+    DEFAULT_CROWDING_MIN_FACTOR,
+    DEFAULT_DECAY_CAP,
+    DEFAULT_DECAY_PER_YEAR,
+    DEFAULT_INSTABILITY_CAP,
+    DEFAULT_INSTABILITY_POWER,
+    DEFAULT_INSTABILITY_STRENGTH,
+    DEFAULT_INSTABILITY_WINDOW_YEARS,
+    DEFAULT_MIN_N_GROUP,
+    apply_instability_penalty,
+    compute_instability_cv,
+    resolve_group_col,
+)
 
-Number = Union[int, float, np.number]
+logger = logging.getLogger(__name__)
 
+
+# ─────────────────────────────────────────────────────────────
+# Config v3
+# ─────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
 class ScoreV3Config:
-    """
-    Configuração do Score v3 (robusto + não-linear + blocos + confiabilidade).
-
-    Premissas:
-      - O score é calculado INTRA-SEGMENTO (group_col), com robust z-score por métrica.
-      - Direcionalidade por métrica: +1 (alto é melhor), -1 (baixo é melhor).
-      - Saturação não-linear (tanh) para ganhos marginais decrescentes.
-      - Agregação em blocos de fatores (evita double-counting por correlação).
-      - Peso por confiabilidade (penaliza instabilidade temporal do bloco).
-      - Opcional: calibração logística -> score cardinal (probabilidade).
-
-    Observação:
-      - Se você não tiver histórico labelado para calibrar logisticamente,
-        use a saída "score_0_100" baseada no percentil do score dentro do segmento.
-    """
-
-    # Colunas
-    group_col: str = "segmento"
-    company_col: str = "ticker"
-
-    # Robustez
+    # robustez
     winsor_p_low: float = 0.05
     winsor_p_high: float = 0.95
-    robust_mad_eps: float = 1e-9  # evita divisão por zero em MAD muito pequeno
+    mad_eps: float = 1e-9
 
-    # Saturação
-    tanh_c: float = 2.0  # quanto maior, mais "linear"; quanto menor, mais satura
+    # não-linearidade
+    tanh_c: float = 2.0  # u -> tanh(u/c)
 
-    # Confiabilidade (estabilidade temporal)
-    # r = 1 / (1 + lambda * std(F_bloco ao longo do tempo))
-    reliability_lambda: float = 0.75
-
-    # Normalização final
-    # Se logistic_params for None, score final 0..100 vem de percentil intra-segmento
-    logistic_params: Optional[Tuple[float, float]] = None  # (a, b)
-
-    # Clip final
-    clip_0_100: bool = True
+    # normalização final (mantém compatibilidade 0..1 do core)
+    # Se True: converte score_base_v3 em percentil (0..1) por grupo (como no v2).
+    # Se False: mantém score_base_v3 bruto (geralmente não recomendado para o core atual).
+    normalize_to_percentile: bool = True
 
 
-# =========================
-# Helpers: robust stats
-# =========================
+# ─────────────────────────────────────────────────────────────
+# Utilitários robustos
+# ─────────────────────────────────────────────────────────────
 
-def _safe_quantile(s: pd.Series, q: float) -> float:
-    s2 = pd.to_numeric(s, errors="coerce").dropna()
-    if s2.empty:
-        return np.nan
-    return float(s2.quantile(q))
+def winsorize_series(s: pd.Series, p_low: float = 0.05, p_high: float = 0.95) -> pd.Series:
+    """Corta extremos por percentis, preservando NaN."""
+    x = _to_numeric_series(s)
+    if x.dropna().empty:
+        return x
+    lo = float(x.quantile(p_low))
+    hi = float(x.quantile(p_high))
+    if not np.isfinite(lo) or not np.isfinite(hi) or lo >= hi:
+        return x
+    return x.clip(lower=lo, upper=hi)
 
 
-def winsorize_by_group(
+def robust_zscore_within_group(
     df: pd.DataFrame,
     group_col: str,
-    cols: Sequence[str],
-    p_low: float = 0.05,
-    p_high: float = 0.95,
-) -> pd.DataFrame:
-    """
-    Winsorização por grupo/segmento: clip em [Q(p_low), Q(p_high)].
-    Retorna cópia com colunas winsorizadas.
-    """
-    out = df.copy()
-    for c in cols:
-        if c not in out.columns:
-            continue
-
-        def _clip_grp(g: pd.DataFrame) -> pd.Series:
-            lo = _safe_quantile(g[c], p_low)
-            hi = _safe_quantile(g[c], p_high)
-            s = pd.to_numeric(g[c], errors="coerce")
-            if np.isnan(lo) or np.isnan(hi):
-                return s
-            return s.clip(lower=lo, upper=hi)
-
-        out[c] = out.groupby(group_col, group_keys=False).apply(_clip_grp)
-    return out
-
-
-def robust_zscore_by_group(
-    df: pd.DataFrame,
-    group_col: str,
-    cols: Sequence[str],
+    col: str,
     mad_eps: float = 1e-9,
-) -> pd.DataFrame:
+) -> pd.Series:
     """
     Robust z-score por grupo usando mediana e MAD:
       z = (x - med) / (1.4826 * MAD)
-    Retorna um DF com colunas z_{col}.
     """
-    zdf = pd.DataFrame(index=df.index)
+    def _rz(s: pd.Series) -> pd.Series:
+        x = _to_numeric_series(s)
+        if x.dropna().empty:
+            return x * 0.0  # tudo NaN -> retorna NaN; mas preserva index
+        med = float(x.median(skipna=True))
+        mad = float((x - med).abs().median(skipna=True))
+        denom = 1.4826 * max(mad, float(mad_eps))
+        return (x - med) / denom
 
-    for c in cols:
-        if c not in df.columns:
-            continue
-
-        x = pd.to_numeric(df[c], errors="coerce")
-
-        def _robust_z(g: pd.DataFrame) -> pd.Series:
-            s = pd.to_numeric(g[c], errors="coerce")
-            med = float(s.median(skipna=True)) if s.notna().any() else np.nan
-            mad = float((s - med).abs().median(skipna=True)) if s.notna().any() else np.nan
-            denom = 1.4826 * max(mad, mad_eps) if not np.isnan(mad) else np.nan
-            return (s - med) / denom
-
-        z = df.groupby(group_col, group_keys=False).apply(_robust_z)
-        zdf[f"z_{c}"] = z
-
-    return zdf
+    return df.groupby(group_col, dropna=False)[col].transform(_rz)
 
 
-def apply_directionality(
-    zdf: pd.DataFrame,
-    z_cols: Sequence[str],
-    direction_map: Mapping[str, int],
-) -> pd.DataFrame:
-    """
-    Aplica direcionalidade ao robust z:
-      u = d * z
-    direction_map deve ser definido no nome da métrica original (sem prefixo z_),
-    ou alternativamente no próprio nome da coluna z_.
-    """
-    out = pd.DataFrame(index=zdf.index)
-    for zc in z_cols:
-        if zc not in zdf.columns:
-            continue
-
-        # métrica original: "z_margem_liquida" -> "margem_liquida"
-        base = zc[2:] if zc.startswith("z_") else zc
-        d = direction_map.get(base, direction_map.get(zc, +1))
-        out[f"u_{base}"] = pd.to_numeric(zdf[zc], errors="coerce") * float(d)
-    return out
-
-
-def tanh_squash(
-    udf: pd.DataFrame,
-    u_cols: Sequence[str],
-    c: float = 2.0,
-) -> pd.DataFrame:
-    """
-    Saturação não-linear:
-      y = tanh(u/c)
-    """
-    out = pd.DataFrame(index=udf.index)
+def tanh_squash(u: pd.Series, c: float = 2.0) -> pd.Series:
     c = float(c) if c and c > 0 else 2.0
-    for uc in u_cols:
-        if uc not in udf.columns:
+    x = _to_numeric_series(u)
+    return np.tanh(x / c)
+
+
+def pct_within_group(df: pd.DataFrame, by: str, col: str) -> pd.Series:
+    """Percentil (rank pct=True) por grupo; NaN -> 0.5."""
+    return df.groupby(by, dropna=False)[col].transform(
+        lambda s: _to_numeric_series(s).rank(pct=True, method="average").fillna(0.5)
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+# Blocos (opcional)
+# ─────────────────────────────────────────────────────────────
+
+def _infer_blocks_from_pesos(
+    pesos_utilizados: Mapping[str, Mapping[str, Any]]
+) -> Tuple[Dict[str, List[str]], Dict[str, float]]:
+    """
+    Se o usuário não passar block_map/block_weights, criamos blocos "unitários":
+      bloco = cada coluna; peso = peso da coluna.
+    Isso garante drop-in sem exigir reconfiguração.
+    """
+    block_map: Dict[str, List[str]] = {}
+    block_weights: Dict[str, float] = {}
+
+    for col, cfg in pesos_utilizados.items():
+        peso = float(cfg.get("peso", 0.0))
+        if peso <= 0:
             continue
-        base = uc[2:] if uc.startswith("u_") else uc
-        u = pd.to_numeric(udf[uc], errors="coerce")
-        out[f"y_{base}"] = np.tanh(u / c)
-    return out
+        b = col  # bloco unitário
+        block_map[b] = [col]
+        block_weights[b] = peso
+
+    # normaliza pesos dos blocos (evita scale drift)
+    wsum = sum(max(0.0, w) for w in block_weights.values())
+    if wsum > 0:
+        block_weights = {b: max(0.0, w) / wsum for b, w in block_weights.items()}
+
+    return block_map, block_weights
 
 
-# =========================
-# Blocos / Confiabilidade
-# =========================
-
-def build_factor_blocks(
-    ydf: pd.DataFrame,
+def build_block_scores(
+    out: pd.DataFrame,
     block_map: Mapping[str, Sequence[str]],
-    alpha_weights: Optional[Mapping[str, Mapping[str, float]]] = None,
-) -> pd.DataFrame:
-    """
-    Constrói fatores por bloco:
-      F_{i,b} = sum_{k in bloco} alpha_{b,k} * y_{i,k}
-
-    block_map: {"Q": ["roe", "roic", "margem_liquida"], "V": ["p_vp"], ...}
-      - nomes devem ser as métricas base (sem prefixos).
-    alpha_weights (opcional):
-      {"Q": {"roe": 0.4, "roic": 0.4, "margem_liquida": 0.2}, ...}
-      Se não informado, usa pesos uniformes dentro do bloco.
-    """
-    out = pd.DataFrame(index=ydf.index)
-
-    for b, metrics in block_map.items():
-        metrics = [m for m in metrics if f"y_{m}" in ydf.columns]
-        if not metrics:
-            out[f"F_{b}"] = np.nan
-            continue
-
-        if alpha_weights and b in alpha_weights:
-            aw = dict(alpha_weights[b])
-            w = np.array([float(aw.get(m, 0.0)) for m in metrics], dtype=float)
-            if w.sum() <= 0:
-                w = np.ones(len(metrics), dtype=float)
-        else:
-            w = np.ones(len(metrics), dtype=float)
-
-        w = w / w.sum()
-
-        mat = np.column_stack([pd.to_numeric(ydf[f"y_{m}"], errors="coerce").to_numpy() for m in metrics])
-        out[f"F_{b}"] = np.nan_to_num(mat, nan=0.0).dot(w)
-
-    return out
-
-
-def reliability_from_time_series(
-    df_time: pd.DataFrame,
-    company_col: str,
-    time_col: str,
-    factor_cols: Sequence[str],
-    lam: float = 0.75,
-) -> pd.DataFrame:
-    """
-    Calcula confiabilidade por empresa e por fator/bloco a partir de série temporal:
-      r = 1 / (1 + lam * std(F ao longo do tempo))
-
-    Retorna um DF indexado por company_col com colunas r_{factor}.
-    """
-    if df_time.empty:
-        return pd.DataFrame(columns=[f"r_{c}" for c in factor_cols]).set_index(company_col)
-
-    d = df_time[[company_col, time_col, *factor_cols]].copy()
-    d = d.dropna(subset=[company_col, time_col])
-    if d.empty:
-        return pd.DataFrame(columns=[f"r_{c}" for c in factor_cols]).set_index(company_col)
-
-    # std por empresa (na prática você pode usar janela fixa; aqui é global no df_time fornecido)
-    g = d.groupby(company_col, dropna=True)
-    stds = g[factor_cols].std(ddof=0)
-
-    lam = float(lam) if lam >= 0 else 0.0
-    r = 1.0 / (1.0 + lam * stds.replace([np.inf, -np.inf], np.nan).fillna(0.0))
-    r.columns = [f"r_{c}" for c in factor_cols]
-    r.index.name = company_col
-    return r
-
-
-def combine_blocks(
-    factors_df: pd.DataFrame,
     block_weights: Mapping[str, float],
-    reliability_df: Optional[pd.DataFrame] = None,
-    company_series: Optional[pd.Series] = None,
 ) -> pd.Series:
     """
-    Combina blocos:
-      S = sum_b w_b * r_b * F_b
-    Se reliability_df fornecido, tenta casar por company_col (via company_series).
+    Score base por blocos:
+      S = sum_b w_b * mean(y_k in bloco b)
+    Onde y_k já está em [-1, +1] após tanh.
     """
-    S = pd.Series(0.0, index=factors_df.index)
-
-    # pesos normalizados
+    # normaliza pesos (defensivo)
     bw = {b: float(w) for b, w in block_weights.items()}
     wsum = sum(max(0.0, w) for w in bw.values())
     if wsum <= 0:
-        bw = {b: 1.0 for b in bw.keys()}
-        wsum = float(len(bw))
-    bw = {b: max(0.0, w) / wsum for b, w in bw.items()}
+        # fallback: pesos iguais
+        keys = list(block_map.keys())
+        if not keys:
+            return pd.Series(0.0, index=out.index)
+        bw = {k: 1.0 / float(len(keys)) for k in keys}
+    else:
+        bw = {b: max(0.0, w) / wsum for b, w in bw.items()}
 
-    for b, w in bw.items():
-        col = f"F_{b}"
-        if col not in factors_df.columns:
+    S = pd.Series(0.0, index=out.index)
+    for b, cols in block_map.items():
+        cols_eff = [c for c in cols if c in out.columns]
+        if not cols_eff:
             continue
-
-        F = pd.to_numeric(factors_df[col], errors="coerce").fillna(0.0)
-
-        if reliability_df is not None and company_series is not None:
-            rcol = f"r_{col}"
-            if rcol in reliability_df.columns:
-                # map empresa->r
-                rmap = reliability_df[rcol]
-                r = company_series.map(rmap).astype(float).fillna(1.0)
-            else:
-                r = 1.0
-        else:
-            r = 1.0
-
-        S = S + w * (F * r)
+        F = pd.concat([_to_numeric_series(out[c]).fillna(0.0) for c in cols_eff], axis=1).mean(axis=1)
+        S = S + float(bw.get(b, 0.0)) * F
 
     return S
 
 
-# =========================
-# Calibração / Normalização final
-# =========================
+# ─────────────────────────────────────────────────────────────
+# Score v3: parte cross-sectional (substitui calcular_score_ajustado_v2)
+# ─────────────────────────────────────────────────────────────
 
-def sigmoid(x: Union[pd.Series, np.ndarray, float], a: float, b: float) -> Union[pd.Series, np.ndarray, float]:
-    z = a * x + b
-    # evita overflow
-    if isinstance(z, pd.Series):
-        z = z.clip(-60, 60)
-        return 1.0 / (1.0 + np.exp(-z))
-    z = np.clip(z, -60, 60)
-    return 1.0 / (1.0 + np.exp(-z))
-
-
-def percentile_0_100_by_group(
+def calcular_score_ajustado_v3(
     df: pd.DataFrame,
-    group_col: str,
-    score_col: str,
-) -> pd.Series:
-    """
-    Converte score contínuo em 0..100 via rank percentil intra-grupo (segmento).
-    Mantém comparabilidade dentro do segmento quando não há calibração logística.
-    """
-    s = pd.to_numeric(df[score_col], errors="coerce")
-
-    def _pct(g: pd.DataFrame) -> pd.Series:
-        x = pd.to_numeric(g[score_col], errors="coerce")
-        if x.notna().sum() <= 1:
-            return pd.Series(np.where(x.notna(), 50.0, np.nan), index=g.index)
-        r = x.rank(method="average", pct=True)
-        return 100.0 * r
-
-    return df.assign(**{score_col: s}).groupby(group_col, group_keys=False).apply(_pct)
-
-
-# =========================
-# API principal
-# =========================
-
-def calcular_score_acumulado_v3(
-    df_atual: pd.DataFrame,
-    metrics: Sequence[str],
-    direction_map: Mapping[str, int],
-    block_map: Mapping[str, Sequence[str]],
-    block_weights: Mapping[str, float],
-    *,
+    pesos_utilizados: Mapping[str, Mapping[str, Any]],
+    prefer_group_col: str = "SEGMENTO",
+    min_n_group: int = DEFAULT_MIN_N_GROUP,
     config: Optional[ScoreV3Config] = None,
-    # Série temporal opcional para confiabilidade:
-    df_time: Optional[pd.DataFrame] = None,
-    time_col: Optional[str] = None,
-    alpha_weights: Optional[Mapping[str, Mapping[str, float]]] = None,
-    # Penalidades externas (compatível com seu pipeline atual)
-    penalty_fn: Optional[Callable[[pd.DataFrame], pd.Series]] = None,
+    # blocos opcionais (se None, inferido de pesos_utilizados)
+    block_map: Optional[Mapping[str, Sequence[str]]] = None,
+    block_weights: Optional[Mapping[str, float]] = None,
 ) -> pd.DataFrame:
     """
-    Calcula Score v3 e devolve DF com colunas:
-      - score_base (antes de penalidades)
-      - score_0_100 (normalizado)
-      - score_final (após penalidades)
-      - adicionais intermediários (opcionalmente úteis para debug)
+    Calcula Score_Ajustado v3 (somente a parte fundamental cross-sectional):
+    - winsoriza indicador
+    - robust z-score por grupo (mediana/MAD)
+    - aplica direcionalidade (melhor_alto)
+    - aplica saturação tanh (ganhos marginais decrescentes)
+    - agrega por pesos (ou por blocos)
+    - converte para percentil 0..1 por grupo (para manter compatibilidade do core)
+    """
+    if df is None or df.empty:
+        return df
 
-    Requisitos mínimos em df_atual:
-      - config.group_col (default "segmento")
-      - config.company_col (default "ticker")
-      - colunas de metrics
+    cfg = config or ScoreV3Config()
+    out = df.copy()
+
+    # seleciona coluna de grupo robustamente (mesma regra do v2)
+    group_col = resolve_group_col(out, prefer=prefer_group_col, min_n=min_n_group)
+    if group_col not in out.columns:
+        out[group_col] = "OUTROS"
+
+    # Se blocos não forem fornecidos, cria blocos unitários com pesos do v2
+    if block_map is None or block_weights is None:
+        bmap, bweights = _infer_blocks_from_pesos(pesos_utilizados)
+        block_map = block_map or bmap
+        block_weights = block_weights or bweights
+
+    # calcula y_{col} (tanh do robust z ajustado pela direção)
+    y_cols: List[str] = []
+    for col, cfg_col in pesos_utilizados.items():
+        if col not in out.columns:
+            continue
+
+        peso = float(cfg_col.get("peso", 0.0))
+        if peso <= 0:
+            continue
+
+        melhor_alto = bool(cfg_col.get("melhor_alto", True))
+
+        # winsor (defensivo)
+        out[col] = winsorize_series(out[col], p_low=cfg.winsor_p_low, p_high=cfg.winsor_p_high)
+
+        # robust z por grupo
+        z = robust_zscore_within_group(out, group_col=group_col, col=col, mad_eps=cfg.mad_eps)
+
+        # direcionalidade
+        u = z if melhor_alto else (-1.0 * z)
+
+        # saturação
+        y = tanh_squash(u, c=cfg.tanh_c)
+
+        ycol = f"{col}_y"
+        out[ycol] = _to_numeric_series(y)
+        y_cols.append(ycol)
+
+    # score base por blocos (se blocos unitários, isso equivale à soma ponderada dos y)
+    score_base = build_block_scores(out, block_map=block_map, block_weights=block_weights)
+    out["Score_Base_v3"] = _to_numeric_series(score_base).fillna(0.0)
+
+    # normalização final: 0..1 por percentil no grupo (compatível com o core do v2)
+    if cfg.normalize_to_percentile:
+        out["Score_Ajustado"] = pct_within_group(out, by=group_col, col="Score_Base_v3")
+    else:
+        out["Score_Ajustado"] = out["Score_Base_v3"]
+
+    return out
+
+
+# ─────────────────────────────────────────────────────────────
+# Score acumulado v3 (equivalente ao calcular_score_acumulado_v2)
+# ─────────────────────────────────────────────────────────────
+
+def calcular_score_acumulado_v3(
+    lista_empresas: Sequence[Mapping[str, Any]],
+    group_map: Mapping[str, str],
+    pesos_utilizados: Mapping[str, Mapping[str, Any]],
+    anos_minimos: int = 4,
+    prefer_group_col: str = "SEGMENTO",
+    min_n_group: int = DEFAULT_MIN_N_GROUP,
+    # Config v3
+    config: Optional[ScoreV3Config] = None,
+    block_map: Optional[Mapping[str, Sequence[str]]] = None,
+    block_weights: Optional[Mapping[str, float]] = None,
+    # Instabilidade (mesmos defaults do v2)
+    instability_window_years: int = DEFAULT_INSTABILITY_WINDOW_YEARS,
+    instability_cap: float = DEFAULT_INSTABILITY_CAP,
+    instability_strength: float = DEFAULT_INSTABILITY_STRENGTH,
+    instability_power: float = DEFAULT_INSTABILITY_POWER,
+    # Crowding + decay (mesmos defaults do v2)
+    crowding_min_factor: float = DEFAULT_CROWDING_MIN_FACTOR,
+    decay_per_year: float = DEFAULT_DECAY_PER_YEAR,
+    decay_cap: float = DEFAULT_DECAY_CAP,
+    # Hierarquia opcional (para fallback SEGMENTO->SUBSETOR->SETOR)
+    subsetor_map: Optional[Mapping[str, str]] = None,
+    setor_map: Optional[Mapping[str, str]] = None,
+) -> pd.DataFrame:
+    """
+    Versão v3 do acumulado:
+    - Score fundamental por robust z-score + tanh + agregação (blocos ou unitário) + percentil por grupo (fallback n pequeno)
+    - Penalidade de instabilidade por CV em janela histórica (mesma do v2)
+    - Crowding + Decay mantidos e aplicados no score final (com caps)
+
+    Retorno: DF com colunas ["Ano", "ticker", "Score_Ajustado"] para compatibilidade.
     """
     cfg = config or ScoreV3Config()
 
-    required = [cfg.group_col, cfg.company_col]
-    for rc in required:
-        if rc not in df_atual.columns:
-            raise ValueError(f"df_atual precisa conter a coluna obrigatória: '{rc}'")
+    if not lista_empresas:
+        return pd.DataFrame(columns=["Ano", "ticker", "Score_Ajustado"])
 
-    df = df_atual.copy()
+    subsetor_map = subsetor_map or {}
+    setor_map = setor_map or {}
 
-    # 1) winsor
-    df_w = winsorize_by_group(
-        df,
-        group_col=cfg.group_col,
-        cols=[c for c in metrics if c in df.columns],
-        p_low=cfg.winsor_p_low,
-        p_high=cfg.winsor_p_high,
-    )
+    # Descobrir anos disponíveis a partir de múltiplos
+    anos: List[int] = []
+    for emp in lista_empresas:
+        dfm = emp.get("multiplos")
+        if isinstance(dfm, pd.DataFrame) and not dfm.empty:
+            dfm2 = _ensure_year(dfm, date_col="Data", year_col="Ano")
+            for a in dfm2["Ano"].dropna().unique():
+                try:
+                    ai = int(a)
+                    if np.isfinite(ai):
+                        anos.append(ai)
+                except Exception:
+                    continue
 
-    # 2) robust z
-    zdf = robust_zscore_by_group(
-        df_w,
-        group_col=cfg.group_col,
-        cols=[c for c in metrics if c in df_w.columns],
-        mad_eps=cfg.robust_mad_eps,
-    )
-    z_cols = [c for c in zdf.columns if c.startswith("z_")]
+    anos_disponiveis = sorted(set(anos))
+    if len(anos_disponiveis) <= anos_minimos:
+        return pd.DataFrame(columns=["Ano", "ticker", "Score_Ajustado"])
 
-    # 3) direcionalidade
-    udf = apply_directionality(zdf, z_cols=z_cols, direction_map=direction_map)
-    u_cols = [c for c in udf.columns if c.startswith("u_")]
+    resultados: List[pd.DataFrame] = []
+    anos_lider: Dict[str, int] = {}
 
-    # 4) saturação
-    ydf = tanh_squash(udf, u_cols=u_cols, c=cfg.tanh_c)
+    # Colunas candidatas para instabilidade (no DRE histórico)
+    instability_candidates = [
+        "ROIC", "ROIC_mean",
+        "Margem_Operacional", "Margem_Operacional_mean",
+        "Margem_Liquida", "Margem_Liquida_mean",
+    ]
 
-    # 5) blocos
-    factors = build_factor_blocks(ydf, block_map=block_map, alpha_weights=alpha_weights)
+    for idx in range(anos_minimos, len(anos_disponiveis)):
+        ano = int(anos_disponiveis[idx])
 
-    # 6) confiabilidade (opcional)
-    reliability_df = None
-    if df_time is not None and time_col is not None and not df_time.empty:
-        factor_cols = [c for c in factors.columns if c.startswith("F_")]
+        # Pré-coleta P/VP por grupo no ano (para crowding)
+        grupo_to_pvp: Dict[str, List[float]] = {}
 
-        # df_time precisa ter as mesmas colunas de fator; em geral você vai calcular fatores
-        # por período e armazenar. Se ainda não tem isso, passe df_time já com F_*
-        missing = [c for c in factor_cols if c not in df_time.columns]
-        if missing:
-            # Se não tiver fatores no df_time, não aplica confiabilidade (mantém r=1)
-            reliability_df = None
-        else:
-            reliability_df = reliability_from_time_series(
-                df_time=df_time,
-                company_col=cfg.company_col,
-                time_col=time_col,
-                factor_cols=factor_cols,
-                lam=cfg.reliability_lambda,
+        for emp in lista_empresas:
+            tk = str(emp.get("ticker", "")).strip()
+            dfm = emp.get("multiplos")
+            if not tk or not isinstance(dfm, pd.DataFrame) or dfm.empty:
+                continue
+
+            dfm2 = _ensure_year(dfm, date_col="Data", year_col="Ano")
+            dfm_ano = dfm2[dfm2["Ano"] == ano]
+            if dfm_ano.empty:
+                continue
+
+            pvp_col = "P/VP" if "P/VP" in dfm_ano.columns else ("P_VP" if "P_VP" in dfm_ano.columns else None)
+            if not pvp_col:
+                continue
+
+            grp = group_map.get(tk, "OUTROS")
+            vals = _to_numeric_series(dfm_ano[pvp_col]).dropna().tolist()
+            grupo_to_pvp.setdefault(grp, []).extend([float(v) for v in vals if np.isfinite(v)])
+
+        # Monta dataframe anual com métricas por empresa
+        dados_ano: List[Dict[str, Any]] = []
+
+        for emp in lista_empresas:
+            ticker = str(emp.get("ticker", "")).strip()
+            if not ticker:
+                continue
+
+            df_mult = emp.get("multiplos")
+            df_dre = emp.get("dre")
+            if not isinstance(df_mult, pd.DataFrame) or not isinstance(df_dre, pd.DataFrame):
+                continue
+
+            df_mult2 = _ensure_year(df_mult, date_col="Data", year_col="Ano")
+            df_dre2 = _ensure_year(df_dre, date_col="Data", year_col="Ano")
+
+            df_mult_hist = df_mult2[df_mult2["Ano"] <= ano].copy()
+            df_dre_hist = df_dre2[df_dre2["Ano"] <= ano].copy()
+
+            if df_mult_hist.empty or df_dre_hist.empty:
+                continue
+
+            seg = group_map.get(ticker, "OUTROS")
+            sub = subsetor_map.get(ticker, "OUTROS")
+            setr = setor_map.get(ticker, "OUTROS")
+
+            # crowding: baseado no P/VP do grupo (segmento preferencial)
+            df_grp_ano = pd.DataFrame({"P/VP": grupo_to_pvp.get(seg, [])})
+            crowd_pen = calc_crowding_penalty(df_grp_ano, coluna="P/VP")
+
+            # métricas simplificadas (v1) para alimentar colunas usadas em pesos
+            metricas = calcular_metricas_historicas_simplificadas(df_mult_hist, df_dre_hist)
+
+            # instabilidade (CV em janela)
+            instability_cv = compute_instability_cv(
+                df_dre_hist,
+                candidate_cols=instability_candidates,
+                year_col="Ano",
+                window=instability_window_years,
             )
 
-    # 7) combina blocos
-    score_base = combine_blocks(
-        factors_df=factors,
-        block_weights=block_weights,
-        reliability_df=reliability_df,
-        company_series=df[cfg.company_col],
-    )
-    df["score_base_v3"] = score_base.astype(float)
+            dados_ano.append(
+                {
+                    "ticker": ticker,
+                    "Ano": ano,
+                    "SEGMENTO": seg,
+                    "SUBSETOR": sub,
+                    "SETOR": setr,
+                    **metricas,
+                    "Penalty_Crowd": float(crowd_pen),
+                    "Instability_CV": float(instability_cv),
+                }
+            )
 
-    # 8) normalização / calibração
-    if cfg.logistic_params is not None:
-        a, b = cfg.logistic_params
-        p = sigmoid(df["score_base_v3"], float(a), float(b))
-        df["score_0_100_v3"] = 100.0 * pd.to_numeric(p, errors="coerce")
-    else:
-        df["score_0_100_v3"] = percentile_0_100_by_group(df, cfg.group_col, "score_base_v3")
+        df_ano = pd.DataFrame(dados_ano)
+        if df_ano.empty:
+            continue
 
-    if cfg.clip_0_100:
-        df["score_0_100_v3"] = pd.to_numeric(df["score_0_100_v3"], errors="coerce").clip(0, 100)
+        # (A) Score fundamental v3 (robust z + tanh + agregação + percentil por grupo com fallback)
+        df_ano = calcular_score_ajustado_v3(
+            df_ano,
+            pesos_utilizados=pesos_utilizados,
+            prefer_group_col=prefer_group_col,
+            min_n_group=min_n_group,
+            config=cfg,
+            block_map=block_map,
+            block_weights=block_weights,
+        )
 
-    # 9) penalidades externas (se existirem)
-    if penalty_fn is not None:
-        pen = penalty_fn(df).reindex(df.index)
-        pen = pd.to_numeric(pen, errors="coerce").fillna(0.0)
-    else:
-        pen = pd.Series(0.0, index=df.index)
+        # resolve group_col efetivo (mesma regra usada no v2)
+        group_col_eff = resolve_group_col(df_ano, prefer=prefer_group_col, min_n=min_n_group)
 
-    df["penalidade_v3"] = pen
-    df["score_final_v3"] = df["score_0_100_v3"] - df["penalidade_v3"]
-    if cfg.clip_0_100:
-        df["score_final_v3"] = pd.to_numeric(df["score_final_v3"], errors="coerce").clip(0, 100)
+        # (B) Penalidade de instabilidade: percentil por grupo, progressiva, cap (mesma do v2)
+        df_ano = apply_instability_penalty(
+            df_ano,
+            group_col=group_col_eff,
+            cap=instability_cap,
+            strength=instability_strength,
+            power=instability_power,
+        )
 
-    # (Debug útil) anexar intermediários
-    df = pd.concat([df, zdf, udf, ydf, factors], axis=1)
+        # (C) Seleciona líder e aplica crowding + decay no score final (mesma lógica do v2)
+        df_ano = df_ano.sort_values("Score_Ajustado", ascending=False).reset_index(drop=True)
+        lider_ano = str(df_ano.loc[0, "ticker"])
 
-    return df
+        final_scores: List[float] = []
+        decay_list: List[float] = []
+        crowd_list: List[float] = []
+
+        for _, row in df_ano.iterrows():
+            tk = str(row["ticker"])
+
+            # contagem de liderança consecutiva
+            if tk == lider_ano:
+                anos_lider[tk] = anos_lider.get(tk, 0) + 1
+            else:
+                anos_lider[tk] = 0
+
+            # Decay anual leve (aplicado ao score final), com cap
+            decay_factor = 1.0 - min(float(decay_per_year) * max(anos_lider[tk] - 1, 0), float(decay_cap))
+            decay_factor = float(np.clip(decay_factor, 0.0, 1.0))
+
+            # Crowding: aplicar após score consolidado, com cap mínimo
+            crowd = float(row.get("Penalty_Crowd", 1.0))
+            if not np.isfinite(crowd):
+                crowd = 1.0
+            crowd = max(crowd, float(crowding_min_factor))
+
+            # Base score (0..1)
+            base = float(row.get("Score_Ajustado", 0.0))
+            if not np.isfinite(base):
+                base = 0.0
+
+            # Penalidade de instabilidade
+            inst_pen = float(row.get("InstabilityPenalty", 0.0))
+            if not np.isfinite(inst_pen):
+                inst_pen = 0.0
+            inst_pen = float(np.clip(inst_pen, 0.0, float(instability_cap)))
+
+            base = base * (1.0 - inst_pen)
+
+            # Score final anual
+            final = base * crowd * decay_factor
+
+            decay_list.append(decay_factor)
+            crowd_list.append(crowd)
+            final_scores.append(final)
+
+        df_ano["Penalty_Decay"] = decay_list
+        df_ano["Penalty_Crowd_Capped"] = crowd_list
+        df_ano["Score_Ajustado"] = final_scores
+
+        resultados.append(df_ano[["Ano", "ticker", "Score_Ajustado"]])
+
+    if resultados:
+        return pd.concat(resultados, ignore_index=True)
+
+    return pd.DataFrame(columns=["Ano", "ticker", "Score_Ajustado"])
 
 
-# =========================
-# Exemplo de uso (comentado)
-# =========================
-#
-# metrics = ["margem_bruta", "margem_ebitda", "margem_liquida", "roe", "roic", "p_vp", "dy", "slope_dre"]
-# direction_map = {
-#   "margem_bruta": +1, "margem_ebitda": +1, "margem_liquida": +1,
-#   "roe": +1, "roic": +1,
-#   "p_vp": -1,
-#   "dy": +1,
-#   "slope_dre": +1,
-# }
-# block_map = {
-#   "Q": ["margem_bruta", "margem_ebitda", "margem_liquida", "roe", "roic"],
-#   "V": ["p_vp"],
-#   "D": ["dy"],
-#   "G": ["slope_dre"],
-# }
-# block_weights = {"Q": 0.45, "V": 0.20, "D": 0.20, "G": 0.15}
-#
-# cfg = ScoreV3Config(group_col="segmento", company_col="ticker", tanh_c=2.0, logistic_params=None)
-#
-# df_out = calcular_score_acumulado_v3(
-#   df_atual=df_atual,
-#   metrics=metrics,
-#   direction_map=direction_map,
-#   block_map=block_map,
-#   block_weights=block_weights,
-#   config=cfg,
-#   penalty_fn=None,  # ou sua função que calcula crowding/decay/platô em pontos de 0..100
-# )
-#
-# df_out.sort_values(["segmento", "score_final_v3"], ascending=[True, False]).head()
+__all__ = [
+    "ScoreV3Config",
+    "calcular_score_ajustado_v3",
+    "calcular_score_acumulado_v3",
+]
