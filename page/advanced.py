@@ -151,7 +151,7 @@ def render() -> None:
         st.error(f"A tabela de setores não contém colunas esperadas: {sorted(needed)}")
         return
 
-    # >>> PATCH MAPAS (fallback SEGMENTO -> SUBSETOR -> SETOR)
+    # >>> MAPAS p/ fallback SEGMENTO -> SUBSETOR -> SETOR
     _tmp = setores[["ticker", "SEGMENTO", "SUBSETOR", "SETOR"]].copy()
     _tmp["ticker"] = (
         _tmp["ticker"].astype(str)
@@ -166,7 +166,7 @@ def render() -> None:
     group_map = dict(zip(_tmp["ticker"], _tmp["SEGMENTO"]))
     subsetor_map = dict(zip(_tmp["ticker"], _tmp["SUBSETOR"]))
     setor_map = dict(zip(_tmp["ticker"], _tmp["SETOR"]))
-    # <<< PATCH MAPAS
+    # <<< MAPAS
 
     dados_macro = _safe_macro()
     if dados_macro is None or dados_macro.empty:
@@ -185,7 +185,7 @@ def render() -> None:
         segmento = st.selectbox("Segmento:", sorted(segmentos))
         tipo = st.radio("Perfil de empresa:", ["Crescimento (<10 anos)", "Estabelecida (≥10 anos)", "Todas"], index=2)
 
-        # >>> PATCH SCORE V1/V2/V3 (controle comparativo)
+        # >>> Scoring (v1 / v2 / v3)
         with st.expander("Scoring (opções)", expanded=False):
             opcoes = ["v1"]
             labels = {"v1": "Score v1 (legado)"}
@@ -198,7 +198,7 @@ def render() -> None:
                 opcoes.append("v3")
                 labels["v3"] = "Score v3 (robusto + tanh)"
 
-            # padrão: v2 se existir; senão v1; se existir v3 e você quiser default v3, troque para "v3"
+            # padrão: v2 se existir; senão v1
             default_mode = "v2" if "v2" in opcoes else "v1"
             scoring_mode = st.radio(
                 "Versão do Score:",
@@ -207,12 +207,14 @@ def render() -> None:
                 format_func=lambda x: labels.get(x, x),
             )
 
-            if scoring_mode == "v3" and ScoreV3Config is not None:
-                st.caption("Ajustes v3 (opcionais):")
-                tanh_c = st.slider("tanh_c (saturação)", min_value=0.8, max_value=6.0, value=2.0, step=0.1)
-            else:
-                tanh_c = 2.0
-        # <<< PATCH SCORE V1/V2/V3
+            tanh_c = 2.0
+            if scoring_mode == "v3":
+                if ScoreV3Config is None:
+                    st.caption("Score v3 indisponível (core/scoring_v3.py não encontrado).")
+                else:
+                    st.caption("Ajustes v3 (opcionais):")
+                    tanh_c = st.slider("tanh_c (saturação)", 0.8, 6.0, 2.0, 0.1)
+        # <<< Scoring
 
         # ── Carteira (modo)
         with st.expander("Carteira (modo)", expanded=False):
@@ -233,7 +235,7 @@ def render() -> None:
 
     # normaliza tickers e nomes
     seg_df["ticker"] = seg_df["ticker"].astype(str).apply(_strip_sa)
-    n_total_segmento_raw = int(seg_df["ticker"].nunique())  # antes do filtro de histórico
+    n_total_segmento_raw = int(seg_df["ticker"].nunique())  # tamanho bruto do segmento (antes do filtro de histórico)
     if "nome_empresa" not in seg_df.columns:
         seg_df["nome_empresa"] = seg_df["ticker"]
 
@@ -245,7 +247,7 @@ def render() -> None:
         return
 
     # ─────────────────────────────────────────────────────────
-    # (Opcional) Diagnóstico colapsável
+    # Diagnóstico (colapsável)
     # ─────────────────────────────────────────────────────────
     with st.expander("Diagnóstico (dados do Supabase)", expanded=False):
         st.caption("Seção apenas informativa. Não altera resultados nem layout principal.")
@@ -255,6 +257,7 @@ def render() -> None:
                 "Subsetor": subsetor,
                 "Segmento": segmento,
                 "Empresas no segmento (bruto)": int(len(seg_df)),
+                "Empresas no segmento (nunique ticker)": int(n_total_segmento_raw),
                 "Linhas setores_df": int(len(setores)),
                 "Macro (linhas)": int(len(dados_macro)),
                 "Macro (data mínima)": str(pd.to_datetime(dados_macro["Data"]).min()) if "Data" in dados_macro.columns else "n/a",
@@ -292,7 +295,7 @@ def render() -> None:
         return n > 0
 
     seg_df = seg_df[seg_df["ticker"].apply(_pass_tipo)]
-    n_total_segmento = int(seg_df["ticker"].nunique())  # tamanho condicionado ao filtro de histórico (tipo)
+    n_total_segmento = int(seg_df["ticker"].nunique())  # tamanho do segmento condicionado ao filtro de histórico (tipo)
     if seg_df.empty:
         st.warning("Nenhuma empresa atende ao filtro de histórico escolhido.")
         return
@@ -347,14 +350,14 @@ def render() -> None:
     # pesos por setor (regra existente)
     pesos = get_pesos(setor)
 
-    # payload scoring (compatível com scoring.py e v2/v3)
+    # payload scoring
     payload = [{"ticker": e.ticker, "nome": e.nome, "multiplos": e.mult, "dre": e.dre} for e in empresas]
 
     # ─────────────────────────────────────────────────────────
     # 2.0) Calcular score (v1 / v2 / v3)
     # ─────────────────────────────────────────────────────────
-    if ("scoring_mode" in locals()) and scoring_mode == "v3" and (calcular_score_acumulado_v3 is not None):
-        cfg_v3 = ScoreV3Config(tanh_c=float(tanh_c)) if ScoreV3Config is not None else None
+    if scoring_mode == "v3" and (calcular_score_acumulado_v3 is not None) and (ScoreV3Config is not None):
+        cfg_v3 = ScoreV3Config(tanh_c=float(tanh_c))
         score = calcular_score_acumulado_v3(
             lista_empresas=payload,
             group_map=group_map,
@@ -366,7 +369,7 @@ def render() -> None:
             min_n_group=7,
             config=cfg_v3,
         )
-    elif ("scoring_mode" in locals()) and scoring_mode == "v2" and (calcular_score_acumulado_v2 is not None):
+    elif scoring_mode == "v2" and (calcular_score_acumulado_v2 is not None):
         score = calcular_score_acumulado_v2(
             lista_empresas=payload,
             group_map=group_map,
@@ -385,7 +388,7 @@ def render() -> None:
         return
 
     # ─────────────────────────────────────────────────────────
-    # 2.1) Decisão automática do modo (binário) por tamanho estrutural do segmento
+    # 2.1) Decisão automática do modo (binário) por tamanho do segmento (após filtro de histórico)
     # ─────────────────────────────────────────────────────────
     score = score.dropna(axis=1, how="all")
     n_empresas_elegiveis = int(score.shape[1])
@@ -437,6 +440,7 @@ def render() -> None:
         )
     else:
         patrimonio_estrategia, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
+
     if patrimonio_estrategia is None or patrimonio_estrategia.empty:
         st.warning("Falha ao simular a carteira da estratégia.")
         return
@@ -493,6 +497,7 @@ def render() -> None:
     df_final["Valor Final"] = pd.to_numeric(df_final["Valor Final"], errors="coerce")
     df_final = df_final.dropna(subset=["Valor Final"]).sort_values("Valor Final", ascending=False)
 
+    # contagem de lideranças (quantas vezes liderou)
     contagem_lideres = lideres["ticker"].value_counts().to_dict()
 
     num_columns = 3
