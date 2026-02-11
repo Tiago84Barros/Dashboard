@@ -1248,7 +1248,183 @@ def gerir_carteira_modulada(
     return df_patrimonio, datas_aportes
 
 
+
+# ────────────────────────────────────────────────────────────────────────────────
+# API EXTRA (não quebra assinaturas existentes)
+# ────────────────────────────────────────────────────────────────────────────────
+def decidir_selecao_e_pesos_por_ano_ref(
+    precos: pd.DataFrame,
+    df_scores: pd.DataFrame,
+    dividendos_dict: Dict[str, Union[pd.Series, pd.DataFrame]],
+    policy: Optional[Dict] = None,
+    ano_ref: int = 0,
+    aporte_mensal: float = 1000.0,
+    fee_bps: float = 0.0,
+    slippage_bps: float = 0.0,
+) -> Dict[str, object]:
+    """Decide, para um *ano de referência* (ano_ref), quais tickers entram no basket (Top-N)
+    e quais pesos/parametrização serão usados, replicando a mesma lógica interna de
+    `gerir_carteira_modulada` (inclui heurística calibrada, se selecionada em policy).
+
+    Este helper existe para:
+      - auditoria/explicabilidade (exibir N, gamma/cap/soft e tickers escolhidos)
+      - gerar "ordem do mês" sem rodar um backtest completo
+
+    Retorno:
+      {
+        "tickers": [.. tickers (formato do score, sem .SA) ..],
+        "tickers_cols": [.. colunas em precos ..],
+        "weights": {ticker: w, ...}  (normalizado),
+        "N": int,
+        "gamma": float,
+        "cap": float,
+        "soft": float,
+        "mode": str,
+      }
+    """
+    policy = policy or {}
+    mode = str(policy.get("mode", "heuristica")).strip().lower()
+
+    # defaults (mesmos de gerir_carteira_modulada)
+    eps = float(policy.get("eps", 0.35))
+    gamma_default = float(policy.get("gamma", 0.90))
+    cap_default = float(policy.get("cap", 0.25))
+    soft_default = float(policy.get("soft", 0.05))
+    n_manual = int(policy.get("N", 2))
+
+    if precos is None or precos.empty or df_scores is None or df_scores.empty:
+        return {"tickers": [], "tickers_cols": [], "weights": {}, "N": 0, "gamma": gamma_default, "cap": cap_default, "soft": soft_default, "mode": mode}
+
+    # normalização básica
+    precos = precos.copy()
+    precos.index = pd.to_datetime(precos.index, errors="coerce")
+    precos = precos.dropna(how="all")
+    if precos.empty:
+        return {"tickers": [], "tickers_cols": [], "weights": {}, "N": 0, "gamma": gamma_default, "cap": cap_default, "soft": soft_default, "mode": mode}
+
+    df_scores2 = df_scores.copy()
+    if "Ano" not in df_scores2.columns:
+        return {"tickers": [], "tickers_cols": [], "weights": {}, "N": 0, "gamma": gamma_default, "cap": cap_default, "soft": soft_default, "mode": mode}
+
+    # garante colunas
+    if "ticker" not in df_scores2.columns:
+        return {"tickers": [], "tickers_cols": [], "weights": {}, "N": 0, "gamma": gamma_default, "cap": cap_default, "soft": soft_default, "mode": mode}
+    if "Score_Ajustado" not in df_scores2.columns:
+        # fallback: tenta Score (mantém compatibilidade defensiva)
+        if "Score" in df_scores2.columns:
+            df_scores2["Score_Ajustado"] = df_scores2["Score"]
+        else:
+            return {"tickers": [], "tickers_cols": [], "weights": {}, "N": 0, "gamma": gamma_default, "cap": cap_default, "soft": soft_default, "mode": mode}
+
+    df_scores2["Ano"] = pd.to_numeric(df_scores2["Ano"], errors="coerce")
+    df_scores2["ticker"] = df_scores2["ticker"].astype(str)
+    df_scores2["Score_Ajustado"] = pd.to_numeric(df_scores2["Score_Ajustado"], errors="coerce")
+
+    score_map: Dict[Tuple[int, str], float] = {}
+    for _, r in df_scores2.dropna(subset=["Ano", "ticker", "Score_Ajustado"]).iterrows():
+        score_map[(int(r["Ano"]), str(r["ticker"]))] = float(r["Score_Ajustado"])
+
+    # dividendos normalizados (mesma resolução por coluna)
+    divs: Dict[str, pd.Series] = {}
+    for col in list(precos.columns):
+        k = _resolve_div_key(dividendos_dict, col)
+        divs[col] = _as_div_series(dividendos_dict.get(k)) if k is not None else pd.Series(dtype="float64")
+
+    cf = _cost_factor(fee_bps=fee_bps, slippage_bps=slippage_bps)
+
+    # tickers elegíveis no ano_ref (presentes no score e no preço)
+    rows = df_scores2[df_scores2["Ano"] == int(ano_ref)].dropna(subset=["ticker", "Score_Ajustado"])
+    if rows.empty:
+        return {"tickers": [], "tickers_cols": [], "weights": {}, "N": 0, "gamma": gamma_default, "cap": cap_default, "soft": soft_default, "mode": mode}
+
+    rows = rows.sort_values("Score_Ajustado", ascending=False)
+
+    tickers_raw = [str(t) for t in rows["ticker"].tolist()]
+    tickers_cols: List[str] = []
+    tickers_keep: List[str] = []
+    scores_keep: List[float] = []
+
+    for tk in tickers_raw:
+        col = _resolve_ticker_col(precos, tk)
+        if col is None:
+            col = _resolve_ticker_col(precos, tk + ".SA")
+        if col is None:
+            continue
+        tickers_keep.append(tk)
+        tickers_cols.append(col)
+        # pega score do primeiro match
+        try:
+            scores_keep.append(float(rows.loc[rows["ticker"] == tk, "Score_Ajustado"].iloc[0]))
+        except Exception:
+            scores_keep.append(float("nan"))
+
+    # remove nans em scores_keep alinhado
+    keep2, cols2, scores2 = [], [], []
+    for tk, col, sc in zip(tickers_keep, tickers_cols, scores_keep):
+        if sc == sc:  # not nan
+            keep2.append(tk); cols2.append(col); scores2.append(float(sc))
+    tickers_keep, tickers_cols, scores_keep = keep2, cols2, scores2
+
+    if not tickers_keep:
+        return {"tickers": [], "tickers_cols": [], "weights": {}, "N": 0, "gamma": gamma_default, "cap": cap_default, "soft": soft_default, "mode": mode}
+
+    # calcula N
+    if mode == "manual":
+        N = int(n_manual)
+    else:
+        N = _select_n_heuristica(scores_keep[:3], eps=eps)
+
+    N = max(1, min(int(N), int(len(tickers_keep))))
+    tickers_keep = tickers_keep[:N]
+    tickers_cols = tickers_cols[:N]
+    scores_top = scores_keep[:N]
+
+    gap12 = float(scores_top[0] - scores_top[1]) if len(scores_top) >= 2 else float(scores_top[0])
+
+    # parâmetros
+    if mode == "manual":
+        gamma = float(policy.get("gamma", gamma_default))
+        cap = float(policy.get("cap", cap_default))
+        soft = float(policy.get("soft", soft_default))
+    elif mode == "heuristica_calibrada":
+        gamma, cap, soft = _calibrate_gamma_cap_soft(
+            precos=precos,
+            divs=divs,
+            tickers_cols=tickers_cols,
+            tickers_score=tickers_keep,
+            score_map=score_map,
+            ano_ref=int(ano_ref),
+            gamma_default=gamma_default,
+            cap_default=cap_default,
+            soft_default=soft_default,
+            aporte_mensal=float(aporte_mensal),
+            cf=cf,
+        )
+    elif mode == "heuristica_simples":
+        n, vol_mean, vol_p70, corr_mean, _ = _metrics_ano_ref(precos, tickers_cols, int(ano_ref))
+        gamma, cap, soft = _params_heuristica_simples(n=n, vol_mean=vol_mean, vol_p70=vol_p70, corr_mean=corr_mean, gap12=gap12)
+    else:
+        gamma = gamma_default
+        cap = cap_default
+        soft = soft_default
+
+    w = _weights_from_scores(tickers_keep, score_map, int(ano_ref), gamma=gamma)
+    w = _apply_cap_soft(w, cap=cap, soft=soft)
+
+    return {
+        "tickers": tickers_keep,
+        "tickers_cols": tickers_cols,
+        "weights": w,
+        "N": int(N),
+        "gamma": float(gamma),
+        "cap": float(cap),
+        "soft": float(soft),
+        "mode": mode,
+    }
+
+
 __all__ = [
+    "decidir_selecao_e_pesos_por_ano_ref",
     "encontrar_proxima_data_valida",
     "gerir_carteira_simples",
     "gerir_carteira_todas_empresas",
