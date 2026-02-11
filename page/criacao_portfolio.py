@@ -68,9 +68,10 @@ except Exception:
 from core.portfolio import (
     calcular_patrimonio_selic_macro,
     gerir_carteira,
+    gerir_carteira_modulada,
+    decidir_selecao_e_pesos_por_ano_ref,
     encontrar_proxima_data_valida,
     gerir_carteira_simples,
-    gerir_carteira_modulada,
 )
 from core.yf_data import (
     baixar_precos,
@@ -200,13 +201,22 @@ def _build_macro() -> Optional[pd.DataFrame]:
 def render():
     st.markdown("<h1 style='text-align: center;'>Criação de Portfólio</h1>", unsafe_allow_html=True)
 
-    # ─────────────────────────────────────────────────────────────
+        # ─────────────────────────────────────────────────────────────
     # CONTROLES DE EXECUÇÃO (não roda sozinho)
     # ─────────────────────────────────────────────────────────────
     if "cp_last_params" not in st.session_state:
-        st.session_state["cp_last_params"] = {"margem_superior": 10.0, "use_score_v2": False, "estrategia_aporte": "Padrão (sempre)"}
+        st.session_state["cp_last_params"] = {
+            "margem_superior": 10.0,
+            "use_score_v2": False,
+            "estrategia_aporte": "Padrão (sempre)",
+            "estrategia_aporte_idx": 0,
+        }
     if "cp_should_run" not in st.session_state:
         st.session_state["cp_should_run"] = False
+
+    st.session_state.setdefault("portfolio_plan", None)
+    st.session_state.setdefault("plan_hash", None)
+    st.session_state.setdefault("last_month_orders", None)
 
     with st.sidebar:
         st.markdown("### ▶️ Execução")
@@ -234,23 +244,90 @@ def render():
                     "Padrão (sempre)",
                     "Auto (Padrão/Calibrado por segmento)",
                 ],
-                index=0,
+                index=int(st.session_state["cp_last_params"].get("estrategia_aporte_idx", 0)),
                 help="Auto aplica Padrão para segmentos com até 4 empresas (após filtro automático de >=10 anos) e Calibrado para segmentos maiores.",
             )
-
-            gerar = st.form_submit_button("🚀 Rodar Criação de Portfólio")
 
         if gerar:
             st.session_state["cp_last_params"] = {
                 "margem_superior": float(margem_superior),
                 "use_score_v2": bool(use_score_v2),
                 "estrategia_aporte": str(estrategia_aporte),
+                "estrategia_aporte_idx": int(0 if str(estrategia_aporte).startswith("Padrão") else 1),
             }
             st.session_state["cp_should_run"] = True
 
     if not st.session_state["cp_should_run"]:
-        st.info("Defina a margem (%) na barra lateral e clique em **🚀 Rodar Criação de Portfólio**.")
-        return
+        if st.session_state.get("portfolio_plan") is None:
+            st.info("Defina a margem (%) na barra lateral e clique em **🚀 Rodar Criação de Portfólio**.")
+            return
+
+# Se já existe um plano e não estamos rodando recomputação, renderiza somente o plano + ordem mensal
+if not st.session_state.get("cp_should_run", False) and st.session_state.get("portfolio_plan") is not None:
+    plan = st.session_state.get("portfolio_plan") or {}
+    empresas_plan = plan.get("empresas_lideres_finais") or []
+    auditoria_plan = plan.get("auditoria_gate") or []
+
+    if empresas_plan:
+        st.subheader("🧩 Empresas elegíveis para compra (plano anual)")
+        dfp = pd.DataFrame(empresas_plan)
+        for (setor, subsetor, segmento), g in dfp.groupby(["setor", "subsetor", "segmento"], dropna=False):
+            modo = str(g["modo_aporte"].iloc[0]) if "modo_aporte" in g.columns else "—"
+            N = int(g["N_compra"].iloc[0]) if "N_compra" in g.columns else len(g)
+            tipo = "Grupo" if (N > 1 or len(g) > 1) else "Individual"
+            st.markdown(f"### {setor} > {subsetor} > {segmento}")
+            st.caption(f"{modo} • {tipo} (N={max(N, len(g))})")
+            cols = st.columns(3)
+            for i, (_, r) in enumerate(g.iterrows()):
+                with cols[i % 3]:
+                    st.write(f"**{r.get('nome','')} ({r.get('ticker','')})**")
+                    st.write(f"Ano-ref: {r.get('ano_ref','—')} • Compra: {r.get('ano_compra','—')}")
+
+        with st.expander("Auditoria — Gate Padrão vs Calibrado (por segmento)", expanded=False):
+            if auditoria_plan:
+                st.dataframe(pd.DataFrame(auditoria_plan), use_container_width=True)
+            else:
+                st.info("Sem auditoria disponível neste plano.")
+        if st.session_state.get("plan_hash"):
+            st.success(f"✅ Plano anual congelado. Hash: {st.session_state.get('plan_hash')}")
+
+    st.subheader("🗓️ Execução mensal — ordem de compra")
+    if empresas_plan:
+        with st.form("cp_order_form", clear_on_submit=False):
+            mes_alvo = st.date_input("Mês-alvo (use o 1º dia do mês)", value=datetime.today().replace(day=1))
+            aporte_mes = st.number_input("Aporte do mês (R$)", min_value=0.0, value=1000.0, step=50.0, format="%.2f")
+            gerar_ordem = st.form_submit_button("🧾 Gerar ordem do mês")
+
+        if gerar_ordem:
+            dfp = pd.DataFrame(empresas_plan)
+            seg_keys = list(dfp.groupby(["setor", "subsetor", "segmento"]).groups.keys())
+            n_seg = max(1, len(seg_keys))
+            aporte_por_seg = float(aporte_mes) / float(n_seg)
+            ordens = []
+            for (setor, subsetor, segmento), g in dfp.groupby(["setor", "subsetor", "segmento"]):
+                weights = g.get("peso_relativo", pd.Series([1.0] * len(g))).astype(float).tolist()
+                s = float(sum(weights)) if weights else 0.0
+                if s <= 0:
+                    weights = [1.0] * len(g); s = float(len(g))
+                for (_, r), wi in zip(g.iterrows(), weights):
+                    ordens.append({
+                        "SETOR": setor, "SUBSETOR": subsetor, "SEGMENTO": segmento,
+                        "ticker": r.get("ticker"), "nome": r.get("nome"),
+                        "modo_aporte": r.get("modo_aporte"),
+                        "valor_compra": aporte_por_seg * (float(wi) / float(s)),
+                    })
+            st.session_state["last_month_orders"] = {"mes_alvo": str(mes_alvo), "aporte_mes": float(aporte_mes), "ordens": ordens}
+
+        last = st.session_state.get("last_month_orders")
+        if last and last.get("ordens"):
+            dfo = pd.DataFrame(last["ordens"])
+            for (setor, subsetor, segmento), g in dfo.groupby(["SETOR", "SUBSETOR", "SEGMENTO"]):
+                st.markdown(f"**{setor} > {subsetor} > {segmento}**")
+                st.dataframe(g[["ticker","nome","valor_compra"]].assign(valor_compra=lambda x: x["valor_compra"].astype(float).round(2)), use_container_width=True)
+    else:
+        st.info("Crie/congele o Portfólio primeiro (rode a Criação de Portfólio).")
+    return
+
 
     # parâmetro efetivo usado na execução
     margem_superior = float(st.session_state["cp_last_params"]["margem_superior"])
@@ -304,7 +381,6 @@ def render():
     )
 
     empresas_lideres_finais: List[dict] = []
-    auditoria_gate: List[dict] = []
     # Acumuladores para Patches 1-3 (histórico global, leve)
     score_global_parts: List[pd.DataFrame] = []
     lideres_global_parts: List[pd.DataFrame] = []
@@ -335,14 +411,6 @@ def render():
         tickers_validos = _filtrar_tickers_com_min_anos(tickers_segmento, min_anos=10, max_workers=12)
         if len(tickers_validos) <= 1:
             continue
-
-        # ── Gate binário (REGRA DE OURO)
-        # n_total_segmento_pos_filtro é estrutural: número de empresas do segmento APÓS o filtro automático (>=10 anos).
-        n_total_segmento_pos_filtro = int(len(set(tickers_validos)))
-        modo_aporte_segmento = "padrao"
-        if estrategia_aporte.strip().lower().startswith("auto"):
-            modo_aporte_segmento = "padrao" if n_total_segmento_pos_filtro <= 4 else "calibrado"
-
 
         tickers_validos_set = set(tickers_validos)
         empresas_validas = empresas_segmento[
@@ -443,39 +511,34 @@ def render():
         except Exception:
             pass
 
-                # n_elegiveis_ano_ref (auditoria): empresas com score no último ano disponível
-        try:
-            ultimo_ano_score = int(pd.to_numeric(score.get("Ano"), errors="coerce").max())
-            n_elegiveis_ano_ref = int(score.loc[score["Ano"] == ultimo_ano_score, "ticker"].nunique())
-        except Exception:
-            ultimo_ano_score = None
-            n_elegiveis_ano_ref = int(len(lista_empresas))
+
+        # Gate binário (Regra de Ouro) — baseado no tamanho estrutural do segmento após filtro automático (>=10 anos)
+        n_total_segmento = int(len(tickers_validos))  # pós-filtro >=10 (estrutural)
+        use_auto = str(estrategia_aporte).lower().startswith("auto")
+        if use_auto:
+            modo_aporte = "Padrão" if n_total_segmento <= 4 else "Calibrado"
+        else:
+            modo_aporte = "Padrão"
 
         auditoria_gate.append({
             "SETOR": setor,
             "SUBSETOR": subsetor,
             "SEGMENTO": segmento,
-            "n_total_segmento_pos_filtro": n_total_segmento_pos_filtro,
-            "n_elegiveis_ano_ref": n_elegiveis_ano_ref,
-            "modo_aplicado": "Padrão" if modo_aporte_segmento == "padrao" else "Calibrado",
+            "n_total_segmento_pos_filtro": n_total_segmento,
+            "modo_aplicado": modo_aporte,
         })
 
-        if modo_aporte_segmento == "calibrado":
-            try:
-                patrimonio_empresas, datas_aportes = gerir_carteira_modulada(
-                    precos,
-                    score,
-                    lideres,
-                    dividendos,
-                    policy={"mode": "heuristica_calibrada"},
-                )
-            except Exception as e:
-                # fallback defensivo: não quebra o fluxo do CP
-                logger.warning("Falha no modo calibrado (%s/%s/%s): %s", setor, subsetor, segmento, e)
-                patrimonio_empresas, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
+        # Chamada do motor (sem duplicar lógica)
+        if modo_aporte == "Calibrado":
+            patrimonio_empresas, datas_aportes = gerir_carteira_modulada(
+                precos=precos,
+                df_scores=score,
+                lideres_por_ano=lideres,
+                dividendos_dict=dividendos,
+                policy={"mode": "heuristica_calibrada"},
+            )
         else:
             patrimonio_empresas, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
-
         if patrimonio_empresas is None or patrimonio_empresas.empty:
             continue
 
@@ -528,19 +591,59 @@ def render():
             )
 
         # líderes do último ano de score (para sugerir compra no próximo ano)
-        ultimo_ano = int(pd.to_numeric(score["Ano"], errors="coerce").max())
-        lideres_ano_anterior = lideres[lideres["Ano"] == ultimo_ano]
 
-        for _, row in lideres_ano_anterior.iterrows():
-            tk = _strip_sa(str(row["ticker"]))
+        ultimo_ano = int(pd.to_numeric(score["Ano"], errors="coerce").max())
+
+        tickers_compra: List[str] = []
+        pesos_compra: dict = {}
+        N_compra: int = 0
+
+        if modo_aporte == "Calibrado":
+            escolha = decidir_selecao_e_pesos_por_ano_ref(
+                precos=precos,
+                df_scores=score,
+                dividendos_dict=dividendos,
+                policy={"mode": "heuristica_calibrada"},
+                ano_ref=ultimo_ano,
+                aporte_mensal=float(1000.0),
+            )
+            tickers_compra = [str(t) for t in (escolha.get("tickers") or [])]
+            pesos_compra = dict(escolha.get("weights") or {})
+            N_compra = int(escolha.get("N") or len(tickers_compra))
+        else:
+            lideres_ano_anterior = lideres[lideres["Ano"] == ultimo_ano]
+            tickers_compra = [_strip_sa(str(x)) for x in lideres_ano_anterior["ticker"].astype(str).tolist()]
+            tickers_compra = [t for t in tickers_compra if t]
+            if tickers_compra:
+                w = 1.0 / float(len(tickers_compra))
+                pesos_compra = {t: w for t in tickers_compra}
+                N_compra = len(tickers_compra)
+
+        # informativo: nº de empresas elegíveis no ano_ref
+        try:
+            n_elegiveis_ano_ref = int(score.loc[score["Ano"] == ultimo_ano, "ticker"].nunique())
+        except Exception:
+            n_elegiveis_ano_ref = 0
+        try:
+            auditoria_gate[-1]["n_elegiveis_ano_ref"] = n_elegiveis_ano_ref
+            auditoria_gate[-1]["N_compra"] = int(N_compra)
+        except Exception:
+            pass
+
+        for tk in tickers_compra:
             empresas_lideres_finais.append(
                 {
                     "ticker": tk,
                     "nome": next((e.nome for e in lista_empresas if _strip_sa(e.ticker) == tk), tk),
                     "logo_url": get_logo_url(tk),
-                    "ano_lider": int(row["Ano"]),
-                    "ano_compra": int(row["Ano"]) + 1,
+                    "ano_ref": ultimo_ano,
+                    "ano_compra": ultimo_ano + 1,
                     "setor": setor,
+                    "subsetor": subsetor,
+                    "segmento": segmento,
+                    "modo_aporte": modo_aporte,
+                    "N_compra": int(N_compra),
+                    "peso_relativo": float(pesos_compra.get(tk, 0.0)) if pesos_compra else 0.0,
                 }
             )
 
@@ -692,93 +795,6 @@ def render():
     except Exception:
         df_prices_global = pd.DataFrame()
 
-    # ─────────────────────────────────────────────────────────
-    # Auditoria — Gate Padrão vs Calibrado (por segmento)
-    # ─────────────────────────────────────────────────────────
-    if auditoria_gate:
-        with st.expander("Auditoria — Gate Padrão vs Calibrado (por segmento)", expanded=False):
-            df_aud = pd.DataFrame(auditoria_gate)
-            cols_pref = ["SETOR","SUBSETOR","SEGMENTO","n_total_segmento_pos_filtro","n_elegiveis_ano_ref","modo_aplicado"]
-            df_aud = df_aud[[c for c in cols_pref if c in df_aud.columns]]
-            st.dataframe(df_aud, use_container_width=True, hide_index=True)
-            st.caption("Gate usa apenas n_total_segmento_pos_filtro (pós filtro automático de >=10 anos). n_elegiveis_ano_ref é apenas auditoria.")
-
-    # ─────────────────────────────────────────────────────────
-    # Etapa A — Persistência institucional do Plano anual (PortfolioPlan)
-    # ─────────────────────────────────────────────────────────
-    try:
-        plan_payload = {
-            "created_at": datetime.now().isoformat(timespec="seconds"),
-            "estrategia_aporte": str(estrategia_aporte),
-            "empresas_lideres_finais": empresas_lideres_finais,
-            "auditoria_gate": auditoria_gate,
-        }
-        plan_hash = hashlib.sha256(json.dumps(plan_payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
-        st.session_state["portfolio_plan"] = plan_payload
-        st.session_state["plan_hash"] = plan_hash
-        st.success(f"✅ Plano anual congelado. Hash: {plan_hash}")
-    except Exception as e:
-        st.session_state["portfolio_plan"] = None
-        st.session_state["plan_hash"] = None
-        st.warning(f"⚠️ Não foi possível persistir o plano anual (PortfolioPlan): {e}")
-
-    # ─────────────────────────────────────────────────────────
-    # Etapa B — Execução mensal (ordem de compra)
-    # ─────────────────────────────────────────────────────────
-    st.markdown("## 🗓️ Execução mensal — ordem de compra")
-    plan = st.session_state.get("portfolio_plan")
-    plan_hash = st.session_state.get("plan_hash")
-
-    if not plan or not plan.get("empresas_lideres_finais"):
-        st.info("Crie/congele o Portfólio primeiro (rode a Criação de Portfólio).")
-    else:
-        colA, colB = st.columns([1, 1])
-        with colA:
-            mes_alvo = st.date_input("Mês-alvo (use o 1º dia do mês)", value=datetime.now().replace(day=1).date())
-        with colB:
-            aporte_mes = st.number_input("Aporte do mês (R$)", min_value=0.0, value=1000.0, step=50.0)
-
-        # seleciona tickers sugeridos para o ano de compra do plano (se existir), senão todos do plano
-        ano_alvo = int(getattr(mes_alvo, "year", datetime.now().year))
-        tickers_ano = [e.get("ticker") for e in plan.get("empresas_lideres_finais", []) if int(e.get("ano_compra", 0)) == ano_alvo]
-        tickers = [t for t in tickers_ano if t] or [e.get("ticker") for e in plan.get("empresas_lideres_finais", []) if e.get("ticker")]
-
-        tickers = [str(t).strip().upper().replace(".SA", "") for t in tickers if t]
-        tickers = sorted(list(dict.fromkeys(tickers)))  # unique mantendo ordem
-
-        if not tickers:
-            st.warning("Plano não possui tickers válidos para gerar ordem mensal.")
-        else:
-            if st.button("🧾 Gerar ordem do mês", type="primary"):
-                valor_por_ativo = float(aporte_mes) / float(len(tickers)) if float(aporte_mes) > 0 else 0.0
-                df_ordem = pd.DataFrame({
-                    "ticker": tickers,
-                    "valor_R$": [valor_por_ativo] * len(tickers),
-                    "percentual_%": [100.0 / len(tickers)] * len(tickers),
-                })
-                order_payload = {
-                    "plan_hash": plan_hash,
-                    "mes_alvo": str(mes_alvo),
-                    "aporte_mes": float(aporte_mes),
-                    "tickers": tickers,
-                    "ordem": df_ordem.to_dict("records"),
-                    "created_at": datetime.now().isoformat(timespec="seconds"),
-                }
-                st.session_state["last_month_orders"] = order_payload
-
-            order = st.session_state.get("last_month_orders")
-            if order and order.get("tickers"):
-                st.markdown("### 📌 Ordem gerada")
-                df_show = pd.DataFrame(order.get("ordem", []))
-                st.dataframe(df_show, use_container_width=True, hide_index=True)
-
-                # Exportações
-                csv_bytes = df_show.to_csv(index=False).encode("utf-8")
-                st.download_button("⬇️ Baixar CSV", data=csv_bytes, file_name=f"ordem_{order.get('mes_alvo','mes')}.csv", mime="text/csv")
-
-                json_bytes = json.dumps(order, ensure_ascii=False, indent=2).encode("utf-8")
-                st.download_button("⬇️ Baixar JSON (auditável)", data=json_bytes, file_name=f"ordem_{order.get('mes_alvo','mes')}.json", mime="application/json")
-
     if empresas_lideres_finais:
         st.markdown("---")
         st.caption("🧪 Teste incremental: habilite os patches um a um para detectar reinícios (reruns) anormais.")
@@ -818,7 +834,94 @@ def render():
                     st.error(f"Patch 4 falhou: {type(e).__name__}: {e}")
 
 
+
+# Persistência do Plano anual (PortfolioPlan) — evita que o plano "mude sem intenção"
+if empresas_lideres_finais:
+    plan_payload = {
+        "created_at": datetime.now().isoformat(),
+        "params": dict(st.session_state.get("cp_last_params") or {}),
+        "empresas_lideres_finais": empresas_lideres_finais,
+        "auditoria_gate": auditoria_gate,
+    }
+    try:
+        plan_hash = hashlib.sha256(json.dumps(plan_payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
+        st.session_state["portfolio_plan"] = plan_payload
+        st.session_state["plan_hash"] = plan_hash
+    except Exception:
+        st.session_state["portfolio_plan"] = plan_payload
+        st.session_state["plan_hash"] = None
+
     # Desarma a execução após rodar (evita “auto-rerun armado”)
     st.session_state["cp_should_run"] = False
+
+
+# ─────────────────────────────────────────────────────────
+# Plano anual + Execução mensal (estado persistido)
+# ─────────────────────────────────────────────────────────
+plan = st.session_state.get("portfolio_plan") or {}
+empresas_plan = plan.get("empresas_lideres_finais") or []
+auditoria_plan = plan.get("auditoria_gate") or []
+
+if empresas_plan:
+    st.subheader("🧩 Empresas elegíveis para compra (plano anual)")
+    dfp = pd.DataFrame(empresas_plan)
+    for (setor, subsetor, segmento), g in dfp.groupby(["setor", "subsetor", "segmento"], dropna=False):
+        modo = str(g["modo_aporte"].iloc[0]) if "modo_aporte" in g.columns else "—"
+        N = int(g["N_compra"].iloc[0]) if "N_compra" in g.columns else len(g)
+        tipo = "Grupo" if (N > 1 or len(g) > 1) else "Individual"
+        st.markdown(f"### {setor} > {subsetor} > {segmento}")
+        st.caption(f"{modo} • {tipo} (N={max(N, len(g))})")
+        cols = st.columns(3)
+        for i, (_, r) in enumerate(g.iterrows()):
+            with cols[i % 3]:
+                st.write(f"**{r.get('nome','')} ({r.get('ticker','')})**")
+                st.write(f"Ano-ref: {r.get('ano_ref','—')} • Compra: {r.get('ano_compra','—')}")
+
+    with st.expander("Auditoria — Gate Padrão vs Calibrado (por segmento)", expanded=False):
+        if auditoria_plan:
+            st.dataframe(pd.DataFrame(auditoria_plan), use_container_width=True)
+        else:
+            st.info("Sem auditoria disponível neste plano.")
+    if st.session_state.get("plan_hash"):
+        st.success(f"✅ Plano anual congelado. Hash: {st.session_state.get('plan_hash')}")
+
+st.subheader("🗓️ Execução mensal — ordem de compra")
+if empresas_plan:
+    with st.form("cp_order_form", clear_on_submit=False):
+        mes_alvo = st.date_input("Mês-alvo (use o 1º dia do mês)", value=datetime.today().replace(day=1))
+        aporte_mes = st.number_input("Aporte do mês (R$)", min_value=0.0, value=1000.0, step=50.0, format="%.2f")
+        gerar_ordem = st.form_submit_button("🧾 Gerar ordem do mês")
+
+    if gerar_ordem:
+        dfp = pd.DataFrame(empresas_plan)
+        seg_keys = list(dfp.groupby(["setor", "subsetor", "segmento"]).groups.keys())
+        n_seg = max(1, len(seg_keys))
+        aporte_por_seg = float(aporte_mes) / float(n_seg)
+        ordens = []
+        for (setor, subsetor, segmento), g in dfp.groupby(["setor", "subsetor", "segmento"]):
+            weights = g.get("peso_relativo", pd.Series([1.0] * len(g))).astype(float).tolist()
+            s = float(sum(weights)) if weights else 0.0
+            if s <= 0:
+                weights = [1.0] * len(g); s = float(len(g))
+            for (_, r), wi in zip(g.iterrows(), weights):
+                ordens.append({
+                    "SETOR": setor,
+                    "SUBSETOR": subsetor,
+                    "SEGMENTO": segmento,
+                    "ticker": r.get("ticker"),
+                    "nome": r.get("nome"),
+                    "modo_aporte": r.get("modo_aporte"),
+                    "valor_compra": aporte_por_seg * (float(wi) / float(s)),
+                })
+        st.session_state["last_month_orders"] = {"mes_alvo": str(mes_alvo), "aporte_mes": float(aporte_mes), "ordens": ordens}
+
+    last = st.session_state.get("last_month_orders")
+    if last and last.get("ordens"):
+        dfo = pd.DataFrame(last["ordens"])
+        for (setor, subsetor, segmento), g in dfo.groupby(["SETOR", "SUBSETOR", "SEGMENTO"]):
+            st.markdown(f"**{setor} > {subsetor} > {segmento}**")
+            st.dataframe(g[["ticker","nome","valor_compra"]].assign(valor_compra=lambda x: x["valor_compra"].astype(float).round(2)), use_container_width=True)
+else:
+    st.info("Crie/congele o Portfólio primeiro (rode a Criação de Portfólio).")
 
     st.markdown("<hr>", unsafe_allow_html=True)
