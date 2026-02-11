@@ -28,62 +28,6 @@ from core.scoring import (
     calcular_score_acumulado,
     penalizar_plato,
 )
-# >>> PATCH SCORE (v1/v2/v3) + comparação opcional
-score_main: Optional[pd.DataFrame] = None
-score_cmp: Optional[pd.DataFrame] = None
-label_main = ""
-label_cmp = ""
-
-def _calc_score(mode: str) -> pd.DataFrame:
-    if mode == "v3" and (calcular_score_acumulado_v3 is not None) and (ScoreV3Config is not None):
-        cfg_v3 = ScoreV3Config(
-            tanh_c=float(tanh_c),
-            rank_sharpen_gamma=float(gamma_sharp),
-            nonlinear_stage=str(nonlinear_stage),
-        )
-        return calcular_score_acumulado_v3(
-            lista_empresas=payload,
-            group_map=group_map,
-            subsetor_map=subsetor_map,
-            setor_map=setor_map,
-            pesos_utilizados=pesos,
-            anos_minimos=4,
-            prefer_group_col="SEGMENTO",
-            min_n_group=7,
-            config=cfg_v3,
-        )
-    if mode == "v2" and (calcular_score_acumulado_v2 is not None):
-        return calcular_score_acumulado_v2(
-            lista_empresas=payload,
-            group_map=group_map,
-            subsetor_map=subsetor_map,
-            setor_map=setor_map,
-            pesos_utilizados=pesos,
-            anos_minimos=4,
-            prefer_group_col="SEGMENTO",
-            min_n_group=7,
-        )
-    # v1 (legado)
-    return calcular_score_acumulado(payload, setores_empresa, pesos, dados_macro, anos_minimos=4)
-
-# principal (seguindo a opção da sidebar)
-_mode = scoring_mode if ("scoring_mode" in locals()) else "v1"
-score_main = _calc_score(_mode)
-label_main = f"Estratégia ({_mode})"
-
-# comparação (v2 vs v3 no mesmo gráfico)
-if ("compare_v2v3" in locals()) and compare_v2v3:
-    if _mode == "v3":
-        score_cmp = _calc_score("v2")
-        label_cmp = "Estratégia (v2)"
-    elif _mode == "v2":
-        score_cmp = _calc_score("v3")
-        label_cmp = "Estratégia (v3)"
-# Usa score = principal para o resto do pipeline
-score = score_main
-# <<< PATCH SCORE
-
-
 
 # >>> PATCH SCORE V3 (import opcional)
 try:
@@ -103,7 +47,6 @@ from core.weights import get_pesos
 
 logger = logging.getLogger(__name__)
 
-
 # ─────────────────────────────────────────────────────────────
 # Utilitários internos
 # ─────────────────────────────────────────────────────────────
@@ -114,16 +57,13 @@ def _norm_sa(ticker: str) -> str:
         return t
     return t if t.endswith(".SA") else f"{t}.SA"
 
-
 def _strip_sa(ticker: str) -> str:
     return (ticker or "").strip().upper().replace(".SA", "")
-
 
 def _clean_df_cols(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     out.columns = out.columns.astype(str).str.strip().str.replace("\ufeff", "", regex=False)
     return out
-
 
 def _count_years_from_dre(dre: Optional[pd.DataFrame]) -> int:
     if dre is None or dre.empty or "Data" not in dre.columns:
@@ -131,14 +71,12 @@ def _count_years_from_dre(dre: Optional[pd.DataFrame]) -> int:
     y = pd.to_datetime(dre["Data"], errors="coerce").dt.year
     return int(y.dropna().nunique())
 
-
 @dataclass(frozen=True)
 class EmpresaDados:
     ticker: str  # sem .SA
     nome: str
     dre: pd.DataFrame
     mult: pd.DataFrame
-
 
 def _load_empresa_dados(ticker: str, nome: str) -> Optional[EmpresaDados]:
     """Carrega DRE + múltiplos para um ticker (B3), retornando estrutura padronizada."""
@@ -164,7 +102,6 @@ def _load_empresa_dados(ticker: str, nome: str) -> Optional[EmpresaDados]:
 
     return EmpresaDados(ticker=tk, nome=nome, dre=dre, mult=mult)
 
-
 def _safe_macro() -> Optional[pd.DataFrame]:
     dm = load_macro_summary()
     if dm is None or dm.empty:
@@ -175,7 +112,6 @@ def _safe_macro() -> Optional[pd.DataFrame]:
         dm["Data"] = pd.to_datetime(dm["Data"], errors="coerce")
         dm = dm.dropna(subset=["Data"]).sort_values("Data")
     return dm
-
 
 # ─────────────────────────────────────────────────────────────
 # Render
@@ -216,7 +152,6 @@ def render() -> None:
     subsetor_map = dict(zip(_tmp["ticker"], _tmp["SUBSETOR"]))
     setor_map = dict(zip(_tmp["ticker"], _tmp["SETOR"]))
     # <<< PATCH SCORE V2
-
 
     dados_macro = _safe_macro()
     if dados_macro is None or dados_macro.empty:
@@ -282,8 +217,6 @@ def render() -> None:
                 gamma_sharp = 1.0
                 nonlinear_stage = "aggregate"
         # <<< PATCH SCORE V2
-
-
 
         # ── Carteira (modo)
         with st.expander("Carteira (modo)", expanded=False):
@@ -420,6 +353,61 @@ def render() -> None:
 
     # payload scoring (compatível com scoring.py)
     payload = [{"ticker": e.ticker, "nome": e.nome, "multiplos": e.mult, "dre": e.dre} for e in empresas]
+    # >>> PATCH SCORE (v1/v2/v3) + comparação opcional
+    score_main: Optional[pd.DataFrame] = None
+    score_cmp: Optional[pd.DataFrame] = None
+    label_main = ""
+    label_cmp = ""
+
+    def _calc_score(mode: str) -> pd.DataFrame:
+        if mode == "v3" and (calcular_score_acumulado_v3 is not None) and (ScoreV3Config is not None):
+            cfg_v3 = ScoreV3Config(
+                tanh_c=float(tanh_c),
+                rank_sharpen_gamma=float(gamma_sharp),
+                nonlinear_stage=str(nonlinear_stage),
+            )
+            return calcular_score_acumulado_v3(
+                lista_empresas=payload,
+                group_map=group_map,
+                subsetor_map=subsetor_map,
+                setor_map=setor_map,
+                pesos_utilizados=pesos,
+                anos_minimos=4,
+                prefer_group_col="SEGMENTO",
+                min_n_group=7,
+                config=cfg_v3,
+            )
+        if mode == "v2" and (calcular_score_acumulado_v2 is not None):
+            return calcular_score_acumulado_v2(
+                lista_empresas=payload,
+                group_map=group_map,
+                subsetor_map=subsetor_map,
+                setor_map=setor_map,
+                pesos_utilizados=pesos,
+                anos_minimos=4,
+                prefer_group_col="SEGMENTO",
+                min_n_group=7,
+            )
+        # v1 (legado)
+        return calcular_score_acumulado(payload, setores_empresa, pesos, dados_macro, anos_minimos=4)
+
+    # principal
+    _mode = scoring_mode if ("scoring_mode" in locals()) else "v1"
+    score_main = _calc_score(_mode)
+    label_main = f"Estratégia ({_mode})"
+
+    # comparação (v2 vs v3 no mesmo gráfico)
+    if ("compare_v2v3" in locals()) and compare_v2v3:
+        if _mode == "v3":
+            score_cmp = _calc_score("v2")
+            label_cmp = "Estratégia (v2)"
+        elif _mode == "v2":
+            score_cmp = _calc_score("v3")
+            label_cmp = "Estratégia (v3)"
+
+    # usa score principal no pipeline
+    score = score_main
+    # <<< PATCH SCORE
 
     # >>> PATCH SCORE V2 (switch v1/v2 sem alterar layout)
     if ("use_score_v2" in locals()) and use_score_v2 and (calcular_score_acumulado_v2 is not None):
@@ -436,7 +424,6 @@ def render() -> None:
     else:
         score = calcular_score_acumulado(payload, setores_empresa, pesos, dados_macro, anos_minimos=4)
     # <<< PATCH SCORE V2
-
 
     if score is None or score.empty:
         st.warning("Score vazio: não há dados suficientes após os filtros e janela mínima.")
