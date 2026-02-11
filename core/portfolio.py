@@ -960,6 +960,243 @@ def _calibrate_gamma_cap_soft(
     soft = float(max(0.02, min(cap - 0.01, soft)))
 
     return gamma, cap, soft
+def _softmax_weights(scores: pd.Series, temperature: float = 0.35) -> pd.Series:
+    """
+    Softmax estável numericamente: w_i = exp((s_i - max(s))/T) / sum(...)
+    """
+    s = pd.to_numeric(scores, errors="coerce").astype(float)
+    s = s.replace([np.inf, -np.inf], np.nan).dropna()
+    if s.empty:
+        return pd.Series(dtype="float64")
+    T = float(temperature) if temperature and temperature > 0 else 0.35
+    x = (s - float(s.max())) / T
+    ex = np.exp(x.clip(-60, 60))
+    w = ex / float(ex.sum())
+    return w.astype(float)
+
+
+def _cap_and_redistribute_weights(
+    w: pd.Series,
+    weight_cap: float = 0.60,
+    min_weight: float = 0.0,
+) -> pd.Series:
+    """
+    Aplica cap por ativo e redistribui o excedente proporcionalmente aos demais.
+    Mantém soma = 1.
+    """
+    if w is None or w.empty:
+        return pd.Series(dtype="float64")
+    w = pd.to_numeric(w, errors="coerce").fillna(0.0).clip(lower=0.0)
+    if w.sum() <= 0:
+        return pd.Series(dtype="float64")
+
+    w = w / float(w.sum())
+
+    cap = float(weight_cap)
+    cap = min(max(cap, 0.05), 0.95)
+
+    floor = float(min_weight)
+    floor = min(max(floor, 0.0), cap)
+
+    # piso (se houver)
+    if floor > 0:
+        w = w.clip(lower=floor)
+        w = w / float(w.sum())
+
+    # iterativo para acomodar múltiplos caps
+    for _ in range(5):
+        over = w[w > cap]
+        if over.empty:
+            break
+        excess = float((over - cap).sum())
+        w.loc[over.index] = cap
+        under = w[w < cap]
+        if under.empty:
+            # tudo capado -> normaliza e sai
+            break
+        add = under / float(under.sum()) * excess
+        w.loc[under.index] = (under + add).clip(upper=cap)
+
+    w = w.clip(lower=0.0)
+    if w.sum() > 0:
+        w = w / float(w.sum())
+    return w
+
+
+def gerir_carteira_topk_softmax(
+    precos: pd.DataFrame,
+    df_scores: pd.DataFrame,
+    dividendos_dict: Dict[str, Union[pd.Series, pd.DataFrame]],
+    top_k: int = 2,
+    temperature: float = 0.35,
+    weight_cap: float = 0.60,
+    min_weight: float = 0.0,
+    aporte_mensal: float = 1000.0,
+    registrar_eventos: bool = False,
+    fee_bps: float = 0.0,
+    slippage_bps: float = 0.0,
+):
+    """
+    Estratégia contínua (Top-K softmax):
+    - A cada mês, usa ano_ref = ano(data) - 1.
+    - Seleciona Top-K tickers pelo Score_Ajustado do ano_ref.
+    - Calcula pesos por softmax intra-TopK (temperatura T).
+    - Aplica cap por ativo (weight_cap) e redistribui excedente.
+    - Aporta mensalmente proporcional aos pesos e reinveste dividendos POR AÇÃO (sanitizado).
+
+    Retorno:
+      - df_patrimonio: colunas por ticker (valor em R$) + 'Patrimônio'
+      - datas_aportes
+      - (opcional) eventos
+    """
+    precos = _ensure_dt_index(precos)
+    if precos is None or precos.empty:
+        return (pd.DataFrame(), []) if not registrar_eventos else (pd.DataFrame(), [], [])
+
+    if df_scores is None or df_scores.empty:
+        return (pd.DataFrame(), []) if not registrar_eventos else (pd.DataFrame(), [], [])
+
+    divs = {t: _as_div_series(dividendos_dict.get(t)) for t in precos.columns}
+    cf = _cost_factor(fee_bps, slippage_bps)
+
+    df_scores2 = df_scores.copy()
+    df_scores2["Ano"] = pd.to_numeric(df_scores2.get("Ano"), errors="coerce")
+    df_scores2["ticker"] = df_scores2.get("ticker").astype(str)
+    df_scores2["Score_Ajustado"] = pd.to_numeric(df_scores2.get("Score_Ajustado"), errors="coerce")
+
+    anos_scores = sorted(int(a) for a in df_scores2["Ano"].dropna().unique())
+    if not anos_scores:
+        return (pd.DataFrame(), []) if not registrar_eventos else (pd.DataFrame(), [], [])
+
+    datas_aportes = _build_monthly_schedule(precos, anos_scores, start_year_offset=1)
+    if not datas_aportes:
+        return (pd.DataFrame(), []) if not registrar_eventos else (pd.DataFrame(), [], [])
+
+    carteira = defaultdict(float)  # ticker(.SA) -> qty
+    aporte_acumulado = 0.0
+    eventos = [] if registrar_eventos else None
+
+    pesos_cache: Dict[int, pd.Series] = {}
+
+    # Para reconstruir série por ticker (como gerir_carteira)
+    carteira_hist: Dict[pd.Timestamp, Dict[str, float]] = {}
+
+    for data0 in datas_aportes:
+        data_sinal = encontrar_proxima_data_valida(pd.Timestamp(data0), precos)
+        if data_sinal is None:
+            continue
+
+        ano_ref = int(data_sinal.year - 1)
+
+        if ano_ref not in pesos_cache:
+            df_ano = df_scores2[df_scores2["Ano"] == ano_ref].dropna(subset=["ticker", "Score_Ajustado"])
+            if df_ano.empty:
+                pesos_cache[ano_ref] = pd.Series(dtype="float64")
+            else:
+                df_ano = df_ano.sort_values("Score_Ajustado", ascending=False)
+                k = int(max(1, top_k))
+                top = df_ano.head(k)
+                w = _softmax_weights(top["Score_Ajustado"], temperature=temperature)
+                w = w.reindex(top["ticker"].values).fillna(0.0)
+                w = _cap_and_redistribute_weights(w, weight_cap=weight_cap, min_weight=min_weight)
+                pesos_cache[ano_ref] = w
+
+                if registrar_eventos:
+                    for tk in list(w.index):
+                        eventos.append({
+                            "data": data_sinal.strftime("%Y-%m"),
+                            "tipo": "universe_topk",
+                            "ticker": str(tk),
+                            "peso": float(w.loc[tk]),
+                            "ano_ref": int(ano_ref),
+                        })
+
+        w = pesos_cache.get(ano_ref, pd.Series(dtype="float64"))
+        if w is None or w.empty:
+            aporte_acumulado += float(aporte_mensal)
+            continue
+
+        # Reinvestimento (POR AÇÃO)
+        for tk in list(carteira.keys()):
+            if carteira[tk] <= 0:
+                continue
+            s = divs.get(tk, pd.Series(dtype="float64"))
+            if s.empty:
+                continue
+            px = _get_price(precos, data_sinal, tk)
+            if px is None:
+                continue
+            div_mes = _div_mes_por_acao_sanitizado(
+                s=s,
+                ano=int(data_sinal.year),
+                mes=int(data_sinal.month),
+                ticker=tk,
+                px_ref=px,
+            )
+            if div_mes <= 0:
+                continue
+            carteira[tk] += (div_mes * carteira[tk]) / px
+
+        total_a_aportar = float(aporte_mensal) + float(aporte_acumulado)
+        aporte_acumulado = 0.0
+
+        # compra proporcional aos pesos (aplica custo no aporte novo)
+        for tk_raw, peso in w.items():
+            peso = float(peso)
+            if peso <= 0:
+                continue
+            tk_sa = tk_raw if str(tk_raw).endswith(".SA") else f"{tk_raw}.SA"
+            px = _get_price(precos, data_sinal, tk_sa)
+            if px is None:
+                aporte_acumulado += total_a_aportar * peso
+                continue
+            aporte_tk = (total_a_aportar * peso) * cf
+            carteira[tk_sa] += aporte_tk / px
+
+        carteira_hist[data_sinal] = dict(carteira)
+
+    # Reconstrói patrimônio diário por ticker + total
+    patrimonio = pd.DataFrame(index=precos.index)
+    if carteira_hist:
+        tickers_all = sorted({t for snap in carteira_hist.values() for t in snap.keys()})
+    else:
+        tickers_all = []
+
+    for t in tickers_all:
+        patrimonio[t] = np.nan
+    patrimonio["Patrimônio"] = np.nan
+
+    datas_hist = sorted(carteira_hist.keys())
+    snap_i = 0
+    last_snapshot: Optional[Dict[str, float]] = None
+
+    for d in precos.index:
+        while snap_i < len(datas_hist) and datas_hist[snap_i] <= d:
+            last_snapshot = carteira_hist[datas_hist[snap_i]]
+            snap_i += 1
+
+        if not last_snapshot:
+            continue
+
+        total = 0.0
+        for t in tickers_all:
+            px = _get_price(precos, d, t)
+            if px is None:
+                continue
+            val = float(last_snapshot.get(t, 0.0)) * float(px)
+            patrimonio.loc[d, t] = val
+            total += val
+
+        patrimonio.loc[d, "Patrimônio"] = total
+
+    patrimonio = patrimonio.ffill()
+
+    if registrar_eventos:
+        return patrimonio, datas_aportes, (eventos or [])
+    return patrimonio, datas_aportes
+
+
+
 def gerir_carteira_modulada(
     precos: pd.DataFrame,
     df_scores: pd.DataFrame,
@@ -1248,183 +1485,7 @@ def gerir_carteira_modulada(
     return df_patrimonio, datas_aportes
 
 
-
-# ────────────────────────────────────────────────────────────────────────────────
-# API EXTRA (não quebra assinaturas existentes)
-# ────────────────────────────────────────────────────────────────────────────────
-def decidir_selecao_e_pesos_por_ano_ref(
-    precos: pd.DataFrame,
-    df_scores: pd.DataFrame,
-    dividendos_dict: Dict[str, Union[pd.Series, pd.DataFrame]],
-    policy: Optional[Dict] = None,
-    ano_ref: int = 0,
-    aporte_mensal: float = 1000.0,
-    fee_bps: float = 0.0,
-    slippage_bps: float = 0.0,
-) -> Dict[str, object]:
-    """Decide, para um *ano de referência* (ano_ref), quais tickers entram no basket (Top-N)
-    e quais pesos/parametrização serão usados, replicando a mesma lógica interna de
-    `gerir_carteira_modulada` (inclui heurística calibrada, se selecionada em policy).
-
-    Este helper existe para:
-      - auditoria/explicabilidade (exibir N, gamma/cap/soft e tickers escolhidos)
-      - gerar "ordem do mês" sem rodar um backtest completo
-
-    Retorno:
-      {
-        "tickers": [.. tickers (formato do score, sem .SA) ..],
-        "tickers_cols": [.. colunas em precos ..],
-        "weights": {ticker: w, ...}  (normalizado),
-        "N": int,
-        "gamma": float,
-        "cap": float,
-        "soft": float,
-        "mode": str,
-      }
-    """
-    policy = policy or {}
-    mode = str(policy.get("mode", "heuristica")).strip().lower()
-
-    # defaults (mesmos de gerir_carteira_modulada)
-    eps = float(policy.get("eps", 0.35))
-    gamma_default = float(policy.get("gamma", 0.90))
-    cap_default = float(policy.get("cap", 0.25))
-    soft_default = float(policy.get("soft", 0.05))
-    n_manual = int(policy.get("N", 2))
-
-    if precos is None or precos.empty or df_scores is None or df_scores.empty:
-        return {"tickers": [], "tickers_cols": [], "weights": {}, "N": 0, "gamma": gamma_default, "cap": cap_default, "soft": soft_default, "mode": mode}
-
-    # normalização básica
-    precos = precos.copy()
-    precos.index = pd.to_datetime(precos.index, errors="coerce")
-    precos = precos.dropna(how="all")
-    if precos.empty:
-        return {"tickers": [], "tickers_cols": [], "weights": {}, "N": 0, "gamma": gamma_default, "cap": cap_default, "soft": soft_default, "mode": mode}
-
-    df_scores2 = df_scores.copy()
-    if "Ano" not in df_scores2.columns:
-        return {"tickers": [], "tickers_cols": [], "weights": {}, "N": 0, "gamma": gamma_default, "cap": cap_default, "soft": soft_default, "mode": mode}
-
-    # garante colunas
-    if "ticker" not in df_scores2.columns:
-        return {"tickers": [], "tickers_cols": [], "weights": {}, "N": 0, "gamma": gamma_default, "cap": cap_default, "soft": soft_default, "mode": mode}
-    if "Score_Ajustado" not in df_scores2.columns:
-        # fallback: tenta Score (mantém compatibilidade defensiva)
-        if "Score" in df_scores2.columns:
-            df_scores2["Score_Ajustado"] = df_scores2["Score"]
-        else:
-            return {"tickers": [], "tickers_cols": [], "weights": {}, "N": 0, "gamma": gamma_default, "cap": cap_default, "soft": soft_default, "mode": mode}
-
-    df_scores2["Ano"] = pd.to_numeric(df_scores2["Ano"], errors="coerce")
-    df_scores2["ticker"] = df_scores2["ticker"].astype(str)
-    df_scores2["Score_Ajustado"] = pd.to_numeric(df_scores2["Score_Ajustado"], errors="coerce")
-
-    score_map: Dict[Tuple[int, str], float] = {}
-    for _, r in df_scores2.dropna(subset=["Ano", "ticker", "Score_Ajustado"]).iterrows():
-        score_map[(int(r["Ano"]), str(r["ticker"]))] = float(r["Score_Ajustado"])
-
-    # dividendos normalizados (mesma resolução por coluna)
-    divs: Dict[str, pd.Series] = {}
-    for col in list(precos.columns):
-        k = _resolve_div_key(dividendos_dict, col)
-        divs[col] = _as_div_series(dividendos_dict.get(k)) if k is not None else pd.Series(dtype="float64")
-
-    cf = _cost_factor(fee_bps=fee_bps, slippage_bps=slippage_bps)
-
-    # tickers elegíveis no ano_ref (presentes no score e no preço)
-    rows = df_scores2[df_scores2["Ano"] == int(ano_ref)].dropna(subset=["ticker", "Score_Ajustado"])
-    if rows.empty:
-        return {"tickers": [], "tickers_cols": [], "weights": {}, "N": 0, "gamma": gamma_default, "cap": cap_default, "soft": soft_default, "mode": mode}
-
-    rows = rows.sort_values("Score_Ajustado", ascending=False)
-
-    tickers_raw = [str(t) for t in rows["ticker"].tolist()]
-    tickers_cols: List[str] = []
-    tickers_keep: List[str] = []
-    scores_keep: List[float] = []
-
-    for tk in tickers_raw:
-        col = _resolve_ticker_col(precos, tk)
-        if col is None:
-            col = _resolve_ticker_col(precos, tk + ".SA")
-        if col is None:
-            continue
-        tickers_keep.append(tk)
-        tickers_cols.append(col)
-        # pega score do primeiro match
-        try:
-            scores_keep.append(float(rows.loc[rows["ticker"] == tk, "Score_Ajustado"].iloc[0]))
-        except Exception:
-            scores_keep.append(float("nan"))
-
-    # remove nans em scores_keep alinhado
-    keep2, cols2, scores2 = [], [], []
-    for tk, col, sc in zip(tickers_keep, tickers_cols, scores_keep):
-        if sc == sc:  # not nan
-            keep2.append(tk); cols2.append(col); scores2.append(float(sc))
-    tickers_keep, tickers_cols, scores_keep = keep2, cols2, scores2
-
-    if not tickers_keep:
-        return {"tickers": [], "tickers_cols": [], "weights": {}, "N": 0, "gamma": gamma_default, "cap": cap_default, "soft": soft_default, "mode": mode}
-
-    # calcula N
-    if mode == "manual":
-        N = int(n_manual)
-    else:
-        N = _select_n_heuristica(scores_keep[:3], eps=eps)
-
-    N = max(1, min(int(N), int(len(tickers_keep))))
-    tickers_keep = tickers_keep[:N]
-    tickers_cols = tickers_cols[:N]
-    scores_top = scores_keep[:N]
-
-    gap12 = float(scores_top[0] - scores_top[1]) if len(scores_top) >= 2 else float(scores_top[0])
-
-    # parâmetros
-    if mode == "manual":
-        gamma = float(policy.get("gamma", gamma_default))
-        cap = float(policy.get("cap", cap_default))
-        soft = float(policy.get("soft", soft_default))
-    elif mode == "heuristica_calibrada":
-        gamma, cap, soft = _calibrate_gamma_cap_soft(
-            precos=precos,
-            divs=divs,
-            tickers_cols=tickers_cols,
-            tickers_score=tickers_keep,
-            score_map=score_map,
-            ano_ref=int(ano_ref),
-            gamma_default=gamma_default,
-            cap_default=cap_default,
-            soft_default=soft_default,
-            aporte_mensal=float(aporte_mensal),
-            cf=cf,
-        )
-    elif mode == "heuristica_simples":
-        n, vol_mean, vol_p70, corr_mean, _ = _metrics_ano_ref(precos, tickers_cols, int(ano_ref))
-        gamma, cap, soft = _params_heuristica_simples(n=n, vol_mean=vol_mean, vol_p70=vol_p70, corr_mean=corr_mean, gap12=gap12)
-    else:
-        gamma = gamma_default
-        cap = cap_default
-        soft = soft_default
-
-    w = _weights_from_scores(tickers_keep, score_map, int(ano_ref), gamma=gamma)
-    w = _apply_cap_soft(w, cap=cap, soft=soft)
-
-    return {
-        "tickers": tickers_keep,
-        "tickers_cols": tickers_cols,
-        "weights": w,
-        "N": int(N),
-        "gamma": float(gamma),
-        "cap": float(cap),
-        "soft": float(soft),
-        "mode": mode,
-    }
-
-
 __all__ = [
-    "decidir_selecao_e_pesos_por_ano_ref",
     "encontrar_proxima_data_valida",
     "gerir_carteira_simples",
     "gerir_carteira_todas_empresas",

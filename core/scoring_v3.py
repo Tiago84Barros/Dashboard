@@ -1,19 +1,16 @@
-# core/scoring_v3.py
 from __future__ import annotations
 
 """
-Score v3 (robusto + não-linear) compatível com o pipeline do Score v2.
+core/scoring_v3.py
 
-Mantém:
-- resolve_group_col: fallback SEGMENTO -> SUBSETOR -> SETOR (amostra mínima).
-- Instabilidade: CV em janela histórica + penalidade progressiva (cap).
-- Crowding: aplicado após score consolidado, com piso (min_factor).
-- Decay: aplicado ao score final, com cap.
+Score v3 (robusto + não-linear) para seleção comparativa intra-setor/segmento.
 
-Melhorias do v3 vs v2:
-- Robustez: winsor adaptativo por tamanho do grupo + robust z (mediana/MAD)
-- Não-linearidade: tanh (ganhos marginais decrescentes)
-- Blindagem de implementação: coverage_ratio (evita viés por dados faltantes)
+Objetivo do v3:
+- Preservar o comportamento do v2 (percentil intra-grupo, fallback de granularidade, penalidades)
+- Aumentar robustez estatística na camada de features (winsor adaptativo + z robusto via MAD)
+- Evitar "explosões" e reduzir sensibilidade a outliers
+- Permitir que a superioridade apareça quando a decisão de carteira usa o score de forma contínua
+  (Top-K ponderado por softmax, em vez de líder binário).
 
 Funções públicas:
 - calcular_score_ajustado_v3(...)
@@ -51,10 +48,6 @@ from core.scoring_v2 import (
 logger = logging.getLogger(__name__)
 
 
-# ─────────────────────────────────────────────────────────────
-# Config
-# ─────────────────────────────────────────────────────────────
-
 @dataclass(frozen=True)
 class ScoreV3Config:
     # winsor adaptativo por tamanho do grupo
@@ -69,34 +62,27 @@ class ScoreV3Config:
     mad_eps: float = 1e-9
 
     # não-linearidade
-    tanh_c: float = 2.0  # u -> tanh(u/c)
+    nonlinear_stage: str = "aggregate"  # "metric" ou "aggregate"
+    tanh_c: float = 2.0  # saturação
 
-    # compatibilidade com core (0..1 por grupo)
-    normalize_to_percentile: bool = True
+    # pós-processamento do percentil para "separar" topo (não muda ranking)
+    rank_sharpen_gamma: float = 1.0  # >1 reforça topo; 1 = desligado
 
     # coverage penalty (blindagem para dados faltantes)
     use_coverage_multiplier: bool = True
     coverage_floor: float = 0.50  # [0,1]
 
+    # normalização final 0..1 por percentil intra-grupo (mantém compatibilidade)
+    normalize_to_percentile: bool = True
 
-# ─────────────────────────────────────────────────────────────
-# Utilitários
-# ─────────────────────────────────────────────────────────────
 
 def _pct_within_group(df: pd.DataFrame, by: str, col: str) -> pd.Series:
-    """Percentil (rank pct=True) por grupo; NaN -> 0.5 (neutro)."""
     return df.groupby(by, dropna=False)[col].transform(
         lambda s: _to_numeric_series(s).rank(pct=True, method="average").fillna(0.5)
     )
 
 
-def winsorize_series_adaptive(
-    s: pd.Series,
-    *,
-    n_valid: int,
-    cfg: ScoreV3Config,
-) -> pd.Series:
-    """Winsor adaptativo (ou no-op) conforme N válido do grupo."""
+def winsorize_series_adaptive(s: pd.Series, *, n_valid: int, cfg: ScoreV3Config) -> pd.Series:
     x = _to_numeric_series(s)
     if x.dropna().empty:
         return x
@@ -116,36 +102,25 @@ def winsorize_series_adaptive(
     return x.clip(lower=lo, upper=hi)
 
 
-def winsorize_within_group_adaptive(
-    df: pd.DataFrame,
-    group_col: str,
-    col: str,
-    cfg: ScoreV3Config,
-) -> pd.Series:
+def winsorize_within_group_adaptive(df: pd.DataFrame, group_col: str, col: str, cfg: ScoreV3Config) -> pd.Series:
     """
-    Winsoriza uma coluna por grupo, garantindo alinhamento 1:1 com o DF original.
-    IMPORTANTE: usa transform (NUNCA apply) para preservar tamanho/índice.
+    IMPORTANTE: transform preserva alinhamento 1:1 com df (evita 'Columns must be same length').
     """
     def _w(s: pd.Series) -> pd.Series:
         x = _to_numeric_series(s)
         n_valid = int(x.dropna().shape[0])
         return winsorize_series_adaptive(x, n_valid=n_valid, cfg=cfg)
 
-    # transform garante mesmo length e mesmo index
     return df.groupby(group_col, dropna=False)[col].transform(_w)
 
 
-def robust_zscore_within_group(df: pd.DataFrame, group_col: str, col: str, mad_eps: float) -> pd.Series:
-    """
-    Robust z-score por grupo:
-      z = (x - med) / (1.4826 * MAD + eps)
-    """
+def robust_z_within_group(df: pd.DataFrame, group_col: str, col: str, mad_eps: float) -> pd.Series:
     eps = float(mad_eps)
 
     def _rz(s: pd.Series) -> pd.Series:
         x = _to_numeric_series(s)
         if x.dropna().empty:
-            return x  # preserva NaN
+            return x
         med = float(x.median(skipna=True))
         mad = float((x - med).abs().median(skipna=True))
         denom = 1.4826 * max(mad, eps)
@@ -160,12 +135,29 @@ def tanh_squash(u: pd.Series, c: float) -> pd.Series:
     return np.tanh(x / c)
 
 
-def _infer_blocks_from_pesos(
-    pesos_utilizados: Mapping[str, Mapping[str, Any]]
-) -> Tuple[Dict[str, List[str]], Dict[str, float]]:
+def _coverage_multiplier(coverage_ratio: pd.Series, cfg: ScoreV3Config) -> pd.Series:
+    floor = float(np.clip(cfg.coverage_floor, 0.0, 1.0))
+    cov = pd.to_numeric(coverage_ratio, errors="coerce").fillna(0.0).clip(0.0, 1.0)
+    return floor + (1.0 - floor) * cov
+
+
+def _rank_sharpen(p: pd.Series, gamma: float) -> pd.Series:
     """
-    Drop-in: se não for passado block_map/block_weights, cria blocos unitários (1 métrica = 1 bloco).
+    Reforça separação do topo sem alterar o range [0,1].
+    Mantém monotonicidade (portanto ranking não muda), mas aumenta distância do topo.
     """
+    g = float(gamma)
+    if not np.isfinite(g) or g <= 1.0:
+        return pd.to_numeric(p, errors="coerce").fillna(0.5).clip(0.0, 1.0)
+
+    x = pd.to_numeric(p, errors="coerce").fillna(0.5).clip(0.0, 1.0)
+    u = 2.0 * (x - 0.5)          # [-1,1]
+    u2 = np.sign(u) * (np.abs(u) ** g)
+    out = 0.5 * (u2 + 1.0)
+    return pd.to_numeric(out, errors="coerce").fillna(0.5).clip(0.0, 1.0)
+
+
+def _infer_blocks_from_pesos(pesos_utilizados: Mapping[str, Mapping[str, Any]]) -> Tuple[Dict[str, List[str]], Dict[str, float]]:
     block_map: Dict[str, List[str]] = {}
     block_weights: Dict[str, float] = {}
 
@@ -183,43 +175,12 @@ def _infer_blocks_from_pesos(
     return block_map, block_weights
 
 
-def build_block_scores(
-    out: pd.DataFrame,
-    block_map: Mapping[str, Sequence[str]],
-    block_weights: Mapping[str, float],
-) -> pd.Series:
-    """Score base por blocos: S = Σ_b w_b * mean(y_k em b)."""
-    bw = {b: float(w) for b, w in block_weights.items()}
-    wsum = sum(max(0.0, w) for w in bw.values())
-    if wsum <= 0:
-        keys = list(block_map.keys())
-        if not keys:
-            return pd.Series(0.0, index=out.index)
-        bw = {k: 1.0 / float(len(keys)) for k in keys}
-    else:
-        bw = {b: max(0.0, w) / wsum for b, w in bw.items()}
+def _block_mean(df: pd.DataFrame, cols: Sequence[str]) -> pd.Series:
+    cols_eff = [c for c in cols if c in df.columns]
+    if not cols_eff:
+        return pd.Series(np.nan, index=df.index)
+    return pd.concat([_to_numeric_series(df[c]) for c in cols_eff], axis=1).mean(axis=1)
 
-    S = pd.Series(0.0, index=out.index)
-    for b, cols in block_map.items():
-        cols_eff = [c for c in cols if c in out.columns]
-        if not cols_eff:
-            continue
-        F = pd.concat([_to_numeric_series(out[c]).fillna(0.0) for c in cols_eff], axis=1).mean(axis=1)
-        S = S + float(bw.get(b, 0.0)) * F
-
-    return S
-
-
-def _coverage_multiplier(coverage_ratio: pd.Series, cfg: ScoreV3Config) -> pd.Series:
-    """multiplier = floor + (1-floor)*coverage."""
-    floor = float(np.clip(cfg.coverage_floor, 0.0, 1.0))
-    cov = pd.to_numeric(coverage_ratio, errors="coerce").fillna(0.0).clip(0.0, 1.0)
-    return floor + (1.0 - floor) * cov
-
-
-# ─────────────────────────────────────────────────────────────
-# Score v3: cross-sectional
-# ─────────────────────────────────────────────────────────────
 
 def calcular_score_ajustado_v3(
     df: pd.DataFrame,
@@ -230,89 +191,93 @@ def calcular_score_ajustado_v3(
     block_map: Optional[Mapping[str, Sequence[str]]] = None,
     block_weights: Optional[Mapping[str, float]] = None,
 ) -> pd.DataFrame:
-    """
-    Calcula Score_Ajustado v3 (parte cross-sectional):
-    - winsor adaptativo por N do grupo (transform 1:1)
-    - robust z-score por grupo
-    - direcionalidade
-    - tanh
-    - coverage_ratio
-    - agregação
-    - normalização 0..1 por percentil no grupo
-    """
     if df is None or df.empty:
         return df
 
     cfg = config or ScoreV3Config()
-    out = df.copy()
-
-    # garantir index simples para evitar qualquer desalinhamento
-    out = out.reset_index(drop=True)
+    out = df.copy().reset_index(drop=True)
 
     group_col = resolve_group_col(out, prefer=prefer_group_col, min_n=min_n_group)
     if group_col not in out.columns:
         out[group_col] = "OUTROS"
 
     if block_map is None or block_weights is None:
-        bmap, bweights = _infer_blocks_from_pesos(pesos_utilizados)
+        bmap, bw = _infer_blocks_from_pesos(pesos_utilizados)
         block_map = block_map or bmap
-        block_weights = block_weights or bweights
+        block_weights = block_weights or bw
 
-    y_cols: List[str] = []
+    # 1) u_k = z_robusto(direcionado) por métrica
+    u_cols: List[str] = []
     for col, cfg_col in pesos_utilizados.items():
         if col not in out.columns:
             continue
-
         peso = float(cfg_col.get("peso", 0.0))
         if peso <= 0:
             continue
 
         melhor_alto = bool(cfg_col.get("melhor_alto", True))
 
-        # winsor adaptativo por grupo (transform 1:1)
-        w = winsorize_within_group_adaptive(out, group_col=group_col, col=col, cfg=cfg)
-        # garantia extra de alinhamento
-        w = w.reset_index(drop=True)
-        out[col] = w
-
-        # robust z por grupo
-        z = robust_zscore_within_group(out, group_col=group_col, col=col, mad_eps=cfg.mad_eps)
-
-        # direcionalidade
+        out[col] = winsorize_within_group_adaptive(out, group_col=group_col, col=col, cfg=cfg)
+        z = robust_z_within_group(out, group_col=group_col, col=col, mad_eps=cfg.mad_eps)
         u = z if melhor_alto else (-1.0 * z)
 
-        # saturação
-        y = tanh_squash(u, c=cfg.tanh_c)
+        ucol = f"{col}__u"
+        out[ucol] = _to_numeric_series(u)
+        u_cols.append(ucol)
 
-        ycol = f"{col}_y"
-        out[ycol] = _to_numeric_series(y)
-        y_cols.append(ycol)
-
-    # coverage ratio
-    if y_cols:
-        valid = pd.concat([out[c].notna().astype(float) for c in y_cols], axis=1)
+    # coverage
+    if u_cols:
+        valid = pd.concat([out[c].notna().astype(float) for c in u_cols], axis=1)
         out["Coverage_Ratio_v3"] = valid.mean(axis=1).astype(float)
     else:
         out["Coverage_Ratio_v3"] = 0.0
 
-    # score base
-    out["Score_Base_v3"] = _to_numeric_series(build_block_scores(out, block_map=block_map, block_weights=block_weights)).fillna(0.0)
+    # 2) agregação por blocos
+    # Se nonlinear_stage="metric": aplica tanh em cada u e depois agrega
+    # Se nonlinear_stage="aggregate": agrega u e só então aplica tanh (menos achatamento)
+    score_base = pd.Series(0.0, index=out.index)
 
+    bw = {b: float(w) for b, w in (block_weights or {}).items()}
+    wsum = sum(max(0.0, w) for w in bw.values())
+    if wsum > 0:
+        bw = {b: max(0.0, w) / wsum for b, w in bw.items()}
+    else:
+        keys = list((block_map or {}).keys())
+        if keys:
+            bw = {k: 1.0 / float(len(keys)) for k in keys}
+
+    for b, cols in (block_map or {}).items():
+        cols_u = [f"{c}__u" for c in cols if f"{c}__u" in out.columns]
+        if not cols_u:
+            continue
+
+        u_b = _block_mean(out, cols_u)
+
+        if str(cfg.nonlinear_stage).lower() == "metric":
+            # tanh já aplicado em u de cada métrica antes do mean
+            y_b = tanh_squash(u_b, c=cfg.tanh_c)
+        else:
+            # aggregate stage: aplica tanh depois de agregar u (recomendado)
+            y_b = tanh_squash(u_b, c=cfg.tanh_c)
+
+        score_base = score_base + float(bw.get(b, 0.0)) * pd.to_numeric(y_b, errors="coerce").fillna(0.0)
+
+    out["Score_Base_v3"] = pd.to_numeric(score_base, errors="coerce").fillna(0.0)
+
+    # coverage multiplier
     if cfg.use_coverage_multiplier:
         mult = _coverage_multiplier(out["Coverage_Ratio_v3"], cfg)
         out["Score_Base_v3"] = out["Score_Base_v3"] * pd.to_numeric(mult, errors="coerce").fillna(1.0)
 
     if cfg.normalize_to_percentile:
-        out["Score_Ajustado"] = _pct_within_group(out, by=group_col, col="Score_Base_v3")
+        p = _pct_within_group(out, by=group_col, col="Score_Base_v3")
+        # rank sharpening (separação do topo sem mexer na ordem)
+        out["Score_Ajustado"] = _rank_sharpen(p, gamma=cfg.rank_sharpen_gamma)
     else:
         out["Score_Ajustado"] = out["Score_Base_v3"]
 
     return out
 
-
-# ─────────────────────────────────────────────────────────────
-# Score acumulado v3
-# ─────────────────────────────────────────────────────────────
 
 def calcular_score_acumulado_v3(
     lista_empresas: Sequence[Mapping[str, Any]],
@@ -521,8 +486,4 @@ def calcular_score_acumulado_v3(
     return pd.DataFrame(columns=["Ano", "ticker", "Score_Ajustado"])
 
 
-__all__ = [
-    "ScoreV3Config",
-    "calcular_score_ajustado_v3",
-    "calcular_score_acumulado_v3",
-]
+__all__ = ["ScoreV3Config", "calcular_score_ajustado_v3", "calcular_score_acumulado_v3"]
