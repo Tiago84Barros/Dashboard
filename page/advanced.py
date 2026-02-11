@@ -29,6 +29,13 @@ from core.scoring import (
     penalizar_plato,
 )
 
+# >>> PATCH SCORE V2 (import opcional)
+try:
+    from core.scoring_v2 import calcular_score_acumulado_v2
+except Exception:
+    calcular_score_acumulado_v2 = None
+# <<< PATCH SCORE V2
+
 # >>> PATCH SCORE V3 (import opcional)
 try:
     from core.scoring_v3 import calcular_score_acumulado_v3, ScoreV3Config
