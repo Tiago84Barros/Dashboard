@@ -668,7 +668,16 @@ def render() -> None:
     df_final = df_final.dropna(subset=["Valor Final"]).sort_values("Valor Final", ascending=False)
 
     # contagem de lideranças (mais coerente com “quantas vezes liderou”)
+    # contagem de lideranças (para exibição) — garante disponibilidade mesmo no modo Top-K
+try:
+    lideres = determinar_lideres(score)  # type: ignore
+except Exception:
+    lideres = None  # type: ignore
+
+if lideres is not None and getattr(lideres, "empty", True) is False and "ticker" in lideres.columns:
     contagem_lideres = lideres["ticker"].value_counts().to_dict()
+else:
+    contagem_lideres = {}
 
     num_columns = 3
     cols_cards = st.columns(num_columns, gap="large")
