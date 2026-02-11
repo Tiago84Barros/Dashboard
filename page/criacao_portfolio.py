@@ -199,6 +199,7 @@ def _build_macro() -> Optional[pd.DataFrame]:
 
 def render():
     st.markdown("<h1 style='text-align: center;'>Criação de Portfólio</h1>", unsafe_allow_html=True)
+    auditoria_gate = []
 
         # ─────────────────────────────────────────────────────────────
     # CONTROLES DE EXECUÇÃO (não roda sozinho)
