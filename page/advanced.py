@@ -28,13 +28,62 @@ from core.scoring import (
     calcular_score_acumulado,
     penalizar_plato,
 )
+# >>> PATCH SCORE (v1/v2/v3) + comparação opcional
+score_main: Optional[pd.DataFrame] = None
+score_cmp: Optional[pd.DataFrame] = None
+label_main = ""
+label_cmp = ""
 
-# >>> PATCH SCORE V2 (import opcional)
-try:
-    from core.scoring_v2 import calcular_score_acumulado_v2
-except Exception:
-    calcular_score_acumulado_v2 = None
-# <<< PATCH SCORE V2
+def _calc_score(mode: str) -> pd.DataFrame:
+    if mode == "v3" and (calcular_score_acumulado_v3 is not None) and (ScoreV3Config is not None):
+        cfg_v3 = ScoreV3Config(
+            tanh_c=float(tanh_c),
+            rank_sharpen_gamma=float(gamma_sharp),
+            nonlinear_stage=str(nonlinear_stage),
+        )
+        return calcular_score_acumulado_v3(
+            lista_empresas=payload,
+            group_map=group_map,
+            subsetor_map=subsetor_map,
+            setor_map=setor_map,
+            pesos_utilizados=pesos,
+            anos_minimos=4,
+            prefer_group_col="SEGMENTO",
+            min_n_group=7,
+            config=cfg_v3,
+        )
+    if mode == "v2" and (calcular_score_acumulado_v2 is not None):
+        return calcular_score_acumulado_v2(
+            lista_empresas=payload,
+            group_map=group_map,
+            subsetor_map=subsetor_map,
+            setor_map=setor_map,
+            pesos_utilizados=pesos,
+            anos_minimos=4,
+            prefer_group_col="SEGMENTO",
+            min_n_group=7,
+        )
+    # v1 (legado)
+    return calcular_score_acumulado(payload, setores_empresa, pesos, dados_macro, anos_minimos=4)
+
+# principal (seguindo a opção da sidebar)
+_mode = scoring_mode if ("scoring_mode" in locals()) else "v1"
+score_main = _calc_score(_mode)
+label_main = f"Estratégia ({_mode})"
+
+# comparação (v2 vs v3 no mesmo gráfico)
+if ("compare_v2v3" in locals()) and compare_v2v3:
+    if _mode == "v3":
+        score_cmp = _calc_score("v2")
+        label_cmp = "Estratégia (v2)"
+    elif _mode == "v2":
+        score_cmp = _calc_score("v3")
+        label_cmp = "Estratégia (v3)"
+# Usa score = principal para o resto do pipeline
+score = score_main
+# <<< PATCH SCORE
+
+
 
 # >>> PATCH SCORE V3 (import opcional)
 try:
@@ -43,11 +92,11 @@ except Exception:
     calcular_score_acumulado_v3 = None
     ScoreV3Config = None  # type: ignore
 # <<< PATCH SCORE V3
-
 from core.portfolio import (
     gerir_carteira,
     gerir_carteira_modulada,
     gerir_carteira_todas_empresas,
+    gerir_carteira_topk_softmax,
     calcular_patrimonio_selic_macro,
 )
 from core.weights import get_pesos
@@ -151,7 +200,7 @@ def render() -> None:
         st.error(f"A tabela de setores não contém colunas esperadas: {sorted(needed)}")
         return
 
-    # >>> MAPAS p/ fallback SEGMENTO -> SUBSETOR -> SETOR
+    # >>> PATCH SCORE V2 (mapas p/ fallback SEGMENTO -> SUBSETOR -> SETOR)
     _tmp = setores[["ticker", "SEGMENTO", "SUBSETOR", "SETOR"]].copy()
     _tmp["ticker"] = (
         _tmp["ticker"].astype(str)
@@ -166,7 +215,8 @@ def render() -> None:
     group_map = dict(zip(_tmp["ticker"], _tmp["SEGMENTO"]))
     subsetor_map = dict(zip(_tmp["ticker"], _tmp["SUBSETOR"]))
     setor_map = dict(zip(_tmp["ticker"], _tmp["SETOR"]))
-    # <<< MAPAS
+    # <<< PATCH SCORE V2
+
 
     dados_macro = _safe_macro()
     if dados_macro is None or dados_macro.empty:
@@ -185,7 +235,7 @@ def render() -> None:
         segmento = st.selectbox("Segmento:", sorted(segmentos))
         tipo = st.radio("Perfil de empresa:", ["Crescimento (<10 anos)", "Estabelecida (≥10 anos)", "Todas"], index=2)
 
-        # >>> Scoring (v1 / v2 / v3)
+        # >>> PATCH SCORE V2 (controle na sidebar, sem alterar layout existente)
         with st.expander("Scoring (opções)", expanded=False):
             opcoes = ["v1"]
             labels = {"v1": "Score v1 (legado)"}
@@ -196,9 +246,8 @@ def render() -> None:
 
             if calcular_score_acumulado_v3 is not None:
                 opcoes.append("v3")
-                labels["v3"] = "Score v3 (robusto + tanh)"
+                labels["v3"] = "Score v3 (robusto + não-linear)"
 
-            # padrão: v2 se existir; senão v1
             default_mode = "v2" if "v2" in opcoes else "v1"
             scoring_mode = st.radio(
                 "Versão do Score:",
@@ -206,15 +255,35 @@ def render() -> None:
                 index=opcoes.index(default_mode),
                 format_func=lambda x: labels.get(x, x),
             )
+            compare_v2v3 = False
+            if (calcular_score_acumulado_v2 is not None) and (calcular_score_acumulado_v3 is not None):
+                compare_v2v3 = st.checkbox("Comparar v2 vs v3 no mesmo gráfico", value=True)
 
-            tanh_c = 2.0
-            if scoring_mode == "v3":
-                if ScoreV3Config is None:
-                    st.caption("Score v3 indisponível (core/scoring_v3.py não encontrado).")
-                else:
-                    st.caption("Ajustes v3 (opcionais):")
-                    tanh_c = st.slider("tanh_c (saturação)", 0.8, 6.0, 2.0, 0.1)
-        # <<< Scoring
+            st.markdown("---")
+            st.markdown("**Alocação (decisão de carteira)**")
+            alloc_mode = st.radio(
+                "Modo de alocação:",
+                ["líder", "topk_softmax"],
+                index=1,
+                format_func=lambda x: "Líder (binário)" if x == "líder" else "Top-K ponderado (softmax)",
+            )
+            top_k = st.slider("Top-K", 1, 5, 2, 1, disabled=(alloc_mode != "topk_softmax"))
+            temperature = st.slider("Softmax T (temperatura)", 0.10, 1.00, 0.35, 0.05, disabled=(alloc_mode != "topk_softmax"))
+            weight_cap = st.slider("Cap por ativo", 0.30, 0.95, 0.60, 0.05, disabled=(alloc_mode != "topk_softmax"))
+
+            if scoring_mode == "v3" and ScoreV3Config is not None:
+                st.markdown("---")
+                st.caption("Ajustes v3 (opcionais):")
+                tanh_c = st.slider("tanh_c (saturação)", 0.8, 6.0, 2.0, 0.1)
+                gamma_sharp = st.slider("gamma (rank sharpening)", 1.0, 3.0, 1.8, 0.1)
+                nonlinear_stage = st.selectbox("Etapa não-linear", ["aggregate", "metric"], index=0)
+            else:
+                tanh_c = 2.0
+                gamma_sharp = 1.0
+                nonlinear_stage = "aggregate"
+        # <<< PATCH SCORE V2
+
+
 
         # ── Carteira (modo)
         with st.expander("Carteira (modo)", expanded=False):
@@ -247,7 +316,7 @@ def render() -> None:
         return
 
     # ─────────────────────────────────────────────────────────
-    # Diagnóstico (colapsável)
+    # (Opcional, não disruptivo) Diagnóstico colapsável
     # ─────────────────────────────────────────────────────────
     with st.expander("Diagnóstico (dados do Supabase)", expanded=False):
         st.caption("Seção apenas informativa. Não altera resultados nem layout principal.")
@@ -257,7 +326,6 @@ def render() -> None:
                 "Subsetor": subsetor,
                 "Segmento": segmento,
                 "Empresas no segmento (bruto)": int(len(seg_df)),
-                "Empresas no segmento (nunique ticker)": int(n_total_segmento_raw),
                 "Linhas setores_df": int(len(setores)),
                 "Macro (linhas)": int(len(dados_macro)),
                 "Macro (data mínima)": str(pd.to_datetime(dados_macro["Data"]).min()) if "Data" in dados_macro.columns else "n/a",
@@ -295,7 +363,7 @@ def render() -> None:
         return n > 0
 
     seg_df = seg_df[seg_df["ticker"].apply(_pass_tipo)]
-    n_total_segmento = int(seg_df["ticker"].nunique())  # tamanho do segmento condicionado ao filtro de histórico (tipo)
+    n_total_segmento = int(seg_df["ticker"].nunique())  # OPÇÃO 2: tamanho do segmento condicionado ao filtro de histórico (tipo)
     if seg_df.empty:
         st.warning("Nenhuma empresa atende ao filtro de histórico escolhido.")
         return
@@ -350,26 +418,11 @@ def render() -> None:
     # pesos por setor (regra existente)
     pesos = get_pesos(setor)
 
-    # payload scoring
+    # payload scoring (compatível com scoring.py)
     payload = [{"ticker": e.ticker, "nome": e.nome, "multiplos": e.mult, "dre": e.dre} for e in empresas]
 
-    # ─────────────────────────────────────────────────────────
-    # 2.0) Calcular score (v1 / v2 / v3)
-    # ─────────────────────────────────────────────────────────
-    if scoring_mode == "v3" and (calcular_score_acumulado_v3 is not None) and (ScoreV3Config is not None):
-        cfg_v3 = ScoreV3Config(tanh_c=float(tanh_c))
-        score = calcular_score_acumulado_v3(
-            lista_empresas=payload,
-            group_map=group_map,
-            subsetor_map=subsetor_map,
-            setor_map=setor_map,
-            pesos_utilizados=pesos,
-            anos_minimos=4,
-            prefer_group_col="SEGMENTO",
-            min_n_group=7,
-            config=cfg_v3,
-        )
-    elif scoring_mode == "v2" and (calcular_score_acumulado_v2 is not None):
+    # >>> PATCH SCORE V2 (switch v1/v2 sem alterar layout)
+    if ("use_score_v2" in locals()) and use_score_v2 and (calcular_score_acumulado_v2 is not None):
         score = calcular_score_acumulado_v2(
             lista_empresas=payload,
             group_map=group_map,
@@ -382,14 +435,20 @@ def render() -> None:
         )
     else:
         score = calcular_score_acumulado(payload, setores_empresa, pesos, dados_macro, anos_minimos=4)
+    # <<< PATCH SCORE V2
+
 
     if score is None or score.empty:
         st.warning("Score vazio: não há dados suficientes após os filtros e janela mínima.")
         return
 
     # ─────────────────────────────────────────────────────────
-    # 2.1) Decisão automática do modo (binário) por tamanho do segmento (após filtro de histórico)
+    # 2.1) Decisão automática do modo (binário) por tamanho estrutural do segmento (OPÇÃO 2)
     # ─────────────────────────────────────────────────────────
+    # Regra:
+    #   - se n_total_segmento <= 4  -> Modelo Padrão (aportes iguais)
+    #   - se n_total_segmento >= 5  -> Ajuste Calibrado
+    # Observação: n_total_segmento é calculado ANTES dos filtros de elegibilidade do ano-ref.
     score = score.dropna(axis=1, how="all")
     n_empresas_elegiveis = int(score.shape[1])
     usar_calibrado = n_total_segmento >= 5
@@ -429,22 +488,41 @@ def render() -> None:
     # ─────────────────────────────────────────────────────────
     # 4) Liderança + backtest estratégia + backtest todas
     # ─────────────────────────────────────────────────────────
-    lideres = determinar_lideres(score)
-    if lideres is None or lideres.empty:
-        st.warning("Não foi possível determinar líderes com o score calculado.")
-        return
+    def _simular(df_score_in: pd.DataFrame) -> Tuple[pd.DataFrame, List[pd.Timestamp]]:
+        if ("alloc_mode" in locals()) and alloc_mode == "topk_softmax":
+            pat, dts = gerir_carteira_topk_softmax(
+                precos=precos,
+                df_scores=df_score_in,
+                dividendos_dict=dividendos,
+                top_k=int(top_k),
+                temperature=float(temperature),
+                weight_cap=float(weight_cap),
+                aporte_mensal=1000.0,
+            )
+            return pat, dts
 
-    if usar_calibrado:
-        patrimonio_estrategia, datas_aportes = gerir_carteira_modulada(
-            precos, score, lideres, dividendos, policy=policy_calibrada
-        )
-    else:
-        patrimonio_estrategia, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
+        lider = determinar_lideres(df_score_in)
+        if lider is None or lider.empty:
+            return pd.DataFrame(), []
+        if usar_calibrado:
+            pat, dts = gerir_carteira_modulada(precos, df_score_in, lider, dividendos, policy=policy_calibrada)
+        else:
+            pat, dts = gerir_carteira(precos, df_score_in, lider, dividendos)
+        return pat, dts
 
+    # principal
+    patrimonio_estrategia, datas_aportes = _simular(score)
     if patrimonio_estrategia is None or patrimonio_estrategia.empty:
         st.warning("Falha ao simular a carteira da estratégia.")
         return
     patrimonio_estrategia = patrimonio_estrategia[["Patrimônio"]]
+
+    # comparação (se houver score_cmp)
+    patrimonio_comp = None
+    if ("score_cmp" in locals()) and (score_cmp is not None) and isinstance(score_cmp, pd.DataFrame) and (not score_cmp.empty):
+        pat_cmp, _ = _simular(score_cmp)
+        if pat_cmp is not None and (not pat_cmp.empty) and ("Patrimônio" in pat_cmp.columns):
+            patrimonio_comp = pat_cmp[["Patrimônio"]].rename(columns={"Patrimônio": "Patrimônio_CMP"})
 
     patrimonio_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aportes)
     if patrimonio_selic is None or patrimonio_selic.empty:
@@ -456,14 +534,112 @@ def render() -> None:
         st.warning("Falha ao simular a carteira (todas as empresas).")
         return
 
-    patrimonio_final = pd.concat([patrimonio_estrategia, patrimonio_empresas, patrimonio_selic], axis=1).sort_index()
+    frames = [patrimonio_estrategia]
+    if ("patrimonio_comp" in locals()) and (patrimonio_comp is not None) and (not patrimonio_comp.empty):
+        frames.append(patrimonio_comp)
+    frames.extend([patrimonio_empresas, patrimonio_selic])
+    patrimonio_final = pd.concat(frames, axis=1).sort_index()
     patrimonio_final = patrimonio_final.apply(pd.to_numeric, errors="coerce").ffill()
+
+        # ─────────────────────────────────────────────────────────
+    # 4.9) Resumo quantitativo (CAGR, Vol, Sharpe, MDD, Alpha vs Selic)
+    # ─────────────────────────────────────────────────────────
+    def _calc_metrics(p: pd.Series, p_rf: Optional[pd.Series] = None) -> Dict[str, float]:
+        outm: Dict[str, float] = {"cagr": np.nan, "vol": np.nan, "sharpe": np.nan, "mdd": np.nan}
+        if p is None or p.empty:
+            return outm
+        p = pd.to_numeric(p, errors="coerce").dropna()
+        if len(p) < 3:
+            return outm
+
+        # CAGR
+        dt0 = p.index.min()
+        dt1 = p.index.max()
+        years = max(1e-9, (dt1 - dt0).days / 365.25)
+        outm["cagr"] = float((p.iloc[-1] / max(p.iloc[0], 1e-9)) ** (1.0 / years) - 1.0)
+
+        # Retornos diários
+        r = p.pct_change().dropna()
+        if len(r) > 10:
+            outm["vol"] = float(r.std(ddof=0) * np.sqrt(252.0))
+
+        # MDD
+        roll_max = p.cummax()
+        dd = (p / roll_max) - 1.0
+        outm["mdd"] = float(dd.min())
+
+        # Sharpe vs rf (se fornecido)
+        if p_rf is not None and (not p_rf.empty):
+            prf = pd.to_numeric(p_rf, errors="coerce").reindex(p.index).ffill().dropna()
+            rr = prf.pct_change().reindex(r.index).dropna()
+            if len(rr) == len(r) and len(r) > 10:
+                ex = (r - rr).dropna()
+                if ex.std(ddof=0) > 0:
+                    outm["sharpe"] = float((ex.mean() * 252.0) / (ex.std(ddof=0) * np.sqrt(252.0)))
+        return outm
+
+    def _fmt_pct(x: float) -> str:
+        if x is None or (isinstance(x, float) and np.isnan(x)):
+            return "—"
+        return f"{x*100:.2f}%"
+
+    # métricas principais (Estratégia, Comparação opcional, Selic)
+    p_strat = patrimonio_final["Patrimônio"] if "Patrimônio" in patrimonio_final.columns else None
+    p_selic = patrimonio_final["Tesouro Selic"] if "Tesouro Selic" in patrimonio_final.columns else None
+    m_strat = _calc_metrics(p_strat, p_rf=p_selic) if p_strat is not None else {}
+
+    has_cmp = "Patrimônio_CMP" in patrimonio_final.columns
+    m_cmp = _calc_metrics(patrimonio_final["Patrimônio_CMP"], p_rf=p_selic) if has_cmp else {}
+
+    m_selic = _calc_metrics(p_selic, p_rf=None) if p_selic is not None else {}
+
+    # Alpha vs Selic (CAGR)
+    alpha_strat = np.nan
+    alpha_cmp = np.nan
+    if p_selic is not None and (not p_selic.empty):
+        alpha_strat = float(m_strat.get("cagr", np.nan) - m_selic.get("cagr", np.nan))
+        if has_cmp:
+            alpha_cmp = float(m_cmp.get("cagr", np.nan) - m_selic.get("cagr", np.nan))
+
+    st.markdown("## Resumo (métricas)")
+    c1, c2, c3 = st.columns(3, gap="large")
+
+    with c1:
+        st.markdown(f"**{(label_main if ('label_main' in locals() and label_main) else 'Estratégia')}**")
+        st.metric("CAGR", _fmt_pct(m_strat.get("cagr", np.nan)))
+        st.metric("Vol (a.a.)", _fmt_pct(m_strat.get("vol", np.nan)))
+        st.metric("Sharpe (vs Selic)", f"{m_strat.get('sharpe', np.nan):.2f}" if not np.isnan(m_strat.get("sharpe", np.nan)) else "—")
+        st.metric("Max Drawdown", _fmt_pct(m_strat.get("mdd", np.nan)))
+        st.metric("Alpha vs Selic (CAGR)", _fmt_pct(alpha_strat))
+
+    with c2:
+        st.markdown("**Tesouro Selic**")
+        st.metric("CAGR", _fmt_pct(m_selic.get("cagr", np.nan)))
+        st.metric("Vol (a.a.)", _fmt_pct(m_selic.get("vol", np.nan)))
+        st.metric("Sharpe", "—")
+        st.metric("Max Drawdown", _fmt_pct(m_selic.get("mdd", np.nan)))
+        st.metric("Alpha vs Selic", "0.00%")
+
+    with c3:
+        st.markdown(f"**{(label_cmp if ('label_cmp' in locals() and label_cmp) else 'Comparação')}**")
+        if has_cmp:
+            st.metric("CAGR", _fmt_pct(m_cmp.get("cagr", np.nan)))
+            st.metric("Vol (a.a.)", _fmt_pct(m_cmp.get("vol", np.nan)))
+            st.metric("Sharpe (vs Selic)", f"{m_cmp.get('sharpe', np.nan):.2f}" if not np.isnan(m_cmp.get("sharpe", np.nan)) else "—")
+            st.metric("Max Drawdown", _fmt_pct(m_cmp.get("mdd", np.nan)))
+            st.metric("Alpha vs Selic (CAGR)", _fmt_pct(alpha_cmp))
+        else:
+            st.caption("Ative a opção **Comparar v2 vs v3** na sidebar para exibir a comparação.")
+
+    st.markdown("---")
 
     st.markdown("## Evolução do patrimônio (Estratégia vs Empresas vs Selic)")
 
     fig, ax = plt.subplots(figsize=(12, 6))
     if "Patrimônio" in patrimonio_final.columns:
-        ax.plot(patrimonio_final.index, patrimonio_final["Patrimônio"], label="Estratégia (Líderes)")
+        ax.plot(patrimonio_final.index, patrimonio_final["Patrimônio"], label=(label_main if ("label_main" in locals() and label_main) else "Estratégia"))
+    if 'Patrimônio_CMP' in patrimonio_final.columns:
+        ax.plot(patrimonio_final.index, patrimonio_final['Patrimônio_CMP'], label=(label_cmp if ("label_cmp" in locals() and label_cmp) else 'Comparação'))
 
     if "Tesouro Selic" in patrimonio_final.columns:
         ax.plot(patrimonio_final.index, patrimonio_final["Tesouro Selic"], label="Tesouro Selic")
@@ -497,7 +673,7 @@ def render() -> None:
     df_final["Valor Final"] = pd.to_numeric(df_final["Valor Final"], errors="coerce")
     df_final = df_final.dropna(subset=["Valor Final"]).sort_values("Valor Final", ascending=False)
 
-    # contagem de lideranças (quantas vezes liderou)
+    # contagem de lideranças (mais coerente com “quantas vezes liderou”)
     contagem_lideres = lideres["ticker"].value_counts().to_dict()
 
     num_columns = 3
