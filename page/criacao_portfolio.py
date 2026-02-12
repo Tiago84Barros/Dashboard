@@ -573,6 +573,10 @@ def render():
 
     # Bloco final: líderes para o próximo ano + distribuição setorial
     # ─────────────────────────────────────────────────────────
+    # ── Patch 5 (filtro quantitativo): aplica lista filtrada (se disponível)
+    if st.session_state.get("cp_p5_on", False) and isinstance(st.session_state.get("cp_p5_empresas_filtradas"), list):
+        empresas_lideres_finais = st.session_state["cp_p5_empresas_filtradas"]
+
     if empresas_lideres_finais:
         st.markdown("## 📑 Empresas líderes para o próximo ano")
         colunas_lideres = st.columns(3)
@@ -763,7 +767,9 @@ def render():
         if 'render_patch5_desempenho_empresas' in globals() and render_patch5_desempenho_empresas is not None:
             with st.expander("🧩 Patch 5 — Desempenho das Empresas (Preço/DY + Lucros)", expanded=False):
                 try:
-                    render_patch5_desempenho_empresas(empresas_lideres_finais)
+                    res_p5 = render_patch5_desempenho_empresas(empresas_lideres_finais, aplicar_filtro=True)
+                    if isinstance(res_p5, dict) and isinstance(res_p5.get('aprovadas'), list):
+                        st.session_state['cp_p5_empresas_filtradas'] = res_p5['aprovadas']
                 except Exception as e:
                     st.error(f"Patch 5 falhou: {type(e).__name__}: {e}")
 
