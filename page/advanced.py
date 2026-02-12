@@ -139,6 +139,46 @@ def _safe_macro() -> Optional[pd.DataFrame]:
 
 def render() -> None:
     st.markdown("<h1 style='text-align:center'>Análise Avançada de Ações</h1>", unsafe_allow_html=True)
+    st.markdown("""
+    <style>
+    .metric-card {
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 14px;
+        padding: 16px;
+        box-shadow: 0 4px 18px rgba(0,0,0,0.25);
+        margin-bottom: 14px;
+    }
+    
+    .metric-title {
+        font-weight: 900;
+        font-size: 16px;
+        margin-bottom: 12px;
+        color: #ffffff;
+    }
+    
+    .metric-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 6px 0;
+        border-bottom: 1px solid rgba(255,255,255,0.05);
+        font-size: 13px;
+    }
+    
+    .metric-label {
+        color: #cfcfcf;
+    }
+    
+    .metric-value {
+        font-weight: 800;
+        color: #ffffff;
+    }
+    
+    .metric-positive { color: #2ecc71; }
+    .metric-negative { color: #e74c3c; }
+    </style>
+    """, unsafe_allow_html=True)
+
 
     # ── setores em sessão
     setores = st.session_state.get("setores_df")
@@ -758,155 +798,83 @@ def render() -> None:
 
     st.markdown("## Resumo (métricas)")
 
-
-    def _render_metrics_card(title: str, rows: list[tuple[str, str]]) -> None:
-
-        items = "".join(
-
-            f"<div style='display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.06);'>"
-
-            f"<div style='color:#cfcfcf;font-size:13px;'>{k}</div>"
-
-            f"<div style='color:#ffffff;font-weight:800;font-size:13px;white-space:nowrap;'>{v}</div>"
-
-            f"</div>"
-
-            for k, v in rows
-
-        )
-
-        st.markdown(
-
-            f"""
-
-            <div style="
-
-                background: rgba(255,255,255,0.03);
-
-                border: 1px solid rgba(255,255,255,0.08);
-
-                border-radius: 14px;
-
-                padding: 14px 14px 10px 14px;
-
-                box-shadow: 0 2px 10px rgba(0,0,0,0.25);
-
-                margin-bottom: 12px;
-
-            ">
-
-                <div style="font-weight:900;font-size:16px;color:#ffffff;margin-bottom:8px;">{title}</div>
-
-                {items}
-
+    def render_metric_card(title, rows):
+        rows_html = ""
+        for label, value, cls in rows:
+            rows_html += f"""
+            <div class="metric-row">
+                <div class="metric-label">{label}</div>
+                <div class="metric-value {cls}">{value}</div>
             </div>
-
-            """,
-
-            unsafe_allow_html=True,
-
-        )
-
-
-    def _fmt_sharpe(x: float) -> str:
-
-        try:
-
-            if x is None or (isinstance(x, float) and np.isnan(x)):
-
-                return "—"
-
-            return f"{float(x):.2f}"
-
-        except Exception:
-
+            """
+    
+        st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-title">{title}</div>
+                {rows_html}
+            </div>
+        """, unsafe_allow_html=True)
+    
+    
+    def fmt_pct(x):
+        if x is None or (isinstance(x, float) and np.isnan(x)):
             return "—"
-
-
+        return f"{x*100:.2f}%"
+    
+    
+    def fmt_sharpe(x):
+        if x is None or (isinstance(x, float) and np.isnan(x)):
+            return "—"
+        return f"{x:.2f}"
+    
+    
     c1, c2, c3 = st.columns(3, gap="large")
-
-
+    
+    # Estratégia principal
     with c1:
-
-        _render_metrics_card(
-
-            (label_main if ("label_main" in locals() and label_main) else "Estratégia"),
-
+        render_metric_card(
+            label_main,
             [
-
-                ("CAGR", _fmt_pct(m_strat.get("cagr", np.nan))),
-
-                ("Vol (a.a.)", _fmt_pct(m_strat.get("vol", np.nan))),
-
-                ("Sharpe (vs Selic)", _fmt_sharpe(m_strat.get("sharpe", np.nan))),
-
-                ("Max Drawdown", _fmt_pct(m_strat.get("mdd", np.nan))),
-
-                ("Alpha vs Selic (CAGR)", _fmt_pct(alpha_strat)),
-
+                ("CAGR", fmt_pct(m_strat.get("cagr")), "metric-positive"),
+                ("Volatilidade", fmt_pct(m_strat.get("vol")), ""),
+                ("Sharpe vs Selic", fmt_sharpe(m_strat.get("sharpe")), ""),
+                ("Max Drawdown", fmt_pct(m_strat.get("mdd")), "metric-negative"),
+                ("Alpha vs Selic", fmt_pct(alpha_strat), "metric-positive"),
             ],
-
         )
-
-
+    
+    # Selic
     with c2:
-
-        _render_metrics_card(
-
+        render_metric_card(
             "Tesouro Selic",
-
             [
-
-                ("CAGR", _fmt_pct(m_selic.get("cagr", np.nan))),
-
-                ("Vol (a.a.)", _fmt_pct(m_selic.get("vol", np.nan))),
-
-                ("Sharpe", "—"),
-
-                ("Max Drawdown", _fmt_pct(m_selic.get("mdd", np.nan))),
-
-                ("Alpha vs Selic", "0.00%"),
-
+                ("CAGR", fmt_pct(m_selic.get("cagr")), ""),
+                ("Volatilidade", fmt_pct(m_selic.get("vol")), ""),
+                ("Sharpe", "—", ""),
+                ("Max Drawdown", fmt_pct(m_selic.get("mdd")), ""),
+                ("Alpha", "0.00%", ""),
             ],
-
         )
-
-
+    
+    # Comparação
     with c3:
-
         if has_cmp:
-
-            _render_metrics_card(
-
-                (label_cmp if ("label_cmp" in locals() and label_cmp) else "Comparação"),
-
+            render_metric_card(
+                label_cmp,
                 [
-
-                    ("CAGR", _fmt_pct(m_cmp.get("cagr", np.nan))),
-
-                    ("Vol (a.a.)", _fmt_pct(m_cmp.get("vol", np.nan))),
-
-                    ("Sharpe (vs Selic)", _fmt_sharpe(m_cmp.get("sharpe", np.nan))),
-
-                    ("Max Drawdown", _fmt_pct(m_cmp.get("mdd", np.nan))),
-
-                    ("Alpha vs Selic (CAGR)", _fmt_pct(alpha_cmp)),
-
+                    ("CAGR", fmt_pct(m_cmp.get("cagr")), "metric-positive"),
+                    ("Volatilidade", fmt_pct(m_cmp.get("vol")), ""),
+                    ("Sharpe vs Selic", fmt_sharpe(m_cmp.get("sharpe")), ""),
+                    ("Max Drawdown", fmt_pct(m_cmp.get("mdd")), "metric-negative"),
+                    ("Alpha vs Selic", fmt_pct(alpha_cmp), "metric-positive"),
                 ],
-
             )
-
         else:
-
-            _render_metrics_card(
-
-                (label_cmp if ("label_cmp" in locals() and label_cmp) else "Comparação"),
-
-                [("Status", "Ative 'Comparar v2 vs v3' na sidebar")],
-
+            render_metric_card(
+                "Comparação",
+                [("Status", "Ative comparação v2 vs v3", "")],
             )
-
-
+    
     st.markdown("---")
 
     st.markdown("## Evolução do patrimônio (Estratégia vs Empresas vs Selic)")
