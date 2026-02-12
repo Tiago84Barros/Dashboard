@@ -198,31 +198,26 @@ def _build_macro() -> Optional[pd.DataFrame]:
 def render():
     st.markdown("<h1 style='text-align: center;'>Criação de Portfólio</h1>", unsafe_allow_html=True)
 
-        # ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────
     # CONTROLES DE EXECUÇÃO (não roda sozinho)
     # ─────────────────────────────────────────────────────────────
     if "cp_last_params" not in st.session_state:
-        st.session_state["cp_last_params"] = {"margem_superior": 10.0, "use_score_v2": False, "lideres_por_segmento": 1}
+        st.session_state["cp_last_params"] = {
+            "margem_superior": 10.0,
+            "use_score_v2": False,
+            "lideres_por_segmento": 1,
+            "tipo_empresa": "Estabelecida (≥10 anos)",
+        }
     if "cp_should_run" not in st.session_state:
         st.session_state["cp_should_run"] = False
+
+    gerar = False
 
     with st.sidebar:
         st.markdown("### ▶️ Execução")
 
         with st.form("cp_run_form", clear_on_submit=False):
-            
-    # Perfil de empresa (histórico DRE) — usado no gate binário e no universo elegível
-    tipo_empresa = st.sidebar.selectbox(
-        "Perfil de empresa (histórico DRE):",
-        ["Estabelecida (≥10 anos)", "Crescimento (<10 anos)", "Todas"],
-        index=0,
-        help="Esse filtro define quais empresas entram no universo elegível e também alimenta o gate binário (n do segmento após o filtro).",
-    )
-
-    # Modo automático (binário) — policy do ajuste calibrado
-    policy_calibrada: Dict = {"mode": "heuristica_calibrada", "eps": 0.35}
-
-margem_superior = st.number_input(
+            margem_superior = st.number_input(
                 "Margem mínima vs Tesouro Selic (%)",
                 min_value=-1000.0,
                 max_value=10000.0,
@@ -232,12 +227,20 @@ margem_superior = st.number_input(
                 help="Digite a % e clique em RODAR. Ex.: 7.5, 12, 33.33",
             )
 
-            # mantém o toggle do Score V2 (se existir)
             use_score_v2 = st.checkbox(
                 "Usar Score V2 (se disponível)",
                 value=bool(st.session_state["cp_last_params"].get("use_score_v2", False)),
             )
 
+            # Perfil de empresa (histórico DRE) — usado no gate binário e no universo elegível
+            tipo_empresa = st.selectbox(
+                "Perfil de empresa (histórico DRE):",
+                ["Estabelecida (≥10 anos)", "Crescimento (<10 anos)", "Todas"],
+                index=["Estabelecida (≥10 anos)", "Crescimento (<10 anos)", "Todas"].index(
+                    st.session_state["cp_last_params"].get("tipo_empresa", "Estabelecida (≥10 anos)")
+                ),
+                help="Esse filtro define quais empresas entram no universo elegível e também alimenta o gate binário (n do segmento após o filtro).",
+            )
 
             lideres_por_segmento = st.number_input(
                 "Líderes por segmento",
@@ -248,27 +251,29 @@ margem_superior = st.number_input(
                 help="Quantas empresas (com maior participação no backtest do último período) serão exibidas por segmento que passou no filtro vs Selic.",
             )
 
-
             gerar = st.form_submit_button("🚀 Rodar Criação de Portfólio")
 
-        if gerar:
-            st.session_state["cp_last_params"] = {
-                "margem_superior": float(margem_superior),
-                "use_score_v2": bool(use_score_v2),
-                "lideres_por_segmento": int(lideres_por_segmento),
-            }
-            st.session_state["cp_should_run"] = True
+    if gerar:
+        st.session_state["cp_last_params"] = {
+            "margem_superior": float(margem_superior),
+            "use_score_v2": bool(use_score_v2),
+            "lideres_por_segmento": int(lideres_por_segmento),
+            "tipo_empresa": str(tipo_empresa),
+        }
+        st.session_state["cp_should_run"] = True
 
     if not st.session_state["cp_should_run"]:
-        st.info("Defina a margem (%) na barra lateral e clique em **🚀 Rodar Criação de Portfólio**.")
+        st.info("Defina os parâmetros na barra lateral e clique em **🚀 Rodar Criação de Portfólio**.")
         return
 
-    # parâmetro efetivo usado na execução
+    # parâmetros efetivos usados na execução
     margem_superior = float(st.session_state["cp_last_params"]["margem_superior"])
     use_score_v2 = bool(st.session_state["cp_last_params"]["use_score_v2"])
     lideres_por_segmento = int(st.session_state["cp_last_params"].get("lideres_por_segmento", 1))
+    tipo_empresa = str(st.session_state["cp_last_params"].get("tipo_empresa", "Estabelecida (≥10 anos)"))
 
-    
+    # Modo automático (binário) — policy do ajuste calibrado
+    policy_calibrada: Dict = {"mode": "heuristica_calibrada", "eps": 0.35}
     # ── Carrega setores (cache em sessão)
     setores_df = st.session_state.get("setores_df")
     if setores_df is None or getattr(setores_df, "empty", True):
@@ -796,4 +801,3 @@ def _filtrar_tickers_por_tipo(
 
     filtrados = [tk for tk in tickers_u if _pass_tipo(tk)]
     return filtrados, years_map
-
