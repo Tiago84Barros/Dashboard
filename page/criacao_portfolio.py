@@ -219,6 +219,7 @@ def render():
         with st.form("cp_run_form", clear_on_submit=False):
             margem_superior = st.number_input(
                 "Margem mínima vs Tesouro Selic (%)",
+                key="cp_margem_superior",
                 min_value=-1000.0,
                 max_value=10000.0,
                 value=float(st.session_state["cp_last_params"].get("margem_superior", 10.0)),
@@ -229,12 +230,14 @@ def render():
 
             use_score_v2 = st.checkbox(
                 "Usar Score V2 (se disponível)",
+                key="cp_use_score_v2",
                 value=bool(st.session_state["cp_last_params"].get("use_score_v2", False)),
             )
 
             # Perfil de empresa (histórico DRE) — usado no gate binário e no universo elegível
             tipo_empresa = st.selectbox(
                 "Perfil de empresa (histórico DRE):",
+                key="cp_tipo_empresa",
                 ["Estabelecida (≥10 anos)", "Crescimento (<10 anos)", "Todas"],
                 index=["Estabelecida (≥10 anos)", "Crescimento (<10 anos)", "Todas"].index(
                     st.session_state["cp_last_params"].get("tipo_empresa", "Estabelecida (≥10 anos)")
@@ -244,6 +247,7 @@ def render():
 
             lideres_por_segmento = st.number_input(
                 "Líderes por segmento",
+                key="cp_lideres_por_segmento",
                 min_value=1,
                 max_value=10,
                 value=int(st.session_state["cp_last_params"].get("lideres_por_segmento", 1)),
@@ -251,7 +255,7 @@ def render():
                 help="Quantas empresas (com maior participação no backtest do último período) serão exibidas por segmento que passou no filtro vs Selic.",
             )
 
-            gerar = st.form_submit_button("🚀 Rodar Criação de Portfólio")
+            gerar = st.form_submit_button("🚀 Rodar Criação de Portfólio", use_container_width=True, type="primary")
 
     if gerar:
         st.session_state["cp_last_params"] = {
@@ -265,8 +269,7 @@ def render():
             st.toast("Executando criação de portfólio...", icon="⏳")
         except Exception:
             pass
-
-        st.rerun()
+        # NOTE: evitamos st.rerun() aqui para garantir que o clique execute na mesma execução.
 
     if not st.session_state["cp_should_run"]:
         st.info("Defina os parâmetros na barra lateral e clique em **🚀 Rodar Criação de Portfólio**.")
