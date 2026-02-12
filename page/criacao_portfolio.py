@@ -201,7 +201,7 @@ def render():
     # CONTROLES DE EXECUÇÃO (não roda sozinho)
     # ─────────────────────────────────────────────────────────────
     if "cp_last_params" not in st.session_state:
-        st.session_state["cp_last_params"] = {"margem_superior": 10.0, "use_score_v2": False}
+        st.session_state["cp_last_params"] = {"margem_superior": 10.0, "use_score_v2": False, "lideres_por_segmento": 1}
     if "cp_should_run" not in st.session_state:
         st.session_state["cp_should_run"] = False
 
@@ -225,12 +225,24 @@ def render():
                 value=bool(st.session_state["cp_last_params"].get("use_score_v2", False)),
             )
 
+
+            lideres_por_segmento = st.number_input(
+                "Líderes por segmento",
+                min_value=1,
+                max_value=10,
+                value=int(st.session_state["cp_last_params"].get("lideres_por_segmento", 1)),
+                step=1,
+                help="Quantas empresas (com maior participação no backtest do último período) serão exibidas por segmento que passou no filtro vs Selic.",
+            )
+
+
             gerar = st.form_submit_button("🚀 Rodar Criação de Portfólio")
 
         if gerar:
             st.session_state["cp_last_params"] = {
                 "margem_superior": float(margem_superior),
                 "use_score_v2": bool(use_score_v2),
+                "lideres_por_segmento": int(lideres_por_segmento),
             }
             st.session_state["cp_should_run"] = True
 
@@ -241,6 +253,7 @@ def render():
     # parâmetro efetivo usado na execução
     margem_superior = float(st.session_state["cp_last_params"]["margem_superior"])
     use_score_v2 = bool(st.session_state["cp_last_params"]["use_score_v2"])
+    lideres_por_segmento = int(st.session_state["cp_last_params"].get("lideres_por_segmento", 1))
 
     
     # ── Carrega setores (cache em sessão)
@@ -490,7 +503,7 @@ def render():
 
         if total_final > 0:
             # "maiores participações": por padrão, 1 líder por segmento (compatível com a ideia de "líder")
-            top_part = valores_finais.sort_values(ascending=False).head(1)
+            top_part = valores_finais.sort_values(ascending=False).head(lideres_por_segmento)
             for ticker_col, val in top_part.items():
                 tk = _strip_sa(str(ticker_col))
                 empresas_lideres_finais.append(
