@@ -960,243 +960,6 @@ def _calibrate_gamma_cap_soft(
     soft = float(max(0.02, min(cap - 0.01, soft)))
 
     return gamma, cap, soft
-def _softmax_weights(scores: pd.Series, temperature: float = 0.35) -> pd.Series:
-    """
-    Softmax estável numericamente: w_i = exp((s_i - max(s))/T) / sum(...)
-    """
-    s = pd.to_numeric(scores, errors="coerce").astype(float)
-    s = s.replace([np.inf, -np.inf], np.nan).dropna()
-    if s.empty:
-        return pd.Series(dtype="float64")
-    T = float(temperature) if temperature and temperature > 0 else 0.35
-    x = (s - float(s.max())) / T
-    ex = np.exp(x.clip(-60, 60))
-    w = ex / float(ex.sum())
-    return w.astype(float)
-
-
-def _cap_and_redistribute_weights(
-    w: pd.Series,
-    weight_cap: float = 0.60,
-    min_weight: float = 0.0,
-) -> pd.Series:
-    """
-    Aplica cap por ativo e redistribui o excedente proporcionalmente aos demais.
-    Mantém soma = 1.
-    """
-    if w is None or w.empty:
-        return pd.Series(dtype="float64")
-    w = pd.to_numeric(w, errors="coerce").fillna(0.0).clip(lower=0.0)
-    if w.sum() <= 0:
-        return pd.Series(dtype="float64")
-
-    w = w / float(w.sum())
-
-    cap = float(weight_cap)
-    cap = min(max(cap, 0.05), 0.95)
-
-    floor = float(min_weight)
-    floor = min(max(floor, 0.0), cap)
-
-    # piso (se houver)
-    if floor > 0:
-        w = w.clip(lower=floor)
-        w = w / float(w.sum())
-
-    # iterativo para acomodar múltiplos caps
-    for _ in range(5):
-        over = w[w > cap]
-        if over.empty:
-            break
-        excess = float((over - cap).sum())
-        w.loc[over.index] = cap
-        under = w[w < cap]
-        if under.empty:
-            # tudo capado -> normaliza e sai
-            break
-        add = under / float(under.sum()) * excess
-        w.loc[under.index] = (under + add).clip(upper=cap)
-
-    w = w.clip(lower=0.0)
-    if w.sum() > 0:
-        w = w / float(w.sum())
-    return w
-
-
-def gerir_carteira_topk_softmax(
-    precos: pd.DataFrame,
-    df_scores: pd.DataFrame,
-    dividendos_dict: Dict[str, Union[pd.Series, pd.DataFrame]],
-    top_k: int = 2,
-    temperature: float = 0.35,
-    weight_cap: float = 0.60,
-    min_weight: float = 0.0,
-    aporte_mensal: float = 1000.0,
-    registrar_eventos: bool = False,
-    fee_bps: float = 0.0,
-    slippage_bps: float = 0.0,
-):
-    """
-    Estratégia contínua (Top-K softmax):
-    - A cada mês, usa ano_ref = ano(data) - 1.
-    - Seleciona Top-K tickers pelo Score_Ajustado do ano_ref.
-    - Calcula pesos por softmax intra-TopK (temperatura T).
-    - Aplica cap por ativo (weight_cap) e redistribui excedente.
-    - Aporta mensalmente proporcional aos pesos e reinveste dividendos POR AÇÃO (sanitizado).
-
-    Retorno:
-      - df_patrimonio: colunas por ticker (valor em R$) + 'Patrimônio'
-      - datas_aportes
-      - (opcional) eventos
-    """
-    precos = _ensure_dt_index(precos)
-    if precos is None or precos.empty:
-        return (pd.DataFrame(), []) if not registrar_eventos else (pd.DataFrame(), [], [])
-
-    if df_scores is None or df_scores.empty:
-        return (pd.DataFrame(), []) if not registrar_eventos else (pd.DataFrame(), [], [])
-
-    divs = {t: _as_div_series(dividendos_dict.get(t)) for t in precos.columns}
-    cf = _cost_factor(fee_bps, slippage_bps)
-
-    df_scores2 = df_scores.copy()
-    df_scores2["Ano"] = pd.to_numeric(df_scores2.get("Ano"), errors="coerce")
-    df_scores2["ticker"] = df_scores2.get("ticker").astype(str)
-    df_scores2["Score_Ajustado"] = pd.to_numeric(df_scores2.get("Score_Ajustado"), errors="coerce")
-
-    anos_scores = sorted(int(a) for a in df_scores2["Ano"].dropna().unique())
-    if not anos_scores:
-        return (pd.DataFrame(), []) if not registrar_eventos else (pd.DataFrame(), [], [])
-
-    datas_aportes = _build_monthly_schedule(precos, anos_scores, start_year_offset=1)
-    if not datas_aportes:
-        return (pd.DataFrame(), []) if not registrar_eventos else (pd.DataFrame(), [], [])
-
-    carteira = defaultdict(float)  # ticker(.SA) -> qty
-    aporte_acumulado = 0.0
-    eventos = [] if registrar_eventos else None
-
-    pesos_cache: Dict[int, pd.Series] = {}
-
-    # Para reconstruir série por ticker (como gerir_carteira)
-    carteira_hist: Dict[pd.Timestamp, Dict[str, float]] = {}
-
-    for data0 in datas_aportes:
-        data_sinal = encontrar_proxima_data_valida(pd.Timestamp(data0), precos)
-        if data_sinal is None:
-            continue
-
-        ano_ref = int(data_sinal.year - 1)
-
-        if ano_ref not in pesos_cache:
-            df_ano = df_scores2[df_scores2["Ano"] == ano_ref].dropna(subset=["ticker", "Score_Ajustado"])
-            if df_ano.empty:
-                pesos_cache[ano_ref] = pd.Series(dtype="float64")
-            else:
-                df_ano = df_ano.sort_values("Score_Ajustado", ascending=False)
-                k = int(max(1, top_k))
-                top = df_ano.head(k)
-                w = _softmax_weights(top["Score_Ajustado"], temperature=temperature)
-                w = w.reindex(top["ticker"].values).fillna(0.0)
-                w = _cap_and_redistribute_weights(w, weight_cap=weight_cap, min_weight=min_weight)
-                pesos_cache[ano_ref] = w
-
-                if registrar_eventos:
-                    for tk in list(w.index):
-                        eventos.append({
-                            "data": data_sinal.strftime("%Y-%m"),
-                            "tipo": "universe_topk",
-                            "ticker": str(tk),
-                            "peso": float(w.loc[tk]),
-                            "ano_ref": int(ano_ref),
-                        })
-
-        w = pesos_cache.get(ano_ref, pd.Series(dtype="float64"))
-        if w is None or w.empty:
-            aporte_acumulado += float(aporte_mensal)
-            continue
-
-        # Reinvestimento (POR AÇÃO)
-        for tk in list(carteira.keys()):
-            if carteira[tk] <= 0:
-                continue
-            s = divs.get(tk, pd.Series(dtype="float64"))
-            if s.empty:
-                continue
-            px = _get_price(precos, data_sinal, tk)
-            if px is None:
-                continue
-            div_mes = _div_mes_por_acao_sanitizado(
-                s=s,
-                ano=int(data_sinal.year),
-                mes=int(data_sinal.month),
-                ticker=tk,
-                px_ref=px,
-            )
-            if div_mes <= 0:
-                continue
-            carteira[tk] += (div_mes * carteira[tk]) / px
-
-        total_a_aportar = float(aporte_mensal) + float(aporte_acumulado)
-        aporte_acumulado = 0.0
-
-        # compra proporcional aos pesos (aplica custo no aporte novo)
-        for tk_raw, peso in w.items():
-            peso = float(peso)
-            if peso <= 0:
-                continue
-            tk_sa = tk_raw if str(tk_raw).endswith(".SA") else f"{tk_raw}.SA"
-            px = _get_price(precos, data_sinal, tk_sa)
-            if px is None:
-                aporte_acumulado += total_a_aportar * peso
-                continue
-            aporte_tk = (total_a_aportar * peso) * cf
-            carteira[tk_sa] += aporte_tk / px
-
-        carteira_hist[data_sinal] = dict(carteira)
-
-    # Reconstrói patrimônio diário por ticker + total
-    patrimonio = pd.DataFrame(index=precos.index)
-    if carteira_hist:
-        tickers_all = sorted({t for snap in carteira_hist.values() for t in snap.keys()})
-    else:
-        tickers_all = []
-
-    for t in tickers_all:
-        patrimonio[t] = np.nan
-    patrimonio["Patrimônio"] = np.nan
-
-    datas_hist = sorted(carteira_hist.keys())
-    snap_i = 0
-    last_snapshot: Optional[Dict[str, float]] = None
-
-    for d in precos.index:
-        while snap_i < len(datas_hist) and datas_hist[snap_i] <= d:
-            last_snapshot = carteira_hist[datas_hist[snap_i]]
-            snap_i += 1
-
-        if not last_snapshot:
-            continue
-
-        total = 0.0
-        for t in tickers_all:
-            px = _get_price(precos, d, t)
-            if px is None:
-                continue
-            val = float(last_snapshot.get(t, 0.0)) * float(px)
-            patrimonio.loc[d, t] = val
-            total += val
-
-        patrimonio.loc[d, "Patrimônio"] = total
-
-    patrimonio = patrimonio.ffill()
-
-    if registrar_eventos:
-        return patrimonio, datas_aportes, (eventos or [])
-    return patrimonio, datas_aportes
-
-
-
 def gerir_carteira_modulada(
     precos: pd.DataFrame,
     df_scores: pd.DataFrame,
@@ -1493,3 +1256,221 @@ __all__ = [
     "gerir_carteira",
     "gerir_carteira_modulada",
 ]
+
+
+# ─────────────────────────────────────────────────────────────
+# Alocação Top-K com Softmax (ponderado) — NOVO
+# ─────────────────────────────────────────────────────────────
+
+def _softmax_stable(x: np.ndarray, temperature: float = 1.0) -> np.ndarray:
+    x = np.asarray(x, dtype="float64")
+    t = float(temperature) if temperature is not None else 1.0
+    t = max(1e-9, t)
+    z = x / t
+    z = z - np.nanmax(z)
+    e = np.exp(np.clip(z, -50, 50))
+    s = np.nansum(e)
+    if not np.isfinite(s) or s <= 0:
+        return np.full_like(e, 1.0 / len(e)) if len(e) else e
+    return e / s
+
+
+def _apply_weight_cap(w: np.ndarray, cap: float) -> np.ndarray:
+    w = np.asarray(w, dtype="float64")
+    if w.size == 0:
+        return w
+    c = float(cap) if cap is not None else 1.0
+    c = min(max(c, 0.0), 1.0)
+    if c <= 0:
+        return np.full_like(w, 1.0 / len(w))
+    if c >= 1:
+        s = w.sum()
+        return w / s if s > 0 else np.full_like(w, 1.0 / len(w))
+
+    w2 = np.clip(w, 0.0, c)
+    s = w2.sum()
+    if s <= 0 or not np.isfinite(s):
+        return np.full_like(w2, 1.0 / len(w2))
+    return w2 / s
+
+
+def gerir_carteira_topk_softmax(
+    precos: pd.DataFrame,
+    df_scores: pd.DataFrame,
+    dividendos_dict: Dict[str, Union[pd.Series, pd.DataFrame]],
+    top_k: int = 2,
+    temperature: float = 0.35,
+    weight_cap: float = 0.60,
+    aporte_mensal: float = 1000.0,
+    score_col: str = "Score_Ajustado",
+    registrar_eventos: bool = False,
+    fee_bps: float = 0.0,
+    slippage_bps: float = 0.0,
+):
+    """
+    Estratégia Top-K ponderada (softmax):
+    - Em cada aporte mensal, identifica o ano_ref = ano(data) - 1
+    - Seleciona as TOP-K empresas por `score_col` naquele ano_ref
+    - Converte scores em pesos via softmax (com `temperature`)
+    - Aplica `weight_cap` (cap por ativo) e renormaliza
+    - Aporta mensalmente conforme pesos e reinveste dividendos POR AÇÃO (sanitizado)
+
+    Retorna:
+        (df_patrimonio, datas_aportes) ou (df_patrimonio, datas_aportes, eventos) se registrar_eventos=True
+    """
+    precos = _ensure_dt_index(precos)
+
+    if precos is None or precos.empty:
+        return (pd.DataFrame(), []) if not registrar_eventos else (pd.DataFrame(), [], [])
+
+    if df_scores is None or df_scores.empty or "Ano" not in df_scores.columns or "ticker" not in df_scores.columns:
+        return (pd.DataFrame(), []) if not registrar_eventos else (pd.DataFrame(), [], [])
+
+    if score_col not in df_scores.columns:
+        # fallback: tenta coluna Score
+        if "Score" in df_scores.columns:
+            score_col_use = "Score"
+        else:
+            score_col_use = score_col
+    else:
+        score_col_use = score_col
+
+    # Dividendos: normaliza para Series indexadas por data
+    divs: Dict[str, pd.Series] = {}
+    for tk, v in (dividendos_dict or {}).items():
+        try:
+            if isinstance(v, pd.DataFrame):
+                # tenta achar coluna 'Dividendo' ou primeira coluna numérica
+                if "Dividendo" in v.columns:
+                    s = v["Dividendo"]
+                else:
+                    num_cols = [c for c in v.columns if np.issubdtype(v[c].dtype, np.number)]
+                    s = v[num_cols[0]] if num_cols else pd.Series(dtype="float64")
+            elif isinstance(v, pd.Series):
+                s = v
+            else:
+                s = pd.Series(dtype="float64")
+            s = s.copy()
+            s.index = pd.to_datetime(s.index, errors="coerce")
+            s = s[~s.index.isna()].sort_index()
+            divs[str(tk)] = s
+        except Exception:
+            divs[str(tk)] = pd.Series(dtype="float64")
+
+    anos_scores = sorted(set(pd.to_numeric(df_scores["Ano"], errors="coerce").dropna().astype(int).tolist()))
+    datas_aportes = _build_monthly_schedule(precos, anos_scores, start_year_offset=1)
+    if not datas_aportes:
+        return (pd.DataFrame(), []) if not registrar_eventos else (pd.DataFrame(), [], [])
+
+    k = int(top_k) if top_k is not None else 2
+    k = max(1, k)
+
+    holdings: Dict[str, float] = defaultdict(float)  # shares
+    caixa: float = 0.0
+    registros: List[dict] = []
+    eventos: List[dict] = []
+
+    fee_mult = _fee_multiplier(fee_bps=fee_bps, slippage_bps=slippage_bps)
+
+    for data_sinal in datas_aportes:
+        ano_ref = int(pd.Timestamp(data_sinal).year) - 1
+
+        # 1) Reinvestir dividendos do mês (POR AÇÃO)
+        div_total = 0.0
+        for tk, qtd in list(holdings.items()):
+            if qtd <= 0:
+                continue
+            s = divs.get(tk, pd.Series(dtype="float64"))
+            if s.empty:
+                continue
+            px_ref = _get_price(precos, data_sinal, tk)
+            div_mes = _div_mes_por_acao_sanitizado(
+                s=s,
+                ano=int(pd.Timestamp(data_sinal).year),
+                mes=int(pd.Timestamp(data_sinal).month),
+                ticker=tk,
+                px_ref=px_ref,
+            )
+            if div_mes > 0:
+                div_total += float(qtd) * float(div_mes)
+
+        if div_total > 0:
+            caixa += div_total
+            if registrar_eventos:
+                eventos.append({"date": data_sinal, "type": "dividendos", "value": float(div_total)})
+
+        # 2) Aporte mensal
+        caixa += float(aporte_mensal)
+        if registrar_eventos:
+            eventos.append({"date": data_sinal, "type": "aporte", "value": float(aporte_mensal)})
+
+        # 3) Escolher TOP-K do ano_ref e calcular pesos
+        df_ref = df_scores.loc[pd.to_numeric(df_scores["Ano"], errors="coerce").fillna(-1).astype(int) == ano_ref].copy()
+        df_ref["ticker"] = df_ref["ticker"].astype(str)
+        df_ref[score_col_use] = pd.to_numeric(df_ref[score_col_use], errors="coerce")
+        df_ref = df_ref.dropna(subset=[score_col_use])
+        df_ref = df_ref.sort_values(score_col_use, ascending=False)
+
+        if df_ref.empty:
+            # sem score para ano_ref → não compra, só registra patrimônio
+            pat = _calc_patrimonio_total(precos, data_sinal, holdings, caixa)
+            registros.append({"date": data_sinal, "Patrimônio": pat})
+            continue
+
+        top = df_ref.head(k)
+        tickers = top["ticker"].tolist()
+        scores = top[score_col_use].astype(float).to_numpy()
+
+        # softmax + cap
+        w = _softmax_stable(scores, temperature=temperature)
+        w = _apply_weight_cap(w, cap=weight_cap)
+
+        # 4) Comprar conforme pesos, usando caixa disponível
+        for tk, wi in zip(tickers, w):
+            if wi <= 0:
+                continue
+            px = _get_price(precos, data_sinal, tk)
+            if px is None or px <= 0:
+                continue
+            valor = caixa * float(wi)
+            valor = max(0.0, valor)
+            if valor <= 0:
+                continue
+
+            # custo e shares
+            valor_eff = valor * fee_mult
+            qtd = valor_eff / px
+            if qtd <= 0:
+                continue
+
+            holdings[tk] += float(qtd)
+            caixa -= float(valor)  # reserva o valor bruto
+            if registrar_eventos:
+                eventos.append({"date": data_sinal, "type": "compra", "ticker": tk, "value": float(valor), "shares": float(qtd), "px": float(px)})
+
+        # Evita caixa negativo por arredondamento
+        caixa = max(0.0, caixa)
+
+        pat = _calc_patrimonio_total(precos, data_sinal, holdings, caixa)
+        registros.append({"date": data_sinal, "Patrimônio": pat})
+
+    df_patrimonio = pd.DataFrame(registros).set_index("date").sort_index().ffill()
+    if "Patrimônio" in df_patrimonio.columns:
+        df_patrimonio = df_patrimonio[df_patrimonio["Patrimônio"].fillna(0) != 0]
+
+    if registrar_eventos:
+        return df_patrimonio, datas_aportes, eventos
+
+    return df_patrimonio, datas_aportes
+
+
+def _calc_patrimonio_total(precos: pd.DataFrame, data: pd.Timestamp, holdings: Dict[str, float], caixa: float) -> float:
+    total = float(caixa)
+    for tk, qtd in holdings.items():
+        if qtd <= 0:
+            continue
+        px = _get_price(precos, data, tk)
+        if px is None:
+            continue
+        total += float(qtd) * float(px)
+    return float(total)
