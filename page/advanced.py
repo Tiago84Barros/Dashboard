@@ -757,34 +757,155 @@ def render() -> None:
             alpha_cmp = float(m_cmp.get("cagr", np.nan) - m_selic.get("cagr", np.nan))
 
     st.markdown("## Resumo (métricas)")
+
+
+    def _render_metrics_card(title: str, rows: list[tuple[str, str]]) -> None:
+
+        items = "".join(
+
+            f"<div style='display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.06);'>"
+
+            f"<div style='color:#cfcfcf;font-size:13px;'>{k}</div>"
+
+            f"<div style='color:#ffffff;font-weight:800;font-size:13px;white-space:nowrap;'>{v}</div>"
+
+            f"</div>"
+
+            for k, v in rows
+
+        )
+
+        st.markdown(
+
+            f"""
+
+            <div style="
+
+                background: rgba(255,255,255,0.03);
+
+                border: 1px solid rgba(255,255,255,0.08);
+
+                border-radius: 14px;
+
+                padding: 14px 14px 10px 14px;
+
+                box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+
+                margin-bottom: 12px;
+
+            ">
+
+                <div style="font-weight:900;font-size:16px;color:#ffffff;margin-bottom:8px;">{title}</div>
+
+                {items}
+
+            </div>
+
+            """,
+
+            unsafe_allow_html=True,
+
+        )
+
+
+    def _fmt_sharpe(x: float) -> str:
+
+        try:
+
+            if x is None or (isinstance(x, float) and np.isnan(x)):
+
+                return "—"
+
+            return f"{float(x):.2f}"
+
+        except Exception:
+
+            return "—"
+
+
     c1, c2, c3 = st.columns(3, gap="large")
 
+
     with c1:
-        st.markdown(f"**{(label_main if ('label_main' in locals() and label_main) else 'Estratégia')}**")
-        st.metric("CAGR", _fmt_pct(m_strat.get("cagr", np.nan)))
-        st.metric("Vol (a.a.)", _fmt_pct(m_strat.get("vol", np.nan)))
-        st.metric("Sharpe (vs Selic)", f"{m_strat.get('sharpe', np.nan):.2f}" if not np.isnan(m_strat.get("sharpe", np.nan)) else "—")
-        st.metric("Max Drawdown", _fmt_pct(m_strat.get("mdd", np.nan)))
-        st.metric("Alpha vs Selic (CAGR)", _fmt_pct(alpha_strat))
+
+        _render_metrics_card(
+
+            (label_main if ("label_main" in locals() and label_main) else "Estratégia"),
+
+            [
+
+                ("CAGR", _fmt_pct(m_strat.get("cagr", np.nan))),
+
+                ("Vol (a.a.)", _fmt_pct(m_strat.get("vol", np.nan))),
+
+                ("Sharpe (vs Selic)", _fmt_sharpe(m_strat.get("sharpe", np.nan))),
+
+                ("Max Drawdown", _fmt_pct(m_strat.get("mdd", np.nan))),
+
+                ("Alpha vs Selic (CAGR)", _fmt_pct(alpha_strat)),
+
+            ],
+
+        )
+
 
     with c2:
-        st.markdown("**Tesouro Selic**")
-        st.metric("CAGR", _fmt_pct(m_selic.get("cagr", np.nan)))
-        st.metric("Vol (a.a.)", _fmt_pct(m_selic.get("vol", np.nan)))
-        st.metric("Sharpe", "—")
-        st.metric("Max Drawdown", _fmt_pct(m_selic.get("mdd", np.nan)))
-        st.metric("Alpha vs Selic", "0.00%")
+
+        _render_metrics_card(
+
+            "Tesouro Selic",
+
+            [
+
+                ("CAGR", _fmt_pct(m_selic.get("cagr", np.nan))),
+
+                ("Vol (a.a.)", _fmt_pct(m_selic.get("vol", np.nan))),
+
+                ("Sharpe", "—"),
+
+                ("Max Drawdown", _fmt_pct(m_selic.get("mdd", np.nan))),
+
+                ("Alpha vs Selic", "0.00%"),
+
+            ],
+
+        )
+
 
     with c3:
-        st.markdown(f"**{(label_cmp if ('label_cmp' in locals() and label_cmp) else 'Comparação')}**")
+
         if has_cmp:
-            st.metric("CAGR", _fmt_pct(m_cmp.get("cagr", np.nan)))
-            st.metric("Vol (a.a.)", _fmt_pct(m_cmp.get("vol", np.nan)))
-            st.metric("Sharpe (vs Selic)", f"{m_cmp.get('sharpe', np.nan):.2f}" if not np.isnan(m_cmp.get("sharpe", np.nan)) else "—")
-            st.metric("Max Drawdown", _fmt_pct(m_cmp.get("mdd", np.nan)))
-            st.metric("Alpha vs Selic (CAGR)", _fmt_pct(alpha_cmp))
+
+            _render_metrics_card(
+
+                (label_cmp if ("label_cmp" in locals() and label_cmp) else "Comparação"),
+
+                [
+
+                    ("CAGR", _fmt_pct(m_cmp.get("cagr", np.nan))),
+
+                    ("Vol (a.a.)", _fmt_pct(m_cmp.get("vol", np.nan))),
+
+                    ("Sharpe (vs Selic)", _fmt_sharpe(m_cmp.get("sharpe", np.nan))),
+
+                    ("Max Drawdown", _fmt_pct(m_cmp.get("mdd", np.nan))),
+
+                    ("Alpha vs Selic (CAGR)", _fmt_pct(alpha_cmp)),
+
+                ],
+
+            )
+
         else:
-            st.caption("Ative a opção **Comparar v2 vs v3** na sidebar para exibir a comparação.")
+
+            _render_metrics_card(
+
+                (label_cmp if ("label_cmp" in locals() and label_cmp) else "Comparação"),
+
+                [("Status", "Ative 'Comparar v2 vs v3' na sidebar")],
+
+            )
+
 
     st.markdown("---")
 
