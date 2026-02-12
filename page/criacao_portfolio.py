@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import logging
-import json
-import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -68,7 +66,6 @@ except Exception:
 from core.portfolio import (
     calcular_patrimonio_selic_macro,
     gerir_carteira,
-    gerir_carteira_modulada,
     encontrar_proxima_data_valida,
     gerir_carteira_simples,
 )
@@ -199,20 +196,14 @@ def _build_macro() -> Optional[pd.DataFrame]:
 
 def render():
     st.markdown("<h1 style='text-align: center;'>Criação de Portfólio</h1>", unsafe_allow_html=True)
-    auditoria_gate = []
 
         # ─────────────────────────────────────────────────────────────
     # CONTROLES DE EXECUÇÃO (não roda sozinho)
     # ─────────────────────────────────────────────────────────────
     if "cp_last_params" not in st.session_state:
-        st.session_state["cp_last_params"] = {"margem_superior": 10.0, "use_score_v2": False, "estrategia_aporte": "Padrão (sempre)", "estrategia_aporte_idx": 0}
+        st.session_state["cp_last_params"] = {"margem_superior": 10.0, "use_score_v2": False}
     if "cp_should_run" not in st.session_state:
         st.session_state["cp_should_run"] = False
-
-    st.session_state.setdefault("portfolio_plan", None)
-    st.session_state.setdefault("plan_hash", None)
-    st.session_state.setdefault("last_month_orders", None)
-
 
     with st.sidebar:
         st.markdown("### ▶️ Execução")
@@ -234,21 +225,12 @@ def render():
                 value=bool(st.session_state["cp_last_params"].get("use_score_v2", False)),
             )
 
-            estrategia_aporte = st.selectbox(
-                "Estratégia de aporte",
-                options=["Padrão (sempre)", "Auto (Padrão/Calibrado por segmento)"],
-                index=int(st.session_state["cp_last_params"].get("estrategia_aporte_idx", 0)),
-                help="Auto aplica Padrão para segmentos com até 4 empresas (após filtro automático de >=10 anos) e Calibrado para segmentos maiores.",
-            )
-
             gerar = st.form_submit_button("🚀 Rodar Criação de Portfólio")
 
         if gerar:
             st.session_state["cp_last_params"] = {
                 "margem_superior": float(margem_superior),
                 "use_score_v2": bool(use_score_v2),
-                "estrategia_aporte": str(estrategia_aporte),
-                "estrategia_aporte_idx": int(0 if str(estrategia_aporte).startswith("Padrão") else 1),
             }
             st.session_state["cp_should_run"] = True
 
@@ -258,7 +240,6 @@ def render():
 
     # parâmetro efetivo usado na execução
     margem_superior = float(st.session_state["cp_last_params"]["margem_superior"])
-    estrategia_aporte = str(st.session_state["cp_last_params"].get("estrategia_aporte", "Padrão (sempre)"))
     use_score_v2 = bool(st.session_state["cp_last_params"]["use_score_v2"])
 
     
@@ -338,17 +319,6 @@ def render():
         tickers_validos = _filtrar_tickers_com_min_anos(tickers_segmento, min_anos=10, max_workers=12)
         if len(tickers_validos) <= 1:
             continue
-        # Gate estrutural (pós-filtro automático >=10 anos): decide Padrão vs Calibrado
-        n_total_segmento = int(len(tickers_validos))
-        usar_calibrado = (estrategia_aporte.startswith("Auto") and n_total_segmento > 4)
-        modo_aporte = "Calibrado" if usar_calibrado else "Padrão"
-        gate_row = {
-            "SETOR": setor,
-            "SUBSETOR": subsetor,
-            "SEGMENTO": segmento,
-            "n_total_segmento_pos_filtro": n_total_segmento,
-            "modo_aporte": modo_aporte,
-        }
 
         tickers_validos_set = set(tickers_validos)
         empresas_validas = empresas_segmento[
@@ -448,13 +418,8 @@ def render():
             lideres_global_parts.append(lideres_seg)
         except Exception:
             pass
-        if usar_calibrado:
-            patrimonio_empresas, datas_aportes = gerir_carteira_modulada(
-                precos, score, lideres, dividendos,
-                policy={"mode": "heuristica_calibrada"},
-            )
-        else:
-            patrimonio_empresas, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
+
+        patrimonio_empresas, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
         if patrimonio_empresas is None or patrimonio_empresas.empty:
             continue
 
@@ -509,11 +474,6 @@ def render():
         # líderes do último ano de score (para sugerir compra no próximo ano)
         ultimo_ano = int(pd.to_numeric(score["Ano"], errors="coerce").max())
         lideres_ano_anterior = lideres[lideres["Ano"] == ultimo_ano]
-        n_elegiveis_ano_ref = int(lideres_ano_anterior["ticker"].nunique())
-        gate_row["n_elegiveis_ano_ref"] = n_elegiveis_ano_ref
-        auditoria_gate.append(gate_row)
-        n_elegiveis_ano_ref = int(lideres_ano_anterior["ticker"].nunique())
-        # (auditoria) n_elegiveis_ano_ref não entra no gate
 
         for _, row in lideres_ano_anterior.iterrows():
             tk = _strip_sa(str(row["ticker"]))
@@ -525,95 +485,28 @@ def render():
                     "ano_lider": int(row["Ano"]),
                     "ano_compra": int(row["Ano"]) + 1,
                     "setor": setor,
-                    "subsetor": subsetor,
-                    "segmento": segmento,
-                    "modo_aporte": modo_aporte,
-                    "n_total_segmento_pos_filtro": n_total_segmento,
-                    "n_elegiveis_ano_ref": n_elegiveis_ano_ref,
                 }
             )
+
     # ─────────────────────────────────────────────────────────
     # Bloco final: líderes para o próximo ano + distribuição setorial
     # ─────────────────────────────────────────────────────────
     if empresas_lideres_finais:
-        st.markdown("## 📑 Empresas líderes para o próximo ano (cesta de compra)")
-        df_lideres_final = pd.DataFrame(empresas_lideres_finais)
-
-        # Agrupa por segmento para deixar claro "individual vs grupo"
-        for (setor_g, subsetor_g, segmento_g), g in df_lideres_final.groupby(["setor","subsetor","segmento"], sort=False):
-            modo = str(g["modo_aporte"].iloc[0])
-            n_total = int(g["n_total_segmento_pos_filtro"].iloc[0])
-            n_eleg = int(g["n_elegiveis_ano_ref"].iloc[0])
-            n_compra = int(len(g))
-
-            tag = "Individual" if n_compra == 1 else f"Grupo (N={n_compra})"
-            st.markdown(f"### {setor_g} > {subsetor_g} > {segmento_g}")
-            st.caption(f"Modo aplicado: **{modo}** | Tamanho estrutural (pós-filtro ≥10): **{n_total}** | Elegíveis no ano-ref (auditoria): **{n_eleg}** | Cesta: **{tag}**")
-
-            cols = st.columns(min(3, n_compra))
-            for j, emp in enumerate(g.to_dict("records")):
-                col = cols[j % len(cols)]
-                col.markdown(
-                    f"""
-                    <div style='border: 2px solid #28a745; border-radius: 10px; padding: 12px; margin-bottom: 10px; background-color: #f0fff4; text-align: center;'>
-                        <img src="{emp['logo_url']}" width="45" />
-                        <h5 style="margin: 5px 0 0;">{emp['nome']}</h5>
-                        <p style="margin: 0; color: #666; font-size: 13px;">({emp['ticker']})</p>
-                        <p style="font-size: 12px; color: #333;">Líder em {emp['ano_lider']}<br>Para compra em {emp['ano_compra']}</p>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-        # Persistência do plano anual (PortfolioPlan) — somente a cesta de compra
-        plan = {
-            "created_at": datetime.utcnow().isoformat(),
-            "estrategia_aporte": estrategia_aporte,
-            "cesta": df_lideres_final[["ticker","nome","setor","subsetor","segmento","modo_aporte","ano_lider","ano_compra"]].to_dict("records"),
-            "auditoria_gate": auditoria_gate,
-        }
-        plan_json = json.dumps(plan, sort_keys=True, ensure_ascii=False).encode("utf-8")
-        plan_hash = hashlib.sha256(plan_json).hexdigest()[:12]
-        st.session_state["portfolio_plan"] = plan
-        st.session_state["plan_hash"] = plan_hash
-        st.success(f"✅ Plano anual congelado. Hash: {plan_hash}")
-
-        # Execução mensal (ordem de compra) — não recalcula plano
-        st.markdown("## 🗓️ Execução mensal — ordem de compra")
-        with st.form("cp_month_order", clear_on_submit=False):
-            mes_alvo = st.date_input("Mês-alvo (use o 1º dia do mês)", value=datetime.today().replace(day=1))
-            aporte_mes = st.number_input("Aporte do mês (R$)", min_value=0.0, value=1000.0, step=50.0, format="%.2f")
-            gerar_ordem = st.form_submit_button("🧾 Gerar ordem do mês")
-
-        if gerar_ordem:
-            # Distribuição simples: 1/N dentro da cesta total (sem duplicar lógica do motor aqui)
-            cesta = st.session_state.get("portfolio_plan", {}).get("cesta", [])
-            if not cesta:
-                st.error("Plano anual vazio. Rode a Criação de Portfólio novamente.")
-            else:
-                n = len(cesta)
-                valor_por_ativo = float(aporte_mes) / max(n, 1)
-                ordens = []
-                for item in cesta:
-                    ordens.append({
-                        "ticker": item["ticker"],
-                        "nome": item["nome"],
-                        "SETOR": item["setor"],
-                        "SUBSETOR": item["subsetor"],
-                        "SEGMENTO": item["segmento"],
-                        "modo_aporte": item["modo_aporte"],
-                        "mes_alvo": str(mes_alvo),
-                        "valor_compra": float(valor_por_ativo),
-                    })
-                st.session_state["last_month_orders"] = {"mes_alvo": str(mes_alvo), "aporte": float(aporte_mes), "ordens": ordens}
-
-        last = st.session_state.get("last_month_orders")
-        if last and last.get("ordens"):
-            st.markdown("### ✅ Ordem gerada")
-            dfo = pd.DataFrame(last["ordens"])
-            for (setor_g, subsetor_g, segmento_g), g in dfo.groupby(["SETOR","SUBSETOR","SEGMENTO"], sort=False):
-                st.markdown(f"**{setor_g} > {subsetor_g} > {segmento_g}**")
-                st.dataframe(g[["ticker","nome","valor_compra","modo_aporte"]], use_container_width=True)
+        st.markdown("## 📑 Empresas líderes para o próximo ano")
+        colunas_lideres = st.columns(3)
+        for idx, emp in enumerate(empresas_lideres_finais):
+            col = colunas_lideres[idx % 3]
+            col.markdown(
+                f"""
+                <div style='border: 2px solid #28a745; border-radius: 10px; padding: 12px; margin-bottom: 10px; background-color: #f0fff4; text-align: center;'>
+                    <img src="{emp['logo_url']}" width="45" />
+                    <h5 style="margin: 5px 0 0;">{emp['nome']}</h5>
+                    <p style="margin: 0; color: #666; font-size: 13px;">({emp['ticker']})</p>
+                    <p style="font-size: 12px; color: #333;">Líder em {emp['ano_lider']}<br>Para compra em {emp['ano_compra']}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
         st.markdown("## 📊 Distribuição setorial do portfólio sugerido")
         setores_portfolio = pd.Series([e["setor"] for e in empresas_lideres_finais]).value_counts()
@@ -627,8 +520,6 @@ def render():
         )
         ax.axis("equal")
         st.pyplot(fig)
-    else:
-        st.warning("Nenhuma empresa líder foi selecionada com os critérios atuais.")
 
     # ─────────────────────────────────────────────────────────
     # Etapa: Desempenho parcial no ano corrente (líderes do ano)
