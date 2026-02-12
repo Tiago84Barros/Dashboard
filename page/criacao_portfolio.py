@@ -68,7 +68,6 @@ from core.portfolio import (
     gerir_carteira,
     encontrar_proxima_data_valida,
     gerir_carteira_simples,
-    gerir_carteira_modulada,
 )
 from core.yf_data import (
     baixar_precos,
@@ -173,52 +172,6 @@ def _filtrar_tickers_com_min_anos(tickers: Sequence[str], min_anos: int = 10, ma
 
     return sorted(set(ok))
 
-def _filtrar_tickers_por_tipo(
-    tickers: Sequence[str],
-    tipo: str = "Estabelecida (≥10 anos)",
-    min_anos_estabelecida: int = 10,
-    max_workers: int = 12,
-) -> List[str]:
-    """
-    Filtra tickers por perfil de histórico (tipo), usando anos distintos na DRE.
-    Regras:
-      - Crescimento (<10 anos): 0 < anos < 10
-      - Estabelecida (≥10 anos): anos >= 10
-      - Todas: anos > 0
-    """
-    tickers = [_strip_sa(t) for t in tickers if (t or "").strip()]
-    if not tickers:
-        return []
-
-    tipo = str(tipo or "").strip()
-
-    def _check(tk: str) -> Tuple[str, int]:
-        try:
-            dre = load_data_from_db(_norm_sa(tk))
-            return tk, int(_safe_year_count_from_dre(dre))
-        except Exception:
-            return tk, 0
-
-    years_map = {}
-    max_workers = min(max_workers, max(2, len(tickers)))
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futs = {ex.submit(_check, tk): tk for tk in tickers}
-        for fut in as_completed(futs):
-            tk, n = fut.result()
-            years_map[tk] = int(n) if n is not None else 0
-
-    def _pass(tk: str) -> bool:
-        n = int(years_map.get(tk, 0))
-        if tipo == "Crescimento (<10 anos)":
-            return (n > 0) and (n < int(min_anos_estabelecida))
-        if tipo == "Estabelecida (≥10 anos)":
-            return n >= int(min_anos_estabelecida)
-        # Todas
-        return n > 0
-
-    ok = [tk for tk in tickers if _pass(tk)]
-    return sorted(set(ok))
-
 
 def _build_macro() -> Optional[pd.DataFrame]:
     """
@@ -248,7 +201,7 @@ def render():
     # CONTROLES DE EXECUÇÃO (não roda sozinho)
     # ─────────────────────────────────────────────────────────────
     if "cp_last_params" not in st.session_state:
-        st.session_state["cp_last_params"] = {"margem_superior": 10.0, "use_score_v2": False, "tipo": "Estabelecida (≥10 anos)"}
+        st.session_state["cp_last_params"] = {"margem_superior": 10.0, "use_score_v2": False}
     if "cp_should_run" not in st.session_state:
         st.session_state["cp_should_run"] = False
 
@@ -272,22 +225,12 @@ def render():
                 value=bool(st.session_state["cp_last_params"].get("use_score_v2", False)),
             )
 
-            tipo = st.selectbox(
-                "Perfil de empresa (histórico DRE):",
-                ["Crescimento (<10 anos)", "Estabelecida (≥10 anos)", "Todas"],
-                index=["Crescimento (<10 anos)", "Estabelecida (≥10 anos)", "Todas"].index(
-                    str(st.session_state["cp_last_params"].get("tipo", "Estabelecida (≥10 anos)"))
-                ),
-                help="Este filtro afeta o gate binário: n≤4 → padrão; n≥5 → calibrado.",
-            )
-
             gerar = st.form_submit_button("🚀 Rodar Criação de Portfólio")
 
         if gerar:
             st.session_state["cp_last_params"] = {
                 "margem_superior": float(margem_superior),
                 "use_score_v2": bool(use_score_v2),
-                "tipo": str(tipo),
             }
             st.session_state["cp_should_run"] = True
 
@@ -298,7 +241,6 @@ def render():
     # parâmetro efetivo usado na execução
     margem_superior = float(st.session_state["cp_last_params"]["margem_superior"])
     use_score_v2 = bool(st.session_state["cp_last_params"]["use_score_v2"])
-    tipo = str(st.session_state["cp_last_params"].get("tipo", "Estabelecida (≥10 anos)"))
 
     
     # ── Carrega setores (cache em sessão)
@@ -373,19 +315,10 @@ def render():
         if len(set(tickers_segmento)) <= 1:
             continue
 
-        # filtro de histórico (tipo) — este filtro alimenta o gate binário
-        tickers_validos = _filtrar_tickers_por_tipo(tickers_segmento, tipo=tipo, min_anos_estabelecida=10, max_workers=12)
-        n_total_segmento = int(len(set(tickers_validos)))  # após filtro de histórico (tipo)
-
-        # ignora segmentos muito pequenos após filtro de histórico
-        if n_total_segmento <= 1:
+        # filtro de histórico mínimo (>=10 anos)
+        tickers_validos = _filtrar_tickers_com_min_anos(tickers_segmento, min_anos=10, max_workers=12)
+        if len(tickers_validos) <= 1:
             continue
-
-        # ── Gate binário (automático)
-        #   n≤4 → padrão (aportes iguais)
-        #   n≥5 → calibrado (auto-tuning)
-        usar_calibrado = bool(n_total_segmento >= 5)
-        policy_calibrada = {"mode": "heuristica_calibrada", "eps": 0.35}
 
         tickers_validos_set = set(tickers_validos)
         empresas_validas = empresas_segmento[
@@ -486,12 +419,7 @@ def render():
         except Exception:
             pass
 
-        if usar_calibrado:
-            patrimonio_empresas, datas_aportes = gerir_carteira_modulada(
-                precos, score, lideres, dividendos, policy=policy_calibrada
-            )
-        else:
-            patrimonio_empresas, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
+        patrimonio_empresas, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
         if patrimonio_empresas is None or patrimonio_empresas.empty:
             continue
 
@@ -543,27 +471,55 @@ def render():
                 unsafe_allow_html=True,
             )
 
-        # líderes do último ano de score (para sugerir compra no próximo ano)
-        ultimo_ano = int(pd.to_numeric(score["Ano"], errors="coerce").max())
-        lideres_ano_anterior = lideres[lideres["Ano"] == ultimo_ano]
+                # líderes sugeridos (Plano B):
+        # usa as MAIORES PARTICIPAÇÕES do backtest no ÚLTIMO PERÍODO do segmento,
+        # mas somente para segmentos que passaram no filtro de superioridade vs Selic.
+        # Isso alinha "quem aparece na tela" (resultado do backtest) com "quem vira líder para o próximo ano".
+        try:
+            last_idx = patrimonio_empresas.index[-1]
+            ano_lider_bt = int(getattr(last_idx, "year", pd.to_datetime(last_idx, errors="coerce").year))
+            if pd.isna(ano_lider_bt):
+                raise ValueError("ano_lider_bt inválido")
+        except Exception:
+            # fallback defensivo: usa o último ano disponível no score
+            ano_lider_bt = int(pd.to_numeric(score.get("Ano", pd.Series([datetime.now().year])), errors="coerce").max())
 
-        for _, row in lideres_ano_anterior.iterrows():
-            tk = _strip_sa(str(row["ticker"]))
-            empresas_lideres_finais.append(
-                {
-                    "ticker": tk,
-                    "nome": next((e.nome for e in lista_empresas if _strip_sa(e.ticker) == tk), tk),
-                    "logo_url": get_logo_url(tk),
-                    "ano_lider": int(row["Ano"]),
-                    "ano_compra": int(row["Ano"]) + 1,
-                    "setor": setor,
-                }
-            )
+        valores_finais = patrimonio_empresas.iloc[-1].drop("Patrimônio", errors="ignore")
+        valores_finais = pd.to_numeric(valores_finais, errors="coerce").dropna()
+        total_final = float(valores_finais.sum()) if not valores_finais.empty else 0.0
+
+        if total_final > 0:
+            # "maiores participações": por padrão, 1 líder por segmento (compatível com a ideia de "líder")
+            top_part = valores_finais.sort_values(ascending=False).head(1)
+            for ticker_col, val in top_part.items():
+                tk = _strip_sa(str(ticker_col))
+                empresas_lideres_finais.append(
+                    {
+                        "ticker": tk,
+                        "nome": next((e.nome for e in lista_empresas if _strip_sa(e.ticker) == tk), tk),
+                        "logo_url": get_logo_url(tk),
+                        "ano_lider": int(ano_lider_bt),
+                        "ano_compra": int(ano_lider_bt) + 1,
+                        "setor": setor,
+                        "participacao": float(val / total_final) * 100.0,
+                        "segmento": segmento,
+                    }
+                )
 
     # ─────────────────────────────────────────────────────────
     # Bloco final: líderes para o próximo ano + distribuição setorial
     # ─────────────────────────────────────────────────────────
     if empresas_lideres_finais:
+
+        # Ordena os líderes sugeridos por participação (maior → menor) e evita duplicatas por ticker
+        _uniq = {}
+        for _e in empresas_lideres_finais:
+            _tk = str(_e.get("ticker", "")).strip().upper()
+            if not _tk:
+                continue
+            if (_tk not in _uniq) or (float(_e.get("participacao", 0.0) or 0.0) > float(_uniq[_tk].get("participacao", 0.0) or 0.0)):
+                _uniq[_tk] = _e
+        empresas_lideres_finais = sorted(_uniq.values(), key=lambda x: float(x.get("participacao", 0.0) or 0.0), reverse=True)
         st.markdown("## 📑 Empresas líderes para o próximo ano")
         colunas_lideres = st.columns(3)
         for idx, emp in enumerate(empresas_lideres_finais):
