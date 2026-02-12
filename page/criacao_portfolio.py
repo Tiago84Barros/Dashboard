@@ -222,7 +222,7 @@ def render():
     # CONTROLES DE EXECUÇÃO (não roda sozinho)
     # ─────────────────────────────────────────────────────────────
     if "cp_last_params" not in st.session_state:
-        st.session_state["cp_last_params"] = {"margem_superior": 10.0, "use_score_v2": False, "tipo_empresa": "Estabelecida (≥10 anos)", "lideres_por_segmento": 1}
+        st.session_state["cp_last_params"] = {"margem_superior": 10.0, "use_score_v2": False, "tipo_empresa": "Estabelecida (≥10 anos)", }
     if "cp_should_run" not in st.session_state:
         st.session_state["cp_should_run"] = False
 
@@ -519,12 +519,14 @@ def render():
         # 2) Se diferente → entram 2 (líder do último ano e maior participação)
         ultimo_ano = int(pd.to_numeric(score["Ano"], errors="coerce").max())
 
+        # líder do último ano (do score)
         try:
             lideres_ano = lideres[pd.to_numeric(lideres["Ano"], errors="coerce") == ultimo_ano]
             ticker_lider_ultimo = _strip_sa(str(lideres_ano.iloc[0]["ticker"]))
         except Exception:
             ticker_lider_ultimo = _strip_sa(str(lideres.iloc[0]["ticker"]))
 
+        # maior participação no último ponto do backtest do segmento
         last_row = patrimonio_empresas.iloc[-1].drop("Patrimônio", errors="ignore").dropna()
         ticker_maior_part = _strip_sa(str(last_row.sort_values(ascending=False).index[0]))
 
@@ -559,9 +561,136 @@ def render():
                     "subsetor": subsetor,
                     "segmento": segmento,
                     "peso": float(peso),
-                    "regra_sel": "1 ativo" if len(tickers_sel) == 1 else "2 ativos",
                 }
             )
+
+    # Bloco final: líderes para o próximo ano + distribuição setorial
+    # ─────────────────────────────────────────────────────────
+    if empresas_lideres_finais:
+        st.markdown("## 📑 Empresas líderes para o próximo ano")
+        colunas_lideres = st.columns(3)
+        for idx, emp in enumerate(empresas_lideres_finais):
+            col = colunas_lideres[idx % 3]
+            col.markdown(
+                f"""
+                <div style='border: 2px solid #28a745; border-radius: 10px; padding: 12px; margin-bottom: 10px; background-color: #f0fff4; text-align: center;'>
+                    <img src="{emp['logo_url']}" width="45" />
+                    <h5 style="margin: 5px 0 0;">{emp['nome']}</h5>
+                    <p style="margin: 0; color: #666; font-size: 13px;">({emp['ticker']})</p>
+                    <p style="font-size: 12px; color: #333;">{emp.get('setor','')} &gt; {emp.get('subsetor','')} &gt; {emp.get('segmento','')}</p>
+                    <p style="font-size: 12px; color: #333;">Líder em {emp['ano_lider']}<br>Para compra em {emp['ano_compra']}</p>
+                    <p style="font-size: 12px; color: #2c3e50;">Peso sugerido: {emp.get('peso',0.0)*100:.1f}%</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("## 📊 Distribuição setorial do portfólio sugerido")
+        setores_portfolio = pd.Series([e.get('peso', 1.0) for e in empresas_lideres_finais], index=[e.get('setor','OUTROS') for e in empresas_lideres_finais]).groupby(level=0).sum().sort_values(ascending=False)
+        fig, ax = plt.subplots()
+        ax.pie(
+            setores_portfolio.values,
+            labels=setores_portfolio.index,
+            autopct="%1.1f%%",
+            startangle=90,
+            textprops={"fontsize": 10},
+        )
+        ax.axis("equal")
+        st.pyplot(fig)
+
+    # ─────────────────────────────────────────────────────────
+    # Etapa: Desempenho parcial no ano corrente (líderes do ano)
+    # ─────────────────────────────────────────────────────────
+    if empresas_lideres_finais:
+        st.markdown("## 📊 Desempenho parcial das líderes (ano atual)")
+
+        ano_corrente = datetime.now().year
+        tickers_corrente = [e["ticker"] for e in empresas_lideres_finais if int(e["ano_compra"]) == ano_corrente]
+
+        if tickers_corrente:
+            tickers_corrente_yf = [_norm_sa(tk) for tk in tickers_corrente]
+
+            precos = baixar_precos_ano_corrente(tickers_corrente_yf)
+            if precos is None or precos.empty:
+                st.warning("⚠️ Dados de preço indisponíveis para as ações escolhidas no ano atual.")
+                st.stop()
+
+            precos.index = pd.to_datetime(precos.index, errors="coerce")
+            precos = precos.dropna(how="all")
+            precos = precos.resample("B").last().ffill()
+
+            if precos.empty:
+                st.warning("⚠️ Dados de preço indisponíveis para as ações escolhidas no ano atual.")
+                st.stop()
+
+            tickers_limpos = [_strip_sa(tk) for tk in tickers_corrente_yf]
+            dividendos_dict = coletar_dividendos(tickers_corrente_yf)
+
+            datas_potenciais = pd.date_range(start=f"{ano_corrente}-01-01", end=f"{ano_corrente}-12-31", freq="MS")
+            datas_aporte: List[pd.Timestamp] = []
+            for data in datas_potenciais:
+                data_valida = encontrar_proxima_data_valida(data, precos)
+                if data_valida is not None and data_valida in precos.index:
+                    datas_aporte.append(data_valida)
+
+            patrimonio_aporte = gerir_carteira_simples(precos, tickers_limpos, datas_aporte, dividendos_dict=dividendos_dict)
+
+            # Selic benchmark (no mesmo índice do patrimônio da estratégia)
+            df_selic = calcular_patrimonio_selic_macro(dados_macro, datas_aporte)
+            if df_selic is None or df_selic.empty:
+                st.warning("⚠️ Não foi possível calcular o benchmark Selic para o período.")
+                st.stop()
+
+            df_selic = df_selic.reindex(patrimonio_aporte.index).ffill()
+
+            df_final = pd.concat(
+                [
+                    patrimonio_aporte.rename("Estratégia de Aporte"),
+                    df_selic,
+                ],
+                axis=1,
+            ).dropna()
+
+            if df_final.empty or df_final["Tesouro Selic"].isna().all():
+                st.warning("⚠️ Não foi possível construir gráfico com os dados disponíveis.")
+                st.stop()
+
+            st.markdown(f"### Comparativo de desempenho parcial em {ano_corrente}")
+            fig, ax = plt.subplots(figsize=(10, 5))
+            df_final["Estratégia de Aporte"].plot(ax=ax, label="Estratégia de Aporte")
+            df_final["Tesouro Selic"].plot(ax=ax, label="Tesouro Selic")
+            ax.set_ylabel("Valor acumulado (R$)")
+            ax.set_xlabel("Data")
+            ax.legend()
+            ax.grid(True, linestyle="--", alpha=0.5)
+            st.pyplot(fig)
+
+            valor_estrategia_final = float(df_final["Estratégia de Aporte"].iloc[-1])
+            valor_selic_final = float(df_final["Tesouro Selic"].iloc[-1])
+            desempenho = ((valor_estrategia_final / valor_selic_final) - 1) * 100.0 if valor_selic_final > 0 else 0.0
+
+            patrimonio_total_aplicado = 1000.0 * len(datas_aporte)
+            retorno_estrategia = ((valor_estrategia_final / patrimonio_total_aplicado) - 1) * 100.0 if patrimonio_total_aplicado > 0 else 0.0
+
+            if desempenho > 0:
+                cor = "green"
+                mensagem = f"A estratégia de aportes nas empresas líderes superou o Tesouro Selic em {desempenho:.2f}% no ano de {ano_corrente}."
+            else:
+                cor = "red"
+                mensagem = f"A estratégia de aportes nas empresas líderes ficou {abs(desempenho):.2f}% abaixo do Tesouro Selic no ano de {ano_corrente}."
+
+            st.markdown(
+                f"""
+                <div style="margin-top: 20px; padding: 15px; border-radius: 8px; background-color: #f9f9f9; border-left: 5px solid {cor};">
+                    <h4 style="margin: 0;">📊 Resultado Comparativo</h4>
+                    <p style="font-size: 16px; color: #333;">{mensagem}</p>
+                    <p style="font-size: 14px; color: #666;">Retorno total da estratégia sobre o capital aportado no ano: <strong>{retorno_estrategia:.2f}%</strong></p>
+                    <p style="font-size: 14px; color: #999;">Baseado nas empresas líderes selecionadas com score fundamentalista ajustado.</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
         # ─────────────────────────────────────────────────────────
     # PATCHES — Teste incremental (Patch 1, 2 e 3)
     # (Rodam APÓS a construção do portfólio; nunca rodam em import)
