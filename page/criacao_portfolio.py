@@ -66,6 +66,7 @@ except Exception:
 from core.portfolio import (
     calcular_patrimonio_selic_macro,
     gerir_carteira,
+    gerir_carteira_modulada,
     encontrar_proxima_data_valida,
     gerir_carteira_simples,
 )
@@ -209,7 +210,19 @@ def render():
         st.markdown("### ▶️ Execução")
 
         with st.form("cp_run_form", clear_on_submit=False):
-            margem_superior = st.number_input(
+            
+    # Perfil de empresa (histórico DRE) — usado no gate binário e no universo elegível
+    tipo_empresa = st.sidebar.selectbox(
+        "Perfil de empresa (histórico DRE):",
+        ["Estabelecida (≥10 anos)", "Crescimento (<10 anos)", "Todas"],
+        index=0,
+        help="Esse filtro define quais empresas entram no universo elegível e também alimenta o gate binário (n do segmento após o filtro).",
+    )
+
+    # Modo automático (binário) — policy do ajuste calibrado
+    policy_calibrada: Dict = {"mode": "heuristica_calibrada", "eps": 0.35}
+
+margem_superior = st.number_input(
                 "Margem mínima vs Tesouro Selic (%)",
                 min_value=-1000.0,
                 max_value=10000.0,
@@ -328,10 +341,17 @@ def render():
         if len(set(tickers_segmento)) <= 1:
             continue
 
-        # filtro de histórico mínimo (>=10 anos)
-        tickers_validos = _filtrar_tickers_com_min_anos(tickers_segmento, min_anos=10, max_workers=12)
+        # filtro de histórico (tipo) — e gate binário (n após filtro)
+        tickers_validos, years_map = _filtrar_tickers_por_tipo(
+            tickers_segmento,
+            tipo=tipo_empresa,
+            max_workers=12,
+        )
         if len(tickers_validos) <= 1:
             continue
+
+        n_total_segmento = int(len(set(tickers_validos)))  # tamanho do segmento APÓS filtro de histórico (tipo)
+        usar_calibrado = n_total_segmento >= 5
 
         tickers_validos_set = set(tickers_validos)
         empresas_validas = empresas_segmento[
@@ -340,8 +360,7 @@ def render():
 
         if empresas_validas.empty or len(empresas_validas) <= 1:
             continue
-
-        # carrega dados completos (multiplos + dre) em paralelo
+# carrega dados completos (multiplos + dre) em paralelo
         lista_empresas: List[EmpresaCarregada] = []
         rows = empresas_validas.to_dict("records")
 
@@ -414,6 +433,14 @@ def render():
         dividendos = coletar_dividendos(tickers_score_yf)
 
         lideres = determinar_lideres(score)
+        # Info (discreto) sobre o modo aplicado neste segmento
+        try:
+            st.sidebar.caption(
+                f"{setor} > {subsetor} > {segmento} | modo: {'calibrado' if usar_calibrado else 'padrão'} | n={n_total_segmento}"
+            )
+        except Exception:
+            pass
+
         if lideres is None or lideres.empty:
             continue
         # ── Acumula score e líderes para os patches (sem rede)
@@ -432,7 +459,17 @@ def render():
         except Exception:
             pass
 
-        patrimonio_empresas, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
+        # Executa backtest com gate binário (n pós filtro de histórico)
+        if usar_calibrado:
+            patrimonio_empresas, datas_aportes = gerir_carteira_modulada(
+                precos,
+                score,
+                lideres,
+                dividendos,
+                policy=policy_calibrada,
+            )
+        else:
+            patrimonio_empresas, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
         if patrimonio_empresas is None or patrimonio_empresas.empty:
             continue
 
@@ -720,3 +757,43 @@ def render():
     st.session_state["cp_should_run"] = False
 
     st.markdown("<hr>", unsafe_allow_html=True)
+
+def _filtrar_tickers_por_tipo(
+    tickers: List[str],
+    tipo: str,
+    max_workers: int = 12,
+) -> Tuple[List[str], Dict[str, int]]:
+    """Filtra tickers conforme o 'Perfil de empresa (histórico DRE)'.
+
+    Retorna (tickers_filtrados, years_map).
+    - Crescimento (<10 anos): 0 < anos < 10
+    - Estabelecida (≥10 anos): anos >= 10
+    - Todas: anos > 0
+    """
+    tickers_u = sorted({(_strip_sa(t) or "") for t in (tickers or []) if _strip_sa(t)})
+    if not tickers_u:
+        return [], {}
+
+    years_map: Dict[str, int] = {}
+
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futs = {ex.submit(_safe_year_count_from_dre, tk): tk for tk in tickers_u}
+        for fut in as_completed(futs):
+            tk = futs[fut]
+            try:
+                n = fut.result()
+                years_map[tk] = int(n) if n is not None else 0
+            except Exception:
+                years_map[tk] = 0
+
+    def _pass_tipo(tk: str) -> bool:
+        n = years_map.get(tk, 0)
+        if tipo == "Crescimento (<10 anos)":
+            return (n < 10) and (n > 0)
+        if tipo == "Estabelecida (≥10 anos)":
+            return n >= 10
+        return n > 0
+
+    filtrados = [tk for tk in tickers_u if _pass_tipo(tk)]
+    return filtrados, years_map
+
