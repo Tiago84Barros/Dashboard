@@ -221,7 +221,7 @@ def render():
     # CONTROLES DE EXECUÇÃO (não roda sozinho)
     # ─────────────────────────────────────────────────────────────
     if "cp_last_params" not in st.session_state:
-        st.session_state["cp_last_params"] = {"margem_superior": 10.0, "use_score_v2": False, "tipo_empresa": "Estabelecida (≥10 anos)", "lideres_por_segmento": 1}
+        st.session_state["cp_last_params"] = {"margem_superior": 10.0, "use_score_v2": False, "tipo_empresa": "Estabelecida (≥10 anos)"}
     if "cp_should_run" not in st.session_state:
         st.session_state["cp_should_run"] = False
 
@@ -253,22 +253,13 @@ def render():
                 ),
             )
 
-            lideres_por_segmento = st.slider(
-                "Líderes por segmento",
-                min_value=1,
-                max_value=5,
-                value=int(st.session_state["cp_last_params"].get("lideres_por_segmento", 1)),
-            )
-
             gerar = st.form_submit_button("🚀 Rodar Criação de Portfólio")
 
         if gerar:
             st.session_state["cp_last_params"] = {
                 "margem_superior": float(margem_superior),
                 "use_score_v2": bool(use_score_v2),
-                "tipo_empresa": str(tipo_empresa),
-                "lideres_por_segmento": int(lideres_por_segmento),
-            }
+                "tipo_empresa": str(tipo_empresa),            }
             st.session_state["cp_should_run"] = True
 
     if not st.session_state["cp_should_run"]:
@@ -279,7 +270,6 @@ def render():
     margem_superior = float(st.session_state["cp_last_params"]["margem_superior"])
     use_score_v2 = bool(st.session_state["cp_last_params"]["use_score_v2"])
     tipo_empresa = str(st.session_state["cp_last_params"].get("tipo_empresa", "Estabelecida (≥10 anos)"))
-    lideres_por_segmento = int(st.session_state["cp_last_params"].get("lideres_por_segmento", 1))
 
     # policy calibrada do modo "Ajuste Calibrado" (auto-tuning)
     policy_calibrada = {"mode": "heuristica_calibrada", "eps": 0.35}
@@ -522,27 +512,63 @@ def render():
                 unsafe_allow_html=True,
             )
 
-                # ── PLANO B: seleciona as maiores participações no último ponto do backtest
-        # (apenas entre os ativos presentes na estratégia do segmento)
+                
+        # ── Seleção automática (regra nova)
+        # 1) Se a líder do último ano também for a maior participação -> entra só ela
+        # 2) Caso contrário -> entra líder do último ano + maior participação
         ultimo_ano = int(pd.to_numeric(score["Ano"], errors="coerce").max())
-        last_row = patrimonio_empresas.iloc[-1].drop("Patrimônio", errors="ignore").dropna()
-        top_cols = (
-            last_row.sort_values(ascending=False)
-            .head(int(lideres_por_segmento))
-        )
 
-        for ticker_col, valor_final in top_cols.items():
-            tk = _strip_sa(str(ticker_col))
+        _lideres_ultimo = lideres[pd.to_numeric(lideres["Ano"], errors="coerce") == ultimo_ano]["ticker"].astype(str).tolist()
+        ticker_lider_ultimo = _strip_sa(_lideres_ultimo[0]) if _lideres_ultimo else ""
+
+        last_row = patrimonio_empresas.iloc[-1].drop("Patrimônio", errors="ignore").dropna()
+        # remove colunas que não sejam ativos (se existirem)
+        last_row = last_row.drop(labels=["Tesouro Selic", "Selic", "Benchmark"], errors="ignore")
+
+        if last_row is None or last_row.empty:
+            continue
+
+        ticker_maior_part = _strip_sa(str(last_row.sort_values(ascending=False).index[0]))
+
+        if not ticker_lider_ultimo:
+            ticker_lider_ultimo = ticker_maior_part
+
+        if ticker_lider_ultimo == ticker_maior_part:
+            escolhidos = [ticker_lider_ultimo]
+        else:
+            escolhidos = [ticker_lider_ultimo, ticker_maior_part]
+
+        # Pesos proporcionais pela participação final no último período do backtest
+        valores_sel: List[float] = []
+        cols_sel: List[str] = []
+        for tk_sel in escolhidos:
+            col_match = None
+            for col in last_row.index:
+                if _strip_sa(str(col)) == tk_sel:
+                    col_match = str(col)
+                    break
+            cols_sel.append(col_match or tk_sel)
+            valores_sel.append(float(last_row.get(col_match, 0.0)) if col_match is not None else 0.0)
+
+        total_sel = float(np.nansum(valores_sel)) if valores_sel else 0.0
+
+        for tk_sel, v_final in zip(escolhidos, valores_sel):
+            peso_pct = (v_final / total_sel * 100.0) if total_sel > 0 else (100.0 / max(1, len(escolhidos)))
+
             empresas_lideres_finais.append(
                 {
-                    "ticker": tk,
-                    "nome": next((e.nome for e in lista_empresas if _strip_sa(e.ticker) == tk), tk),
-                    "logo_url": get_logo_url(tk),
+                    "ticker": tk_sel,
+                    "nome": next((e.nome for e in lista_empresas if _strip_sa(e.ticker) == tk_sel), tk_sel),
+                    "logo_url": get_logo_url(tk_sel),
                     "ano_lider": int(ultimo_ano),
                     "ano_compra": int(ultimo_ano) + 1,
+                    "peso_pct": float(peso_pct),
                     "setor": setor,
+                    "subsetor": subsetor,
+                    "segmento": segmento,
                 }
             )
+
 
     # ─────────────────────────────────────────────────────────
     # Bloco final: líderes para o próximo ano + distribuição setorial
@@ -558,7 +584,7 @@ def render():
                     <img src="{emp['logo_url']}" width="45" />
                     <h5 style="margin: 5px 0 0;">{emp['nome']}</h5>
                     <p style="margin: 0; color: #666; font-size: 13px;">({emp['ticker']})</p>
-                    <p style="font-size: 12px; color: #333;">Líder em {emp['ano_lider']}<br>Para compra em {emp['ano_compra']}</p>
+                    <p style="font-size: 12px; color: #333;">Líder em {emp['ano_lider']}<br>Para compra em {emp['ano_compra']}<br>Peso sugerido: {emp.get('peso_pct', 0.0):.1f}%<br>{emp.get('setor', '')} &gt; {emp.get('subsetor', '')} &gt; {emp.get('segmento', '')}</p>
                 </div>
                 """,
                 unsafe_allow_html=True,
