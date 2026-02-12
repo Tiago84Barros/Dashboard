@@ -12,6 +12,8 @@ import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 
+import yfinance as yf
+
 
 # ─────────────────────────────────────────────────────────────
 # Helpers internos
@@ -509,6 +511,247 @@ def render_patch4_benchmark_segmento(
             ax.grid(True, linestyle="--", alpha=0.4)
             st.pyplot(fig)
 
+
+
+# ─────────────────────────────────────────────────────────────
+# PATCH 5 — Desempenho das empresas (Preço/DY via yfinance + Lucro via DB)
+# ─────────────────────────────────────────────────────────────
+
+@st.cache_data(show_spinner=False, ttl=60 * 60)
+def _yf_fetch_history(ticker: str, period: str = "5y") -> pd.DataFrame:
+    tk = ticker if ticker.endswith(".SA") else f"{ticker}.SA"
+    try:
+        df = yf.Ticker(tk).history(period=period, auto_adjust=False)
+        if df is None:
+            return pd.DataFrame()
+        df = df.copy()
+        df.index = pd.to_datetime(df.index, errors="coerce")
+        df = df[~df.index.isna()].sort_index()
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(show_spinner=False, ttl=60 * 60)
+def _yf_fetch_dividends(ticker: str) -> pd.Series:
+    tk = ticker if ticker.endswith(".SA") else f"{ticker}.SA"
+    try:
+        s = yf.Ticker(tk).dividends
+        if s is None:
+            return pd.Series(dtype=float)
+        s = pd.to_numeric(s, errors="coerce").dropna()
+        s.index = pd.to_datetime(s.index, errors="coerce")
+        s = s[~s.index.isna()].sort_index()
+        return s
+    except Exception:
+        return pd.Series(dtype=float)
+
+
+@st.cache_data(show_spinner=False, ttl=6 * 60 * 60)
+def _db_fetch_lucro_liquido_ano(ticker: str) -> pd.Series:
+    """Retorna série (ano -> Lucro_Liquido) da tabela Demonstracoes_Financeiras."""
+    try:
+        from core.db_loader import load_data_from_db  # type: ignore
+    except Exception:
+        return pd.Series(dtype=float)
+
+    df = load_data_from_db(ticker)  # pode retornar None
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.Series(dtype=float)
+
+    if "Data" not in df.columns or "Lucro_Liquido" not in df.columns:
+        return pd.Series(dtype=float)
+
+    dfx = df.copy()
+    dfx["Data"] = pd.to_datetime(dfx["Data"], errors="coerce")
+    dfx = dfx.dropna(subset=["Data"])
+    if dfx.empty:
+        return pd.Series(dtype=float)
+
+    dfx["Ano"] = dfx["Data"].dt.year.astype(int)
+    dfx["Lucro_Liquido"] = pd.to_numeric(dfx["Lucro_Liquido"], errors="coerce")
+    dfx = dfx.dropna(subset=["Lucro_Liquido"])
+
+    # DFP anual costuma ter 1 linha por ano; usamos o último registro do ano (maior Data)
+    dfx = dfx.sort_values(["Ano", "Data"])
+    s = dfx.groupby("Ano")["Lucro_Liquido"].last()
+    s = pd.to_numeric(s, errors="coerce").dropna()
+    return s
+
+
+def _cagr(v0: float, v1: float, years: float) -> Optional[float]:
+    try:
+        if years <= 0:
+            return None
+        if v0 <= 0 or v1 <= 0:
+            return None
+        return (v1 / v0) ** (1.0 / years) - 1.0
+    except Exception:
+        return None
+
+
+def _max_drawdown(prices: pd.Series) -> Optional[float]:
+    try:
+        s = pd.to_numeric(prices, errors="coerce").dropna()
+        if s.empty:
+            return None
+        roll_max = s.cummax()
+        dd = (s / roll_max) - 1.0
+        return float(dd.min())
+    except Exception:
+        return None
+
+
+def render_patch5_desempenho_empresas(
+    empresas_lideres_finais: List[Dict],
+) -> None:
+    """Mostra métricas por empresa: volatilidade, DY médio 5a, crescimento de lucros, retorno e drawdown."""
+    st.markdown("## 🧩 Patch 5 — Desempenho das Empresas (Preço/DY + Lucros)")
+    st.caption(
+        "Preço e dividendos via yfinance. Lucro Líquido via tabela Demonstracoes_Financeiras (coluna Lucro_Liquido). "
+        "Métricas são aproximadas e dependem da disponibilidade de dados."
+    )
+
+    if not empresas_lideres_finais:
+        st.info("Sem empresas selecionadas para analisar neste patch.")
+        return
+
+    # CSS cards no estilo do dashboard (blocos)
+    st.markdown(
+        """
+        <style>
+        .cp5-card{
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.18);
+            border-radius: 18px;
+            padding: 16px 16px 14px 16px;
+            margin: 10px 0 14px 0;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+        }
+        .cp5-title{font-size: 18px; font-weight: 700; margin: 0 0 4px 0; color: #EAF0FF;}
+        .cp5-sub{font-size: 12px; color: rgba(234,240,255,0.75); margin: 0 0 10px 0;}
+        .cp5-grid{display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px;}
+        .cp5-kv{padding: 8px 10px; border-radius: 12px; background: rgba(0,0,0,0.18); border: 1px solid rgba(255,255,255,0.10);}
+        .cp5-k{font-size: 11px; color: rgba(234,240,255,0.70); margin: 0;}
+        .cp5-v{font-size: 15px; font-weight: 700; color: #FFFFFF; margin: 0;}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Ordena por peso (se existir) para refletir relevância na carteira
+    emp_sorted = sorted(empresas_lideres_finais, key=lambda e: float(e.get("peso", 0.0) or 0.0), reverse=True)
+
+    for emp in emp_sorted:
+        tk = _strip_sa(str(emp.get("ticker", "")))
+        nome = str(emp.get("nome") or tk).strip()
+        seg = f"{emp.get('setor','')} > {emp.get('subsetor','')} > {emp.get('segmento','')}"
+        peso = _safe_float(emp.get("peso"))
+        peso_txt = f"{(peso*100):.1f}%" if peso is not None else "—"
+
+        hist = _yf_fetch_history(tk, period="5y")
+        divs = _yf_fetch_dividends(tk)
+
+        # Preço
+        if not hist.empty and "Close" in hist.columns:
+            close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+        else:
+            close = pd.Series(dtype=float)
+
+        # Retornos diários
+        if not close.empty and close.shape[0] > 20:
+            rets = close.pct_change().dropna()
+            vol = float(rets.std() * np.sqrt(252)) if not rets.empty else None
+            mdd = _max_drawdown(close)
+            # 12m
+            try:
+                d_12m = close.index.max() - pd.Timedelta(days=365)
+                c_12m = close.loc[close.index >= d_12m]
+                ret12 = float(c_12m.iloc[-1] / c_12m.iloc[0] - 1.0) if c_12m.shape[0] >= 2 else None
+            except Exception:
+                ret12 = None
+            # CAGR 5a (usa primeiras/últimas observações do período retornado)
+            try:
+                years = max(1e-6, (close.index.max() - close.index.min()).days / 365.25)
+                cagr5 = _cagr(float(close.iloc[0]), float(close.iloc[-1]), years)
+            except Exception:
+                cagr5 = None
+        else:
+            vol = None
+            mdd = None
+            ret12 = None
+            cagr5 = None
+
+        # DY médio 5a
+        dy_mean = None
+        try:
+            if not divs.empty and not close.empty:
+                div_year = divs.groupby(divs.index.year).sum()
+                # preço médio anual pelo Close
+                px_year = close.groupby(close.index.year).mean()
+                years = sorted(set(div_year.index).intersection(set(px_year.index)))
+                # pega últimos 5 anos disponíveis
+                years = years[-5:]
+                if years:
+                    dy_year = (div_year.reindex(years) / px_year.reindex(years)).replace([np.inf, -np.inf], np.nan).dropna()
+                    if not dy_year.empty:
+                        dy_mean = float(dy_year.mean())
+        except Exception:
+            dy_mean = None
+
+        # Lucro (CAGR 5a)
+        lucro_cagr = None
+        lucro_ult = None
+        try:
+            luc = _db_fetch_lucro_liquido_ano(tk)
+            if not luc.empty:
+                luc = luc.sort_index()
+                luc_last5 = luc.tail(5)
+                lucro_ult = float(luc_last5.iloc[-1])
+                if luc_last5.shape[0] >= 2:
+                    years = float(luc_last5.index.max() - luc_last5.index.min())
+                    lucro_cagr = _cagr(float(luc_last5.iloc[0]), float(luc_last5.iloc[-1]), max(1.0, years))
+        except Exception:
+            lucro_cagr = None
+            lucro_ult = None
+
+        def fmt_pct(v: Optional[float]) -> str:
+            if v is None or pd.isna(v):
+                return "N/D"
+            return f"{v*100:.1f}%"
+
+        def fmt_money(v: Optional[float]) -> str:
+            if v is None or pd.isna(v):
+                return "N/D"
+            # formato curto
+            abs_v = abs(v)
+            if abs_v >= 1e9:
+                return f"R$ {v/1e9:.2f} bi"
+            if abs_v >= 1e6:
+                return f"R$ {v/1e6:.2f} mi"
+            if abs_v >= 1e3:
+                return f"R$ {v/1e3:.2f} mil"
+            return f"R$ {v:.2f}"
+
+        html = f"""
+        <div class="cp5-card">
+            <div class="cp5-title">{nome} ({tk})</div>
+            <div class="cp5-sub">{seg} • Peso sugerido: <b>{peso_txt}</b></div>
+            <div class="cp5-grid">
+                <div class="cp5-kv"><p class="cp5-k">Volatilidade (5a, anual)</p><p class="cp5-v">{fmt_pct(vol)}</p></div>
+                <div class="cp5-kv"><p class="cp5-k">Max Drawdown (5a)</p><p class="cp5-v">{fmt_pct(mdd)}</p></div>
+                <div class="cp5-kv"><p class="cp5-k">Retorno 12m (preço)</p><p class="cp5-v">{fmt_pct(ret12)}</p></div>
+                <div class="cp5-kv"><p class="cp5-k">CAGR (preço, janela)</p><p class="cp5-v">{fmt_pct(cagr5)}</p></div>
+                <div class="cp5-kv"><p class="cp5-k">DY médio (últ. 5 anos)</p><p class="cp5-v">{fmt_pct(dy_mean)}</p></div>
+                <div class="cp5-kv"><p class="cp5-k">CAGR Lucro (últ. 5 anos)</p><p class="cp5-v">{fmt_pct(lucro_cagr)}</p></div>
+                <div class="cp5-kv"><p class="cp5-k">Lucro Líquido (últ. ano)</p><p class="cp5-v">{fmt_money(lucro_ult)}</p></div>
+                <div class="cp5-kv"><p class="cp5-k">Fonte</p><p class="cp5-v">yfinance + Supabase</p></div>
+            </div>
+        </div>
+        """
+        st.markdown(html, unsafe_allow_html=True)
+
+    st.caption("Notas: retornos e volatilidade são por preço (sem reinvestimento). DY é aproximado por dividendos/Preço médio anual.")
 
 # ─────────────────────────────────────────────────────────────
 # PATCH 5 — IA (OpenAI) — Seleção/validação amigável (era Patch 6)
