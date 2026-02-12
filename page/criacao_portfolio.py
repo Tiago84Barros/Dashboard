@@ -237,8 +237,8 @@ def render():
             # Perfil de empresa (histórico DRE) — usado no gate binário e no universo elegível
             tipo_empresa = st.selectbox(
                 "Perfil de empresa (histórico DRE):",
-                key="cp_tipo_empresa",
                 ["Estabelecida (≥10 anos)", "Crescimento (<10 anos)", "Todas"],
+                key="cp_tipo_empresa",
                 index=["Estabelecida (≥10 anos)", "Crescimento (<10 anos)", "Todas"].index(
                     st.session_state["cp_last_params"].get("tipo_empresa", "Estabelecida (≥10 anos)")
                 ),
