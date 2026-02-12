@@ -222,7 +222,7 @@ def render():
     # CONTROLES DE EXECUÇÃO (não roda sozinho)
     # ─────────────────────────────────────────────────────────────
     if "cp_last_params" not in st.session_state:
-        st.session_state["cp_last_params"] = {"margem_superior": 10.0, "use_score_v2": False, "tipo_empresa": "Estabelecida (≥10 anos)", }
+        st.session_state["cp_last_params"] = {"margem_superior": 10.0, "use_score_v2": False, "tipo_empresa": "Estabelecida (≥10 anos)", "lideres_por_segmento": 1}
     if "cp_should_run" not in st.session_state:
         st.session_state["cp_should_run"] = False
 
@@ -259,8 +259,7 @@ def render():
             st.session_state["cp_last_params"] = {
                 "margem_superior": float(margem_superior),
                 "use_score_v2": bool(use_score_v2),
-                "tipo_empresa": str(tipo_empresa),
-                }
+                "tipo_empresa": str(tipo_empresa),            }
             st.session_state["cp_should_run"] = True
 
     if not st.session_state["cp_should_run"]:
@@ -513,85 +512,63 @@ def render():
             )
 
                 # ── Seleção automática (Líder do último ano + Maior participação)
-
                 # Regra:
-
                 # 1) Se líder do último ano == maior participação → entra apenas 1
-
                 # 2) Se diferente → entram 2 (líder do último ano e maior participação)
-
                 ultimo_ano = int(pd.to_numeric(score["Ano"], errors="coerce").max())
-
                 try:
-
                     lideres_ano = lideres[pd.to_numeric(lideres["Ano"], errors="coerce") == ultimo_ano]
-
                     ticker_lider_ultimo = _strip_sa(str(lideres_ano.iloc[0]["ticker"]))
-
                 except Exception:
-
                     ticker_lider_ultimo = _strip_sa(str(lideres.iloc[0]["ticker"]))
-
                 
-
                 last_row = patrimonio_empresas.iloc[-1].drop("Patrimônio", errors="ignore").dropna()
-
                 ticker_maior_part = _strip_sa(str(last_row.sort_values(ascending=False).index[0]))
-
                 
-
                 tickers_sel = [ticker_lider_ultimo] if ticker_lider_ultimo == ticker_maior_part else [ticker_lider_ultimo, ticker_maior_part]
-
-                # preserva ordem e remove duplicatas
-
                 tickers_sel = list(dict.fromkeys([t for t in tickers_sel if t]))
-
                 
-
-                valores_sel = [float(last_row.get(t + ".SA", last_row.get(t, np.nan))) for t in tickers_sel]
-
+                def _value_for(tk: str) -> float:
+                    if tk in last_row.index:
+                        return float(last_row[tk])
+                    if (tk + ".SA") in last_row.index:
+                        return float(last_row[tk + ".SA"])
+                    return float("nan")
+                
+                valores_sel = [_value_for(t) for t in tickers_sel]
                 total_sel = float(np.nansum(valores_sel)) if valores_sel else 0.0
-
                 
-
                 for tk in tickers_sel:
-
-                    # tenta encontrar a coluna no DF de patrimônio (pode estar com .SA ou sem)
-
-                    colname = tk if tk in last_row.index else (tk + ".SA" if (tk + ".SA") in last_row.index else None)
-
-                    v = float(last_row[colname]) if colname else 0.0
-
-                    peso = (v / total_sel) if total_sel > 0 else 0.0
-
+                    v = _value_for(tk)
+                    peso = (v / total_sel) if total_sel > 0 and pd.notna(v) else 0.0
                     empresas_lideres_finais.append(
-
                         {
-
                             "ticker": tk,
-
                             "nome": next((e.nome for e in lista_empresas if _strip_sa(e.ticker) == tk), tk),
-
                             "logo_url": get_logo_url(tk),
-
                             "ano_lider": int(ultimo_ano),
-
                             "ano_compra": int(ultimo_ano) + 1,
-
                             "setor": setor,
-
                             "subsetor": subsetor,
-
                             "segmento": segmento,
-
                             "peso": float(peso),
-
                             "regra_sel": "1 ativo" if len(tickers_sel)==1 else "2 ativos",
-
                         }
-
                     )
 
+
+        for ticker_col, valor_final in top_cols.items():
+            tk = _strip_sa(str(ticker_col))
+            empresas_lideres_finais.append(
+                {
+                    "ticker": tk,
+                    "nome": next((e.nome for e in lista_empresas if _strip_sa(e.ticker) == tk), tk),
+                    "logo_url": get_logo_url(tk),
+                    "ano_lider": int(ultimo_ano),
+                    "ano_compra": int(ultimo_ano) + 1,
+                    "setor": setor,
+                }
+            )
 
     # ─────────────────────────────────────────────────────────
     # Bloco final: líderes para o próximo ano + distribuição setorial
