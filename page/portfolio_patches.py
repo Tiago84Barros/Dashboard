@@ -15,10 +15,6 @@ import matplotlib.pyplot as plt
 import yfinance as yf
 
 
-def _escape_html(s: str) -> str:
-    return (s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
-
-
 # ─────────────────────────────────────────────────────────────
 # Helpers internos
 # ─────────────────────────────────────────────────────────────
@@ -608,220 +604,154 @@ def _max_drawdown(prices: pd.Series) -> Optional[float]:
 
 def render_patch5_desempenho_empresas(
     empresas_lideres_finais: List[Dict],
-    aplicar_filtro: bool = True,
-    cfg: Optional[Dict[str, float]] = None,
-) -> Dict[str, object]:
-    """Patch 5 como filtro quantitativo (Preço/DY via yfinance + Lucro via DB)."""
-    st.markdown("## 🧩 Patch 5 — Filtro Quantitativo (Dividendos + Robustez)")
+) -> None:
+    """Mostra métricas por empresa: volatilidade, DY médio 5a, crescimento de lucros, retorno e drawdown."""
+    st.markdown("## 🧩 Patch 5 — Desempenho das Empresas (Preço/DY + Lucros)")
     st.caption(
-        "Preço e dividendos via yfinance. Lucro Líquido via Demonstracoes_Financeiras (Lucro_Liquido). "
-        "Com o filtro ativo, somente empresas aprovadas seguem para a carteira final."
+        "Preço e dividendos via yfinance. Lucro Líquido via tabela Demonstracoes_Financeiras (coluna Lucro_Liquido). "
+        "Métricas são aproximadas e dependem da disponibilidade de dados."
     )
 
     if not empresas_lideres_finais:
         st.info("Sem empresas selecionadas para analisar neste patch.")
-        return {"aprovadas": [], "reprovadas": [], "cfg": cfg or {}}
+        return
 
-    # Defaults (você pode ajustar no próprio patch)
-    defaults = {
-        "vol_max": 0.45,
-        "mdd_min": -0.55,
-        "dy_min": 0.06,
-        "dy_min_years": 3,
-        "lucro_ultimo_min": 0.0,
-        "cagr_lucro_min": 0.00,
-        "usar_cv_dy": 0.0,
-        "cv_dy_max": 1.00,
-    }
-    cfg = cfg or {}
-    cfgx = {**defaults, **{k: v for k, v in cfg.items() if v is not None}}
-
-    # Controles do filtro (sem poluir sidebar)
-    with st.container():
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            aplicar_filtro = st.checkbox("Ativar filtro Patch 5", value=bool(aplicar_filtro), key="cp_p5_on")
-            vol_max = st.number_input("Volatilidade máx (a.a.)", 0.05, 2.0, float(cfgx["vol_max"]), 0.05, format="%.2f", key="cp_p5_vol")
-            mdd_min = st.number_input("Drawdown mín (ex: -0.55)", -0.99, -0.05, float(cfgx["mdd_min"]), 0.05, format="%.2f", key="cp_p5_mdd")
-        with c2:
-            dy_min = st.number_input("DY médio mín (5 anos)", 0.0, 0.5, float(cfgx["dy_min"]), 0.01, format="%.2f", key="cp_p5_dy")
-            dy_min_years = st.number_input("Anos com dividendos (de 5)", 0, 5, int(cfgx["dy_min_years"]), 1, key="cp_p5_dy_years")
-            usar_cv = st.checkbox("Exigir estabilidade do DY (CV)", value=bool(cfgx["usar_cv_dy"] >= 0.5), key="cp_p5_cv_on")
-        with c3:
-            cagr_lucro_min = st.number_input("CAGR Lucro mín (5 anos)", -1.0, 2.0, float(cfgx["cagr_lucro_min"]), 0.05, format="%.2f", key="cp_p5_cagr_lucro")
-            lucro_ult_min = st.number_input("Lucro último ano mín", -1e12, 1e12, float(cfgx["lucro_ultimo_min"]), 1e6, format="%.0f", key="cp_p5_lucro_ult")
-            cv_dy_max = st.number_input("CV máx DY anual", 0.1, 5.0, float(cfgx["cv_dy_max"]), 0.1, format="%.2f", key="cp_p5_cv")
-
-    cfgx.update({
-        "vol_max": float(vol_max),
-        "mdd_min": float(mdd_min),
-        "dy_min": float(dy_min),
-        "dy_min_years": int(dy_min_years),
-        "cagr_lucro_min": float(cagr_lucro_min),
-        "lucro_ultimo_min": float(lucro_ult_min),
-        "usar_cv_dy": 1.0 if usar_cv else 0.0,
-        "cv_dy_max": float(cv_dy_max),
-    })
-
-    # CSS cards
+    # CSS cards no estilo do dashboard (blocos)
     st.markdown(
         """
         <style>
-        .cp5-card{background: rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.18);
-            border-radius:18px; padding:16px; margin:10px 0 14px 0; box-shadow:0 10px 30px rgba(0,0,0,0.25);}
-        .cp5-title{font-size:18px; font-weight:800; margin:0 0 2px 0; color:#EAF0FF;}
-        .cp5-sub{font-size:12px; color:rgba(234,240,255,0.75); margin:0 0 10px 0;}
-        .cp5-badge-ok{display:inline-block; padding:4px 10px; border-radius:999px; background:rgba(0,180,120,0.25);
-            border:1px solid rgba(0,180,120,0.45); color:#CFFFEA; font-weight:800; font-size:11px;}
-        .cp5-badge-no{display:inline-block; padding:4px 10px; border-radius:999px; background:rgba(220,80,80,0.25);
-            border:1px solid rgba(220,80,80,0.45); color:#FFE0E0; font-weight:800; font-size:11px;}
-        .cp5-grid{display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px 12px;}
-        .cp5-kv{padding:8px 10px; border-radius:12px; background:rgba(0,0,0,0.18); border:1px solid rgba(255,255,255,0.10);}
-        .cp5-k{font-size:11px; color:rgba(234,240,255,0.70); margin:0;}
-        .cp5-v{font-size:15px; font-weight:800; color:#FFFFFF; margin:0;}
-        .cp5-mot{margin-top:10px; font-size:12px; color:rgba(255,255,255,0.85);}
-        .cp5-mot ul{margin:6px 0 0 16px;}
+        .cp5-card{
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.18);
+            border-radius: 18px;
+            padding: 16px 16px 14px 16px;
+            margin: 10px 0 14px 0;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+        }
+        .cp5-title{font-size: 18px; font-weight: 700; margin: 0 0 4px 0; color: #EAF0FF;}
+        .cp5-sub{font-size: 12px; color: rgba(234,240,255,0.75); margin: 0 0 10px 0;}
+        .cp5-grid{display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px;}
+        .cp5-kv{padding: 8px 10px; border-radius: 12px; background: rgba(0,0,0,0.18); border: 1px solid rgba(255,255,255,0.10);}
+        .cp5-k{font-size: 11px; color: rgba(234,240,255,0.70); margin: 0;}
+        .cp5-v{font-size: 15px; font-weight: 700; color: #FFFFFF; margin: 0;}
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    def fmt_pct(v):
-        if v is None or pd.isna(v):
-            return "N/D"
-        return f"{v*100:.1f}%"
-
-    def fmt_money(v):
-        if v is None or pd.isna(v):
-            return "N/D"
-        v = float(v)
-        a = abs(v)
-        if a >= 1e9: return f"R$ {v/1e9:.2f} bi"
-        if a >= 1e6: return f"R$ {v/1e6:.2f} mi"
-        if a >= 1e3: return f"R$ {v/1e3:.2f} mil"
-        return f"R$ {v:.2f}"
-
-    def dy_stats(divs: pd.Series, close: pd.Series):
-        if divs.empty or close.empty:
-            return None, 0, None
-        div_year = divs.groupby(divs.index.year).sum()
-        px_year = close.groupby(close.index.year).mean()
-        years = sorted(set(div_year.index).intersection(set(px_year.index)))[-5:]
-        if not years:
-            return None, 0, None
-        dy_year = (div_year.reindex(years) / px_year.reindex(years)).replace([np.inf, -np.inf], np.nan).dropna()
-        if dy_year.empty:
-            return None, 0, None
-        dy_mean = float(dy_year.mean())
-        years_paid = int((dy_year > 0).sum())
-        cv = float(dy_year.std() / abs(dy_year.mean())) if dy_year.shape[0] >= 2 and dy_year.mean() != 0 else None
-        return dy_mean, years_paid, cv
-
+    # Ordena por peso (se existir) para refletir relevância na carteira
     emp_sorted = sorted(empresas_lideres_finais, key=lambda e: float(e.get("peso", 0.0) or 0.0), reverse=True)
-    aprovadas, reprovadas = [], []
 
     for emp in emp_sorted:
         tk = _strip_sa(str(emp.get("ticker", "")))
         nome = str(emp.get("nome") or tk).strip()
         seg = f"{emp.get('setor','')} > {emp.get('subsetor','')} > {emp.get('segmento','')}"
         peso = _safe_float(emp.get("peso"))
-        peso_txt = f"{peso*100:.1f}%" if peso is not None else "—"
+        peso_txt = f"{(peso*100):.1f}%" if peso is not None else "—"
 
         hist = _yf_fetch_history(tk, period="5y")
         divs = _yf_fetch_dividends(tk)
-        close = pd.to_numeric(hist["Close"], errors="coerce").dropna() if (not hist.empty and "Close" in hist.columns) else pd.Series(dtype=float)
 
-        vol = mdd = ret12 = cagrp = None
-        if close.shape[0] > 40:
+        # Preço
+        if not hist.empty and "Close" in hist.columns:
+            close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+        else:
+            close = pd.Series(dtype=float)
+
+        # Retornos diários
+        if not close.empty and close.shape[0] > 20:
             rets = close.pct_change().dropna()
             vol = float(rets.std() * np.sqrt(252)) if not rets.empty else None
             mdd = _max_drawdown(close)
+            # 12m
             try:
                 d_12m = close.index.max() - pd.Timedelta(days=365)
                 c_12m = close.loc[close.index >= d_12m]
                 ret12 = float(c_12m.iloc[-1] / c_12m.iloc[0] - 1.0) if c_12m.shape[0] >= 2 else None
             except Exception:
                 ret12 = None
+            # CAGR 5a (usa primeiras/últimas observações do período retornado)
             try:
                 years = max(1e-6, (close.index.max() - close.index.min()).days / 365.25)
-                cagrp = _cagr(float(close.iloc[0]), float(close.iloc[-1]), years)
+                cagr5 = _cagr(float(close.iloc[0]), float(close.iloc[-1]), years)
             except Exception:
-                cagrp = None
+                cagr5 = None
+        else:
+            vol = None
+            mdd = None
+            ret12 = None
+            cagr5 = None
 
-        dy_mean, dy_years, dy_cv = dy_stats(divs, close)
-
-        lucro_cagr = lucro_ult = None
+        # DY médio 5a
+        dy_mean = None
         try:
-            luc = _db_fetch_lucro_liquido_ano(tk).sort_index()
-            if not luc.empty:
-                luc5 = luc.tail(5)
-                lucro_ult = float(luc5.iloc[-1])
-                if luc5.shape[0] >= 2:
-                    yrs = float(luc5.index.max() - luc5.index.min())
-                    lucro_cagr = _cagr(float(luc5.iloc[0]), float(luc5.iloc[-1]), max(1.0, yrs))
+            if not divs.empty and not close.empty:
+                div_year = divs.groupby(divs.index.year).sum()
+                # preço médio anual pelo Close
+                px_year = close.groupby(close.index.year).mean()
+                years = sorted(set(div_year.index).intersection(set(px_year.index)))
+                # pega últimos 5 anos disponíveis
+                years = years[-5:]
+                if years:
+                    dy_year = (div_year.reindex(years) / px_year.reindex(years)).replace([np.inf, -np.inf], np.nan).dropna()
+                    if not dy_year.empty:
+                        dy_mean = float(dy_year.mean())
         except Exception:
-            pass
+            dy_mean = None
 
-        motivos = []
-        if vol is None or vol > cfgx["vol_max"]:
-            motivos.append(f"Volatilidade {fmt_pct(vol)} > {fmt_pct(cfgx['vol_max'])}.")
-        if mdd is None or mdd < cfgx["mdd_min"]:
-            motivos.append(f"Drawdown {fmt_pct(mdd)} < {fmt_pct(cfgx['mdd_min'])}.")
-        if dy_mean is None or dy_mean < cfgx["dy_min"]:
-            motivos.append(f"DY médio (5y) {fmt_pct(dy_mean)} < {fmt_pct(cfgx['dy_min'])}.")
-        if dy_years < cfgx["dy_min_years"]:
-            motivos.append(f"Pagou dividendos em {dy_years}/5 anos (< {cfgx['dy_min_years']}/5).")
-        if cfgx["usar_cv_dy"] >= 0.5 and (dy_cv is None or dy_cv > cfgx["cv_dy_max"]):
-            motivos.append(f"DY instável (CV {('N/D' if dy_cv is None else f'{dy_cv:.2f}')} > {cfgx['cv_dy_max']:.2f}).")
-        if lucro_ult is None or lucro_ult <= cfgx["lucro_ultimo_min"]:
-            motivos.append(f"Lucro último ano {fmt_money(lucro_ult)} <= {fmt_money(cfgx['lucro_ultimo_min'])}.")
-        if lucro_cagr is None or lucro_cagr < cfgx["cagr_lucro_min"]:
-            motivos.append(f"CAGR Lucro {fmt_pct(lucro_cagr)} < {fmt_pct(cfgx['cagr_lucro_min'])}.")
+        # Lucro (CAGR 5a)
+        lucro_cagr = None
+        lucro_ult = None
+        try:
+            luc = _db_fetch_lucro_liquido_ano(tk)
+            if not luc.empty:
+                luc = luc.sort_index()
+                luc_last5 = luc.tail(5)
+                lucro_ult = float(luc_last5.iloc[-1])
+                if luc_last5.shape[0] >= 2:
+                    years = float(luc_last5.index.max() - luc_last5.index.min())
+                    lucro_cagr = _cagr(float(luc_last5.iloc[0]), float(luc_last5.iloc[-1]), max(1.0, years))
+        except Exception:
+            lucro_cagr = None
+            lucro_ult = None
 
-        aprovada = (len(motivos) == 0)
-        badge = "<span class='cp5-badge-ok'>APROVADA</span>" if aprovada else "<span class='cp5-badge-no'>REPROVADA</span>"
+        def fmt_pct(v: Optional[float]) -> str:
+            if v is None or pd.isna(v):
+                return "N/D"
+            return f"{v*100:.1f}%"
 
-        mot_html = ""
-        if not aprovada:
-            itens = "".join([f"<li>{_escape_html(x)}</li>" for x in motivos[:8]])
-            mot_html = f"<div class='cp5-mot'><b>Motivos:</b><ul>{itens}</ul></div>"
+        def fmt_money(v: Optional[float]) -> str:
+            if v is None or pd.isna(v):
+                return "N/D"
+            # formato curto
+            abs_v = abs(v)
+            if abs_v >= 1e9:
+                return f"R$ {v/1e9:.2f} bi"
+            if abs_v >= 1e6:
+                return f"R$ {v/1e6:.2f} mi"
+            if abs_v >= 1e3:
+                return f"R$ {v/1e3:.2f} mil"
+            return f"R$ {v:.2f}"
 
-        st.markdown(
-            f"""
-            <div class="cp5-card">
-              <div class="cp5-title">{nome} ({tk}) {badge}</div>
-              <div class="cp5-sub">{seg} • Peso atual: <b>{peso_txt}</b></div>
-              <div class="cp5-grid">
+        html = f"""
+        <div class="cp5-card">
+            <div class="cp5-title">{nome} ({tk})</div>
+            <div class="cp5-sub">{seg} • Peso sugerido: <b>{peso_txt}</b></div>
+            <div class="cp5-grid">
                 <div class="cp5-kv"><p class="cp5-k">Volatilidade (5a, anual)</p><p class="cp5-v">{fmt_pct(vol)}</p></div>
                 <div class="cp5-kv"><p class="cp5-k">Max Drawdown (5a)</p><p class="cp5-v">{fmt_pct(mdd)}</p></div>
                 <div class="cp5-kv"><p class="cp5-k">Retorno 12m (preço)</p><p class="cp5-v">{fmt_pct(ret12)}</p></div>
-                <div class="cp5-kv"><p class="cp5-k">CAGR (preço, janela)</p><p class="cp5-v">{fmt_pct(cagrp)}</p></div>
+                <div class="cp5-kv"><p class="cp5-k">CAGR (preço, janela)</p><p class="cp5-v">{fmt_pct(cagr5)}</p></div>
                 <div class="cp5-kv"><p class="cp5-k">DY médio (últ. 5 anos)</p><p class="cp5-v">{fmt_pct(dy_mean)}</p></div>
-                <div class="cp5-kv"><p class="cp5-k">Dividendos pagos (anos)</p><p class="cp5-v">{dy_years}/5</p></div>
                 <div class="cp5-kv"><p class="cp5-k">CAGR Lucro (últ. 5 anos)</p><p class="cp5-v">{fmt_pct(lucro_cagr)}</p></div>
                 <div class="cp5-kv"><p class="cp5-k">Lucro Líquido (últ. ano)</p><p class="cp5-v">{fmt_money(lucro_ult)}</p></div>
-              </div>
-              {mot_html}
+                <div class="cp5-kv"><p class="cp5-k">Fonte</p><p class="cp5-v">yfinance + Supabase</p></div>
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        </div>
+        """
+        st.markdown(html, unsafe_allow_html=True)
 
-        out_emp = dict(emp)
-        out_emp["_p5"] = {"aprovada": aprovada, "motivos": motivos, "dy_mean": dy_mean, "dy_years": dy_years}
-        (aprovadas if aprovada else reprovadas).append(out_emp)
-
-    if aplicar_filtro:
-        total = float(sum([float(e.get("peso", 0.0) or 0.0) for e in aprovadas]))
-        if total > 0:
-            for e in aprovadas:
-                e["peso"] = float(e.get("peso", 0.0) or 0.0) / total
-        st.success(f"Filtro ativo: {len(aprovadas)} aprovadas • {len(reprovadas)} reprovadas.")
-        return {"aprovadas": aprovadas, "reprovadas": reprovadas, "cfg": cfgx}
-
-    st.info("Filtro desativado: nenhuma empresa foi removida da carteira.")
-    return {"aprovadas": emp_sorted, "reprovadas": reprovadas, "cfg": cfgx}
-
+    st.caption("Notas: retornos e volatilidade são por preço (sem reinvestimento). DY é aproximado por dividendos/Preço médio anual.")
 
 # ─────────────────────────────────────────────────────────────
 # PATCH 5 — IA (OpenAI) — Seleção/validação amigável (era Patch 6)
