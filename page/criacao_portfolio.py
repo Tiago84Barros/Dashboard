@@ -334,6 +334,85 @@ def _mix_weights_equal_and_score(scores: dict, mix_equal: float = 0.50) -> dict:
     return {k: float(w[k]) for k in keys}
 
 
+def _apply_cap(weights: dict, cap: float = 0.30) -> dict:
+    """Aplica teto por ativo e redistribui excedente proporcionalmente entre os demais."""
+
+    w = {k: float(v or 0.0) for k, v in (weights or {}).items()}
+    if not w:
+        return w
+    # normaliza
+    s = sum(w.values())
+    if s > 0:
+        w = {k: v / s for k, v in w.items()}
+
+    # redistribuição iterativa
+    for _ in range(10):  # converge rápido
+        over = {k: v for k, v in w.items() if v > cap}
+        if not over:
+            break
+        excess = sum(v - cap for v in over.values())
+        for k in over:
+            w[k] = cap
+        under_keys = [k for k, v in w.items() if v < cap - 1e-12]
+        if not under_keys or excess <= 0:
+            break
+        under_sum = sum(w[k] for k in under_keys)
+        if under_sum <= 0:
+            # fallback: distribui igual entre under
+            add = excess / len(under_keys)
+            for k in under_keys:
+                w[k] += add
+        else:
+            for k in under_keys:
+                w[k] += excess * (w[k] / under_sum)
+
+    # normaliza final
+    s = sum(w.values())
+    if s > 0:
+        w = {k: v / s for k, v in w.items()}
+    return w
+
+
+def _mix_weights_structural(
+    tickers: List[str],
+    scores_cons: dict,
+    scores_quality: dict,
+    mix_equal: float = 0.40,
+    mix_cons: float = 0.30,
+    mix_score: float = 0.30,
+    cap: float = 0.30,
+) -> dict:
+    """Peso = mix_equal*igual + mix_cons*consolidação + mix_score*score (com cap)."""
+
+    tickers = [_strip_sa(t) for t in (tickers or []) if (t or "").strip()]
+    tickers = list(dict.fromkeys(tickers))
+    n = len(tickers)
+    if n == 0:
+        return {}
+
+    equal = 1.0 / n
+
+    s_cons = pd.Series({t: float(scores_cons.get(t, 0.0) or 0.0) for t in tickers}, dtype="float64")
+    s_qual = pd.Series({t: float(scores_quality.get(t, 0.0) or 0.0) for t in tickers}, dtype="float64")
+
+    s_cons = s_cons.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    s_qual = s_qual.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+    s_cons = (s_cons / float(s_cons.sum())) if float(s_cons.sum()) > 0 else s_cons
+    s_qual = (s_qual / float(s_qual.sum())) if float(s_qual.sum()) > 0 else s_qual
+
+    w = pd.Series({t: mix_equal * equal for t in tickers}, dtype="float64")
+    w = w + mix_cons * s_cons + mix_score * s_qual
+
+    total = float(w.sum())
+    if total > 0:
+        w = w / total
+
+    w_dict = {t: float(w[t]) for t in tickers}
+    w_dict = _apply_cap(w_dict, cap=float(cap))
+    return w_dict
+
+
 # ─────────────────────────────────────────────────────────────
 # Render Streamlit
 # ─────────────────────────────────────────────────────────────
@@ -697,21 +776,72 @@ def render():
     # Bloco final: líderes para o próximo ano + distribuição setorial
     # ─────────────────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────
-    # Recalcula peso sugerido por consolidação (tamanho + liquidez + estabilidade)
+    # Recalcula peso sugerido por consolidação + Score (com CAP 30%)
     # ─────────────────────────────────────────────────────────
     try:
         tickers_finais = [_strip_sa(e.get("ticker","")) for e in empresas_lideres_finais]
         tickers_finais = [t for t in tickers_finais if t]
         precos_global_df = pd.concat(precos_global_parts, axis=1) if precos_global_parts else None
+
+        # 1) Consolidação (mercado)
         scores_cons, meta_cons = _calc_consolidation_scores(tickers_finais, precos_global=precos_global_df)
-        pesos_cons = _mix_weights_equal_and_score(scores_cons, mix_equal=0.50) if scores_cons else {}
+
+        # 2) Qualidade (Score) — extrai do score_global_parts (último ano disponível)
+        scores_quality = {}
+        try:
+            if score_global_parts:
+                dfq = pd.concat(score_global_parts, ignore_index=True)
+                # garante ticker normalizado
+                dfq["_TK"] = dfq["ticker"].astype(str).map(_strip_sa)
+                dfq["_ANO"] = pd.to_numeric(dfq["Ano"], errors="coerce")
+                ultimo_ano_q = int(dfq["_ANO"].max())
+                dfq = dfq[dfq["_ANO"] == ultimo_ano_q].copy()
+
+                # escolhe melhor coluna de score disponível
+                cand_cols = [c for c in dfq.columns if str(c).lower() in ("score", "score_total", "scorefinal", "score_final", "pontuacao", "pontuação")]
+                score_col = cand_cols[0] if cand_cols else None
+
+                if score_col is not None:
+                    dfq["_SRAW"] = pd.to_numeric(dfq[score_col], errors="coerce")
+                else:
+                    # fallback: soma de colunas numéricas (exceto Ano)
+                    num = dfq.select_dtypes(include="number").copy()
+                    for dropc in ["Ano", "_ANO"]:
+                        if dropc in num.columns:
+                            num = num.drop(columns=[dropc], errors="ignore")
+                    dfq["_SRAW"] = num.sum(axis=1) if not num.empty else np.nan
+
+                # agrega por ticker
+                g = dfq.groupby("_TK")["_SRAW"].mean()
+                # normaliza para positivo
+                g = g.replace([np.inf, -np.inf], np.nan).dropna()
+                if not g.empty:
+                    mn = float(g.min())
+                    g = (g - mn) + 1e-9
+                    scores_quality = {k: float(v) for k, v in g.to_dict().items()}
+        except Exception:
+            scores_quality = {}
+
+        # 3) Mistura estrutural + cap
+        pesos_final = _mix_weights_structural(
+            tickers=tickers_finais,
+            scores_cons=scores_cons or {},
+            scores_quality=scores_quality or {},
+            mix_equal=0.40,
+            mix_cons=0.30,
+            mix_score=0.30,
+            cap=0.30,
+        ) if tickers_finais else {}
+
         for e in empresas_lideres_finais:
             tk = _strip_sa(e.get("ticker",""))
-            if tk in pesos_cons:
-                e["peso"] = float(pesos_cons[tk])
+            if tk in pesos_final:
+                e["peso"] = float(pesos_final[tk])
+
             lvl = (meta_cons.get(tk, {}) or {}).get("level", None)
             if lvl:
                 e["nivel_consolidacao"] = str(lvl)
+
     except Exception:
         pass
 
