@@ -793,6 +793,8 @@ def render():
                 dfq = pd.concat(score_global_parts, ignore_index=True)
                 # garante ticker normalizado
                 dfq["_TK"] = dfq["ticker"].astype(str).map(_strip_sa)
+                # restringe ao conjunto final (peso não pode alterar seleção/liderança)
+                dfq = dfq[dfq["_TK"].isin(tickers_finais)].copy()
                 dfq["_ANO"] = pd.to_numeric(dfq["Ano"], errors="coerce")
                 ultimo_ano_q = int(dfq["_ANO"].max())
                 dfq = dfq[dfq["_ANO"] == ultimo_ano_q].copy()
