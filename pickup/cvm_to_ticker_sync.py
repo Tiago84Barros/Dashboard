@@ -1,13 +1,12 @@
-# pickup/cvm_to_ticker_sync.py
 from __future__ import annotations
 
 import io
 import os
 import re
 import zipfile
-from dataclasses import dataclass
-from typing import Optional, Tuple
 from datetime import date, timedelta
+from dataclasses import dataclass
+from typing import Optional
 
 import pandas as pd
 import requests
@@ -17,25 +16,24 @@ from sqlalchemy import create_engine, text
 # =========================
 # CONFIG
 # =========================
+
 @dataclass(frozen=True)
 class Config:
     supabase_db_url: str
     target_schema: str = "public"
     target_table: str = "cvm_to_ticker"
-
-    # CVM: cadastro de companhias (traz CD_CVM + CNPJ)
     cvm_cadastro_url: str = "https://dados.cvm.gov.br/dados/CIA_ABERTA/CAD/DADOS/cad_cia_aberta.csv"
-
-    # B3: arquivo que precisa conter TICKER + CNPJ do emissor (ou equivalente)
-    # -> deixe por ENV para você plugar o link “oficial” que você usar
-    b3_instrumentos_url: str = os.getenv("B3_INSTRUMENTOS_URL", "").strip()
-
-    timeout_sec: int = 60
+    b3_base_url: str = os.getenv(
+        "B3_INSTRUMENTS_BASE",
+        "https://arquivos.b3.com.br/tabelas/InstrumentsConsolidated"
+    )
+    timeout_sec: int = 20
 
 
 # =========================
-# UTILS
+# UTILIDADES
 # =========================
+
 def _only_digits(s: str) -> str:
     return re.sub(r"\D+", "", str(s or ""))
 
@@ -47,52 +45,26 @@ def _cnpj_raiz(cnpj: str) -> str:
 
 def _looks_like_equity_ticker(t: str) -> bool:
     t = (t or "").strip().upper()
-    # padrões comuns B3 para ações/units: PETR4, VALE3, EGIE3, TAEE11 etc.
     return bool(re.fullmatch(r"[A-Z]{4}\d{1,2}", t))
 
 
 def _pick_best_ticker(tickers: list[str]) -> Optional[str]:
-    """
-    Heurística para escolher UM ticker por CVM (mantendo compatibilidade com teu CSV atual).
-    Preferência típica: ON(3) > PN(4) > UNIT(11) > outros.
-    """
     if not tickers:
         return None
-    uniq = sorted({t.strip().upper() for t in tickers if t and str(t).strip()})
-    if not uniq:
-        return None
 
-    def score(t: str) -> tuple[int, str]:
-        # menor score = melhor
+    uniq = sorted(set(tickers))
+
+    def score(t: str):
         if t.endswith("3"):
-            s = 0
+            return (0, t)
         elif t.endswith("4"):
-            s = 1
+            return (1, t)
         elif t.endswith("11"):
-            s = 2
+            return (2, t)
         else:
-            s = 9
-        return (s, t)
+            return (9, t)
 
     return sorted(uniq, key=score)[0]
-
-
-
-def get_latest_b3_url(max_days_back: int = 7) -> str:
-    base = "https://arquivos.b3.com.br/tabelas/InstrumentsConsolidated"
-    
-    for i in range(max_days_back):
-        d = (date.today() - timedelta(days=i)).strftime("%Y-%m-%d")
-        url = f"{base}/{d}?lang=pt"
-        try:
-            r = requests.get(url, timeout=10)
-            if r.status_code == 200:
-                print(f"[B3] Arquivo encontrado para {d}")
-                return url
-        except Exception:
-            pass
-
-    raise RuntimeError("Não encontrei arquivo recente em InstrumentsConsolidated.")
 
 
 def _download_bytes(url: str, timeout: int) -> bytes:
@@ -102,191 +74,161 @@ def _download_bytes(url: str, timeout: int) -> bytes:
 
 
 def _read_csv_or_zip(content: bytes) -> pd.DataFrame:
-    """
-    Aceita CSV puro ou ZIP com 1 CSV dentro.
-    """
-    # tenta zip
     if content[:4] == b"PK\x03\x04":
         with zipfile.ZipFile(io.BytesIO(content)) as z:
             names = [n for n in z.namelist() if n.lower().endswith(".csv")]
             if not names:
-                raise ValueError("ZIP baixado não contém CSV.")
-            # pega o primeiro CSV
+                raise ValueError("ZIP sem CSV.")
             with z.open(names[0]) as f:
-                data = f.read()
-        content = data
+                content = f.read()
 
-    # tenta ler com ; e latin-1 (padrão BR), fallback para utf-8
-    for (sep, enc) in [(";", "latin-1"), (";", "utf-8"), (",", "utf-8"), (",", "latin-1")]:
+    for sep in [";", ","]:
         try:
-            return pd.read_csv(io.BytesIO(content), sep=sep, encoding=enc)
+            return pd.read_csv(io.BytesIO(content), sep=sep, encoding="latin-1")
         except Exception:
-            pass
+            continue
 
-    raise ValueError("Não consegui ler o arquivo como CSV (nem em ; nem em ,).")
+    raise ValueError("Falha ao ler CSV da B3.")
 
 
-def _find_col(df: pd.DataFrame, candidates: list[str]) -> Optional[str]:
-    cols = list(df.columns)
-    norm = {c.lower().strip(): c for c in cols}
-    for cand in candidates:
-        key = cand.lower().strip()
-        if key in norm:
-            return norm[key]
-    return None
+# =========================
+# B3 - BUSCA DATA MAIS RECENTE
+# =========================
+
+def _get_latest_b3_url(base_url: str, max_days_back: int = 10) -> str:
+    for i in range(max_days_back):
+        d = (date.today() - timedelta(days=i)).strftime("%Y-%m-%d")
+        url = f"{base_url}/{d}?lang=pt"
+        try:
+            r = requests.get(url, timeout=10)
+            if r.status_code == 200:
+                print(f"[B3] Arquivo encontrado: {d}")
+                return url
+        except Exception:
+            continue
+
+    raise RuntimeError("Nenhum arquivo recente encontrado na B3.")
 
 
 # =========================
 # LOADERS
 # =========================
-def _load_cvm_cadastro(cfg: Config) -> pd.DataFrame:
+
+def _load_cvm(cfg: Config) -> pd.DataFrame:
+    print("[CVM] Baixando cadastro...")
     content = _download_bytes(cfg.cvm_cadastro_url, cfg.timeout_sec)
-    df = _read_csv_or_zip(content)
+    df = pd.read_csv(io.BytesIO(content), sep=";", encoding="latin-1")
 
-    col_cvm = _find_col(df, ["CD_CVM", "cd_cvm", "codigo_cvm", "cvm"])
-    col_cnpj = _find_col(df, ["CNPJ_CIA", "cnpj_cia", "cnpj"])
-    col_nome = _find_col(df, ["DENOM_SOCIAL", "denom_social", "nome_empresarial", "razao_social"])
-
-    if not col_cvm or not col_cnpj:
-        raise KeyError(
-            f"[CVM] Não encontrei colunas CD_CVM/CNPJ. Colunas disponíveis: {list(df.columns)}"
-        )
-
-    out = pd.DataFrame({
-        "cvm": pd.to_numeric(df[col_cvm], errors="coerce").astype("Int64"),
-        "cnpj_raiz": df[col_cnpj].map(_cnpj_raiz),
-        "nome_cvm": (df[col_nome].astype("string").str.strip() if col_nome else pd.Series([""] * len(df))),
+    df = df.rename(columns={
+        "CD_CVM": "cvm",
+        "CNPJ_CIA": "cnpj",
+        "DENOM_SOCIAL": "nome"
     })
 
-    out = out.dropna(subset=["cvm"])
-    out = out[out["cnpj_raiz"].str.len() == 8]
-    out = out.drop_duplicates(subset=["cvm"], keep="last").reset_index(drop=True)
-    return out
+    df["cnpj_raiz"] = df["cnpj"].map(_cnpj_raiz)
+    df = df.dropna(subset=["cvm", "cnpj_raiz"])
+    df = df[df["cnpj_raiz"].str.len() == 8]
+
+    return df[["cvm", "cnpj_raiz", "nome"]].drop_duplicates("cvm")
 
 
-def _load_b3_instrumentos(cfg: Config) -> pd.DataFrame:
-    if not cfg.b3_instrumentos_url:
-        raise EnvironmentError(
-            "B3_INSTRUMENTOS_URL não definido. "
-            "Defina esta env var com a URL do arquivo da B3 que contenha TICKER e CNPJ do emissor."
-        )
-
-    content = _download_bytes(cfg.b3_instrumentos_url, cfg.timeout_sec)
+def _load_b3(cfg: Config) -> pd.DataFrame:
+    print("[B3] Buscando arquivo consolidado...")
+    url = _get_latest_b3_url(cfg.b3_base_url)
+    content = _download_bytes(url, cfg.timeout_sec)
     df = _read_csv_or_zip(content)
 
-    col_ticker = _find_col(df, ["TICKER", "ticker", "CODIGO_NEGOCIACAO", "codigo_negociacao", "cod_negociacao"])
-    col_cnpj = _find_col(df, ["CNPJ_EMISSOR", "cnpj_emissor", "CNPJ", "cnpj"])
-    col_nome = _find_col(df, ["NOME_EMISSOR", "nome_emissor", "NOME_EMPRESA", "nome_empresa", "EMISSOR", "emissor"])
+    # Ajuste automático das colunas
+    possible_ticker = ["TICKER", "ticker", "CODIGO_NEGOCIACAO", "codigo_negociacao"]
+    possible_cnpj = ["CNPJ_EMISSOR", "cnpj_emissor", "CNPJ"]
+
+    col_ticker = next((c for c in possible_ticker if c in df.columns), None)
+    col_cnpj = next((c for c in possible_cnpj if c in df.columns), None)
 
     if not col_ticker or not col_cnpj:
-        raise KeyError(
-            f"[B3] Não encontrei colunas de ticker/CNPJ. Colunas disponíveis: {list(df.columns)}"
-        )
+        raise KeyError("Colunas esperadas não encontradas no arquivo da B3.")
 
-    out = pd.DataFrame({
-        "ticker": df[col_ticker].astype("string").str.strip().str.upper(),
-        "cnpj_raiz": df[col_cnpj].map(_cnpj_raiz),
-        "nome_b3": (df[col_nome].astype("string").str.strip() if col_nome else pd.Series([""] * len(df))),
-    })
+    df["ticker"] = df[col_ticker].astype(str).str.strip().str.upper()
+    df["cnpj_raiz"] = df[col_cnpj].map(_cnpj_raiz)
 
-    out = out.dropna(subset=["ticker"])
-    out = out[out["ticker"].map(_looks_like_equity_ticker)]
-    out = out[out["cnpj_raiz"].str.len() == 8]
-    out = out.drop_duplicates(subset=["ticker"], keep="last").reset_index(drop=True)
-    return out
+    df = df[df["ticker"].map(_looks_like_equity_ticker)]
+    df = df[df["cnpj_raiz"].str.len() == 8]
+
+    return df[["ticker", "cnpj_raiz"]].drop_duplicates()
 
 
 # =========================
-# DB (DDL + UPSERT)
+# DB
 # =========================
-def _ensure_table(engine, schema: str, table: str) -> None:
+
+def _ensure_table(engine, schema: str, table: str):
     ddl = f"""
     CREATE TABLE IF NOT EXISTS {schema}.{table} (
-      cvm        INTEGER PRIMARY KEY,
-      ticker     TEXT NOT NULL,
-      cnpj_raiz  TEXT,
-      nome_cvm   TEXT,
-      nome_b3    TEXT,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        cvm INTEGER PRIMARY KEY,
+        ticker TEXT NOT NULL,
+        cnpj_raiz TEXT,
+        nome_cvm TEXT,
+        updated_at TIMESTAMPTZ DEFAULT now()
     );
-
-    CREATE UNIQUE INDEX IF NOT EXISTS {table}_ticker_uq
-    ON {schema}.{table} (ticker);
     """
     with engine.begin() as conn:
         conn.execute(text(ddl))
 
 
-def _upsert(engine, schema: str, table: str, df: pd.DataFrame, chunk_size: int = 2000) -> int:
+def _upsert(engine, schema: str, table: str, df: pd.DataFrame):
     sql = f"""
-    INSERT INTO {schema}.{table} (cvm, ticker, cnpj_raiz, nome_cvm, nome_b3, updated_at)
-    VALUES (:cvm, :ticker, :cnpj_raiz, :nome_cvm, :nome_b3, now())
+    INSERT INTO {schema}.{table} (cvm, ticker, cnpj_raiz, nome_cvm, updated_at)
+    VALUES (:cvm, :ticker, :cnpj_raiz, :nome_cvm, now())
     ON CONFLICT (cvm) DO UPDATE SET
-      ticker     = EXCLUDED.ticker,
-      cnpj_raiz  = EXCLUDED.cnpj_raiz,
-      nome_cvm   = EXCLUDED.nome_cvm,
-      nome_b3    = EXCLUDED.nome_b3,
-      updated_at = now();
+        ticker = EXCLUDED.ticker,
+        cnpj_raiz = EXCLUDED.cnpj_raiz,
+        nome_cvm = EXCLUDED.nome_cvm,
+        updated_at = now();
     """
 
-    rows = df.to_dict(orient="records")
-    total = 0
     with engine.begin() as conn:
-        for i in range(0, len(rows), chunk_size):
-            conn.execute(text(sql), rows[i : i + chunk_size])
-            total += len(rows[i : i + chunk_size])
-    return total
+        conn.execute(text(sql), df.to_dict(orient="records"))
 
 
 # =========================
 # MAIN
 # =========================
-def main() -> None:
-    supabase_db_url = os.getenv("SUPABASE_DB_URL", "").strip()
-    if not supabase_db_url:
-        raise EnvironmentError("SUPABASE_DB_URL não definida. Configure em Secrets/Env Vars.")
 
-    cfg = Config(supabase_db_url=supabase_db_url)
+def main():
+    db_url = os.getenv("SUPABASE_DB_URL", "").strip()
+    if not db_url:
+        raise EnvironmentError("SUPABASE_DB_URL não definida.")
 
-    print("[cvm_to_ticker] Iniciando atualização CVM -> Ticker (B3)")
-    print(f"[cvm_to_ticker] CVM cadastro: {cfg.cvm_cadastro_url}")
-    print(f"[cvm_to_ticker] B3 instrumentos: {cfg.b3_instrumentos_url or '(ENV B3_INSTRUMENTOS_URL vazio)'}")
+    cfg = Config(supabase_db_url=db_url)
 
-    df_cvm = _load_cvm_cadastro(cfg)
-    print(f"[cvm_to_ticker] CVM: {len(df_cvm)} companhias com CNPJ raiz")
+    df_cvm = _load_cvm(cfg)
+    print(f"[CVM] {len(df_cvm)} companhias válidas.")
 
-    df_b3 = _load_b3_instrumentos(cfg)
-    print(f"[cvm_to_ticker] B3: {len(df_b3)} tickers com CNPJ raiz")
+    df_b3 = _load_b3(cfg)
+    print(f"[B3] {len(df_b3)} tickers válidos.")
 
-    # Join por CNPJ raiz
     merged = df_b3.merge(df_cvm, on="cnpj_raiz", how="inner")
-    if merged.empty:
-        raise RuntimeError(
-            "Join B3 x CVM resultou em 0 linhas. "
-            "Verifique se o arquivo da B3 realmente contém CNPJ do emissor (ou se o CNPJ está em outro campo)."
-        )
 
-    # Escolher 1 ticker por CVM (compatível com teu CSV atual)
-    best = (
+    if merged.empty:
+        raise RuntimeError("Join resultou vazio. Abortando atualização.")
+
+    final = (
         merged.groupby("cvm", as_index=False)
         .agg(
-            ticker=("ticker", lambda s: _pick_best_ticker(list(s))),
+            ticker=("ticker", lambda x: _pick_best_ticker(list(x))),
             cnpj_raiz=("cnpj_raiz", "first"),
-            nome_cvm=("nome_cvm", "first"),
-            nome_b3=("nome_b3", "first"),
+            nome_cvm=("nome", "first"),
         )
         .dropna(subset=["ticker"])
     )
 
-    print(f"[cvm_to_ticker] Linhas finais (1 ticker por CVM): {len(best)}")
-    print("[cvm_to_ticker] Amostra:")
-    print(best.head(10).to_string(index=False))
+    print(f"[JOIN] {len(final)} registros finais.")
 
     engine = create_engine(cfg.supabase_db_url, pool_pre_ping=True)
     _ensure_table(engine, cfg.target_schema, cfg.target_table)
+    _upsert(engine, cfg.target_schema, cfg.target_table, final)
 
-    n = _upsert(engine, cfg.target_schema, cfg.target_table, best)
-    print(f"[cvm_to_ticker] UPSERT concluído: {n} registros gravados/atualizados em {cfg.target_schema}.{cfg.target_table}")
+    print("[OK] Atualização concluída com sucesso.")
 
 
 if __name__ == "__main__":
