@@ -7,6 +7,7 @@ import re
 import zipfile
 from dataclasses import dataclass
 from typing import Optional, Tuple
+from datetime import date, timedelta
 
 import pandas as pd
 import requests
@@ -74,6 +75,24 @@ def _pick_best_ticker(tickers: list[str]) -> Optional[str]:
         return (s, t)
 
     return sorted(uniq, key=score)[0]
+
+
+
+def get_latest_b3_url(max_days_back: int = 7) -> str:
+    base = "https://arquivos.b3.com.br/tabelas/InstrumentsConsolidated"
+    
+    for i in range(max_days_back):
+        d = (date.today() - timedelta(days=i)).strftime("%Y-%m-%d")
+        url = f"{base}/{d}?lang=pt"
+        try:
+            r = requests.get(url, timeout=10)
+            if r.status_code == 200:
+                print(f"[B3] Arquivo encontrado para {d}")
+                return url
+        except Exception:
+            pass
+
+    raise RuntimeError("Não encontrei arquivo recente em InstrumentsConsolidated.")
 
 
 def _download_bytes(url: str, timeout: int) -> bytes:
