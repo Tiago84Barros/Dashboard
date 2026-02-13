@@ -128,6 +128,32 @@ def render() -> None:
 
     st.divider()
 
+   # =========================
+    # BOTÃO 0: CVM -> TICKER (B3)
+    # =========================
+    st.markdown("## 0. Correlação CVM → Ticker (B3)")
+    with st.expander("Detalhes / Variáveis de ambiente (CVM→Ticker)", expanded=False):
+        st.write("B3_INSTRUMENTOS_URL:", os.getenv("B3_INSTRUMENTOS_URL", "(não definido)"))
+        st.caption(
+            "Esta rotina baixa o cadastro da CVM (CD_CVM + CNPJ) e cruza com o arquivo da B3 "
+            "(Ticker + CNPJ do emissor) usando CNPJ raiz. "
+            "Grava em public.cvm_to_ticker."
+        )
+
+    _run_job(
+        job_key="job_cvm_ticker_running",
+        button_label="Atualizar correlação CVM → Ticker",
+        info_text=(
+            "Executa **pickup/cvm_to_ticker_sync.py** e atualiza a tabela **public.cvm_to_ticker**.\n\n"
+            "Requisitos: **SUPABASE_DB_URL** e **B3_INSTRUMENTOS_URL** definidos."
+        ),
+        status_label="Atualizando correlação CVM → Ticker (B3)...",
+        module_import_path="pickup.cvm_to_ticker_sync",
+        module_attr_name="cvm_to_ticker_sync",
+    )
+
+    st.divider()
+
     # =========================
     # BOTÃO 1: DFP (ANUAL)
     # =========================
