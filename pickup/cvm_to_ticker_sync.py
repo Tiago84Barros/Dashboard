@@ -134,19 +134,41 @@ def _load_cvm(cfg: Config) -> pd.DataFrame:
 
 def _load_b3(cfg: Config) -> pd.DataFrame:
     print("[B3] Buscando arquivo consolidado...")
-    url = _get_latest_b3_url(cfg.b3_base_url)
-    content = _download_bytes(url, cfg.timeout_sec)
+
+    # 1️⃣ Descobrir a data mais recente válida
+    for i in range(10):
+        d = (date.today() - timedelta(days=i)).strftime("%Y-%m-%d")
+        meta_url = f"{cfg.b3_base_url}/{d}?lang=pt"
+
+        try:
+            r = requests.get(meta_url, timeout=10)
+            if r.status_code == 200:
+                meta = r.json()
+                file_name = meta.get("fileName")
+                if file_name:
+                    print(f"[B3] Arquivo encontrado: {file_name}")
+                    break
+        except Exception:
+            continue
+    else:
+        raise RuntimeError("Nenhum arquivo recente encontrado na B3.")
+
+    # 2️⃣ Baixar o CSV real
+    file_url = f"https://arquivos.b3.com.br/{file_name}"
+    content = _download_bytes(file_url, cfg.timeout_sec)
     df = _read_csv_or_zip(content)
 
-    # Ajuste automático das colunas
-    possible_ticker = ["TICKER", "ticker", "CODIGO_NEGOCIACAO", "codigo_negociacao"]
-    possible_cnpj = ["CNPJ_EMISSOR", "cnpj_emissor", "CNPJ"]
+    print("[B3] Colunas disponíveis:", df.columns.tolist())
+
+    # 3️⃣ Ajuste dinâmico de colunas
+    possible_ticker = ["Ticker", "TICKER", "Código de Negociação", "CODIGO_NEGOCIACAO"]
+    possible_cnpj = ["CNPJ Emissor", "CNPJ_EMISSOR", "CNPJ"]
 
     col_ticker = next((c for c in possible_ticker if c in df.columns), None)
     col_cnpj = next((c for c in possible_cnpj if c in df.columns), None)
 
     if not col_ticker or not col_cnpj:
-        raise KeyError("Colunas esperadas não encontradas no arquivo da B3.")
+        raise KeyError(f"Colunas não encontradas. Disponíveis: {df.columns.tolist()}")
 
     df["ticker"] = df[col_ticker].astype(str).str.strip().str.upper()
     df["cnpj_raiz"] = df[col_cnpj].map(_cnpj_raiz)
@@ -155,7 +177,6 @@ def _load_b3(cfg: Config) -> pd.DataFrame:
     df = df[df["cnpj_raiz"].str.len() == 8]
 
     return df[["ticker", "cnpj_raiz"]].drop_duplicates()
-
 
 # =========================
 # DB
