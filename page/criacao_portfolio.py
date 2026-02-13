@@ -11,6 +11,12 @@ import numpy as np
 import streamlit as st
 import matplotlib.pyplot as plt
 
+# yfinance (opcional) — usado para pesos por consolidação
+try:
+    import yfinance as yf  # type: ignore
+except Exception:
+    yf = None  # type: ignore
+
 from core.db_loader import (
     load_setores_from_db,
     load_data_from_db,
@@ -219,13 +225,123 @@ def _build_macro() -> Optional[pd.DataFrame]:
 
 
 # ─────────────────────────────────────────────────────────────
+# Pesos por Consolidação (tamanho + liquidez + estabilidade)
+# ─────────────────────────────────────────────────────────────
+
+def _rank01(values: List[float]) -> List[float]:
+    """Rank percentil simples (0..1) preservando ordem original."""
+    if not values:
+        return []
+    s = pd.Series(values, dtype="float64")
+    ranks = s.rank(pct=True, method="average").fillna(0.0)
+    return [float(x) for x in ranks.tolist()]
+
+def _calc_consolidation_scores(tickers: List[str], precos_global: Optional[pd.DataFrame] = None) -> Tuple[dict, dict]:
+    """Retorna scores (0..1) e meta por ticker."""
+    tickers = [_strip_sa(t) for t in (tickers or []) if (t or "").strip()]
+    tickers = list(dict.fromkeys(tickers))
+    if not tickers:
+        return {}, {}
+
+    mcap_list, volm_list, invvol_list = [], [], []
+    meta: dict = {}
+
+    def _get_close_series(tk: str) -> pd.Series:
+        if precos_global is not None and not precos_global.empty:
+            cols = [c for c in precos_global.columns if _strip_sa(str(c)) == tk]
+            if cols:
+                return pd.to_numeric(precos_global[cols[0]], errors="coerce").dropna()
+        if yf is None:
+            return pd.Series(dtype=float)
+        try:
+            h = yf.Ticker(_norm_sa(tk)).history(period="5y", auto_adjust=False)
+            if h is None or h.empty or "Close" not in h.columns:
+                return pd.Series(dtype=float)
+            return pd.to_numeric(h["Close"], errors="coerce").dropna()
+        except Exception:
+            return pd.Series(dtype=float)
+
+    def _get_vol_medio(tk: str) -> float:
+        if yf is None:
+            return float("nan")
+        try:
+            h = yf.Ticker(_norm_sa(tk)).history(period="3mo", auto_adjust=False)
+            if h is None or h.empty or "Volume" not in h.columns:
+                return float("nan")
+            v = pd.to_numeric(h["Volume"], errors="coerce").dropna()
+            return float(v.tail(60).mean()) if not v.empty else float("nan")
+        except Exception:
+            return float("nan")
+
+    def _get_mcap(tk: str) -> float:
+        if yf is None:
+            return float("nan")
+        try:
+            info = getattr(yf.Ticker(_norm_sa(tk)), "info", {}) or {}
+            m = info.get("marketCap", None)
+            return float(m) if m is not None else float("nan")
+        except Exception:
+            return float("nan")
+
+    for tk in tickers:
+        close = _get_close_series(tk)
+        vol = float("nan")
+        if close.shape[0] > 40:
+            rets = close.pct_change().dropna()
+            if not rets.empty:
+                vol = float(rets.std() * np.sqrt(252))
+        invvol = (1.0 / vol) if (vol == vol and vol > 0) else float("nan")
+
+        volm = _get_vol_medio(tk)
+        mcap = _get_mcap(tk)
+
+        meta[tk] = {"market_cap": mcap, "vol": vol, "vol_med": volm}
+        mcap_list.append(mcap); volm_list.append(volm); invvol_list.append(invvol)
+
+    mcap_r = _rank01(mcap_list)
+    volm_r = _rank01(volm_list)
+    invvol_r = _rank01(invvol_list)
+
+    scores = {}
+    for i, tk in enumerate(tickers):
+        score = 0.45 * mcap_r[i] + 0.35 * volm_r[i] + 0.20 * invvol_r[i]
+        scores[tk] = float(score)
+
+    svals = pd.Series(list(scores.values()), dtype="float64")
+    q1 = float(svals.quantile(0.33)) if not svals.empty else 0.33
+    q2 = float(svals.quantile(0.66)) if not svals.empty else 0.66
+
+    for tk, sc in scores.items():
+        lvl = "Alta" if sc >= q2 else ("Média" if sc >= q1 else "Baixa")
+        meta[tk]["level"] = lvl
+
+    return scores, meta
+
+def _mix_weights_equal_and_score(scores: dict, mix_equal: float = 0.50) -> dict:
+    keys = list(scores.keys())
+    if not keys:
+        return {}
+    n = len(keys)
+    equal = 1.0 / max(1, n)
+    s = pd.Series([float(scores.get(k, 0.0) or 0.0) for k in keys], index=keys, dtype="float64")
+    s = s.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    total = float(s.sum())
+    if total <= 0:
+        return {k: equal for k in keys}
+    s_norm = s / total
+    w = mix_equal * equal + (1.0 - mix_equal) * s_norm
+    w = w / float(w.sum()) if float(w.sum()) > 0 else w
+    return {k: float(w[k]) for k in keys}
+
+
+# ─────────────────────────────────────────────────────────────
 # Render Streamlit
 # ─────────────────────────────────────────────────────────────
 
 def render():
     st.markdown("<h1 style='text-align: center;'>Criação de Portfólio</h1>", unsafe_allow_html=True)
 
-        # ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────
     # CONTROLES DE EXECUÇÃO (não roda sozinho)
     # ─────────────────────────────────────────────────────────────
     if "cp_last_params" not in st.session_state:
@@ -514,8 +630,7 @@ def render():
                     <p style='margin: 5px 0 0; font-weight: bold;'>{nome}</p>
                     <p style='margin: 0; color: #666; font-size: 12px;'>({tk_clean})</p>
                     <p style='font-size: 12px; color: #999;'>{anos_lider_str}</p>
-                    <p style='font-size: 12px; color: #2c3e50;'>Participação: {perc_part:.1f}%</p>
-                </div>
+</div>
                 """,
                 unsafe_allow_html=True,
             )
@@ -556,7 +671,11 @@ def render():
 
         for tk in tickers_sel:
             v = _value_for(tk)
-            peso = (v / total_sel) if total_sel > 0 and pd.notna(v) else 0.0
+            peso_part = (v / total_sel) if total_sel > 0 and pd.notna(v) else 0.0
+
+            is_lider_ultimo = (tk == ticker_lider_ultimo)
+            motivo_select = "LÍDER" if is_lider_ultimo else "GRANDE_PARTICIPACAO"
+
             empresas_lideres_finais.append(
                 {
                     "ticker": tk,
@@ -567,28 +686,57 @@ def render():
                     "setor": setor,
                     "subsetor": subsetor,
                     "segmento": segmento,
-                    "peso": float(peso),
+                    "participacao_backtest": float(peso_part),
+                    "is_lider_ultimo": bool(is_lider_ultimo),
+                    "motivo_select": str(motivo_select),
+                    "peso": float(peso_part),
                 }
             )
 
+
     # Bloco final: líderes para o próximo ano + distribuição setorial
     # ─────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
+    # Recalcula peso sugerido por consolidação (tamanho + liquidez + estabilidade)
+    # ─────────────────────────────────────────────────────────
+    try:
+        tickers_finais = [_strip_sa(e.get("ticker","")) for e in empresas_lideres_finais]
+        tickers_finais = [t for t in tickers_finais if t]
+        precos_global_df = pd.concat(precos_global_parts, axis=1) if precos_global_parts else None
+        scores_cons, meta_cons = _calc_consolidation_scores(tickers_finais, precos_global=precos_global_df)
+        pesos_cons = _mix_weights_equal_and_score(scores_cons, mix_equal=0.50) if scores_cons else {}
+        for e in empresas_lideres_finais:
+            tk = _strip_sa(e.get("ticker",""))
+            if tk in pesos_cons:
+                e["peso"] = float(pesos_cons[tk])
+            lvl = (meta_cons.get(tk, {}) or {}).get("level", None)
+            if lvl:
+                e["nivel_consolidacao"] = str(lvl)
+    except Exception:
+        pass
+
+
     if empresas_lideres_finais:
         st.markdown("## 📑 Empresas líderes para o próximo ano")
         colunas_lideres = st.columns(3)
         for idx, emp in enumerate(empresas_lideres_finais):
             col = colunas_lideres[idx % 3]
             col.markdown(
+                
                 f"""
                 <div style='border: 2px solid #28a745; border-radius: 10px; padding: 12px; margin-bottom: 10px; background-color: #f0fff4; text-align: center;'>
                     <img src="{emp['logo_url']}" width="45" />
                     <h5 style="margin: 5px 0 0;">{emp['nome']}</h5>
                     <p style="margin: 0; color: #666; font-size: 13px;">({emp['ticker']})</p>
-                    <p style="font-size: 12px; color: #333;">{emp.get('setor','')} &gt; {emp.get('subsetor','')} &gt; {emp.get('segmento','')}</p>
-                    <p style="font-size: 12px; color: #333;">Líder em {emp['ano_lider']}<br>Para compra em {emp['ano_compra']}</p>
-                    <p style="font-size: 12px; color: #2c3e50;">Peso sugerido: {emp.get('peso',0.0)*100:.1f}%</p>
+                    <p style="font-size: 12px; color: #333;"><b>Segmento:</b> {emp.get('segmento','')}</p>
+                    <p style="font-size: 12px; color: #333;">
+                        {("Líder em " + str(emp.get('ano_lider')) + "<br>Para compra em " + str(emp.get('ano_compra'))) if emp.get('is_lider_ultimo') else "Grande participação no segmento"}
+                    </p>
+                    <p style="font-size: 12px; color: #2c3e50;"><b>Peso sugerido para compra:</b> {emp.get('peso',0.0)*100:.1f}%</p>
+                    <p style="font-size: 12px; color: #2c3e50;"><b>Nível de consolidação:</b> {emp.get('nivel_consolidacao','—')}</p>
                 </div>
-                """,
+                """
+,
                 unsafe_allow_html=True,
             )
 
