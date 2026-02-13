@@ -96,14 +96,22 @@ def _read_csv_or_zip(content: bytes) -> pd.DataFrame:
 # =========================
 
 def _get_latest_b3_url(base_url: str, max_days_back: int = 10) -> str:
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json"
+    }
+
     for i in range(max_days_back):
         d = (date.today() - timedelta(days=i)).strftime("%Y-%m-%d")
         url = f"{base_url}/{d}?lang=pt"
+
         try:
-            r = requests.get(url, timeout=10)
+            r = requests.get(url, headers=headers, timeout=10)
             if r.status_code == 200:
-                print(f"[B3] Arquivo encontrado: {d}")
+                print(f"[B3] Arquivo encontrado para {d}")
                 return url
+            else:
+                print(f"[B3] {d} -> status {r.status_code}")
         except Exception:
             continue
 
