@@ -115,6 +115,7 @@ def _load_page_renderer(page_key: str) -> Callable[[], None]:
         "Básica": ("page.basic", "basic"),
         "Avançada": ("page.advanced", "advanced"),
         "Criação de Portfólio": ("page.criacao_portfolio", "criacao_portfolio"),
+        "🧪 Teste Patch 6": ("page.patch6_teste", "patch6_teste"),
         "Configurações": ("page.configuracoes", "configuracoes"),
     }
     paths = mapping.get(page_key)
@@ -148,7 +149,7 @@ with st.sidebar:
     st.markdown("## Análises")
     pagina_escolhida = st.radio(
         "Escolha a seção:",
-        ["Básica", "Avançada", "Criação de Portfólio", "Configurações"],
+        ["Básica", "Avançada", "Criação de Portfólio", "🧪 Teste Patch 6", "Configurações"],
         index=0,
     )
 
@@ -165,6 +166,7 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
+
 
 
 
