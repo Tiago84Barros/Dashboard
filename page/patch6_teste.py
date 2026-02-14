@@ -1,79 +1,215 @@
-# dashboard/page/patch6_teste.py
+# pickup/docs_rag.py
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+import re
+
+import pandas as pd
 import streamlit as st
+from sqlalchemy import text
+
+# Usa seu engine do core.db_loader (já existe no seu projeto)
+from core.db_loader import get_supabase_engine
 
 
-def render() -> None:
-    st.title("🧪 Teste Rápido — Patch 6 (isolado)")
-    st.caption("Roda o Patch 6 sem executar criação de portfólio, score ou backtest.")
+def _norm_ticker(t: str) -> str:
+    return (t or "").strip().upper().replace(".SA", "").strip()
 
-    # Import local (evita quebrar o app caso algo ainda esteja faltando)
+
+def _safe_int(x: Any, default: int = 0) -> int:
     try:
-        from page.portfolio_patches import render_patch6_perspectivas_factibilidade
-    except Exception as e:
-        st.error(f"Falha ao importar Patch 6: {type(e).__name__}: {e}")
-        return
+        return int(x)
+    except Exception:
+        return default
 
-    # ---- Entrada de tickers
-    default = "ROMI3, KEPL3, MYPK3"
-    tickers_txt = st.text_input("Tickers (separados por vírgula)", value=default)
 
-    tickers = [t.strip().upper().replace(".SA", "") for t in tickers_txt.split(",") if t.strip()]
-    tickers = list(dict.fromkeys(tickers))
+def _limit_text(s: str, max_chars: int) -> str:
+    s = (s or "").strip()
+    if max_chars and max_chars > 0 and len(s) > max_chars:
+        return s[:max_chars] + "…"
+    return s
 
-    if not tickers:
-        st.warning("Informe pelo menos 1 ticker.")
-        return
 
-    empresas_mock: List[Dict[str, Any]] = [{"ticker": tk, "nome": tk, "peso": 0.10} for tk in tickers]
+def _build_source(fonte: str, tipo: str, titulo: str, url: str) -> str:
+    parts = []
+    fonte = (fonte or "").strip()
+    tipo = (tipo or "").strip()
+    titulo = (titulo or "").strip()
+    url = (url or "").strip()
 
-    st.markdown("### Parâmetros do teste")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        ativar_ajuste_peso = st.checkbox("Ativar ajuste de peso", value=True)
-    with col2:
-        cache_horas = st.number_input("Cache (horas)", min_value=1, max_value=168, value=24, step=1)
-    with col3:
-        usar_docs_supabase = st.checkbox("Carregar docs do Supabase (RAG)", value=True)
+    if fonte:
+        parts.append(fonte)
+    if tipo:
+        parts.append(tipo)
+    if titulo:
+        parts.append(titulo)
+    if url:
+        parts.append(url)
 
-    docs_by_ticker: Optional[Dict[str, List[Dict[str, Any]]]] = None
+    return " | ".join(parts) if parts else "docs_corporativos"
 
-    # ---- (Opcional) Carregar docs via Supabase
-    if usar_docs_supabase:
-        try:
-            # ajuste este import se seu arquivo estiver em outro path
-            from pickup.docs_rag import get_docs_by_ticker  # type: ignore
 
-            with st.spinner("Lendo docs do Supabase..."):
-                docs_by_ticker = get_docs_by_ticker(
-                    tickers=tickers,
-                    limit_docs=8,
-                    limit_chars_per_doc=4000,
+@st.cache_data(show_spinner=False, ttl=60 * 10)
+def count_docs_by_ticker(ticker: str) -> int:
+    tk = _norm_ticker(ticker)
+    if not tk:
+        return 0
+    engine = get_supabase_engine()
+    with engine.connect() as conn:
+        r = conn.execute(
+            text("SELECT COUNT(*) AS c FROM public.docs_corporativos WHERE ticker = :t"),
+            {"t": tk},
+        ).fetchone()
+    return _safe_int(r[0] if r else 0, 0)
+
+
+@st.cache_data(show_spinner=False, ttl=60 * 10)
+def count_docs_by_tickers(tickers: List[str]) -> Dict[str, int]:
+    tks = [_norm_ticker(x) for x in (tickers or []) if _norm_ticker(x)]
+    tks = list(dict.fromkeys(tks))
+    if not tks:
+        return {}
+
+    engine = get_supabase_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT ticker, COUNT(*)::int AS c
+                FROM public.docs_corporativos
+                WHERE ticker = ANY(:tks)
+                GROUP BY ticker
+                """
+            ),
+            {"tks": tks},
+        ).fetchall()
+
+    out = {tk: 0 for tk in tks}
+    for r in rows or []:
+        out[_norm_ticker(str(r[0]))] = _safe_int(r[1], 0)
+    return out
+
+
+@st.cache_data(show_spinner=False, ttl=60 * 10)
+def get_docs_by_ticker(
+    ticker: str,
+    *,
+    limit_docs: int = 12,
+    max_chars_per_doc: int = 6000,
+    prefer_chunks: bool = True,
+    limit_chunks: int = 18,
+) -> List[Dict[str, Any]]:
+    """
+    Retorna lista no formato esperado pelo Patch6:
+      [{"source": "...", "date": "YYYY-MM-DD", "text": "..."}]
+
+    - Se prefer_chunks=True e houver chunks, retorna chunks (melhor para RAG).
+    - Caso contrário retorna raw_text de docs_corporativos.
+    """
+    tk = _norm_ticker(ticker)
+    if not tk:
+        return []
+
+    engine = get_supabase_engine()
+
+    # 1) tenta chunks (RAG)
+    if prefer_chunks:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT
+                        d.fonte,
+                        d.tipo,
+                        COALESCE(d.titulo,'') AS titulo,
+                        COALESCE(d.url,'') AS url,
+                        COALESCE(d.data::text,'NA') AS data_txt,
+                        c.chunk_text
+                    FROM public.docs_corporativos_chunks c
+                    JOIN public.docs_corporativos d ON d.id = c.doc_id
+                    WHERE c.ticker = :t
+                    ORDER BY d.data DESC NULLS LAST, d.id DESC, c.chunk_index ASC
+                    LIMIT :lim
+                    """
+                ),
+                {"t": tk, "lim": int(limit_chunks)},
+            ).fetchall()
+
+        if rows:
+            out: List[Dict[str, Any]] = []
+            for r in rows:
+                fonte, tipo, titulo, url, data_txt, chunk_text = r
+                out.append(
+                    {
+                        "source": _build_source(str(fonte), str(tipo), str(titulo), str(url)),
+                        "date": str(data_txt),
+                        "text": _limit_text(str(chunk_text or ""), int(max_chars_per_doc)),
+                    }
                 )
+            return out[: int(limit_docs)]
 
-            total_docs = sum(len(v or []) for v in (docs_by_ticker or {}).values())
-            st.success(f"Docs carregados do Supabase: {total_docs}")
+    # 2) fallback: docs (raw_text)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT
+                    fonte,
+                    tipo,
+                    COALESCE(titulo,'') AS titulo,
+                    COALESCE(url,'') AS url,
+                    COALESCE(data::text,'NA') AS data_txt,
+                    raw_text
+                FROM public.docs_corporativos
+                WHERE ticker = :t
+                ORDER BY data DESC NULLS LAST, id DESC
+                LIMIT :lim
+                """
+            ),
+            {"t": tk, "lim": int(limit_docs)},
+        ).fetchall()
 
-            with st.expander("Ver contagem por ticker", expanded=False):
-                for tk in tickers:
-                    st.write(f"{tk}: {len((docs_by_ticker or {}).get(tk, []) or [])} docs")
+    out2: List[Dict[str, Any]] = []
+    for r in rows or []:
+        fonte, tipo, titulo, url, data_txt, raw_text = r
+        out2.append(
+            {
+                "source": _build_source(str(fonte), str(tipo), str(titulo), str(url)),
+                "date": str(data_txt),
+                "text": _limit_text(str(raw_text or ""), int(max_chars_per_doc)),
+            }
+        )
+    return out2
 
-        except Exception as e:
-            st.error(f"Falha ao carregar docs do Supabase (docs_rag): {type(e).__name__}: {e}")
-            docs_by_ticker = None
 
-    st.markdown("---")
+def get_docs_by_tickers(
+    tickers: List[str],
+    *,
+    limit_docs: int = 12,
+    max_chars_per_doc: int = 6000,
+    prefer_chunks: bool = True,
+    limit_chunks: int = 18,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Conveniência: retorna dict ticker -> docs list.
+    """
+    tks = [_norm_ticker(x) for x in (tickers or []) if _norm_ticker(x)]
+    tks = list(dict.fromkeys(tks))
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for tk in tks:
+        out[tk] = get_docs_by_ticker(
+            tk,
+            limit_docs=limit_docs,
+            max_chars_per_doc=max_chars_per_doc,
+            prefer_chunks=prefer_chunks,
+            limit_chunks=limit_chunks,
+        )
+    return out
 
-    if st.button("🧠 Rodar Patch 6 agora", type="primary"):
-        try:
-            render_patch6_perspectivas_factibilidade(
-                empresas_mock,
-                indicadores_por_ticker=None,       # depois plugamos indicadores aqui
-                docs_by_ticker=docs_by_ticker,     # RAG vindo do Supabase
-                ativar_ajuste_peso=ativar_ajuste_peso,
-                cache_horas_default=int(cache_horas),
-            )
-        except Exception as e:
-            st.error(f"Patch 6 quebrou: {type(e).__name__}: {e}")
+
+__all__ = [
+    "get_docs_by_ticker",
+    "get_docs_by_tickers",
+    "count_docs_by_ticker",
+    "count_docs_by_tickers",
+]
