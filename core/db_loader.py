@@ -1,7 +1,9 @@
+# core/db_loader.py
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Tuple
+import hashlib
+from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 import streamlit as st
@@ -291,6 +293,81 @@ def load_macro_mensal() -> pd.DataFrame | None:
         return None
 
 
+# ════════════════════════════════════════════════════════════════════════════════
+# PATCH 6 — Documentos corporativos (CVM/RI) para alimentar docs_by_ticker
+# ════════════════════════════════════════════════════════════════════════════════
+
+def make_doc_hash(ticker: str, data: str | None, url: str | None, raw_text: str) -> str:
+    """
+    Hash estável para deduplicação no Supabase (docs_corporativos).
+    Use no ETL: doc_hash = make_doc_hash(...)
+    """
+    base = (
+        f"{(ticker or '').upper().replace('.SA','').strip()}|"
+        f"{data or ''}|"
+        f"{url or ''}|"
+        f"{(raw_text or '')[:20000]}"
+    )
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()
+
+
+@st.cache_data(show_spinner=False, ttl=60 * 30)
+def load_docs_corporativos_by_ticker(
+    tickers: List[str],
+    limit_per_ticker: int = 8,
+    days_back: int = 365,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Retorna no formato que o Patch6 espera:
+      { "PETR4": [{"source": "CVM:fato_relevante", "date": "2026-02-10", "text": "..."}], ... }
+
+    Pré-requisito: tabela public.docs_corporativos existir no Supabase.
+    """
+    tks = [
+        (t or "").strip().upper().replace(".SA", "")
+        for t in (tickers or [])
+        if str(t or "").strip()
+    ]
+    tks = list(dict.fromkeys([t for t in tks if t]))
+    if not tks:
+        return {}
+
+    try:
+        df = _read_sql_df(
+            """
+            SELECT ticker, data, fonte, tipo, titulo, url, raw_text
+            FROM public.docs_corporativos
+            WHERE ticker = ANY(:tks)
+              AND (data IS NULL OR data >= (CURRENT_DATE - (:days_back::int)))
+            ORDER BY ticker, data DESC NULLS LAST, id DESC
+            """,
+            {"tks": tks, "days_back": int(days_back)},
+        )
+    except Exception as e:
+        # Mantém a app viva mesmo se a tabela não existir ainda
+        st.error(f"Erro ao carregar docs_corporativos: {e}")
+        return {tk: [] for tk in tks}
+
+    out: Dict[str, List[Dict[str, Any]]] = {tk: [] for tk in tks}
+    if df is None or df.empty:
+        return out
+
+    # normaliza
+    df["ticker"] = df["ticker"].astype(str).str.upper().str.replace(".SA", "", regex=False).str.strip()
+    for tk, grp in df.groupby("ticker"):
+        rows = grp.head(int(limit_per_ticker)).to_dict("records")
+        out[str(tk)] = [
+            {
+                "source": f"{(r.get('fonte') or 'NA')}:{(r.get('tipo') or 'NA')}",
+                "date": str(r.get("data") or "NA"),
+                "text": str(r.get("raw_text") or "")[:12000],
+            }
+            for r in rows
+            if str(r.get("raw_text") or "").strip()
+        ]
+    return out
+
+
 __all__ = [
     "get_supabase_engine",
     "load_setores_from_db",
@@ -303,4 +380,7 @@ __all__ = [
     "load_multiplos_tri_hist_from_db",
     "load_macro_summary",
     "load_macro_mensal",
+    # Patch 6 docs
+    "load_docs_corporativos_by_ticker",
+    "make_doc_hash",
 ]
