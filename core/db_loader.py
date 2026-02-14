@@ -367,11 +367,116 @@ def load_docs_corporativos_by_ticker(
         ]
     return out
 
+# ════════════════════════════════════════════════════════════════════════════════
+# Patch 6 — Documentos corporativos (CVM/RI) para RAG
+# Tabelas: public.docs_corporativos / public.docs_corporativos_chunks
+# ════════════════════════════════════════════════════════════════════════════════
+
+@st.cache_data(show_spinner=False, ttl=6 * 60 * 60)
+def load_docs_corporativos_from_db(
+    ticker: str,
+    *,
+    limit: int = 20,
+    tipos: list[str] | None = None,
+    fontes: list[str] | None = None,
+) -> pd.DataFrame | None:
+    """
+    Carrega documentos corporativos textuais para um ticker.
+
+    Retorna colunas típicas:
+      [id, ticker, data, fonte, tipo, titulo, url, raw_text, lang, doc_hash, created_at]
+    """
+    tk1, tk2 = _normalize_ticker(ticker)
+    limit = int(limit)
+
+    wh_tipo = ""
+    if tipos:
+        wh_tipo = " AND tipo = ANY(:tipos) "
+
+    wh_fonte = ""
+    if fontes:
+        wh_fonte = " AND fonte = ANY(:fontes) "
+
+    try:
+        df = _read_sql_df(
+            f"""
+            SELECT
+                id, ticker, data, fonte, tipo, titulo, url, raw_text, lang, doc_hash, created_at
+            FROM public.docs_corporativos
+            WHERE (ticker = :tk2 OR ticker = :tk1)
+              {wh_tipo}
+              {wh_fonte}
+            ORDER BY COALESCE(data, DATE(created_at)) DESC, id DESC
+            LIMIT :limit
+            """,
+            {"tk1": tk1, "tk2": tk2, "limit": limit, "tipos": tipos, "fontes": fontes},
+        )
+        if df is None or df.empty:
+            return df
+        if "data" in df.columns:
+            df["data"] = pd.to_datetime(df["data"], errors="coerce").dt.date
+        return df
+    except Exception as e:
+        st.error(f"Erro ao carregar docs corporativos para {ticker}: {e}")
+        return None
+
+
+@st.cache_data(show_spinner=False, ttl=6 * 60 * 60)
+def load_docs_corporativos_chunks_from_db(
+    ticker: str,
+    *,
+    limit_docs: int = 12,
+    limit_chunks_per_doc: int = 6,
+) -> pd.DataFrame | None:
+    """
+    Carrega chunks de documentos (RAG) para um ticker.
+    Estratégia: pega os últimos N docs e retorna até M chunks por doc (ordenados).
+    """
+    tk1, tk2 = _normalize_ticker(ticker)
+    limit_docs = int(limit_docs)
+    limit_chunks_per_doc = int(limit_chunks_per_doc)
+
+    try:
+        df = _read_sql_df(
+            """
+            WITH docs AS (
+                SELECT id, ticker, COALESCE(data, DATE(created_at)) as dt
+                FROM public.docs_corporativos
+                WHERE (ticker = :tk2 OR ticker = :tk1)
+                ORDER BY dt DESC, id DESC
+                LIMIT :limit_docs
+            ),
+            ranked AS (
+                SELECT
+                    c.*,
+                    d.dt,
+                    ROW_NUMBER() OVER (PARTITION BY c.doc_id ORDER BY c.chunk_index ASC) as rn
+                FROM public.docs_corporativos_chunks c
+                JOIN docs d ON d.id = c.doc_id
+            )
+            SELECT
+                id, doc_id, ticker, chunk_index, chunk_text, chunk_hash, created_at
+            FROM ranked
+            WHERE rn <= :limit_chunks_per_doc
+            ORDER BY dt DESC, doc_id DESC, chunk_index ASC
+            """,
+            {
+                "tk1": tk1,
+                "tk2": tk2,
+                "limit_docs": limit_docs,
+                "limit_chunks_per_doc": limit_chunks_per_doc,
+            },
+        )
+        return df
+    except Exception as e:
+        st.error(f"Erro ao carregar chunks para {ticker}: {e}")
+        return None
+
 
 __all__ = [
     "get_supabase_engine",
     "load_setores_from_db",
-    "load_setores_from_supabase",  # alias legado crítico (basic.py)
+    "load_setores_from_supabase",
     "load_data_from_db",
     "load_data_tri_from_db",
     "load_multiplos_from_db",
@@ -380,7 +485,6 @@ __all__ = [
     "load_multiplos_tri_hist_from_db",
     "load_macro_summary",
     "load_macro_mensal",
-    # Patch 6 docs
-    "load_docs_corporativos_by_ticker",
-    "make_doc_hash",
+    "load_docs_corporativos_from_db",
+    "load_docs_corporativos_chunks_from_db",
 ]
