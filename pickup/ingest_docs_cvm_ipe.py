@@ -375,6 +375,7 @@ def ingest_ipe_for_tickers(
                 continue
 
             df = _read_ipe_zip_to_df(zip_bytes)
+            st.write(f"Colunas encontradas no IPE {yr}:", list(df.columns))
             if df is None or df.empty:
                 continue
 
