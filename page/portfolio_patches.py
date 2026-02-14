@@ -1101,7 +1101,7 @@ def render_patch6_perspectivas_factibilidade(
     # - armazena em public.docs_corporativos + docs_corporativos_chunks
     # ------------------------------------------------------------------
     # tickers já foram normalizados acima (evita duplicação)
-    tickers = sorted(list(dict.fromkeys([_norm_tk(t) for t in (tickers or []) if _norm_tk(t)])))
+    tickers = sorted(list(dict.fromkeys([_norm_tk(e.get("ticker", "")) for e in (empresas_lideres_finais or []) if _norm_tk(e.get("ticker", ""))])))
 
     with st.expander("⚙️ Atualizar base de documentos (CVM/IPE) — somente empresas selecionadas", expanded=False):
         st.caption(
@@ -1207,14 +1207,6 @@ def render_patch6_perspectivas_factibilidade(
     # UI por empresa: texto manual + hint de docs_by_ticker
     st.markdown("### 📥 Fontes (cole aqui trechos oficiais)")
     st.caption("Dica: cole trechos de Fato Relevante / release de RI / call transcript / apresentação. Quanto mais oficial, melhor.")
-
-    tickers = []
-    for e in empresas_lideres_finais:
-        tk = _norm_tk(e.get("ticker", ""))
-        if tk:
-            tickers.append(tk)
-    tickers = sorted(list(dict.fromkeys(tickers)))
-
     for tk in tickers:
         nome = _get_nome(tk, empresas_lideres_finais)
         with st.expander(f"📌 {nome} ({tk}) — colar textos (opcional)", expanded=False):
