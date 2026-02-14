@@ -10,3 +10,4 @@ psycopg2-binary
 python-bcb
 sqlalchemy>=2.0
 openai>=1.0.0
+tradingcomdados==1.4.10
