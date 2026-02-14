@@ -1054,35 +1054,34 @@ def render():
                 except Exception as e:
                     st.error(f"Patch 5 falhou: {type(e).__name__}: {e}")
 
-if render_patch6_perspectivas_factibilidade is not None:
-    with st.expander("🧩 Patch 6 — Perspectivas & Factibilidade (Plano futuro + execução)", expanded=False):
-        st.caption(
-            "Este patch usa IA e pode fazer chamadas externas (custo e tempo). "
-            "Por padrão ele fica DESLIGADO para não travar o fluxo após 'Rodar Criação de Portfólio'."
-        )
-        habilitar_p6 = st.checkbox(
-            "✅ Habilitar Patch 6 nesta execução",
-            value=bool(st.session_state.get("cp_enable_patch6", False)),
-            key="cp_enable_patch6",
-            help="Ative somente quando quiser analisar perspectivas. Se desligado, nada do Patch 6 roda.",
-        )
-
-        if habilitar_p6:
-            try:
-                render_patch6_perspectivas_factibilidade(
-                    empresas_lideres_finais,
-                    indicadores_por_ticker=None,  # depois plugar: dict[ticker] -> df_indicadores
-                    docs_by_ticker=None,          # depois plugar: dict[ticker] -> [{source,date,text},...]
-                    ativar_ajuste_peso=True,
-                    cache_horas_default=24,
+        if render_patch6_perspectivas_factibilidade is not None:
+            with st.expander("🧩 Patch 6 — Perspectivas & Factibilidade (Plano futuro + execução)", expanded=False):
+                st.caption(
+                    "Este patch usa IA e pode fazer chamadas externas (custo e tempo). "
+                    "Por padrão ele fica DESLIGADO para não travar o fluxo após 'Rodar Criação de Portfólio'."
                 )
-            except Exception as e:
-                st.error(f"Patch 6 falhou: {type(e).__name__}: {e}")
-        else:
-            st.info("Patch 6 está desativado. Marque a opção acima para iniciar.")
+                habilitar_p6 = st.checkbox(
+                    "✅ Habilitar Patch 6 nesta execução",
+                    value=bool(st.session_state.get("cp_enable_patch6", False)),
+                    key="cp_enable_patch6",
+                    help="Ative somente quando quiser analisar perspectivas. Se desligado, nada do Patch 6 roda.",
+                )
+
+                if habilitar_p6:
+                    try:
+                        render_patch6_perspectivas_factibilidade(
+                            empresas_lideres_finais,
+                            indicadores_por_ticker=None,  # depois plugar: dict[ticker] -> df_indicadores
+                            docs_by_ticker=None,          # depois plugar: dict[ticker] -> [{source,date,text},...]
+                            ativar_ajuste_peso=True,
+                            cache_horas_default=24,
+                        )
+                    except Exception as e:
+                        st.error(f"Patch 6 falhou: {type(e).__name__}: {e}")
+                else:
+                    st.info("Patch 6 está desativado. Marque a opção acima para iniciar.")
 
 
-    # Desarma a execução após rodar (evita “auto-rerun armado”)
-    st.session_state["cp_should_run"] = False
 
-    st.markdown("<hr>", unsafe_allow_html=True)
+            st.markdown("<hr>", unsafe_allow_html=True)
+
