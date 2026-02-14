@@ -754,153 +754,304 @@ def render_patch5_desempenho_empresas(
     st.caption("Notas: retornos e volatilidade são por preço (sem reinvestimento). DY é aproximado por dividendos/Preço médio anual.")
 
 # ─────────────────────────────────────────────────────────────
-# PATCH 5 — IA (OpenAI) — Seleção/validação amigável (era Patch 6)
+# PATCH 6 — Perspectivas & Factibilidade (NLP + régua financeira)
 # ─────────────────────────────────────────────────────────────
 
-def _render_patch5_report(resp: Dict[str, Any], *, mostrar_tabela: bool = False) -> None:
-    resumo = str(resp.get("resumo_executivo", "")).strip()
-    obs = str(resp.get("observacao_importante", "")).strip()
+def _pick_last_numeric(df: Optional[pd.DataFrame], candidates: List[str]) -> Optional[float]:
+    """Tenta achar o último valor numérico válido dentre várias colunas possíveis."""
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        return None
+    cols = {str(c).strip(): c for c in df.columns}
+    for name in candidates:
+        if name in cols:
+            s = pd.to_numeric(df[cols[name]], errors="coerce").dropna()
+            if not s.empty:
+                return _safe_float(s.iloc[-1])
+    # fallback: busca por match case-insensitive
+    lower_map = {str(c).strip().lower(): c for c in df.columns}
+    for name in candidates:
+        k = name.strip().lower()
+        if k in lower_map:
+            s = pd.to_numeric(df[lower_map[k]], errors="coerce").dropna()
+            if not s.empty:
+                return _safe_float(s.iloc[-1])
+    return None
 
-    if resumo:
-        st.markdown("### 🧾 Resumo")
-        st.write(resumo)
 
-    if obs:
-        st.markdown("### ℹ️ Observação importante")
-        st.info(obs)
+def _clamp(x: float, lo: float, hi: float) -> float:
+    try:
+        return float(max(lo, min(hi, float(x))))
+    except Exception:
+        return float(lo)
 
-    selecionadas = resp.get("selecionadas", []) or []
-    st.markdown("### ✅ Candidatas mais fortes (segundo a IA)")
-    if not selecionadas:
-        st.warning("A IA não marcou nenhuma como forte.")
+
+def _score_bucket(value: Optional[float], *, good_when_low: bool, cuts: List[float], scores: List[float]) -> float:
+    """
+    Converte métrica em score por faixas.
+    cuts: limites ordenados (ex.: [2.5, 3.5, 5.0])
+    scores: pontuações correspondentes (len = len(cuts)+1)
+    """
+    if value is None or not np.isfinite(value):
+        return 0.0
+    v = float(value)
+    if good_when_low:
+        # menor é melhor
+        for i, c in enumerate(cuts):
+            if v <= c:
+                return float(scores[i])
+        return float(scores[-1])
     else:
-        for item in selecionadas:
-            tk = str(item.get("ticker", "")).strip()
-            emp = str(item.get("empresa", tk)).strip()
-            nota = item.get("nota_0_100", "")
-            conf = item.get("confianca_0_1", "")
-            st.markdown(f"**{emp} ({tk})** — nota **{nota}** | confiança **{conf}**")
-
-            pq = item.get("por_que_entra", []) or []
-            if pq:
-                st.markdown("- **Por que entra:**")
-                for p in pq[:6]:
-                    st.write(f"  - {p}")
-
-            riscos = item.get("riscos_principais", []) or []
-            if riscos:
-                st.markdown("- **Riscos que eu monitoraria:**")
-                for r in riscos[:6]:
-                    st.write(f"  - {r}")
-
-            usar = str(item.get("como_eu_usaria", "")).strip()
-            if usar:
-                st.markdown(f"- **Como eu usaria na prática:** {usar}")
-
-            st.markdown("---")
-
-    nao = resp.get("nao_selecionadas", []) or []
-    st.markdown("### 🟡 Em observação / fora (segundo a IA)")
-    if not nao:
-        st.write("Nenhuma ficou de fora.")
-    else:
-        for item in nao:
-            tk = str(item.get("ticker", "")).strip()
-            emp = str(item.get("empresa", tk)).strip()
-            st.markdown(f"**{emp} ({tk})**")
-
-            pq = item.get("por_que_ficou_fora", []) or []
-            if pq:
-                st.markdown("- **Por que ficou fora:**")
-                for p in pq[:6]:
-                    st.write(f"  - {p}")
-
-            mel = item.get("o_que_precisa_melhorar_ou_confirmar", []) or []
-            if mel:
-                st.markdown("- **O que confirmar antes de descartar:**")
-                for m in mel[:6]:
-                    st.write(f"  - {m}")
-
-            st.markdown("---")
-
-    alertas = resp.get("alertas_metodologicos", []) or []
-    if alertas:
-        st.markdown("### ⚠️ Alertas metodológicos")
-        for a in alertas[:10]:
-            st.write(f"- {a}")
-
-    if mostrar_tabela and selecionadas:
-        try:
-            df = pd.DataFrame(selecionadas)
-            cols = [c for c in ["ticker", "empresa", "nota_0_100", "confianca_0_1", "como_eu_usaria"] if c in df.columns]
-            st.markdown("### 📋 Tabela (opcional)")
-            st.dataframe(df[cols] if cols else df, use_container_width=True)
-        except Exception:
-            pass
-
-    with st.expander("Ver JSON completo (debug)", expanded=False):
-        st.json(resp)
+        # maior é melhor
+        for i, c in enumerate(cuts):
+            if v >= c:
+                return float(scores[i])
+        return float(scores[-1])
 
 
-def render_patch5_ia_selecao_lideres(
-    score_global: pd.DataFrame,
-    lideres_global: pd.DataFrame,
+def _patch6_regua_financeira_factibilidade(indicadores_df: Optional[pd.DataFrame]) -> Dict[str, Any]:
+    """
+    Régua objetiva 0–100 usando indicadores básicos.
+    Funciona com diferentes nomes de colunas (robusto).
+    """
+    df = _safe_df(indicadores_df)
+
+    # Nomes comuns (ajuste se você quiser “encaixar” nos seus campos reais)
+    div_liq_ebitda = _pick_last_numeric(df, [
+        "DIV_LIQ_EBITDA", "DIVIDA_LIQ_EBITDA", "Dívida Líquida/EBITDA", "DIVIDA_LIQUIDA_EBITDA",
+        "Divida_Liq_Ebitda", "div_liq_ebitda"
+    ])
+    liquidez_corrente = _pick_last_numeric(df, [
+        "LIQ_CORRENTE", "LIQUIDEZ_CORRENTE", "Liquidez Corrente", "liquidez_corrente"
+    ])
+    margem_ebitda = _pick_last_numeric(df, [
+        "MARGEM_EBITDA", "Margem EBITDA", "margem_ebitda"
+    ])
+    margem_liquida = _pick_last_numeric(df, [
+        "MARGEM_LIQ", "MARGEM_LIQUIDA", "Margem Líquida", "margem_liquida"
+    ])
+    roe = _pick_last_numeric(df, ["ROE", "roe"])
+    roic = _pick_last_numeric(df, ["ROIC", "roic"])
+
+    # Subscores (pesos pensados para “capacidade de executar plano”)
+    # 1) Alavancagem (peso alto) — bom quando baixo
+    s_alav = _score_bucket(
+        div_liq_ebitda, good_when_low=True,
+        cuts=[2.0, 3.0, 4.0, 5.0],
+        scores=[25.0, 20.0, 14.0, 7.0, 2.0]
+    )
+
+    # 2) Liquidez (capacidade de atravessar ciclos)
+    s_liq = _score_bucket(
+        liquidez_corrente, good_when_low=False,
+        cuts=[1.5, 1.2, 1.0],
+        scores=[20.0, 15.0, 10.0, 4.0]
+    )
+
+    # 3) Rentabilidade/eficiência (proxy para “motor de caixa no futuro”)
+    # margens podem variar por setor, então damos peso moderado
+    s_margem = 0.0
+    s_margem += _score_bucket(margem_ebitda, good_when_low=False, cuts=[25, 15, 8], scores=[12.0, 9.0, 6.0, 2.0])
+    s_margem += _score_bucket(margem_liquida, good_when_low=False, cuts=[15, 8, 3], scores=[8.0, 6.0, 4.0, 1.0])
+
+    # 4) Retorno sobre capital (qualidade estrutural)
+    s_ret = 0.0
+    s_ret += _score_bucket(roe, good_when_low=False, cuts=[18, 12, 8], scores=[8.0, 6.0, 4.0, 1.0])
+    s_ret += _score_bucket(roic, good_when_low=False, cuts=[14, 10, 6], scores=[7.0, 5.0, 3.0, 1.0])
+
+    raw = float(s_alav + s_liq + s_margem + s_ret)
+    raw = _clamp(raw, 0.0, 100.0)
+
+    drivers_pos = []
+    drivers_neg = []
+
+    if div_liq_ebitda is not None:
+        if div_liq_ebitda <= 2.0:
+            drivers_pos.append(f"Alavancagem saudável (Dívida Líq/EBITDA ≈ {div_liq_ebitda:.2f}).")
+        elif div_liq_ebitda >= 4.0:
+            drivers_neg.append(f"Alavancagem elevada (Dívida Líq/EBITDA ≈ {div_liq_ebitda:.2f}).")
+
+    if liquidez_corrente is not None:
+        if liquidez_corrente >= 1.5:
+            drivers_pos.append(f"Liquidez corrente robusta (≈ {liquidez_corrente:.2f}).")
+        elif liquidez_corrente < 1.0:
+            drivers_neg.append(f"Liquidez corrente abaixo de 1 (≈ {liquidez_corrente:.2f}).")
+
+    if margem_ebitda is not None and margem_ebitda >= 15:
+        drivers_pos.append(f"Margem EBITDA consistente (≈ {margem_ebitda:.1f}%).")
+    if margem_liquida is not None and margem_liquida < 3:
+        drivers_neg.append(f"Margem líquida muito baixa (≈ {margem_liquida:.1f}%).")
+
+    if roic is not None and roic >= 10:
+        drivers_pos.append(f"ROIC bom (≈ {roic:.1f}%).")
+    if roe is not None and roe < 8:
+        drivers_neg.append(f"ROE baixo (≈ {roe:.1f}%).")
+
+    return {
+        "score_regua_0_100": raw,
+        "metrics": {
+            "div_liq_ebitda": div_liq_ebitda,
+            "liquidez_corrente": liquidez_corrente,
+            "margem_ebitda_%": margem_ebitda,
+            "margem_liquida_%": margem_liquida,
+            "roe_%": roe,
+            "roic_%": roic,
+        },
+        "drivers_pos": drivers_pos[:4],
+        "drivers_neg": drivers_neg[:4],
+    }
+
+
+def _patch6_llm_extract_and_assess(
+    *,
+    llm: Any,
+    empresa: str,
+    ticker: str,
+    textos: List[Dict[str, Any]],
+    regua_obj: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Usa o LLMClient.generate_json para:
+    - extrair iniciativas futuras (eventos) do texto
+    - classificar riscos/dependências
+    - propor ajuste leve em cima da régua objetiva (sem virar “achismo”)
+    """
+    # schema com saída estável (sem texto solto)
+    schema_hint = r"""
+{
+  "iniciativas": [
+    {
+      "tipo": "expansao|m&a|desinvestimento|capex|concessao_licitacao|pesquisa_exploracao|reestruturacao|guidance|outros",
+      "descricao_curta": "STRING",
+      "horizonte": "curto|medio|longo|nao_informado",
+      "dependencias": ["STRING"],
+      "impacto_esperado": "receita|margem|eficiencia|divida|caixa|ambivalente|nao_informado",
+      "sinal": "positivo|negativo|ambivalente",
+      "evidencia": {"fonte": "STRING", "data": "STRING", "trecho": "STRING"}
+    }
+  ],
+  "avaliacao_execucao": {
+    "risco_execucao": "baixo|medio|alto|nao_informado",
+    "pontos_a_favor": ["STRING"],
+    "pontos_contra": ["STRING"],
+    "perguntas_criticas": ["STRING"],
+    "ajuste_sugerido_no_score_regua_pp": 0
+  },
+  "resumo_1_paragrafo": "STRING"
+}
+""".strip()
+
+    # guardrails: LLM não inventa fatos nem datas; só usa os textos fornecidos.
+    system = """
+Você é um analista buy-side, cético e orientado a evidência.
+Regras obrigatórias:
+- NÃO invente fatos, números, datas, nomes, operações.
+- Use APENAS o conteúdo fornecido em 'textos' para extrair iniciativas e trechos de evidência.
+- Se não houver evidência, retorne iniciativas vazias e explique em 'resumo_1_paragrafo'.
+- Ajuste sugerido no score deve ser pequeno (entre -12 e +12 p.p.) e justificado.
+- Trate a régua objetiva como base; você só pode sugerir ajuste leve.
+- Saída SEMPRE no schema solicitado.
+""".strip()
+
+    # Contexto de textos (limitado para custo e para ficar estável)
+    # Cada item: {source, date, text}
+    ctx = []
+    for t in (textos or [])[:10]:
+        ctx.append({
+            "source": str(t.get("source", "NA")).strip(),
+            "date": str(t.get("date", "NA")).strip(),
+            "text": str(t.get("text", "")).strip()[:4000],  # evita payload gigante
+        })
+
+    user = f"""
+Empresa: {empresa} ({ticker})
+Base objetiva de factibilidade (régua 0–100): {regua_obj.get("score_regua_0_100")}
+Métricas disponíveis: {json.dumps(regua_obj.get("metrics", {}), ensure_ascii=False)}
+
+Tarefa:
+1) Extraia do material fornecido as iniciativas/planos futuros.
+2) Para cada iniciativa, capture um trecho de evidência e rotule tipo/horizonte/dependências/sinal.
+3) Faça uma avaliação de execução (risco baixo/médio/alto) e sugira ajuste leve no score da régua (p.p.).
+""".strip()
+
+    # Usa a interface do projeto (LLMClient)
+    out = llm.generate_json(system=system, user=user, schema_hint=schema_hint, context=ctx)
+
+    if not isinstance(out, dict):
+        out = {}
+
+    # sanitiza ajuste
+    try:
+        adj = float(out.get("avaliacao_execucao", {}).get("ajuste_sugerido_no_score_regua_pp", 0) or 0)
+    except Exception:
+        adj = 0.0
+    adj = _clamp(adj, -12.0, 12.0)
+    out.setdefault("avaliacao_execucao", {})
+    out["avaliacao_execucao"]["ajuste_sugerido_no_score_regua_pp"] = float(adj)
+
+    return out
+
+
+def _patch6_weight_factor(score_final: float) -> float:
+    """
+    Sugere multiplicador de peso do aporte (não mexe no score base).
+    Regras conservadoras por faixa.
+    """
+    s = float(score_final)
+    if s >= 80:
+        return 1.07
+    if s >= 70:
+        return 1.04
+    if s >= 55:
+        return 1.00
+    if s >= 45:
+        return 0.96
+    return 0.92
+
+
+def render_patch6_perspectivas_factibilidade(
     empresas_lideres_finais: List[Dict[str, Any]],
     *,
-    max_recs_default: int = 10,
-) -> Optional[Dict[str, Any]]:
-    st.markdown("## 🤖 Patch 5 — Validação por IA (relatório amigável)")
+    indicadores_por_ticker: Optional[Dict[str, pd.DataFrame]] = None,
+    docs_by_ticker: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    ativar_ajuste_peso: bool = True,
+    cache_horas_default: int = 24,
+) -> Optional[pd.DataFrame]:
+    """
+    PATCH 6 UI:
+    - Para cada empresa final, extrai “o que pretende fazer” (via LLM em JSON)
+    - Calcula factibilidade objetiva (régua financeira)
+    - Ajusta score final com ajuste leve do LLM (±12 p.p.)
+    - Sugere fator de peso de aporte (opcional)
+
+    Retorna DataFrame com:
+    [ticker, empresa, score_regua, ajuste_pp, score_final, fator_peso, risco_execucao, iniciativas_count]
+    """
+    st.markdown("## 🧩 Patch 6 — Perspectivas & Factibilidade (Plano futuro + capacidade de execução)")
     st.caption(
-        "A IA usa **apenas** os dados que você já calculou (score e histórico de liderança). "
-        "Ela **não conhece o futuro**."
+        "MVP do Patch6: você informa textos (CVM/RI/notícias) e a IA transforma em iniciativas estruturadas. "
+        "A factibilidade parte de uma régua financeira objetiva; a IA só ajusta levemente com base em evidência do texto."
     )
 
     if not empresas_lideres_finais:
-        st.info("Sem líderes finais nesta execução — Patch 5 não tem o que analisar.")
+        st.info("Sem líderes finais nesta execução — Patch 6 não tem o que analisar.")
         return None
 
+    # cliente LLM do projeto
     try:
         from core.ai_models.llm_client.factory import get_llm_client
+        llm = get_llm_client()
     except Exception as e:
         st.error(f"Não consegui inicializar o cliente de IA (LLM). Erro: {type(e).__name__}: {e}")
         return None
 
-    tickers = sorted({_norm_tk(e.get("ticker", "")) for e in empresas_lideres_finais if _norm_tk(e.get("ticker", ""))})
-    if not tickers:
-        st.info("Patch 5 indisponível: tickers finais inválidos.")
-        return None
-
-    ultimo_ano = None
-    try:
-        if isinstance(score_global, pd.DataFrame) and (not score_global.empty) and ("Ano" in score_global.columns):
-            ultimo_ano = int(pd.to_numeric(score_global["Ano"], errors="coerce").max())
-    except Exception:
-        ultimo_ano = None
-
-    if "patch5_ia_cache" not in st.session_state:
-        st.session_state["patch5_ia_cache"] = {}  # run_key -> {"value": dict, "expires_at": float}
-
-    with st.form("patch5_form", clear_on_submit=False):
-        c1, c2, c3, c4 = st.columns([1.0, 1.0, 1.0, 1.2])
-        with c1:
-            max_recs = st.number_input("Quantidade de recomendações", 3, 25, int(max_recs_default), 1)
-        with c2:
-            mostrar_tabela = st.checkbox("Mostrar tabela", value=False)
-        with c3:
-            ttl_h = st.number_input("Cache (horas)", 1, 72, 12, 1)
-        with c4:
-            submitted = st.form_submit_button("🤖 Executar IA (Patch 5)")
-
-    base_key_payload = {"tickers": tickers, "ultimo_ano": ultimo_ano, "max_recs": int(max_recs), "ver": 2}
-    run_key = hashlib.md5(json.dumps(base_key_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
-
-    busy_flag = f"patch5_busy_{run_key}"
-    run_flag = f"patch5_run_{run_key}"
-    st.session_state.setdefault(busy_flag, False)
-    st.session_state.setdefault(run_flag, False)
+    # cache
+    if "patch6_cache" not in st.session_state:
+        st.session_state["patch6_cache"] = {}  # run_key -> {"value": dict, "expires_at": float}
+    if "patch6_textos_man" not in st.session_state:
+        st.session_state["patch6_textos_man"] = {}  # ticker -> str
 
     def _cache_get(k: str) -> Optional[dict]:
-        it = st.session_state["patch5_ia_cache"].get(k)
+        it = st.session_state["patch6_cache"].get(k)
         if not it:
             return None
         if time.time() > float(it.get("expires_at", 0)):
@@ -909,582 +1060,240 @@ def render_patch5_ia_selecao_lideres(
         return v if isinstance(v, dict) else None
 
     def _cache_set(k: str, v: dict, ttl_seconds: int) -> None:
-        st.session_state["patch5_ia_cache"][k] = {"value": v, "expires_at": time.time() + int(ttl_seconds)}
-
-    cached = _cache_get(run_key)
-    if cached and not submitted:
-        st.success("Mostrando resultado já gerado (cache).")
-        _render_patch5_report(cached, mostrar_tabela=bool(mostrar_tabela))
-        return cached
-
-    if submitted:
-        st.session_state[run_flag] = True
-
-    if not st.session_state[run_flag]:
-        st.info("Clique em **🤖 Executar IA (Patch 5)** para gerar o relatório.")
-        return None
-
-    if st.session_state[busy_flag]:
-        st.warning("Patch 5 já está em execução. Aguarde finalizar.")
-        return None
-
-    st.session_state[busy_flag] = True
-
-    try:
-        sg = score_global.copy() if isinstance(score_global, pd.DataFrame) else pd.DataFrame()
-        lg = lideres_global.copy() if isinstance(lideres_global, pd.DataFrame) else pd.DataFrame()
-
-        if not sg.empty and "ticker" in sg.columns:
-            sg["ticker"] = sg["ticker"].astype(str).map(_norm_tk)
-        if not lg.empty and "ticker" in lg.columns:
-            lg["ticker"] = lg["ticker"].astype(str).map(_norm_tk)
-
-        score_last = pd.DataFrame()
-        if ultimo_ano is not None and (not sg.empty) and ("Ano" in sg.columns):
-            score_last = sg[pd.to_numeric(sg["Ano"], errors="coerce") == ultimo_ano].copy()
-
-        def _clip(s: Any, n: int = 60) -> str:
-            t = str(s or "").strip()
-            return (t[:n] + "…") if len(t) > n else t
-
-        cards: List[Dict[str, Any]] = []
-        for e in empresas_lideres_finais:
-            tk = _norm_tk(str(e.get("ticker", "")))
-            if not tk:
-                continue
-
-            nome = _clip(e.get("nome", tk), 70)
-            setor = _clip(e.get("setor", e.get("SETOR", "OUTROS")), 40)
-
-            score_ultimo = None
-            if not score_last.empty and "ticker" in score_last.columns:
-                rows = score_last[score_last["ticker"] == tk]
-                if not rows.empty:
-                    if "Score_Ajustado" in rows.columns:
-                        score_ultimo = _safe_float(rows.iloc[0].get("Score_Ajustado"))
-                    else:
-                        sc_cols = [c for c in rows.columns if str(c).lower().startswith("score")]
-                        score_ultimo = _safe_float(rows.iloc[0].get(sc_cols[0])) if sc_cols else None
-
-            anos_lider: List[int] = []
-            if not lg.empty and {"ticker", "Ano"}.issubset(lg.columns):
-                try:
-                    anos = lg.loc[lg["ticker"] == tk, "Ano"].dropna().astype(int).unique().tolist()
-                    anos_lider = sorted(anos)
-                except Exception:
-                    anos_lider = []
-
-            cards.append(
-                {
-                    "ticker": tk,
-                    "empresa": nome,
-                    "setor": setor,
-                    "score_ultimo_ano": score_ultimo,
-                    "qtd_anos_lider": int(len(anos_lider)),
-                    "anos_lider_recent": anos_lider[-6:] if anos_lider else [],
-                    "ano_base_score": ultimo_ano,
-                }
-            )
-
-        cards = cards[:20]
-        if not cards:
-            st.warning("Não consegui montar contexto para a IA (cards vazios).")
-            return None
-
-        schema_hint = """
-{
-  "resumo_executivo": "STRING",
-  "observacao_importante": "STRING",
-  "selecionadas": [{"ticker":"STRING","empresa":"STRING","nota_0_100":0,"confianca_0_1":0.0,"por_que_entra":["STRING"],"riscos_principais":["STRING"],"como_eu_usaria":"STRING"}],
-  "nao_selecionadas": [{"ticker":"STRING","empresa":"STRING","por_que_ficou_fora":["STRING"],"o_que_precisa_melhorar_ou_confirmar":["STRING"]}],
-  "alertas_metodologicos": ["STRING"]
-}
-""".strip()
-
-        system = (
-            "Você é um analista fundamentalista prudente. "
-            "Escreva em linguagem simples. "
-            "NÃO use dados futuros. Não invente fatos. "
-            "Se faltarem dados, diga que faltou e como validar."
-        )
-
-        user = (
-            f"Tenho uma carteira candidata (líderes selecionadas por score). "
-            f"O score vai até {ultimo_ano if ultimo_ano is not None else 'desconhecido'}. "
-            f"Quero um mini-relatório amigável: candidatas mais fortes vs em observação.\n\n"
-            f"Regras:\n"
-            f"- Selecione no máximo {int(max_recs)} em 'selecionadas'.\n"
-            f"- O resto em 'nao_selecionadas'.\n"
-            f"- Não use performance futura.\n"
-            f"- Baseie-se apenas no contexto.\n\n"
-            f"Contexto (lista de empresas):\n{json.dumps(cards, ensure_ascii=False)}"
-        )
-
-        with st.spinner("Rodando IA (Patch 5)..."):
-            llm = get_llm_client()
-            resp = llm.generate_json(system=system, user=user, schema_hint=schema_hint, context=None)
-
-        if not isinstance(resp, dict):
-            st.error("A IA retornou algo inválido (não é dict).")
-            return None
-
-        resp.setdefault("resumo_executivo", "")
-        resp.setdefault("observacao_importante", "")
-        resp.setdefault("selecionadas", [])
-        resp.setdefault("nao_selecionadas", [])
-        resp.setdefault("alertas_metodologicos", [])
-
-        _cache_set(run_key, resp, int(ttl_h) * 3600)
-        _render_patch5_report(resp, mostrar_tabela=bool(mostrar_tabela))
-        return resp
-
-    except Exception as e:
-        st.error(f"Falha ao chamar IA: {type(e).__name__}: {e}")
-        return None
-
-    finally:
-        st.session_state[run_flag] = False
-        st.session_state[busy_flag] = False
-
-
-# ─────────────────────────────────────────────────────────────
-# PATCH 6 — Evidências externas + Resumo do Portfólio (era Patch 7)
-# ─────────────────────────────────────────────────────────────
-
-def _p6_strip_sa(ticker: str) -> str:
-    return (ticker or "").strip().upper().replace(".SA", "").strip()
-
-
-def _p6_get_nome(ticker: str, empresas_lideres_finais: List[Dict]) -> str:
-    tk = _p6_strip_sa(ticker)
-    for e in (empresas_lideres_finais or []):
-        if _p6_strip_sa(str(e.get("ticker", ""))) == tk:
-            return str(e.get("nome") or tk)
-    return tk
-
-
-def _p6_bullets(xs: Any, max_items: int = 6) -> List[str]:
-    if xs is None:
-        return []
-    if isinstance(xs, str):
-        s = xs.strip()
-        return [s] if s else []
-    if isinstance(xs, list):
-        out: List[str] = []
-        for x in xs:
-            s = str(x).strip()
-            if s:
-                out.append(s)
-            if len(out) >= max_items:
-                break
-        return out
-    return []
-
-
-def _p6_make_key(*, tickers_and_names: List[List[str]], days: int, max_items: int) -> str:
-    payload = {"t": tickers_and_names, "days": int(days), "max_items": int(max_items)}
-    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
-    return hashlib.md5(raw).hexdigest()
-
-
-def _p6_get_store() -> Dict[str, Any]:
-    if "patch6_last_payload" not in st.session_state:
-        st.session_state["patch6_last_payload"] = {}
-    return st.session_state["patch6_last_payload"]
-
-
-def _p6_store_set(key: str, value: dict, ttl_seconds: int) -> None:
-    store = _p6_get_store()
-    store[key] = {"value": value, "expires_at": time.time() + int(ttl_seconds)}
-
-
-def _p6_store_get(key: str) -> Optional[dict]:
-    store = _p6_get_store()
-    item = store.get(key)
-    if not item:
-        return None
-    if time.time() > float(item.get("expires_at", 0)):
-        return None
-    return item.get("value")
-
-
-def _p6_schema_fallback() -> str:
-    return """
-    {
-      "ticker": "STRING",
-      "empresa": "STRING",
-      "veredito": "fortalece|neutro|enfraquece",
-      "resumo": "STRING",
-      "catalisadores": ["..."],
-      "riscos": ["..."]
-    }
-    """.strip()
-
-
-def _p6_inject_css() -> None:
-    if st.session_state.get("_patch6_css_injected"):
-        return
-
-    st.markdown(
-        """
-        <style>
-          .p6-title { font-size: 28px; font-weight: 800; margin: 0 0 6px 0; letter-spacing: 0.2px; color: #6DD5FA; }
-          .p6-subtitle { font-size: 14px; opacity: 0.85; margin: 0 0 14px 0; }
-          .p6-card { border: 1px solid rgba(255,255,255,0.10); border-radius: 14px; padding: 14px 16px; background: rgba(255,255,255,0.03); margin: 10px 0 14px 0; }
-          .p6-section-title { font-size: 16px; font-weight: 800; margin: 0 0 8px 0; letter-spacing: 0.2px; }
-          .p6-text { font-size: 16px; line-height: 1.65; margin: 0; }
-          .p6-bullets { font-size: 16px; line-height: 1.65; margin: 6px 0 0 0; padding-left: 18px; }
-          .p6-badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 800; letter-spacing: 0.3px; margin-left: 8px; vertical-align: middle; }
-          .p6-badge-strong { background: rgba(124,252,152,0.18); color: #7CFC98; border: 1px solid rgba(124,252,152,0.35); }
-          .p6-badge-neutral { background: rgba(243,210,80,0.18); color: #F3D250; border: 1px solid rgba(243,210,80,0.35); }
-          .p6-badge-weak { background: rgba(255,107,107,0.18); color: #FF6B6B; border: 1px solid rgba(255,107,107,0.35); }
-          .p6-kpi { font-size: 13px; opacity: 0.9; margin-top: 8px; }
-          .p6-muted { opacity: 0.78; }
-          div[data-testid="stExpander"] summary { font-weight: 700; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.session_state["_patch6_css_injected"] = True
-
-
-def _p6_badge_html(veredito: str) -> str:
-    v = (veredito or "").strip().lower()
-    if v == "fortalece":
-        return '<span class="p6-badge p6-badge-strong">FORTALECE</span>'
-    if v == "enfraquece":
-        return '<span class="p6-badge p6-badge-weak">ENFRAQUECE</span>'
-    return '<span class="p6-badge p6-badge-neutral">NEUTRO</span>'
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def _p6_fetch_news_cached(
-    tickers_and_names_tuples: List[tuple],
-    days: int,
-    max_items: int,
-) -> Dict[str, Any]:
-    from core.ai_models.pipelines.news_pipeline import build_news_for_portfolio
-    return (
-        build_news_for_portfolio(
-            tickers_and_names=tickers_and_names_tuples,
-            days=int(days),
-            max_items_per_ticker=int(max_items),
-        )
-        or {}
-    )
-
-
-def render_patch6_validacao_evidencias(
-    score_global: pd.DataFrame,
-    lideres_global: pd.DataFrame,
-    empresas_lideres_finais: List[Dict],
-    *,
-    days_default: int = 60,
-    max_items_per_ticker_default: int = 10,
-    cache_ttl_hours_default: int = 12,
-) -> Optional[dict]:
-
-    _p6_inject_css()
-
-    st.session_state.setdefault("patch6_run", False)
-    st.session_state.setdefault("patch6_last_key", None)
-
-    st.markdown(
-        """
-        <div>
-          <div class="p6-title">📊 Patch 6 — Evidências externas & Leitura do Portfólio</div>
-          <div class="p6-subtitle p6-muted">Validação qualitativa baseada em notícias/fontes recentes.</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    if not empresas_lideres_finais:
-        st.info("Patch 6 indisponível: não há líderes finais.")
-        return None
-
-    tickers_and_names = [
-        [_p6_strip_sa(e.get("ticker", "")), _p6_get_nome(e.get("ticker", ""), empresas_lideres_finais)]
-        for e in (empresas_lideres_finais or [])
-        if _p6_strip_sa(e.get("ticker", ""))
-    ]
-    if not tickers_and_names:
-        st.info("Patch 6 indisponível: tickers inválidos.")
-        return None
+        st.session_state["patch6_cache"][k] = {"value": v, "expires_at": time.time() + int(ttl_seconds)}
 
     with st.form("patch6_form", clear_on_submit=False):
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3 = st.columns([1.0, 1.0, 1.2])
         with c1:
-            days = st.number_input("Janela (dias)", 7, 365, int(days_default), 7)
+            ttl_h = st.number_input("Cache (horas)", 1, 168, int(cache_horas_default), 1)
         with c2:
-            max_items = st.number_input("Evidências por empresa", 3, 20, int(max_items_per_ticker_default), 1)
+            max_textos = st.number_input("Máx. textos por empresa (RAG)", 1, 15, 8, 1)
         with c3:
-            ttl_h = st.number_input("Cache (horas)", 1, 72, int(cache_ttl_hours_default), 1)
-        submitted = st.form_submit_button("Rodar Patch 6")
+            submitted = st.form_submit_button("🧠 Executar Patch 6")
 
-    if submitted:
-        st.session_state["patch6_run"] = True
+    # UI por empresa: texto manual + hint de docs_by_ticker
+    st.markdown("### 📥 Fontes (cole aqui trechos oficiais)")
+    st.caption("Dica: cole trechos de Fato Relevante / release de RI / call transcript / apresentação. Quanto mais oficial, melhor.")
 
-    cache_key = _p6_make_key(tickers_and_names=tickers_and_names, days=int(days), max_items=int(max_items))
-    st.session_state["patch6_last_key"] = cache_key
+    tickers = []
+    for e in empresas_lideres_finais:
+        tk = _norm_tk(e.get("ticker", ""))
+        if tk:
+            tickers.append(tk)
+    tickers = sorted(list(dict.fromkeys(tickers)))
 
-    cached = _p6_store_get(cache_key)
-    if cached and not st.session_state["patch6_run"]:
-        st.success("Mostrando último resultado do Patch 6 (cache).")
-        _render_patch6_output(cached, empresas_lideres_finais)
-        return cached
+    for tk in tickers:
+        nome = _get_nome(tk, empresas_lideres_finais)
+        with st.expander(f"📌 {nome} ({tk}) — colar textos (opcional)", expanded=False):
+            default_text = st.session_state["patch6_textos_man"].get(tk, "")
+            txt = st.text_area(
+                "Cole aqui (pode ser 1 ou vários parágrafos, separados por linha).",
+                value=default_text,
+                height=160,
+                key=f"patch6_txt_{tk}",
+                placeholder="Cole trechos de CVM/RI/notícias. Se deixar vazio, Patch6 só usa docs_by_ticker (se fornecido).",
+            )
+            st.session_state["patch6_textos_man"][tk] = txt
 
-    if not st.session_state["patch6_run"]:
-        st.info("Clique em **Rodar Patch 6** para gerar o relatório.")
+            has_auto = bool(docs_by_ticker and docs_by_ticker.get(tk))
+            if has_auto:
+                st.caption(f"Também existem {len(docs_by_ticker.get(tk) or [])} textos via docs_by_ticker (automático).")
+
+    if not submitted:
+        st.info("Clique em **🧠 Executar Patch 6** para gerar o relatório.")
         return None
 
-    try:
-        from core.ai_models.llm_client.factory import get_llm_client
-        from core.ai_models.prompts.system import SYSTEM_GUARDRAILS
+    # execução
+    resultados: List[Dict[str, Any]] = []
+    ttl_seconds = int(ttl_h) * 3600
+
+    for tk in tickers:
+        nome = _get_nome(tk, empresas_lideres_finais)
+
+        # monta textos: manual + automático
+        textos: List[Dict[str, Any]] = []
+        manual = (st.session_state["patch6_textos_man"].get(tk, "") or "").strip()
+        if manual:
+            textos.append({"source": "manual", "date": "NA", "text": manual})
+
+        if docs_by_ticker and docs_by_ticker.get(tk):
+            # espera lista de {source, date, text}
+            for it in (docs_by_ticker.get(tk) or [])[: int(max_textos)]:
+                if isinstance(it, dict) and str(it.get("text", "")).strip():
+                    textos.append({
+                        "source": str(it.get("source", "auto")).strip(),
+                        "date": str(it.get("date", "NA")).strip(),
+                        "text": str(it.get("text", "")).strip()
+                    })
+
+        # indicadores
+        ind_df = None
+        if indicadores_por_ticker and tk in indicadores_por_ticker:
+            ind_df = indicadores_por_ticker.get(tk)
+
+        regua_obj = _patch6_regua_financeira_factibilidade(ind_df)
+
+        # cache key: depende do texto + métricas base
+        payload = {
+            "ticker": tk,
+            "empresa": nome,
+            "regua": regua_obj.get("score_regua_0_100"),
+            "metrics": regua_obj.get("metrics", {}),
+            "text_hash": hashlib.md5(("|".join([t.get("text", "") for t in textos])[:12000]).encode("utf-8")).hexdigest(),
+            "ver": 1,
+        }
+        run_key = hashlib.md5(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+
+        cached = _cache_get(run_key)
+        if cached:
+            out = cached
+        else:
+            # Se não houver texto algum, devolve vazio com aviso (sem inventar)
+            if not textos:
+                out = {
+                    "iniciativas": [],
+                    "avaliacao_execucao": {
+                        "risco_execucao": "nao_informado",
+                        "pontos_a_favor": [],
+                        "pontos_contra": ["Sem textos fornecidos (CVM/RI/notícias) para extrair iniciativas futuras."],
+                        "perguntas_criticas": ["Você pode colar um trecho de Fato Relevante ou release de RI?"],
+                        "ajuste_sugerido_no_score_regua_pp": 0
+                    },
+                    "resumo_1_paragrafo": "Sem material textual suficiente para extrair perspectivas. A régua objetiva foi calculada apenas com indicadores numéricos."
+                }
+            else:
+                out = _patch6_llm_extract_and_assess(
+                    llm=llm,
+                    empresa=nome,
+                    ticker=tk,
+                    textos=textos,
+                    regua_obj=regua_obj,
+                )
+            _cache_set(run_key, out, ttl_seconds)
+
+        # score final = régua + ajuste_pp
         try:
-            from core.ai_models.prompts.schemas import SCHEMA_PATCH7 as SCHEMA_PATCH6  # se existir
+            ajuste_pp = float(out.get("avaliacao_execucao", {}).get("ajuste_sugerido_no_score_regua_pp", 0) or 0)
         except Exception:
-            SCHEMA_PATCH6 = _p6_schema_fallback()
-    except Exception as e:
-        st.error(f"Patch 6 indisponível: erro ao importar módulos IA. {type(e).__name__}: {e}")
-        st.session_state["patch6_run"] = False
+            ajuste_pp = 0.0
+        ajuste_pp = _clamp(ajuste_pp, -12.0, 12.0)
+
+        score_regua = float(regua_obj.get("score_regua_0_100") or 0.0)
+        score_final = _clamp(score_regua + ajuste_pp, 0.0, 100.0)
+
+        risco_exec = str(out.get("avaliacao_execucao", {}).get("risco_execucao", "nao_informado")).strip()
+        iniciativas = out.get("iniciativas", []) or []
+        iniciativas_count = int(len(iniciativas)) if isinstance(iniciativas, list) else 0
+
+        fator_peso = _patch6_weight_factor(score_final) if ativar_ajuste_peso else 1.0
+
+        resultados.append({
+            "ticker": tk,
+            "empresa": nome,
+            "score_regua_0_100": round(score_regua, 1),
+            "ajuste_ia_pp": round(ajuste_pp, 1),
+            "score_final_0_100": round(score_final, 1),
+            "fator_peso_aporte": round(float(fator_peso), 3),
+            "risco_execucao": risco_exec,
+            "iniciativas_count": iniciativas_count,
+            "_debug": out,
+            "_drivers_pos": regua_obj.get("drivers_pos", []),
+            "_drivers_neg": regua_obj.get("drivers_neg", []),
+            "_metrics": regua_obj.get("metrics", {}),
+        })
+
+    df_out = pd.DataFrame(resultados)
+    if df_out.empty:
+        st.warning("Patch 6 não gerou resultados.")
         return None
 
-    with st.spinner("Coletando evidências recentes..."):
-        try:
-            news_map = _p6_fetch_news_cached(
-                tickers_and_names_tuples=[(a[0], a[1]) for a in tickers_and_names],
-                days=int(days),
-                max_items=int(max_items),
-            ) or {}
-        except Exception as e:
-            st.error(f"Falha ao coletar notícias: {type(e).__name__}: {e}")
-            st.session_state["patch6_run"] = False
-            return None
+    # exibição: tabela “profissional”
+    st.markdown("### 📌 Resultado consolidado (Patch 6)")
+    show_cols = ["ticker", "empresa", "score_final_0_100", "score_regua_0_100", "ajuste_ia_pp", "risco_execucao", "iniciativas_count", "fator_peso_aporte"]
+    st.dataframe(df_out[show_cols].sort_values("score_final_0_100", ascending=False), use_container_width=True)
 
-    try:
-        llm = get_llm_client()
-    except Exception as e:
-        st.error(f"Falha ao inicializar IA: {type(e).__name__}: {e}")
-        st.session_state["patch6_run"] = False
-        return None
+    # cards por empresa
+    st.markdown("### 🗂️ Detalhe por empresa (iniciativas + evidência + leitura)")
+    for _, row in df_out.sort_values("score_final_0_100", ascending=False).iterrows():
+        tk = str(row["ticker"])
+        nome = str(row["empresa"])
+        dbg = row.get("_debug", {}) if isinstance(row.get("_debug", {}), dict) else {}
+        drivers_pos = row.get("_drivers_pos", []) or []
+        drivers_neg = row.get("_drivers_neg", []) or []
+        metrics = row.get("_metrics", {}) if isinstance(row.get("_metrics", {}), dict) else {}
 
-    resultados: Dict[str, dict] = {}
-    falhas: List[Dict[str, str]] = []
+        with st.expander(f"🔎 {nome} ({tk}) — Score {row['score_final_0_100']}/100 | risco {row['risco_execucao']}", expanded=False):
+            c1, c2, c3 = st.columns([1.0, 1.0, 1.0])
+            with c1:
+                st.metric("Score (régua)", row["score_regua_0_100"])
+            with c2:
+                st.metric("Ajuste IA (p.p.)", row["ajuste_ia_pp"])
+            with c3:
+                st.metric("Fator peso aporte", row["fator_peso_aporte"] if ativar_ajuste_peso else 1.0)
 
-    progress = st.progress(0)
-    total = max(1, len(tickers_and_names))
+            st.caption("Régua objetiva (drivers):")
+            if drivers_pos:
+                st.success("A favor: " + " ".join([f"• {x}" for x in drivers_pos]))
+            if drivers_neg:
+                st.warning("Contra: " + " ".join([f"• {x}" for x in drivers_neg]))
 
-    for i, (tk, nome) in enumerate(tickers_and_names, start=1):
-        progress.progress(min(i / total, 1.0))
-        st.write(f"Analisando: {nome} ({tk})…")
+            with st.expander("Ver métricas usadas (debug)", expanded=False):
+                st.json(metrics)
 
-        items = news_map.get(tk, []) or []
-        ctx_items = []
-        for it in items:
-            try:
-                title = getattr(it, "title", None) or (it.get("title") if isinstance(it, dict) else "")
-                source = getattr(it, "source", None) or (it.get("source") if isinstance(it, dict) else "")
-                link = getattr(it, "link", None) or (it.get("link") if isinstance(it, dict) else "")
-                published_at = getattr(it, "published_at", None) or (it.get("published_at") if isinstance(it, dict) else None)
-                snippet = getattr(it, "snippet", None) or (it.get("snippet") if isinstance(it, dict) else "")
-                dt = published_at.isoformat() if hasattr(published_at, "isoformat") and published_at else ""
-            except Exception:
-                title, source, link, dt, snippet = "", "", "", "", ""
+            resumo = str(dbg.get("resumo_1_paragrafo", "")).strip()
+            if resumo:
+                st.write(resumo)
 
-            ctx_items.append({"title": str(title), "source": str(source), "date": str(dt), "url": str(link), "snippet": str(snippet)})
+            iniciativas = dbg.get("iniciativas", []) or []
+            if not iniciativas:
+                st.info("Sem iniciativas extraídas (ou sem textos fornecidos).")
+            else:
+                st.markdown("**Iniciativas identificadas (com evidência):**")
+                for it in iniciativas[:8]:
+                    try:
+                        tipo = str(it.get("tipo", "outros"))
+                        desc = str(it.get("descricao_curta", "")).strip()
+                        horizonte = str(it.get("horizonte", "nao_informado"))
+                        impacto = str(it.get("impacto_esperado", "nao_informado"))
+                        sinal = str(it.get("sinal", "ambivalente"))
+                        dep = it.get("dependencias", []) or []
+                        ev = it.get("evidencia", {}) or {}
+                        fonte = str(ev.get("fonte", "NA"))
+                        data = str(ev.get("data", "NA"))
+                        trecho = str(ev.get("trecho", "")).strip()
+                    except Exception:
+                        continue
 
-        user_task = (
-            f"Analise a empresa {nome} ({tk}) usando APENAS as evidências no contexto.\n\n"
-            "Entregue:\n"
-            "1) Resumo (4–6 linhas)\n"
-            "2) Catalisadores (3–5)\n"
-            "3) Riscos (3–5)\n"
-            "4) Veredito: 'fortalece', 'neutro' ou 'enfraquece'\n\n"
-            "Não invente fatos. Se as evidências forem fracas, diga isso."
-        )
+                    st.markdown(f"- **[{tipo}]** {desc}  \n  • Horizonte: `{horizonte}` | Impacto: `{impacto}` | Sinal: `{sinal}`")
+                    if dep:
+                        st.caption("Dependências: " + ", ".join([str(x) for x in dep[:6]]))
+                    if trecho:
+                        st.markdown(f"> {trecho[:240]}{'…' if len(trecho) > 240 else ''}")
+                        st.caption(f"Fonte: {fonte} | Data: {data}")
 
-        try:
-            out = llm.generate_json(system=SYSTEM_GUARDRAILS, user=user_task, schema_hint=SCHEMA_PATCH6, context=ctx_items)
-            if not isinstance(out, dict):
-                out = {}
-            out["ticker"] = tk
-            out["empresa"] = nome
-            out["evidencias"] = ctx_items
-            resultados[tk] = out
-        except Exception as e:
-            falhas.append({"ticker": tk, "erro": f"{type(e).__name__}: {e}"})
-            resultados[tk] = {
-                "ticker": tk,
-                "empresa": nome,
-                "veredito": "indisponível",
-                "resumo": "Falha ao gerar relatório (timeout/erro). Tente novamente com menos evidências por empresa.",
-                "catalisadores": [],
-                "riscos": [],
-                "evidencias": ctx_items,
-            }
+            aval = dbg.get("avaliacao_execucao", {}) or {}
+            st.markdown("**Leitura de execução:**")
+            risco = str(aval.get("risco_execucao", "nao_informado"))
+            st.write(f"Risco de execução: **{risco}**")
 
-    progress.progress(1.0)
+            pf = aval.get("pontos_a_favor", []) or []
+            pc = aval.get("pontos_contra", []) or []
+            pq = aval.get("perguntas_criticas", []) or []
 
-    resumo_portfolio: dict = {}
-    try:
-        resumo_portfolio = llm.generate_json(
-            system=SYSTEM_GUARDRAILS,
-            user=(
-                "Com base nos relatórios por empresa, gere um resumo do portfólio:\n"
-                "- visao_geral (3–6 linhas)\n"
-                "- destaques (3–6 bullets)\n"
-                "- riscos_comuns (3–6 bullets)\n"
-                "- catalisadores_comuns (3–6 bullets)\n"
-                "- acoes_praticas (3–6 bullets)\n"
-                "Tom: curto, simples e amigável."
-            ),
-            schema_hint='{"visao_geral":"str","destaques":["str"],"riscos_comuns":["str"],"catalisadores_comuns":["str"],"acoes_praticas":["str"]}',
-            context=list(resultados.values())[:25],
-        )
-        if not isinstance(resumo_portfolio, dict):
-            resumo_portfolio = {}
-    except Exception as e:
-        resumo_portfolio = {"erro": f"{type(e).__name__}: {e}"}
+            if pf:
+                st.markdown("- **Pontos a favor:**")
+                for x in pf[:6]:
+                    st.write(f"  - {x}")
+            if pc:
+                st.markdown("- **Pontos contra:**")
+                for x in pc[:6]:
+                    st.write(f"  - {x}")
+            if pq:
+                st.markdown("- **Perguntas críticas (pra validar antes do aporte):**")
+                for x in pq[:6]:
+                    st.write(f"  - {x}")
 
-    payload = {
-        "resultados_por_ticker": resultados,
-        "resumo_portfolio": resumo_portfolio,
-        "falhas": falhas,
-        "generated_at": int(time.time()),
-        "params": {"days": int(days), "max_items": int(max_items)},
-    }
+            with st.expander("Ver JSON completo (debug)", expanded=False):
+                st.json(dbg)
 
-    _p6_store_set(cache_key, payload, int(ttl_h) * 3600)
-    _render_patch6_output(payload, empresas_lideres_finais)
-    st.session_state["patch6_run"] = False
-    return payload
-
-
-def _render_patch6_output(payload: dict, empresas_lideres_finais: List[Dict]) -> None:
-    _p6_inject_css()
-
-    resultados = (payload or {}).get("resultados_por_ticker", {}) or {}
-    resumo = (payload or {}).get("resumo_portfolio", {}) or {}
-    falhas = (payload or {}).get("falhas", []) or []
-    params = (payload or {}).get("params", {}) or {}
-    days = params.get("days")
-    max_items = params.get("max_items")
-
-    st.markdown(
-        f"""
-        <div class="p6-card">
-          <div class="p6-section-title" style="color:#F3D250;">🧠 Contexto Estratégico</div>
-          <div class="p6-kpi p6-muted">Janela: <b>{days}</b> dias • Evidências por empresa: <b>{max_items}</b></div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        """
-        <div class="p6-card">
-          <div class="p6-section-title" style="color:#6DD5FA;">📌 Resumo do portfólio</div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    if isinstance(resumo, dict) and resumo.get("erro"):
-        st.warning(f"Falha ao gerar resumo do portfólio: {resumo.get('erro')}")
-        st.markdown("</div>", unsafe_allow_html=True)
-    else:
-        visao = str(resumo.get("visao_geral") or "—").strip()
-        st.markdown(f'<p class="p6-text">{visao}</p>', unsafe_allow_html=True)
-
-        def _render_list(title: str, key: str, color: str) -> None:
-            items = _p6_bullets(resumo.get(key), max_items=8)
-            if not items:
-                return
-            st.markdown(
-                f'<div style="margin-top:12px;"><div class="p6-section-title" style="color:{color};">{title}</div></div>',
-                unsafe_allow_html=True,
-            )
-            st.markdown('<ul class="p6-bullets">', unsafe_allow_html=True)
-            for x in items:
-                st.markdown(f"<li>{x}</li>", unsafe_allow_html=True)
-            st.markdown("</ul>", unsafe_allow_html=True)
-
-        _render_list("🚀 Destaques & Catalisadores", "destaques", "#7CFC98")
-        _render_list("⚠️ Riscos comuns", "riscos_comuns", "#FF6B6B")
-        _render_list("🧩 Catalisadores comuns", "catalisadores_comuns", "#7CFC98")
-        _render_list("✅ Ações práticas", "acoes_praticas", "#6DD5FA")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    st.markdown(
-        """
-        <div class="p6-card">
-          <div class="p6-section-title" style="color:#6DD5FA;">🧩 Relatório por empresa</div>
-          <div class="p6-muted" style="font-size:13px;">Abra cada empresa para ver resumo, catalisadores e riscos.</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    for e in (empresas_lideres_finais or []):
-        tk = _p6_strip_sa(str(e.get("ticker", "")))
-        if not tk:
-            continue
-        rep = resultados.get(tk, {}) or {}
-
-        nome = _p6_get_nome(tk, empresas_lideres_finais)
-        ver = str(rep.get("veredito") or "neutro").strip().lower()
-        res = str(rep.get("resumo") or "—").strip()
-        cats = _p6_bullets(rep.get("catalisadores"), max_items=8)
-        risks = _p6_bullets(rep.get("riscos"), max_items=8)
-
-        badge = _p6_badge_html(ver)
-        exp_title = f"{nome} ({tk})"
-        with st.expander(exp_title, expanded=False):
-            st.markdown(
-                f"""
-                <div class="p6-card">
-                  <div class="p6-section-title" style="color:#6DD5FA;">
-                    🏭 {nome} ({tk}) {badge}
-                  </div>
-                  <p class="p6-text">{res}</p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-            if cats:
-                st.markdown('<div class="p6-card"><div class="p6-section-title" style="color:#7CFC98;">🚀 Catalisadores</div>', unsafe_allow_html=True)
-                st.markdown('<ul class="p6-bullets">', unsafe_allow_html=True)
-                for x in cats:
-                    st.markdown(f"<li>{x}</li>", unsafe_allow_html=True)
-                st.markdown("</ul></div>", unsafe_allow_html=True)
-
-            if risks:
-                st.markdown('<div class="p6-card"><div class="p6-section-title" style="color:#FF6B6B;">⚠️ Riscos</div>', unsafe_allow_html=True)
-                st.markdown('<ul class="p6-bullets">', unsafe_allow_html=True)
-                for x in risks:
-                    st.markdown(f"<li>{x}</li>", unsafe_allow_html=True)
-                st.markdown("</ul></div>", unsafe_allow_html=True)
-
-            evs = rep.get("evidencias", []) or []
-            if evs:
-                with st.expander("📰 Evidências usadas (títulos/fontes)", expanded=False):
-                    for it in evs[:20]:
-                        title = str(it.get("title") or "").strip()
-                        source = str(it.get("source") or "").strip()
-                        date = str(it.get("date") or "").strip()
-                        url = str(it.get("url") or "").strip()
-                        snippet = str(it.get("snippet") or "").strip()
-
-                        line = f"- **{title or 'Sem título'}**"
-                        if source or date:
-                            line += f" ({source}{' • ' if source and date else ''}{date})"
-                        if url:
-                            line += f"\n  - {url}"
-                        if snippet:
-                            line += f"\n  - {snippet[:240]}{'...' if len(snippet) > 240 else ''}"
-                        st.markdown(line)
-
-    if falhas:
-        with st.expander("🛠️ Detalhes de falhas (debug)", expanded=False):
-            st.json(falhas)
+    return df_out
