@@ -3,41 +3,41 @@ from __future__ import annotations
 """
 pickup/ingest_docs_cvm_ipe.py
 ----------------------------
-Ingestão de documentos IPE (CVM - Dados Abertos) para Supabase.
+Ingestão de comunicados IPE (CVM) para Supabase:
+- salva doc em public.docs_corporativos
+- cria chunks em public.docs_corporativos_chunks
 
-Estratégia (sem CVM↔Ticker confiável):
-1) Baixa ZIP oficial: https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/ipe_cia_aberta_{ANO}.zip
-2) Lê o CSV do zip.
-3) Faz match do Nome_Companhia do IPE com setores.nome_empresa → obtém ticker.
-4) Para docs das empresas desejadas: baixa PDF (Link_Download), extrai texto, salva em:
-   - public.docs_corporativos
-   - public.docs_corporativos_chunks
+Objetivo: abastecer o Patch 6 (RAG) com fontes oficiais.
 
-Observações:
-- Extração de texto de PDF pode ser imperfeita (depende do PDF).
-- Sem OCR (por enquanto).
+Características:
+- Pode rodar via botão no Streamlit (page.patch6_teste / patch6)
+- Timeout curto + retry curto (para não "travar" o app)
+- Baixa PDF (Link_Download) e extrai texto (sem OCR) quando possível
+- Se a CVM mudar endpoint/CSV, retorna erros explicativos
+
+Requisitos:
+- requests
+- pandas
+- sqlalchemy
+- pdfminer.six  (recomendado; se não tiver, cai para modo "metadados")
 """
 
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-from datetime import datetime, date
 import hashlib
 import io
 import re
 import time
-import zipfile
-import unicodedata
 
 import pandas as pd
+import streamlit as st
 import requests
 from sqlalchemy import text
-import streamlit as st
 
-from core.db_loader import get_supabase_engine, load_setores_from_db
+from core.db_loader import get_supabase_engine
 
-
-# -------------------------
-# Normalização / hashing
-# -------------------------
+# ---------------------------------------------------------------------
+# Util
+# ---------------------------------------------------------------------
 
 def _norm_ticker(t: str) -> str:
     return (t or "").upper().replace(".SA", "").strip()
@@ -50,39 +50,12 @@ def _clean_text(s: str) -> str:
     s = re.sub(r"\s+", " ", s)
     return s
 
-def _strip_accents(s: str) -> str:
-    s = unicodedata.normalize("NFKD", s or "")
-    return "".join(ch for ch in s if not unicodedata.combining(ch))
-
-def _norm_name(s: str) -> str:
-    """
-    Normaliza nome de empresa para matching:
-    - upper
-    - sem acentos
-    - remove pontuação
-    - remove sufixos comuns
-    """
-    s = _strip_accents(str(s or "")).upper()
-    s = re.sub(r"[^A-Z0-9\s]", " ", s)
-    s = re.sub(r"\s+", " ", s).strip()
-
-    # remove ruídos comuns
-    junk = [
-        "S A", "S A ", " SA", " S A", " S/A", " S A", "S/A",
-        "COMPANHIA", "CIA", "CI A", "LTDA", "LIMITADA",
-        "HOLDING", "HOLDINGS",
-    ]
-    for j in junk:
-        s = s.replace(j, " ")
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
-
-def _chunk_text(texto: str, chunk_chars: int = 1600, overlap: int = 250) -> List[str]:
+def _chunk_text(texto: str, chunk_chars: int = 1600, overlap: int = 220) -> List[str]:
     t = (texto or "").strip()
     if not t:
         return []
     t = t.replace("\r\n", "\n")
-    out = []
+    out: List[str] = []
     i = 0
     n = len(t)
     while i < n:
@@ -93,65 +66,143 @@ def _chunk_text(texto: str, chunk_chars: int = 1600, overlap: int = 250) -> List
         i = max(0, j - overlap)
     return out
 
+# ---------------------------------------------------------------------
+# IPE via CSV (opção 1 — recomendada)
+# ---------------------------------------------------------------------
 
-# -------------------------
-# PDF text extraction
-# -------------------------
+# Configure nas Secrets/Env:
+#   IPE_CSV_URL_TEMPLATE="https://.../ipe_{ano}.csv"
+IPE_CSV_URL_TEMPLATE = (
+    st.secrets.get("IPE_CSV_URL_TEMPLATE")
+    if hasattr(st, "secrets") else None
+) or (  # env fallback
+    __import__("os").getenv("IPE_CSV_URL_TEMPLATE") or ""
+).strip()
 
-def _extract_pdf_text(pdf_bytes: bytes) -> str:
-    """
-    Tenta extrair texto do PDF com libs comuns.
-    Sem OCR.
-    """
-    if not pdf_bytes:
+def _http_get(url: str, *, timeout: int = 15) -> bytes:
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "*/*"}
+    last_exc: Optional[Exception] = None
+    for _ in range(2):
+        try:
+            r = requests.get(url, headers=headers, timeout=timeout)
+            r.raise_for_status()
+            return r.content
+        except Exception as e:
+            last_exc = e
+            time.sleep(0.35)
+    raise RuntimeError(f"GET falhou: {last_exc}")
+
+def _download_ipe_csv(ano: int, *, timeout: int = 20) -> pd.DataFrame:
+    if not IPE_CSV_URL_TEMPLATE:
+        raise RuntimeError(
+            "IPE_CSV_URL_TEMPLATE não definido. "
+            "Defina nas Secrets/Env. Ex.: https://.../ipe_{ano}.csv"
+        )
+    url = IPE_CSV_URL_TEMPLATE.format(ano=ano)
+    content = _http_get(url, timeout=timeout)
+
+    # tenta decodificar
+    s = ""
+    for enc in ("utf-8-sig", "latin1", "cp1252"):
+        try:
+            s = content.decode(enc)
+            break
+        except Exception:
+            pass
+    if not s:
+        raise RuntimeError("Falha ao decodificar CSV IPE.")
+
+    # separador pode variar
+    try:
+        df = pd.read_csv(io.StringIO(s), sep=";", dtype=str)
+        if df.shape[1] <= 2:
+            df = pd.read_csv(io.StringIO(s), sep=",", dtype=str)
+    except Exception:
+        df = pd.read_csv(io.StringIO(s), sep=",", dtype=str)
+
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
+
+def _col(df: pd.DataFrame, *names: str) -> Optional[str]:
+    cols = {c.lower(): c for c in df.columns}
+    for n in names:
+        if n.lower() in cols:
+            return cols[n.lower()]
+    return None
+
+def _row_to_meta(df: pd.DataFrame, row: pd.Series) -> Dict[str, Any]:
+    def getv(*names: str) -> str:
+        c = _col(df, *names)
+        if c and c in row and pd.notna(row[c]):
+            return str(row[c]).strip()
         return ""
 
-    # 1) pypdf (novo)
+    return {
+        "CNPJ_Companhia": getv("CNPJ_Companhia", "CNPJ"),
+        "Nome_Companhia": getv("Nome_Companhia", "Nome Companhia", "Emissor"),
+        "Codigo_CVM": getv("Codigo_CVM", "Código_CVM", "Cod_CVM"),
+        "Data_Referencia": getv("Data_Referencia", "Data Referencia"),
+        "Categoria": getv("Categoria"),
+        "Tipo": getv("Tipo"),
+        "Especie": getv("Especie", "Espécie"),
+        "Assunto": getv("Assunto", "DescricaoAssunto", "Descrição"),
+        "Data_Entrega": getv("Data_Entrega", "DataEntrega", "Data Entrega"),
+        "Tipo_Apresentacao": getv("Tipo_Apresentacao", "Tipo Apresentacao"),
+        "Protocolo_Entrega": getv("Protocolo_Entrega", "Protocolo Entrega"),
+        "Versao": getv("Versao", "Versão"),
+        "Link_Download": getv("Link_Download", "Link Download", "URL", "Url"),
+    }
+
+def _filter_rows_for_ticker(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
+    """
+    Sem CVM->ticker, filtragem mínima:
+      - se CSV tiver coluna Ticker -> match exato
+      - senão retorna vazio (para evitar falsos positivos)
+    """
+    tk = _norm_ticker(ticker)
+    if df.empty:
+        return df
+
+    col_ticker = _col(df, "Ticker", "ticker")
+    if col_ticker:
+        m = df[col_ticker].astype(str).str.upper().str.replace(".SA", "", regex=False).str.strip()
+        return df[m == tk]
+
+    return df.iloc[0:0]
+
+# ---------------------------------------------------------------------
+# PDF text extraction (sem OCR)
+# ---------------------------------------------------------------------
+
+def _extract_pdf_text(pdf_bytes: bytes) -> str:
+    if not pdf_bytes:
+        return ""
     try:
-        from pypdf import PdfReader  # type: ignore
-        reader = PdfReader(io.BytesIO(pdf_bytes))
-        parts = []
-        for p in reader.pages:
-            try:
-                parts.append(p.extract_text() or "")
-            except Exception:
-                pass
-        return _clean_text("\n".join(parts))
+        from pdfminer.high_level import extract_text  # type: ignore
     except Exception:
-        pass
-
-    # 2) PyPDF2 (antigo)
+        return ""
     try:
-        import PyPDF2  # type: ignore
-        reader = PyPDF2.PdfReader(io.BytesIO(pdf_bytes))
-        parts = []
-        for p in reader.pages:
-            try:
-                parts.append(p.extract_text() or "")
-            except Exception:
-                pass
-        return _clean_text("\n".join(parts))
+        with io.BytesIO(pdf_bytes) as bio:
+            txt = extract_text(bio) or ""
+        return _clean_text(txt)
     except Exception:
-        pass
+        return ""
 
-    return ""
-
-
-# -------------------------
+# ---------------------------------------------------------------------
 # Supabase insert
-# -------------------------
+# ---------------------------------------------------------------------
 
 def _upsert_doc_and_chunks(
     *,
     ticker: str,
-    data_iso: Optional[str],
+    data: Optional[str],
     fonte: str,
     tipo: str,
     titulo: str,
     url: str,
     raw_text: str,
     chunk_chars: int = 1600,
-    overlap: int = 250,
+    overlap: int = 220,
 ) -> Tuple[bool, str]:
     tk = _norm_ticker(ticker)
     if not tk:
@@ -179,7 +230,7 @@ def _upsert_doc_and_chunks(
     with engine.begin() as conn:
         res = conn.execute(sql_doc, {
             "ticker": tk,
-            "data": data_iso,
+            "data": data,
             "fonte": fonte,
             "tipo": tipo,
             "titulo": titulo,
@@ -188,6 +239,7 @@ def _upsert_doc_and_chunks(
             "doc_hash": doc_hash,
         })
         row = res.first()
+
         if row is None:
             return False, doc_hash
 
@@ -206,7 +258,7 @@ def _upsert_doc_and_chunks(
         )
 
         for i, ch in enumerate(chunks):
-            ch_clean = ch.strip()
+            ch_clean = (ch or "").strip()
             if not ch_clean:
                 continue
             ch_hash = _sha256("|".join([str(doc_id), tk, str(i), ch_clean]))
@@ -220,275 +272,131 @@ def _upsert_doc_and_chunks(
 
     return True, doc_hash
 
-
-# -------------------------
-# CVM Dados Abertos (IPE)
-# -------------------------
-
-def _ipe_zip_url(year: int) -> str:
-    return f"https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/ipe_cia_aberta_{int(year)}.zip"
-
-
-@st.cache_data(show_spinner=False, ttl=60 * 30)
-def _download_ipe_zip(year: int) -> bytes:
-    url = _ipe_zip_url(year)
-    r = requests.get(url, timeout=60)
-    r.raise_for_status()
-    return r.content
-
-
-def _read_ipe_csv_from_zip(zip_bytes: bytes) -> pd.DataFrame:
-    """
-    Lê o CSV dentro do zip.
-    Normalmente existe um CSV principal com os docs.
-    """
-    zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
-    names = zf.namelist()
-
-    # tenta achar o CSV principal (o maior)
-    csvs = [n for n in names if n.lower().endswith(".csv")]
-    if not csvs:
-        raise RuntimeError("ZIP do IPE não contém CSV.")
-
-    # escolhe o CSV maior
-    biggest = None
-    biggest_size = -1
-    for n in csvs:
-        info = zf.getinfo(n)
-        if info.file_size > biggest_size:
-            biggest_size = info.file_size
-            biggest = n
-
-    assert biggest is not None
-    with zf.open(biggest) as f:
-        raw = f.read()
-
-    # encoding pode variar: tenta utf-8 e latin-1
-    for enc in ("utf-8", "latin-1"):
-        try:
-            df = pd.read_csv(io.BytesIO(raw), sep=";", encoding=enc, low_memory=False)
-            return df
-        except Exception:
-            continue
-
-    # fallback: tenta comma
-    for enc in ("utf-8", "latin-1"):
-        try:
-            df = pd.read_csv(io.BytesIO(raw), sep=",", encoding=enc, low_memory=False)
-            return df
-        except Exception:
-            continue
-
-    raise RuntimeError("Falha ao ler CSV do IPE (encoding/separador).")
-
-
-def _build_nome_to_ticker_index() -> Dict[str, str]:
-    """
-    Monta índice normalizado:
-      norm(nome_empresa) -> ticker
-    com base em public.setores.
-    """
-    setores = load_setores_from_db()
-    if setores is None or setores.empty:
-        return {}
-
-    # garante colunas
-    if "nome_empresa" not in setores.columns or "ticker" not in setores.columns:
-        return {}
-
-    mp: Dict[str, str] = {}
-    for _, row in setores.iterrows():
-        tk = _norm_ticker(str(row.get("ticker") or ""))
-        nm = _norm_name(str(row.get("nome_empresa") or ""))
-        if tk and nm and nm not in mp:
-            mp[nm] = tk
-    return mp
-
-
-def _best_match_ticker(nome_companhia: str, idx: Dict[str, str]) -> Optional[str]:
-    """
-    Matching simples:
-    - tenta match exato do nome normalizado
-    - se não achar, tenta melhor similaridade (difflib) com threshold alto
-    """
-    nm = _norm_name(nome_companhia)
-    if not nm:
-        return None
-    if nm in idx:
-        return idx[nm]
-
-    # fuzzy leve (sem libs externas)
-    import difflib
-
-    keys = list(idx.keys())
-    # corta custo: só compara com candidatos que compartilham tokens
-    toks = set(nm.split())
-    candidates = [k for k in keys if len(toks.intersection(set(k.split()))) >= max(1, min(2, len(toks)))]
-    if not candidates:
-        candidates = keys[:2000]  # fallback (limitado)
-
-    best = None
-    best_score = 0.0
-    for k in candidates:
-        s = difflib.SequenceMatcher(None, nm, k).ratio()
-        if s > best_score:
-            best_score = s
-            best = k
-
-    if best and best_score >= 0.93:
-        return idx.get(best)
-
-    return None
-
-
-def _pick_col(df: pd.DataFrame, options: Sequence[str]) -> Optional[str]:
-    cols = set(df.columns.astype(str))
-    for o in options:
-        if o in cols:
-            return o
-    return None
-
+# ---------------------------------------------------------------------
+# Public API: ingest
+# ---------------------------------------------------------------------
 
 def ingest_ipe_for_tickers(
     tickers: Sequence[str],
     *,
-    anos: int = 2,
-    max_docs_por_ticker: int = 30,
-    sleep_s: float = 0.15,
-    baixar_pdf: bool = True,
+    anos: int = 1,
+    max_docs_por_ticker: int = 12,
+    sleep_s: float = 0.0,
     chunk_chars: int = 1600,
-    overlap: int = 250,
+    overlap: int = 220,
+    timeout_pdf: int = 18,
+    timeout_csv: int = 25,
 ) -> Dict[str, Any]:
     """
-    Ingestão IPE via dados abertos.
-    - Filtra docs dos tickers desejados via match por nome da companhia (setores.nome_empresa).
+    Opção 1 (CSV IPE + PDF):
+    - baixa CSV do(s) ano(s)
+    - filtra por ticker (se CSV tiver coluna Ticker)
+    - baixa PDF do Link_Download
+    - extrai texto (pdfminer) ou salva metadados se não conseguir
+    - insere no Supabase
 
     Retorno:
       {
         "ok": bool,
-        "stats": { "ANO_2026": {...}, "TICKER": {...} },
-        "errors": {...}
+        "stats": { "TICKER": {"matched":M,"inserted":I,"skipped":K} },
+        "errors": { "TICKER|ANO_xxxx": "mensagem" }
       }
     """
     tks = [_norm_ticker(t) for t in (tickers or []) if str(t).strip()]
-    tks = list(dict.fromkeys([t for t in tks if t]))
+    tks = list(dict.fromkeys(tks))
     if not tks:
         return {"ok": False, "stats": {}, "errors": {"__all__": "Lista de tickers vazia."}}
 
-    # índice nome->ticker a partir da sua base
-    nome_idx = _build_nome_to_ticker_index()
-    if not nome_idx:
-        return {
-            "ok": False,
-            "stats": {},
-            "errors": {"__all__": "Tabela setores vazia/indisponível (precisa de nome_empresa e ticker)."},
-        }
+    ano_fim = int(pd.Timestamp.utcnow().year)
+    ano_ini = int(ano_fim - max(0, int(anos) - 1))
+    anos_list = list(range(ano_ini, ano_fim + 1))
 
-    year_end = int(pd.Timestamp.utcnow().year)
-    years = list(range(year_end, year_end - int(anos) - 1, -1))
-
-    stats: Dict[str, Any] = {}
+    stats: Dict[str, Dict[str, int]] = {tk: {"matched": 0, "inserted": 0, "skipped": 0} for tk in tks}
     errors: Dict[str, str] = {}
 
-    # stats por ticker
-    for tk in tks:
-        stats[tk] = {"seen": 0, "matched": 0, "inserted": 0, "skipped": 0}
-
-    for yr in years:
-        key = f"ANO_{yr}"
-        stats[key] = {"seen": 0, "matched": 0, "inserted": 0, "skipped": 0}
-
+    csvs: Dict[int, pd.DataFrame] = {}
+    for ano in anos_list:
         try:
-            zip_bytes = _download_ipe_zip(yr)
-            df = _read_ipe_csv_from_zip(zip_bytes)
+            df = _download_ipe_csv(ano, timeout=int(timeout_csv))
+            csvs[ano] = df
+        except Exception as e:
+            errors[f"ANO_{ano}"] = f"{type(e).__name__}: {e}"
 
-            # identifica colunas (o print da sua tela mostra esses nomes)
-            c_nome = _pick_col(df, ["Nome_Companhia", "Nome_Companhia ", "Nome_Companhia\t", "Nome_Companhia\r"])
-            c_assunto = _pick_col(df, ["Assunto"])
-            c_data = _pick_col(df, ["Data_Entrega", "Data_Referencia"])
-            c_link = _pick_col(df, ["Link_Download", "Link_Download "])
-            c_tipo = _pick_col(df, ["Tipo"])
-            c_cat = _pick_col(df, ["Categoria"])
+    if not csvs:
+        return {"ok": False, "stats": stats, "errors": errors or {"__all__": "Nenhum CSV IPE disponível."}}
 
-            if not c_nome:
-                raise RuntimeError("CSV sem coluna Nome_Companhia (ou variação).")
-            if not c_link:
-                raise RuntimeError("CSV sem coluna Link_Download (ou variação).")
-
-            # percorre e filtra
-            for _, row in df.iterrows():
-                stats[key]["seen"] += 1
-
-                nome = str(row.get(c_nome) or "").strip()
-                if not nome:
-                    stats[key]["skipped"] += 1
+    for tk in tks:
+        try:
+            used = 0
+            for ano, df in csvs.items():
+                f = _filter_rows_for_ticker(df, tk)
+                if f.empty:
                     continue
 
-                tk_match = _best_match_ticker(nome, nome_idx)
-                if not tk_match or tk_match not in tks:
-                    continue
+                for _, r in f.iterrows():
+                    if used >= int(max_docs_por_ticker):
+                        break
 
-                stats[key]["matched"] += 1
-                stats[tk_match]["seen"] += 1
-                stats[tk_match]["matched"] += 1
+                    meta = _row_to_meta(df, r)
+                    url = meta.get("Link_Download", "").strip()
+                    if not url:
+                        stats[tk]["skipped"] += 1
+                        continue
 
-                assunto = str(row.get(c_assunto) or "").strip() if c_assunto else ""
-                link = str(row.get(c_link) or "").strip()
-                tipo = str(row.get(c_tipo) or "ipe").strip() if c_tipo else "ipe"
-                cat = str(row.get(c_cat) or "").strip() if c_cat else ""
+                    stats[tk]["matched"] += 1
 
-                # data
-                data_iso = None
-                if c_data:
-                    v = row.get(c_data)
-                    d = pd.to_datetime(v, errors="coerce", dayfirst=True)
-                    if pd.notna(d):
-                        data_iso = d.date().isoformat()
-
-                # baixa pdf e extrai
-                pdf_text = ""
-                if baixar_pdf and link:
+                    # baixa PDF
                     try:
-                        pr = requests.get(link, timeout=60)
-                        pr.raise_for_status()
-                        pdf_text = _extract_pdf_text(pr.content)
-                    except Exception:
-                        pdf_text = ""
+                        pdf_bytes = _http_get(url, timeout=int(timeout_pdf))
+                    except Exception as e:
+                        errors[f"{tk}|PDF"] = f"{type(e).__name__}: {e}"
+                        stats[tk]["skipped"] += 1
+                        continue
 
-                # texto final (sempre guarda o header do doc, mesmo se PDF não extrair)
-                header = f"FONTE: CVM/IPE\nANO: {yr}\nCOMPANHIA: {nome}\nTICKER: {tk_match}\nCATEGORIA: {cat}\nTIPO: {tipo}\nASSUNTO: {assunto}\nLINK: {link}\nDATA: {data_iso or ''}\n"
-                raw_text = header + ("\n\n" + pdf_text if pdf_text else "")
+                    txt = _extract_pdf_text(pdf_bytes)
+                    if not txt:
+                        # sem pdfminer ou PDF sem texto
+                        txt = _clean_text(
+                            f"ASSUNTO: {meta.get('Assunto','')}\n"
+                            f"CATEGORIA: {meta.get('Categoria','')}\n"
+                            f"TIPO: {meta.get('Tipo','')}\n"
+                            f"DATA_ENTREGA: {meta.get('Data_Entrega','')}\n"
+                            f"LINK: {url}\n"
+                        )
 
-                # se não tem pdf_text, ainda assim salva (porque o Patch6 pelo menos vê metadados)
-                inserted, _ = _upsert_doc_and_chunks(
-                    ticker=tk_match,
-                    data_iso=data_iso,
-                    fonte="CVM",
-                    tipo="ipe",
-                    titulo=(assunto or f"IPE {yr}"),
-                    url=link,
-                    raw_text=_clean_text(raw_text),
-                    chunk_chars=int(chunk_chars),
-                    overlap=int(overlap),
-                )
+                    data_iso = None
+                    for k in ("Data_Entrega", "Data_Referencia"):
+                        v = meta.get(k)
+                        if isinstance(v, str) and v.strip():
+                            d = pd.to_datetime(v, errors="coerce", dayfirst=True)
+                            if pd.notna(d):
+                                data_iso = d.date().isoformat()
+                                break
 
-                if inserted:
-                    stats[key]["inserted"] += 1
-                    stats[tk_match]["inserted"] += 1
-                else:
-                    stats[key]["skipped"] += 1
-                    stats[tk_match]["skipped"] += 1
+                    titulo = (meta.get("Assunto") or "").strip()
 
-                # limita por ticker (pra não explodir custo)
-                if stats[tk_match]["matched"] >= int(max_docs_por_ticker):
-                    # continua contando o ano, mas não ingere mais para esse ticker
-                    pass
+                    inserted, _ = _upsert_doc_and_chunks(
+                        ticker=tk,
+                        data=data_iso,
+                        fonte="CVM",
+                        tipo="ipe",
+                        titulo=titulo,
+                        url=url,
+                        raw_text=txt,
+                        chunk_chars=int(chunk_chars),
+                        overlap=int(overlap),
+                    )
+                    if inserted:
+                        stats[tk]["inserted"] += 1
+                    else:
+                        stats[tk]["skipped"] += 1
 
-                if sleep_s and float(sleep_s) > 0:
-                    time.sleep(float(sleep_s))
+                    used += 1
+                    if sleep_s and float(sleep_s) > 0:
+                        time.sleep(float(sleep_s))
 
         except Exception as e:
-            errors[key] = f"{type(e).__name__}: {e}"
+            errors[tk] = f"{type(e).__name__}: {e}"
 
-    ok = (len(errors) == 0)
+    ok = (len([k for k in errors.keys() if not k.startswith("ANO_")]) == 0)
     return {"ok": ok, "stats": stats, "errors": errors}
