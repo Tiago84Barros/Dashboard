@@ -1,83 +1,141 @@
-# core/docs_rag.py
+# pickup/docs_rag.py
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
+import re
+import hashlib
 
 import pandas as pd
-
-from core.db_loader import (
-    load_docs_corporativos_from_db,
-    load_docs_corporativos_chunks_from_db,
-)
+from sqlalchemy import text
+import streamlit as st
 
 
-def build_docs_by_ticker_from_db(
-    tickers: List[str],
+def _norm_ticker(t: str) -> str:
+    return (t or "").strip().upper().replace(".SA", "")
+
+
+def _shorten(s: str, limit: int) -> str:
+    s = (s or "").strip()
+    if not s:
+        return ""
+    if len(s) <= limit:
+        return s
+    return s[: limit - 1] + "…"
+
+
+def _safe_int(x: Any, default: int) -> int:
+    try:
+        return int(x)
+    except Exception:
+        return default
+
+
+def _get_engine():
+    # usa seu loader já existente
+    try:
+        from core.db_loader import get_supabase_engine  # type: ignore
+    except Exception:
+        from db_loader import get_supabase_engine  # type: ignore
+    return get_supabase_engine()
+
+
+@st.cache_data(show_spinner=False, ttl=60 * 30)
+def get_docs_by_ticker(
     *,
-    limit_docs: int = 12,
+    tickers: List[str],
+    limit_docs: int = 8,
+    limit_chars_per_doc: int = 4000,
+    only_tipos: Optional[List[str]] = None,
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
-    Retorna docs_by_ticker no formato esperado pelo Patch 6:
-
-      docs_by_ticker[ticker] = [
-        {"source": "...", "date": "YYYY-MM-DD", "text": "..."},
-        ...
-      ]
-
-    Observação: aqui usamos raw_text do documento (não chunks).
-    Para RAG com chunks, use build_chunks_by_ticker_from_db().
+    Busca documentos em public.docs_corporativos para cada ticker.
+    Retorna no formato esperado pelo Patch6:
+      { "ROMI3": [ {"source": "...", "date": "YYYY-MM-DD", "text": "..."}, ... ], ... }
     """
-    out: Dict[str, List[Dict[str, Any]]] = {}
-    for tk in tickers:
-        df = load_docs_corporativos_from_db(tk, limit=limit_docs)
-        if df is None or df.empty:
-            out[tk] = []
-            continue
+    tickers_n = [_norm_ticker(t) for t in (tickers or []) if _norm_ticker(t)]
+    tickers_n = list(dict.fromkeys(tickers_n))
+
+    out: Dict[str, List[Dict[str, Any]]] = {tk: [] for tk in tickers_n}
+    if not tickers_n:
+        return out
+
+    limit_docs = max(1, _safe_int(limit_docs, 8))
+    limit_chars_per_doc = max(500, _safe_int(limit_chars_per_doc, 4000))
+
+    engine = _get_engine()
+
+    # filtro opcional por tipo (ex.: ["fato_relevante","comunicado","ipe"])
+    tipos_sql = ""
+    params: Dict[str, Any] = {
+        "tickers": tickers_n,
+    }
+
+    if only_tipos:
+        tipos_norm = [str(x).strip().lower() for x in only_tipos if str(x).strip()]
+        if tipos_norm:
+            tipos_sql = " AND lower(tipo) = ANY(:tipos) "
+            params["tipos"] = tipos_norm
+
+    sql = f"""
+        SELECT
+            ticker,
+            data,
+            fonte,
+            tipo,
+            titulo,
+            url,
+            raw_text
+        FROM public.docs_corporativos
+        WHERE ticker = ANY(:tickers)
+        {tipos_sql}
+        ORDER BY ticker ASC, data DESC NULLS LAST, id DESC
+    """
+
+    # Puxa tudo e depois limita por ticker (mais simples/robusto para começar)
+    with engine.connect() as conn:
+        df = pd.read_sql_query(text(sql), conn, params=params)
+
+    if df is None or df.empty:
+        return out
+
+    # normaliza
+    df["ticker"] = df["ticker"].astype(str).map(_norm_ticker)
+    if "data" in df.columns:
+        df["data"] = pd.to_datetime(df["data"], errors="coerce").dt.date
+
+    for tk in tickers_n:
+        dft = df[df["ticker"] == tk].head(limit_docs)
         rows: List[Dict[str, Any]] = []
-        for _, r in df.iterrows():
+
+        for _, r in dft.iterrows():
+            fonte = str(r.get("fonte", "supabase")).strip() or "supabase"
+            tipo = str(r.get("tipo", "")).strip()
+            titulo = str(r.get("titulo", "")).strip()
+            url = str(r.get("url", "")).strip()
+            raw = str(r.get("raw_text", "")).strip()
+
+            # monta “source” bem legível
+            src_parts = [fonte]
+            if tipo:
+                src_parts.append(tipo)
+            if titulo:
+                src_parts.append(titulo)
+            if url:
+                src_parts.append(url)
+
+            source = " | ".join(src_parts)
+
+            dt = r.get("data", None)
+            date_str = str(dt) if dt else "NA"
+
             rows.append(
                 {
-                    "source": str(r.get("fonte", "db")).strip(),
-                    "date": str(r.get("data") or r.get("created_at") or "NA")[:10],
-                    "text": str(r.get("raw_text", "")).strip(),
+                    "source": source,
+                    "date": date_str,
+                    "text": _shorten(raw, limit_chars_per_doc),
                 }
             )
+
         out[tk] = rows
-    return out
 
-
-def build_chunks_by_ticker_from_db(
-    tickers: List[str],
-    *,
-    limit_docs: int = 12,
-    limit_chunks_per_doc: int = 6,
-) -> Dict[str, List[Dict[str, Any]]]:
-    """
-    Retorna chunks_by_ticker (útil para Patch 7 / RAG), no formato:
-
-      chunks_by_ticker[ticker] = [
-        {"doc_id": 123, "chunk_index": 0, "text": "..."},
-        ...
-      ]
-    """
-    out: Dict[str, List[Dict[str, Any]]] = {}
-    for tk in tickers:
-        df = load_docs_corporativos_chunks_from_db(
-            tk,
-            limit_docs=limit_docs,
-            limit_chunks_per_doc=limit_chunks_per_doc,
-        )
-        if df is None or df.empty:
-            out[tk] = []
-            continue
-        rows: List[Dict[str, Any]] = []
-        for _, r in df.iterrows():
-            rows.append(
-                {
-                    "doc_id": int(r.get("doc_id") or 0),
-                    "chunk_index": int(r.get("chunk_index") or 0),
-                    "text": str(r.get("chunk_text", "")).strip(),
-                }
-            )
-        out[tk] = rows
     return out
