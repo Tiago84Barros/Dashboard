@@ -3,20 +3,17 @@ from __future__ import annotations
 """
 pickup/docs_rag.py
 ------------------
-Leitura de documentos corporativos (CVM IPE / RI / etc.) do Supabase para uso no Patch 6.
+Leitura de documentos e chunks do Supabase para uso no Patch 6 (RAG).
 
-Tabelas esperadas (já criadas por você no Supabase):
+Tabelas esperadas:
 - public.docs_corporativos
-- public.docs_corporativos_chunks  (opcional para Patch 7)
-
-Este módulo NÃO baixa nada da internet. Ele apenas consulta o banco.
+- public.docs_corporativos_chunks
 """
 
-from typing import Any, Dict, List, Optional, Sequence
-import hashlib
+from typing import Any, Dict, List, Sequence, Optional, Tuple
+import re
 
 import pandas as pd
-import streamlit as st
 from sqlalchemy import text
 
 from core.db_loader import get_supabase_engine
@@ -26,166 +23,107 @@ def _norm_ticker(t: str) -> str:
     return (t or "").upper().replace(".SA", "").strip()
 
 
-def _as_date_str(x: Any) -> str:
-    try:
-        if x is None or (isinstance(x, float) and pd.isna(x)):
-            return "NA"
-        d = pd.to_datetime(x, errors="coerce")
-        if pd.isna(d):
-            return str(x)
-        return d.date().isoformat()
-    except Exception:
-        return str(x)
+def _read_df(sql: str, params: Dict[str, Any]) -> pd.DataFrame:
+    engine = get_supabase_engine()
+    with engine.connect() as conn:
+        return pd.read_sql_query(text(sql), conn, params=params)
 
 
-def _row_to_doc_dict(r: Dict[str, Any]) -> Dict[str, Any]:
-    # padrão esperado pelo Patch6: {source,date,text}
-    fonte = str(r.get("fonte", "supabase")).strip() or "supabase"
-    tipo = str(r.get("tipo", "")).strip()
-    titulo = str(r.get("titulo", "")).strip()
-    url = str(r.get("url", "")).strip()
-    header = " | ".join([x for x in [fonte, tipo, titulo, url] if x])
-    raw = str(r.get("raw_text", "") or "").strip()
-
-    # Mantém texto “cru” (Patch6 faz o recorte no client)
-    if header:
-        text_out = f"{header}\n\n{raw}"
-    else:
-        text_out = raw
-
-    return {
-        "source": fonte,
-        "date": _as_date_str(r.get("data")),
-        "text": text_out,
-        "meta": {
-            "tipo": tipo,
-            "titulo": titulo,
-            "url": url,
-            "doc_id": r.get("id"),
-        },
-    }
-
-
-@st.cache_data(show_spinner=False, ttl=10 * 60)
 def count_docs_by_tickers(tickers: Sequence[str]) -> Dict[str, int]:
-    """
-    Retorna contagem de docs por ticker em public.docs_corporativos.
-    """
     tks = [_norm_ticker(t) for t in (tickers or []) if str(t).strip()]
-    tks = list(dict.fromkeys(tks))
+    tks = list(dict.fromkeys([t for t in tks if t]))
     if not tks:
         return {}
 
-    engine = get_supabase_engine()
-    sql = text(
+    df = _read_df(
         """
-        SELECT ticker, COUNT(*) AS n
+        SELECT ticker, COUNT(*)::int as qtd
         FROM public.docs_corporativos
         WHERE ticker = ANY(:tks)
         GROUP BY ticker
-        """
+        """,
+        {"tks": tks},
     )
-    with engine.connect() as conn:
-        df = pd.read_sql_query(sql, conn, params={"tks": tks})
-
     out = {tk: 0 for tk in tks}
-    if df is not None and not df.empty:
-        for _, r in df.iterrows():
-            out[_norm_ticker(r["ticker"])] = int(r["n"])
+    for _, row in df.iterrows():
+        out[str(row["ticker"]).upper()] = int(row["qtd"])
     return out
 
 
-@st.cache_data(show_spinner=False, ttl=10 * 60)
 def get_docs_by_ticker(
     ticker: str,
     *,
-    limit_docs: int = 12,
-    prefer_tipos: Optional[List[str]] = None,
+    limit: int = 50,
+    tipo: Optional[str] = None,
+    fonte: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """
-    Retorna lista de docs (ordenados por data desc) para um ticker.
-    """
     tk = _norm_ticker(ticker)
     if not tk:
         return []
 
-    engine = get_supabase_engine()
+    where = ["ticker = :tk"]
+    params: Dict[str, Any] = {"tk": tk, "limit": int(limit)}
 
-    if prefer_tipos:
-        # ordena com prioridade (CASE) para tipos preferidos
-        tipos = [str(x).strip() for x in prefer_tipos if str(x).strip()]
-        sql = text(
-            """
-            SELECT id, ticker, data, fonte, tipo, titulo, url, raw_text
-            FROM public.docs_corporativos
-            WHERE ticker = :tk
-            ORDER BY
-              (CASE
-                WHEN tipo = ANY(:tipos) THEN 0
-                ELSE 1
-              END),
-              data DESC NULLS LAST,
-              id DESC
-            LIMIT :lim
-            """
-        )
-        params = {"tk": tk, "lim": int(limit_docs), "tipos": tipos}
-    else:
-        sql = text(
-            """
-            SELECT id, ticker, data, fonte, tipo, titulo, url, raw_text
-            FROM public.docs_corporativos
-            WHERE ticker = :tk
-            ORDER BY data DESC NULLS LAST, id DESC
-            LIMIT :lim
-            """
-        )
-        params = {"tk": tk, "lim": int(limit_docs)}
+    if tipo:
+        where.append("tipo = :tipo")
+        params["tipo"] = str(tipo)
 
-    with engine.connect() as conn:
-        df = pd.read_sql_query(sql, conn, params=params)
+    if fonte:
+        where.append("fonte = :fonte")
+        params["fonte"] = str(fonte)
 
-    if df is None or df.empty:
+    sql = f"""
+        SELECT id, ticker, data, fonte, tipo, titulo, url, raw_text, created_at
+        FROM public.docs_corporativos
+        WHERE {" AND ".join(where)}
+        ORDER BY COALESCE(data, created_at::date) DESC, id DESC
+        LIMIT :limit
+    """
+
+    df = _read_df(sql, params)
+    return df.to_dict(orient="records") if df is not None and not df.empty else []
+
+
+def get_chunks_by_ticker(
+    ticker: str,
+    *,
+    limit: int = 120,
+) -> List[Dict[str, Any]]:
+    tk = _norm_ticker(ticker)
+    if not tk:
         return []
 
-    docs: List[Dict[str, Any]] = []
-    for _, row in df.iterrows():
-        docs.append(_row_to_doc_dict(row.to_dict()))
-    return docs
+    df = _read_df(
+        """
+        SELECT c.id, c.doc_id, c.ticker, c.chunk_index, c.chunk_text, c.created_at
+        FROM public.docs_corporativos_chunks c
+        WHERE c.ticker = :tk
+        ORDER BY c.id DESC
+        LIMIT :limit
+        """,
+        {"tk": tk, "limit": int(limit)},
+    )
+    return df.to_dict(orient="records") if df is not None and not df.empty else []
 
 
-@st.cache_data(show_spinner=False, ttl=10 * 60)
-def get_docs_by_tickers(
-    tickers: Sequence[str],
+def get_rag_context_for_ticker(
+    ticker: str,
     *,
-    limit_docs_per_ticker: int = 10,
-    prefer_tipos: Optional[List[str]] = None,
-) -> Dict[str, List[Dict[str, Any]]]:
+    max_chunks: int = 80,
+) -> List[Dict[str, Any]]:
     """
-    Retorna dict {ticker -> [docs]}.
+    Retorna uma lista de mensagens/sumários prontos para passar como context no LLM.
+    """
+    chunks = get_chunks_by_ticker(ticker, limit=int(max_chunks))
+    if not chunks:
+        return []
 
-    Observação: como limit por ticker em SQL puro é mais chato (window functions),
-    este método faz N queries (uma por ticker) mas com cache.
-    Para universo pequeno (carteira final) é ok.
-    """
-    tks = [_norm_ticker(t) for t in (tickers or []) if str(t).strip()]
-    tks = list(dict.fromkeys(tks))
-    out: Dict[str, List[Dict[str, Any]]] = {}
-    for tk in tks:
-        out[tk] = get_docs_by_ticker(tk, limit_docs=int(limit_docs_per_ticker), prefer_tipos=prefer_tipos)
+    # reduz ruído e garante tamanho razoável por chunk
+    out = []
+    for ch in chunks:
+        txt = str(ch.get("chunk_text") or "").strip()
+        txt = re.sub(r"\s+", " ", txt)
+        if not txt:
+            continue
+        out.append({"ticker": ticker, "chunk_index": ch.get("chunk_index"), "text": txt})
     return out
-
-
-def make_doc_hash(ticker: str, fonte: str, tipo: str, titulo: str, url: str, raw_text: str) -> str:
-    """
-    Mesmo método de hash usado no ingest para evitar duplicatas.
-    """
-    base = "|".join([
-        _norm_ticker(ticker),
-        (fonte or "").strip(),
-        (tipo or "").strip(),
-        (titulo or "").strip(),
-        (url or "").strip(),
-        (raw_text or "").strip(),
-    ])
-    return hashlib.sha256(base.encode("utf-8")).hexdigest()
