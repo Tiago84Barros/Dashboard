@@ -49,7 +49,7 @@ try:
         render_patch2_dominancia,
     )
 
-    # Patch 3 (novo): diversificação (antigo Patch 4)
+    # Patch 3 (novo): diversificação 
     try:
         from page.portfolio_patches import render_patch3_diversificacao
     except Exception:
@@ -68,12 +68,19 @@ try:
     except Exception:
         render_patch5_desempenho_empresas = None  # type: ignore
 
+    # Patch 6 (novo): Perspectivas & Factibilidade (NLP + régua financeira)
+    try:
+        from page.portfolio_patches import render_patch6_perspectivas_factibilidade
+    except Exception:
+        render_patch6_perspectivas_factibilidade = None  # type: ignore
+
 except Exception:
     render_patch1_regua_conviccao = None  # type: ignore
     render_patch2_dominancia = None  # type: ignore
     render_patch3_diversificacao = None  # type: ignore
     render_patch4_benchmark_segmento = None  # type: ignore
     render_patch5_desempenho_empresas = None  # type: ignore
+    render_patch6_perspectivas_factibilidade = None  # type: ignore
 
 # <<< PATCHES (portfolio_patches)
 
@@ -978,7 +985,7 @@ def render():
                 unsafe_allow_html=True,
             )
 
-        # ─────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
     # PATCHES — Teste incremental (Patch 1, 2 e 3)
     # (Rodam APÓS a construção do portfólio; nunca rodam em import)
     # ─────────────────────────────────────────────────────────
@@ -1046,6 +1053,23 @@ def render():
                     render_patch5_desempenho_empresas(empresas_lideres_finais)
                 except Exception as e:
                     st.error(f"Patch 5 falhou: {type(e).__name__}: {e}")
+
+
+        if render_patch6_perspectivas_factibilidade is not None:
+            with st.expander("🧩 Patch 6 — Perspectivas & Factibilidade (Plano futuro + execução)", expanded=False):
+                try:
+                    # MVP: roda com textos colados manualmente dentro do expander.
+                    # Depois você pluga docs_by_ticker (CVM/RI) e indicadores_por_ticker (se quiser régua mais forte).
+                    render_patch6_perspectivas_factibilidade(
+                        empresas_lideres_finais,
+                        indicadores_por_ticker=None,  # depois plugar: dict[ticker] -> df_indicadores
+                        docs_by_ticker=None,          # depois plugar: dict[ticker] -> [{source,date,text},...]
+                        ativar_ajuste_peso=True,
+                        cache_horas_default=24,
+                    )
+                except Exception as e:
+                    st.error(f"Patch 6 falhou: {type(e).__name__}: {e}")
+
 
     # Desarma a execução após rodar (evita “auto-rerun armado”)
     st.session_state["cp_should_run"] = False
