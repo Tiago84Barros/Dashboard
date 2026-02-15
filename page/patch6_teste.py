@@ -1,88 +1,95 @@
 from __future__ import annotations
-
 """
 page/patch6_teste.py
 --------------------
-Página de teste para rodar o Patch 6 sem passar por criação de portfólio/score/backtest.
+Página de teste rápida do Patch 6, sem passar por criacao_portfolio.py.
 
-Fluxo:
-1) Informar tickers
-2) Contar docs no Supabase (public.docs_corporativos)
-3) Ingerir IPE (CVM) via dados abertos (opção A) -> public.docs_corporativos
-4) Rodar Patch 6 com RAG do Supabase
-
-Requisitos:
-- pickup/docs_rag.py com get_docs_by_tickers / count_docs_by_tickers
-- pickup/ingest_docs_cvm_ipe.py com ingest_ipe_for_tickers
+Inclui:
+1) Selecionar tickers
+2) Contar docs existentes no Supabase (public.docs_corporativos)
+3) Ingerir docs (A->B fallback): CVM/IPE e/ou RI (public.ri_map)
 """
 
-from typing import List
-
+from typing import List, Dict
 import streamlit as st
+from sqlalchemy import text
 
-from pickup.docs_rag import count_docs_by_tickers, get_docs_by_tickers
-from pickup.ingest_docs_cvm_ipe import ingest_ipe_for_tickers
-
-
-def _parse_tickers(s: str) -> List[str]:
-    if not s:
-        return []
-    raw = [x.strip().upper().replace(".SA", "") for x in s.split(",")]
-    out = [x for x in raw if x]
-    # dedupe
-    seen = set()
-    res = []
-    for t in out:
-        if t not in seen:
-            seen.add(t)
-            res.append(t)
-    return res
+from core.db_loader import get_supabase_engine
+from pickup.ingest_docs_fallback import ingest_strategy_for_tickers
 
 
-def render():
-    st.markdown("# Patch 6 — Modo Teste")
-    st.caption("Roda o Patch 6 sem executar criação de portfólio, score ou backtest.")
+def _norm(t: str) -> str:
+    return (t or "").upper().replace(".SA", "").strip()
 
-    tickers_txt = st.text_input("Tickers (separados por vírgula)", value="BBAS3")
-    tks = _parse_tickers(tickers_txt)
 
-    st.markdown("## Parâmetros do teste")
-    years = st.number_input("Anos (janela)", min_value=0, max_value=10, value=2, step=1)
-    max_docs = st.number_input("Máx docs por ticker", min_value=1, max_value=200, value=25, step=1)
-    fetch_html = st.checkbox("Baixar texto quando houver HTML/TXT (mais lento)", value=True)
+def _count_docs_by_tickers(tickers: List[str]) -> Dict[str, int]:
+    tks = [_norm(x) for x in tickers if str(x).strip()]
+    tks = list(dict.fromkeys(tks))
+    if not tks:
+        return {}
+    engine = get_supabase_engine()
+    sql = text("""
+        select upper(ticker) as ticker, count(*)::int as qtd
+        from public.docs_corporativos
+        where upper(ticker) = any(:tks)
+        group by upper(ticker)
+    """)
+    out = {tk: 0 for tk in tks}
+    with engine.begin() as conn:
+        rows = conn.execute(sql, {"tks": tks}).fetchall()
+        for tk, qtd in rows:
+            out[str(tk).upper()] = int(qtd or 0)
+    return out
 
-    st.divider()
-    st.markdown("## 1) Verificar docs já existentes")
-    if st.button("Contar docs no Supabase", use_container_width=True, disabled=not tks):
-        counts = count_docs_by_tickers(tks)
-        total = sum(counts.values()) if counts else 0
-        st.success(f"Docs carregados do Supabase: {total}")
+
+def render() -> None:
+    st.title("Patch 6 — Teste rápido (A/B/C)")
+    st.caption("Depuração: ingestão e contagem sem rodar criação de portfólio/score/backtest.")
+
+    tickers_str = st.text_input("Tickers (separados por vírgula)", value="BBAS3,PETR3,VALE3")
+    tickers = [_norm(x) for x in tickers_str.split(",") if x.strip()]
+
+    st.subheader("2) Verificar docs já existentes")
+    if st.button("Contar docs no Supabase"):
+        counts = _count_docs_by_tickers(tickers)
+        total = sum(counts.values())
+        st.success(f"Docs carregados no Supabase: {total}")
         with st.expander("Ver contagem por ticker", expanded=True):
-            for tk in tks:
-                st.write(f"**{tk}**: {counts.get(tk, 0)} docs")
+            for tk, q in counts.items():
+                st.write(f"{tk}: {q}")
 
-    st.divider()
-    st.markdown("## 2) Ingerir docs IPE (CVM) para os tickers")
-    st.caption("Usa dados.cvm.gov.br e filtra por Código CVM via public.cvm_to_ticker.")
-    if st.button("Ingerir IPE (CVM) agora", use_container_width=True, disabled=not tks):
-        with st.spinner("Ingerindo IPE..."):
-            result = ingest_ipe_for_tickers(
-                tks,
-                years=int(years),
+    st.subheader("3) Ingerir docs (A->B)")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        anos = st.number_input("Anos (janela)", min_value=0, max_value=15, value=2, step=1)
+    with col2:
+        max_docs = st.number_input("Máx docs por ticker", min_value=1, max_value=200, value=25, step=1)
+    with col3:
+        strategy = st.selectbox("Estratégia", ["A", "B", "A->B", "A->B->C"], index=2)
+
+    st.caption("A: CVM/IPE • B: RI via public.ri_map • C: secundário (placeholder)")
+    if st.button("Ingerir agora"):
+        with st.spinner("Ingerindo..."):
+            res = ingest_strategy_for_tickers(
+                tickers,
+                anos=int(anos),
                 max_docs_por_ticker=int(max_docs),
-                fetch_html_text=bool(fetch_html),
+                sleep_s=0.2,
+                strategy=str(strategy),
+                ri_map_table="public.ri_map",
+                enable_c=False,
             )
-        st.json(result)
+        st.json(res)
 
-    st.divider()
-    st.markdown("## 3) Rodar Patch 6 com RAG do Supabase")
-    st.caption("Aqui o Patch6 puxa automaticamente os docs do Supabase e monta contexto.")
+    st.subheader("4) Tabela RI map (manual)")
+    st.code("""create table if not exists public.ri_map (
+  id bigserial primary key,
+  ticker text not null unique,
+  ri_url text not null,
+  created_at timestamptz default now()
+);
 
-    # Placeholder: o seu Patch 6 real provavelmente está em outro módulo.
-    # Aqui apenas mostramos o contexto que seria passado para o modelo.
-    if st.button("Montar contexto (preview)", use_container_width=True, disabled=not tks):
-        docs = get_docs_by_tickers(tks, limit_per_ticker=25)
-        st.info(f"Total de docs retornados: {len(docs)}")
-        if docs:
-            st.json(docs[:5])
-            st.caption("Mostrando apenas os 5 primeiros docs para preview.")
+insert into public.ri_map (ticker, ri_url)
+values ('BBAS3', 'https://ri.bb.com.br/')
+on conflict (ticker) do update set ri_url=excluded.ri_url;
+""", language="sql")
