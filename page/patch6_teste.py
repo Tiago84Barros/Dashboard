@@ -1,47 +1,89 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional
+import inspect
+from typing import Any, Dict, List, Optional, Sequence
 
-import pandas as pd
 import streamlit as st
 
-# Store (cache + persistência)
-from core.patch6_store import (
-    prepare_patch6_docs_and_keys,
-    get_assessment_by_run_key,
-    upsert_assessment_and_initiatives,
-)
+# Store / RAG (Supabase)
+from core.patch6_store import prepare_patch6_docs_and_keys
 
 # LLM
 from core.ai_models.llm_client.factory import get_llm_client
 
-# INGEST
+# Ingest (pickup)
 from pickup.ingest_docs_cvm_ipe import ingest_ipe_for_tickers
 
 
-# ============================================================
+# -------------------------
 # Helpers
-# ============================================================
-
+# -------------------------
 def _norm_ticker(t: str) -> str:
     return (t or "").upper().replace(".SA", "").strip()
 
-def _clip(s: str, n: int = 800) -> str:
+
+def _dedup(seq: Sequence[str]) -> List[str]:
+    out: List[str] = []
+    seen = set()
+    for x in seq:
+        x = _norm_ticker(x)
+        if x and x not in seen:
+            out.append(x)
+            seen.add(x)
+    return out
+
+
+def _clip(s: str, n: int = 900) -> str:
     s = (s or "").strip()
     return s[:n] + ("…" if len(s) > n else "")
 
-def _as_list(x: Any) -> List[str]:
-    if isinstance(x, list):
-        return [str(i) for i in x if str(i).strip()]
-    if isinstance(x, str) and x.strip():
-        return [x.strip()]
-    return []
 
+def _call_ingest_flex(
+    tickers: List[str],
+    *,
+    anos: int,
+    max_docs_por_ticker: int,
+    sleep_s: float,
+) -> Dict[str, Any]:
+    """
+    Chama ingest_ipe_for_tickers com parâmetros compatíveis com diferentes versões do arquivo.
+    Resolve automaticamente nomes diferentes (ex.: anos vs years) e ignora params inexistentes.
+    """
+    fn = ingest_ipe_for_tickers
+    sig = inspect.signature(fn)
+    params = sig.parameters
 
-# ============================================================
-# LLM
-# ============================================================
+    kwargs: Dict[str, Any] = {}
+
+    # tenta mapear "anos"
+    if "anos" in params:
+        kwargs["anos"] = int(anos)
+    elif "years" in params:
+        kwargs["years"] = int(anos)
+    elif "year_window" in params:
+        kwargs["year_window"] = int(anos)
+    # se não existir nada, não passa nada (usa default interno)
+
+    # max docs
+    if "max_docs_por_ticker" in params:
+        kwargs["max_docs_por_ticker"] = int(max_docs_por_ticker)
+    elif "max_docs" in params:
+        kwargs["max_docs"] = int(max_docs_por_ticker)
+    elif "limit" in params:
+        kwargs["limit"] = int(max_docs_por_ticker)
+
+    # sleep
+    if "sleep_s" in params:
+        kwargs["sleep_s"] = float(sleep_s)
+    elif "sleep" in params:
+        kwargs["sleep"] = float(sleep_s)
+    elif "delay_s" in params:
+        kwargs["delay_s"] = float(sleep_s)
+
+    # importante: o primeiro argumento deve ser tickers
+    return fn(tickers, **kwargs)
+
 
 def _run_llm(
     *,
@@ -50,7 +92,6 @@ def _run_llm(
     docs: List[Dict[str, Any]],
     manual_text: str,
 ) -> Dict[str, Any]:
-
     schema_hint = """
 {
   "iniciativas": [
@@ -58,6 +99,7 @@ def _run_llm(
       "tipo": "expansao|capex|m&a|guidance|reestruturacao|eficiencia|regulatorio|outros",
       "descricao_curta": "STRING",
       "horizonte": "curto|medio|longo|nao_informado",
+      "dependencias": ["STRING"],
       "impacto_esperado": "receita|margem|eficiencia|divida|caixa|ambivalente|nao_informado",
       "sinal": "positivo|negativo|ambivalente",
       "evidencia": {"fonte": "STRING", "data": "STRING", "trecho": "STRING"}
@@ -78,27 +120,42 @@ def _run_llm(
 """.strip()
 
     system = """
-Você é um analista buy-side focado em evidência textual.
-Use apenas o conteúdo fornecido.
-Não invente dados.
-Sempre retorne JSON válido conforme schema.
+Você é um analista buy-side, cético e orientado a evidência.
+Regras obrigatórias:
+- NÃO invente fatos, números, datas, operações.
+- Use APENAS o conteúdo fornecido em 'docs' e 'texto manual'.
+- Se não houver evidência, deixe 'iniciativas' vazio e explique no resumo.
+- Saída SEMPRE em JSON válido no schema solicitado.
 """.strip()
 
-    llm = get_llm_client()
+    ctx_docs = []
+    for d in (docs or [])[:10]:
+        ctx_docs.append(
+            {
+                "fonte": str(d.get("fonte", "NA")),
+                "tipo": str(d.get("tipo", "NA")),
+                "data": str(d.get("data", "NA")),
+                "titulo": str(d.get("titulo", "")),
+                "text": str(d.get("raw_text", ""))[:3200],
+            }
+        )
 
     user = f"""
 Empresa: {empresa} ({ticker})
 
-Documentos:
-{docs}
+docs (documentos oficiais/estratégicos):
+{ctx_docs}
 
-Texto manual:
-{manual_text if manual_text else "(vazio)"}
+texto_manual (opcional):
+{manual_text if manual_text and manual_text.strip() else "(vazio)"}
 
-Extraia iniciativas estratégicas futuras, avalie risco de execução
-e classifique compra como forte/moderada/fraca.
-"""
+Tarefa:
+1) Extraia iniciativas estratégicas futuras (projeções, planos, investimentos, reestruturações, guidance etc.)
+2) Para cada iniciativa, inclua evidência (fonte/data/trecho) do material fornecido.
+3) Avalie risco de execução e classifique compra: forte/moderada/fraca, justificando pelo texto.
+""".strip()
 
+    llm = get_llm_client()
     return llm.generate_json(
         system=system,
         user=user,
@@ -107,168 +164,122 @@ e classifique compra como forte/moderada/fraca.
     )
 
 
-# ============================================================
-# Página
-# ============================================================
-
+# -------------------------
+# Page
+# -------------------------
 def render() -> None:
+    st.markdown("# 🧪 Patch 6 — Teste (Ingest + LLM)")
 
-    st.markdown("# 🧪 Patch 6 — Modo Teste Completo")
-
-    # ------------------------------------------------------------
-    # Sidebar
-    # ------------------------------------------------------------
     with st.sidebar:
+        st.markdown("## Entrada")
+        ticker = _norm_ticker(st.text_input("Ticker", value="BBAS3"))
+        empresa = st.text_input("Nome empresa (opcional)", value=ticker)
 
-        ticker = _norm_ticker(
-            st.text_input("Ticker", value="BBAS3")
-        )
+        st.markdown("## Ingest (captura)")
+        anos = st.number_input("Janela (anos)", 0, 10, 2, 1)
+        max_docs = st.number_input("Máx docs por ticker", 1, 80, 25, 1)
+        sleep_s = st.number_input("Sleep (s) entre docs", 0.0, 3.0, 0.15, 0.05)
 
-        empresa = st.text_input("Nome empresa", value=ticker)
-
-        limit_docs = st.number_input("Docs max", 1, 30, 10)
-        anos = st.number_input("Janela anos (ingest)", 1, 10, 2)
-        max_docs = st.number_input("Max docs por ticker (ingest)", 5, 200, 30)
+        st.markdown("## Leitura Supabase")
+        limit_docs = st.number_input("Docs max p/ LLM (Supabase)", 1, 30, 10, 1)
 
         provider = (os.getenv("AI_PROVIDER") or "openai").lower()
         model_env = os.getenv("AI_MODEL") or "gpt-4.1-mini"
-
-        st.write(f"Provider: {provider}")
-        st.write(f"Model: {model_env}")
+        st.caption(f"AI_PROVIDER: {provider}")
+        st.caption(f"AI_MODEL: {model_env}")
 
     if not ticker:
-        st.warning("Informe ticker.")
+        st.warning("Informe um ticker.")
         return
 
-    # ------------------------------------------------------------
-    # INGEST
-    # ------------------------------------------------------------
-    st.markdown("## ⬇️ Atualizar documentos no Supabase")
+    # =========================
+    # (A) INGEST
+    # =========================
+    st.markdown("## A) 📥 Ingest (capturar/atualizar docs no Supabase)")
 
-    col1, col2 = st.columns(2)
+    colA1, colA2 = st.columns([1.0, 2.2])
+    with colA1:
+        do_ingest = st.button("📥 Rodar ingest deste ticker", use_container_width=True)
+    with colA2:
+        st.caption(
+            "Executa o coletor e salva em docs_corporativos / docs_corporativos_chunks. "
+            "Depois disso, a LLM consegue ler do Supabase."
+        )
 
-    if col1.button("Atualizar este ticker"):
-        with st.spinner("Ingerindo..."):
-            resp = ingest_ipe_for_tickers(
-                [ticker],
-                anos=int(anos),
-                max_docs_por_ticker=int(max_docs),
-            )
-        st.success("Finalizado.")
-        st.json(resp)
-
-    tickers_lote = st.text_area(
-        "Atualizar lote (1 ticker por linha)",
-        height=100
-    )
-
-    if col2.button("Atualizar lote"):
-        lista = [
-            _norm_ticker(x)
-            for x in tickers_lote.splitlines()
-            if x.strip()
-        ]
-        if lista:
-            with st.spinner("Ingerindo lote..."):
-                resp = ingest_ipe_for_tickers(
-                    lista,
+    if do_ingest:
+        with st.spinner("Ingest em execução..."):
+            try:
+                resp = _call_ingest_flex(
+                    [ticker],
                     anos=int(anos),
                     max_docs_por_ticker=int(max_docs),
+                    sleep_s=float(sleep_s),
                 )
-            st.success("Finalizado.")
-            st.json(resp)
+                st.success("Ingest finalizado.")
+                st.json(resp)
+            except Exception as e:
+                st.error(f"Ingest falhou: {type(e).__name__}: {e}")
+                st.stop()
 
     st.divider()
 
-    # ------------------------------------------------------------
-    # BUSCA DOCS
-    # ------------------------------------------------------------
-    pkg = prepare_patch6_docs_and_keys(
-        ticker,
-        limit_docs=int(limit_docs),
-        provider=provider,
-        model=model_env,
-        patch_version="patch6_v1",
-    )
+    # =========================
+    # (B) CARREGAR DOCS DO SUPABASE
+    # =========================
+    st.markdown("## B) 📚 Documentos (carregar do Supabase)")
+    try:
+        pkg = prepare_patch6_docs_and_keys(
+            ticker,
+            limit_docs=int(limit_docs),
+            provider=provider,
+            model=model_env,
+            patch_version="patch6_test_v1",
+        )
+    except Exception as e:
+        st.error(f"Falha ao carregar docs do Supabase: {type(e).__name__}: {e}")
+        return
 
-    st.markdown("## 📚 Documentos encontrados")
-
-    docs = pkg["docs"]
+    docs = pkg.get("docs") or []
+    st.caption(f"Docs encontrados: {len(docs)} | last_doc_date: {pkg.get('last_doc_date')}")
 
     if not docs:
-        st.warning("Nenhum documento encontrado.")
+        st.warning("Nenhum documento encontrado no Supabase para este ticker.")
     else:
-        for d in docs:
-            st.markdown(f"**{d.get('titulo')}**")
-            st.caption(f"{d.get('fonte')} | {d.get('tipo')} | {d.get('data')}")
-            st.write(_clip(d.get("raw_text", "")))
-            st.divider()
-
-    # ------------------------------------------------------------
-    # CACHE
-    # ------------------------------------------------------------
-    st.markdown("## 🧠 Cache")
-
-    cached = get_assessment_by_run_key(pkg["run_key"])
-
-    if cached and cached.get("assessment"):
-        st.success("Cache HIT")
-        st.json(cached["assessment"])
-    else:
-        st.info("Cache MISS")
+        with st.expander("Ver documentos carregados", expanded=False):
+            for d in docs:
+                st.markdown(f"**{d.get('titulo') or '(sem título)'}**")
+                st.caption(f"{d.get('fonte')} | {d.get('tipo')} | {d.get('data')}")
+                st.write(_clip(d.get("raw_text", "")))
+                st.divider()
 
     st.divider()
 
-    # ------------------------------------------------------------
-    # LLM
-    # ------------------------------------------------------------
+    # =========================
+    # (C) TESTE LLM
+    # =========================
+    st.markdown("## C) 🧠 Teste da LLM (RAG + texto manual opcional)")
+
     manual_text = st.text_area(
-        "Texto manual opcional",
-        height=120
+        "Texto manual (opcional) — cole trechos de CVM/RI/call/release. Se vazio, a LLM usa somente o Supabase.",
+        height=140,
     )
 
-    if st.button("🚀 Rodar LLM"):
-
+    if st.button("🚀 Rodar LLM agora"):
         if not docs and not manual_text.strip():
-            st.error("Sem dados para enviar à LLM.")
+            st.error("Sem docs no Supabase e sem texto manual — não há o que analisar.")
             return
 
         with st.spinner("Chamando LLM..."):
-            out = _run_llm(
-                ticker=ticker,
-                empresa=empresa,
-                docs=docs,
-                manual_text=manual_text,
-            )
+            try:
+                out = _run_llm(
+                    ticker=ticker,
+                    empresa=empresa or ticker,
+                    docs=docs,
+                    manual_text=manual_text,
+                )
+            except Exception as e:
+                st.error(f"LLM falhou: {type(e).__name__}: {e}")
+                return
 
-        st.markdown("## Resultado LLM")
+        st.success("LLM respondeu.")
         st.json(out)
-
-        iniciativas = out.get("iniciativas", [])
-        aval = out.get("avaliacao_execucao", {})
-        rating = out.get("rating_compra", {})
-
-        assessment_id = upsert_assessment_and_initiatives(
-            run_key=pkg["run_key"],
-            ticker=ticker,
-            provider=provider,
-            model=model_env,
-            docs_hash=pkg["docs_hash"],
-            docs_count=pkg["docs_count"],
-            last_doc_date_iso=pkg["last_doc_date"],
-            score_regua_0_100=None,
-            ajuste_ia_pp=None,
-            score_final_0_100=None,
-            risco_execucao=aval.get("risco_execucao"),
-            rating_compra=rating.get("rating"),
-            motivo_compra=rating.get("motivo"),
-            fator_peso_aporte=None,
-            resumo_1_paragrafo=out.get("resumo_1_paragrafo"),
-            pontos_a_favor=_as_list(aval.get("pontos_a_favor")),
-            pontos_contra=_as_list(aval.get("pontos_contra")),
-            perguntas_criticas=_as_list(aval.get("perguntas_criticas")),
-            llm_json=out,
-            iniciativas=iniciativas,
-        )
-
-        st.success(f"Salvo no Supabase (assessment_id={assessment_id})")
