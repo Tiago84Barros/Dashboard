@@ -26,8 +26,8 @@ import streamlit as st
 # Imports do seu projeto
 from core.ai_models.llm_client.factory import get_llm_client
 from pickup.docs_rag import count_docs_by_tickers, get_docs_by_tickers
-from pickup.ingest_docs_cvm_ipe import ingest_ipe_for_tickers
-
+#from pickup.ingest_docs_cvm_ipe import ingest_ipe_for_tickers
+from pickup.ingest_docs_cvm_enet import ingest_enet_for_tickers
 
 def _parse_tickers(s: str) -> List[str]:
     raw = (s or "").replace(";", ",").replace("\n", ",")
