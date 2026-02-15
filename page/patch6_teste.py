@@ -178,16 +178,14 @@ def render() -> None:
                 )
 
                 with st.spinner("Executando análise estruturada..."):
-                    out = llm.generate_json(
-                        system=system,
-                        user=user,
-                        schema_hint=schema_hint,
-                        context=[
-                            {"ticker": tk, "ativar_ajuste_peso": bool(ativar_ajuste_peso)}
-                        ],
-                    )
+                    out = ingest_enet_for_tickers(
+                        tickers=tickers,
+                        anos=anos,
+                        max_docs_por_ticker=max_docs,
+                        baixar_e_extrair=True,
+                   )
 
-                st.json(out)
+                   st.json(out)
 
         except Exception as e:
             st.error(f"Patch 6 falhou: {e}")
