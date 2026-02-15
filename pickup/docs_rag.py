@@ -3,16 +3,18 @@ from __future__ import annotations
 """
 pickup/docs_rag.py
 ------------------
-Leitura de documentos do Supabase para uso no Patch 6 (RAG).
+Helpers para o Patch 6 (RAG) ler documentos no Supabase.
 
-Tabelas:
+Exports (compat):
+- get_docs_by_tickers(tickers, limit_per_ticker=50) -> List[dict]
+- count_docs_by_tickers(tickers) -> Dict[str,int]
+
+Tabelas esperadas:
 - public.docs_corporativos
-- public.docs_corporativos_chunks
 """
 
 from typing import Any, Dict, List, Sequence
 from sqlalchemy import text
-
 from core.db_loader import get_supabase_engine
 
 
@@ -25,52 +27,51 @@ def count_docs_by_tickers(tickers: Sequence[str]) -> Dict[str, int]:
     tks = list(dict.fromkeys(tks))
     if not tks:
         return {}
-
     engine = get_supabase_engine()
     sql = text(
         """
-        SELECT ticker, COUNT(*)::int AS qtd
-        FROM public.docs_corporativos
-        WHERE ticker = ANY(:tks)
-        GROUP BY ticker
+        select upper(ticker) as ticker, count(*) as qtd
+        from public.docs_corporativos
+        where upper(ticker) = any(:tks)
+        group by upper(ticker)
         """
     )
-    with engine.connect() as conn:
+    out: Dict[str, int] = {t: 0 for t in tks}
+    with engine.begin() as conn:
         rows = conn.execute(sql, {"tks": tks}).fetchall()
-
-    out = {tk: 0 for tk in tks}
     for r in rows:
         out[str(r[0]).upper()] = int(r[1])
     return out
 
 
-def get_docs_by_ticker(ticker: str, *, limit: int = 30) -> List[Dict[str, Any]]:
-    tk = _norm_ticker(ticker)
-    if not tk:
-        return []
-
-    engine = get_supabase_engine()
-    sql = text(
-        """
-        SELECT id, ticker, data, fonte, tipo, titulo, url, raw_text, doc_hash, created_at
-        FROM public.docs_corporativos
-        WHERE ticker = :tk
-        ORDER BY data DESC NULLS LAST, created_at DESC
-        LIMIT :lim
-        """
-    )
-    with engine.connect() as conn:
-        rows = conn.execute(sql, {"tk": tk, "lim": int(limit)}).mappings().all()
-    return [dict(r) for r in rows]
-
-
-def get_docs_by_tickers(tickers: Sequence[str], *, limit_per_ticker: int = 20) -> Dict[str, List[Dict[str, Any]]]:
+def get_docs_by_tickers(tickers: Sequence[str], *, limit_per_ticker: int = 50) -> List[Dict[str, Any]]:
+    """
+    Retorna docs recentes (por data desc, depois id desc) para uso como contexto RAG.
+    """
     tks = [_norm_ticker(t) for t in (tickers or []) if str(t).strip()]
     tks = list(dict.fromkeys(tks))
-    out: Dict[str, List[Dict[str, Any]]] = {tk: [] for tk in tks}
     if not tks:
-        return out
+        return []
+    engine = get_supabase_engine()
 
-    for tk in tks:
-        out[tk] = get_docs_by_ticker(tk, limit=int(limit_per_ticker))
-    return out
+    # Busca por ticker em batches via LATERAL (limit por ticker)
+    sql = text(
+        """
+        with tks as (
+          select unnest(:tks::text[]) as tk
+        )
+        select d.*
+        from tks
+        join lateral (
+          select *
+          from public.docs_corporativos d
+          where upper(d.ticker) = upper(tks.tk)
+          order by d.data desc nulls last, d.id desc
+          limit :lim
+        ) d on true
+        order by d.ticker, d.data desc nulls last, d.id desc
+        """
+    )
+    with engine.begin() as conn:
+        rows = conn.execute(sql, {"tks": tks, "lim": int(limit_per_ticker)}).mappings().all()
+    return [dict(r) for r in rows]
