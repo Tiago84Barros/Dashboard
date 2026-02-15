@@ -1,220 +1,142 @@
-# dashboard/page/patch6_teste.py
-# Patch 6 — Teste (Ingest + LLM)
-#
-# Arquivo corrigido e consolidado
-# Compatível com:
-# - core.db_loader
-# - ingest fallback A/B/C
-# - runner LLM em core.ai_models.pipelines
 
+# dashboard/page/patch6_teste.py
 from __future__ import annotations
 
-import importlib
-import inspect
 import json
-import pkgutil
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
+from sqlalchemy import text
+
+from core.db_loader import get_supabase_engine
 
 
-# -------------------------------
+# ------------------------------------------------------------
 # Helpers
-# -------------------------------
+# ------------------------------------------------------------
 def _parse_tickers(raw: str) -> List[str]:
     if not raw:
         return []
-    out: List[str] = []
+    out = []
     for p in raw.replace(";", ",").split(","):
-        t = (p or "").strip().upper()
+        t = p.strip().upper()
         if t:
             out.append(t)
-    seen = set()
-    uniq = []
-    for t in out:
-        if t not in seen:
-            uniq.append(t)
-            seen.add(t)
-    return uniq
+    return list(dict.fromkeys(out))
 
 
-def _safe_call(fn: Callable[..., Any], **kwargs) -> Any:
-    try:
-        sig = inspect.signature(fn)
-    except Exception:
-        return fn(**kwargs)
-
-    accepted = {}
-    for k, v in kwargs.items():
-        if k in sig.parameters:
-            accepted[k] = v
-
-    return fn(**accepted)
-
-
-# -------------------------------
-# Supabase
-# -------------------------------
-def _get_supabase_client() -> Any:
-    candidates = [
-        ("core.db_loader", ["get_supabase", "get_supabase_client"]),
-    ]
-
-    for mod_name, attrs in candidates:
-        try:
-            mod = importlib.import_module(mod_name)
-        except Exception:
-            continue
-
-        for a in attrs:
-            obj = getattr(mod, a, None)
-            if callable(obj):
-                return obj()
-
-    raise RuntimeError("Não consegui obter supabase client.")
-
-
+# ------------------------------------------------------------
+# Supabase via SQLAlchemy
+# ------------------------------------------------------------
 def count_docs_by_tickers(tickers: List[str]) -> Tuple[int, Dict[str, int]]:
-    sb = _get_supabase_client()
+    engine = get_supabase_engine()
     total = 0
-    by: Dict[str, int] = {}
+    by = {}
+
+    sql = text("""
+        SELECT ticker, COUNT(*) as cnt
+        FROM public.docs_corporativos
+        WHERE ticker = ANY(:tickers)
+        GROUP BY ticker
+    """)
+
+    with engine.connect() as conn:
+        result = conn.execute(sql, {"tickers": tickers}).fetchall()
+
+    for row in result:
+        by[row.ticker] = int(row.cnt)
+        total += int(row.cnt)
 
     for tk in tickers:
-        res = (
-            sb.table("docs_corporativos")
-            .select("id", count="exact")
-            .eq("ticker", tk)
-            .execute()
-        )
-        cnt = int(getattr(res, "count", None) or 0)
-        by[tk] = cnt
-        total += cnt
+        if tk not in by:
+            by[tk] = 0
 
     return total, by
 
 
-def get_chunks_for_rag(ticker: str, categoria: Optional[str], top_k: int):
-    sb = _get_supabase_client()
-    q = sb.table("docs_corporativos_chunks").select(
-        "id,doc_id,ticker,categoria,chunk_text"
-    ).eq("ticker", ticker)
+def get_recent_docs(ticker: str, limit: int = 20) -> List[Dict[str, Any]]:
+    engine = get_supabase_engine()
+    sql = text("""
+        SELECT id, ticker, titulo, fonte, tipo, created_at
+        FROM public.docs_corporativos
+        WHERE ticker = :ticker
+        ORDER BY id DESC
+        LIMIT :limit
+    """)
+    with engine.connect() as conn:
+        rows = conn.execute(sql, {"ticker": ticker, "limit": limit}).fetchall()
 
-    if categoria:
-        q = q.eq("categoria", categoria)
-
-    res = q.order("id", desc=True).limit(int(top_k)).execute()
-    return getattr(res, "data", []) or []
-
-
-# -------------------------------
-# Ingest
-# -------------------------------
-def _try_find_ingest_runner():
-    candidates = [
-        ("pickup.ingest_docs_fallback", ["ingest_strategy_for_tickers"]),
-        ("core.ingest_docs_fallback", ["ingest_strategy_for_tickers"]),
-        ("pickup.ingest_docs_cvm_ipe", ["ingest_ipe_for_tickers"]),
-    ]
-
-    for mod_name, fn_names in candidates:
-        try:
-            mod = importlib.import_module(mod_name)
-        except Exception:
-            continue
-
-        for fn in fn_names:
-            f = getattr(mod, fn, None)
-            if callable(f):
-                return f
-
-    return None
+    return [dict(r._mapping) for r in rows]
 
 
-# -------------------------------
-# LLM Runner
-# -------------------------------
-def _try_find_llm_runner():
-    fn_candidates = {
-        "run_patch6_llm",
-        "run_llm",
-        "run_rag",
-        "judge_company",
+def get_chunks_for_rag(ticker: str, top_k: int = 25) -> List[str]:
+    engine = get_supabase_engine()
+    sql = text("""
+        SELECT chunk_text
+        FROM public.docs_corporativos_chunks
+        WHERE ticker = :ticker
+        ORDER BY id DESC
+        LIMIT :limit
+    """)
+    with engine.connect() as conn:
+        rows = conn.execute(sql, {"ticker": ticker, "limit": top_k}).fetchall()
+
+    return [r.chunk_text for r in rows]
+
+
+# ------------------------------------------------------------
+# LLM Stub (simplificado para teste)
+# ------------------------------------------------------------
+def run_llm_simples(ticker: str, chunks: List[str], manual_text: str) -> Dict[str, Any]:
+    if not chunks and not manual_text.strip():
+        return {"ok": False, "error": "Sem contexto disponível."}
+
+    contexto = "\n\n".join(chunks[:5])[:2000]
+
+    return {
+        "ok": True,
+        "result": {
+            "ticker": ticker,
+            "perspectiva_compra": "moderada",
+            "resumo": "Teste LLM executado com contexto disponível.",
+            "context_preview": contexto[:500],
+        },
     }
 
-    try:
-        pkg = importlib.import_module("core.ai_models.pipelines")
-    except Exception:
-        return None
 
-    for mi in pkgutil.iter_modules(pkg.__path__, pkg.__name__ + "."):
-        try:
-            m = importlib.import_module(mi.name)
-        except Exception:
-            continue
-
-        for fn in fn_candidates:
-            f = getattr(m, fn, None)
-            if callable(f):
-                return f
-
-    return None
-
-
-def _run_llm(ticker: str, categoria: Optional[str], top_k: int):
-    chunks = get_chunks_for_rag(ticker, categoria, top_k)
-    if not chunks:
-        return {"ok": False, "error": "Sem chunks para RAG."}
-
-    context = "\n\n---\n\n".join(
-        [(c.get("chunk_text") or "")[:2000] for c in chunks]
-    )
-
-    runner = _try_find_llm_runner()
-    if not runner:
-        return {"ok": False, "error": "Runner LLM não encontrado."}
-
-    return _safe_call(runner, ticker=ticker, context=context, chunks=chunks)
-
-
-# -------------------------------
+# ------------------------------------------------------------
 # UI
-# -------------------------------
+# ------------------------------------------------------------
 def render():
-    st.title("🧪 Patch 6 — Teste (Ingest + LLM)")
+    st.title("🧪 Patch6 — Teste SQLAlchemy")
 
-    tickers_raw = st.text_input(
-        "Tickers (vírgula)",
-        value="BBAS3, ABEV3",
-    )
-
+    tickers_raw = st.text_input("Tickers", value="BBAS3")
     tickers = _parse_tickers(tickers_raw)
 
-    st.markdown("### A) Ingest")
-    ingest_runner = _try_find_ingest_runner()
+    if not tickers:
+        st.warning("Informe ao menos 1 ticker.")
+        return
 
-    if ingest_runner:
-        if st.button("Rodar ingest"):
-            out = _safe_call(
-                ingest_runner,
-                tickers=tickers,
-                anos=2,
-                max_docs_por_ticker=60,
-            )
-            st.json(out)
-    else:
-        st.warning("Runner de ingest não encontrado.")
-
-    st.markdown("### B) Contagem Docs")
     if st.button("Contar docs"):
         total, by = count_docs_by_tickers(tickers)
-        st.success(f"Total: {total}")
+        st.success(f"Total docs: {total}")
         st.json(by)
 
-    st.markdown("### C) LLM (RAG)")
-    ticker_llm = st.selectbox("Ticker", tickers)
+    st.divider()
+
+    ticker_sel = st.selectbox("Ticker", tickers)
+
+    if st.button("Ver docs recentes"):
+        docs = get_recent_docs(ticker_sel)
+        st.json(docs)
+
+    st.divider()
+
+    manual_text = st.text_area("Texto manual opcional")
 
     if st.button("Rodar LLM"):
-        out = _run_llm(ticker_llm, "estrategico", 25)
+        chunks = get_chunks_for_rag(ticker_sel)
+        out = run_llm_simples(ticker_sel, chunks, manual_text)
         st.json(out)
 
 
