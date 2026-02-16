@@ -447,7 +447,10 @@ def ingest_ipe_for_tickers(
     if c_dt:
         dt = pd.to_datetime(df2[c_dt], errors="coerce", dayfirst=True)
         df2["_dt"] = dt
-        cutoff = pd.Timestamp.utcnow().normalize() - pd.Timedelta(days=365 * max(0, int(years)))
+        cutoff = (pd.Timestamp.utcnow().tz_localize(None).normalize()
+                  - pd.Timedelta(days=365 * max(0, int(years))))
+        # garante comparação tz-naive (evita: Invalid comparison between dtype=datetime64[ns] and Timestamp)
+        df2["_dt"] = pd.to_datetime(df2["_dt"], errors="coerce", utc=True).dt.tz_convert(None)
         df2 = df2[df2["_dt"].isna() | (df2["_dt"] >= cutoff)].copy()
 
     stats: Dict[str, Dict[str, int]] = {tk: {"matched": 0, "inserted": 0, "skipped": 0} for tk in tks}
