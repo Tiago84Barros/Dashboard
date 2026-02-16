@@ -29,6 +29,7 @@ import hashlib
 import io
 import re
 import time
+from datetime import datetime
 
 import pandas as pd
 import requests
@@ -69,29 +70,66 @@ def _chunk_text(texto: str, chunk_chars: int = 1500, overlap: int = 200) -> List
 
 # ───────────────────────── CVM DADOS ABERTOS ─────────────────────────
 
-# Tentativas em ordem: primeiro o CSV "único" (mais provável), depois variações.
-IPE_URL_CANDIDATES = [
-    "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/ipe_cia_aberta.csv",
-    "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/IPE_CIA_ABERTA.csv",
-    # algumas estruturas antigas (caso a CVM altere novamente)
-    "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/ipe_cia_aberta.zip",
-]
+# Tentativas:
+# 1) Tenta descobrir os arquivos anuais via index do diretório (mais robusto).
+# 2) Fallback: gera URLs por ano (últimos N anos) e testa.
+#
+# Observação importante:
+# No portal dados.cvm.gov.br, o IPE costuma estar disponível como ZIP anual:
+#   https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/ipe_cia_aberta_YYYY.zip
+# e o ZIP contém CSV(s) com metadados e links de download.
+IPE_DIR_INDEX_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/"
 
-def _fetch_first_working_ipe_url(timeout: int = 45) -> Tuple[Optional[str], Dict[str, Any]]:
+def _discover_ipe_year_urls(years_back: int = 6, timeout: int = 20) -> Tuple[List[str], Dict[str, Any]]:
+    """Descobre URLs anuais do IPE (ZIP) a partir do index do diretório.
+
+    Retorna (urls_ordenadas_desc, debug).
     """
-    Retorna (url_ok, debug) testando uma lista de URLs.
-    """
-    debug: Dict[str, Any] = {"candidates": []}
-    for url in IPE_URL_CANDIDATES:
+    debug: Dict[str, Any] = {"index_url": IPE_DIR_INDEX_URL, "discovered": [], "generated": []}
+    urls: List[str] = []
+    try:
+        r = requests.get(IPE_DIR_INDEX_URL, timeout=timeout)
+        r.raise_for_status()
+        html = r.text or ""
+        years = sorted({int(y) for y in re.findall(r"ipe_cia_aberta_(\d{4})\.zip", html)}, reverse=True)
+        if years:
+            # limita ao intervalo desejado (anos_back)
+            cur = datetime.utcnow().year
+            min_year = max(1900, cur - years_back + 1)
+            years = [y for y in years if y >= min_year]
+            for y in years:
+                urls.append(f"{IPE_DIR_INDEX_URL}ipe_cia_aberta_{y}.zip")
+        debug["discovered"] = urls[:]
+    except Exception as e:
+        debug["index_error"] = f"{type(e).__name__}: {e}"
+
+    if urls:
+        return urls, debug
+
+    # fallback: gera URLs por ano
+    cur = datetime.utcnow().year
+    gen = [f"{IPE_DIR_INDEX_URL}ipe_cia_aberta_{y}.zip" for y in range(cur, cur - years_back, -1)]
+    debug["generated"] = gen[:]
+    return gen, debug
+
+def _fetch_working_ipe_urls(years_back: int, timeout: int = 45) -> Tuple[List[str], Dict[str, Any]]:
+    """Testa URLs anuais do IPE e retorna as que estão disponíveis (HTTP 200)."""
+    candidates, debug = _discover_ipe_year_urls(years_back=years_back, timeout=min(20, timeout))
+    debug["candidates_tested"] = []
+    ok_urls: List[str] = []
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; DashboardAnalise/1.0; +https://dados.cvm.gov.br/)"
+    }
+    for url in candidates:
         try:
-            r = requests.get(url, stream=True, timeout=timeout)
+            r = requests.get(url, stream=True, timeout=timeout, headers=headers)
             ok = (r.status_code == 200)
-            debug["candidates"].append({"url": url, "status": r.status_code, "ok": ok})
+            debug["candidates_tested"].append({"url": url, "status": r.status_code, "ok": ok})
             if ok:
-                return url, debug
+                ok_urls.append(url)
         except Exception as e:
-            debug["candidates"].append({"url": url, "error": f"{type(e).__name__}: {e}", "ok": False})
-    return None, debug
+            debug["candidates_tested"].append({"url": url, "error": f"{type(e).__name__}: {e}", "ok": False})
+    return ok_urls, debug
 
 
 @st.cache_data(ttl=60 * 30, show_spinner=False)
@@ -349,28 +387,37 @@ def ingest_ipe_for_tickers(
             "debug": {"have": tk2cvm},
         }
 
-    # 2) encontra url do dataset IPE
-    url_ipe, debug = _fetch_first_working_ipe_url()
-    if not url_ipe:
+    # 2) encontra URLs anuais do dataset IPE (ZIP por ano) conforme janela desejada
+    # years=2 => tenta ano corrente e anterior (e assim por diante).
+    years_back = max(1, int(years or 1))
+    url_list, debug = _fetch_working_ipe_urls(years_back=years_back)
+    if not url_list:
         return {
             "ok": False,
             "url_ipe": None,
             "stats": {},
-            "errors": {"__ipe__": "Nenhum CSV IPE disponível (todas as URLs candidatas falharam)."},
+            "errors": {"__ipe__": "Nenhum ZIP anual do IPE disponível (todas as URLs candidatas falharam)."},
             "debug": debug,
         }
+    url_ipe = url_list[0]  # mantém compatibilidade com retornos/telemetria
 
-    # 3) carrega dataframe
-    try:
-        df = _load_ipe_dataframe(url_ipe)
-    except Exception as e:
+    # 3) carrega dataframe (concat dos anos disponíveis)
+    dfs: List[pd.DataFrame] = []
+    last_err: Optional[str] = None
+    for u in url_list:
+        try:
+            dfs.append(_load_ipe_dataframe(u))
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e}"
+    if not dfs:
         return {
             "ok": False,
-            "url_ipe": url_ipe,
+            "url_ipe": url_list[0],
             "stats": {},
-            "errors": {"__ipe__": f"Falha ao carregar CSV IPE: {type(e).__name__}: {e}"},
+            "errors": {"__ipe__": f"Falha ao carregar ZIPs do IPE (ex.: {last_err})"},
             "debug": debug,
         }
+    df = pd.concat(dfs, ignore_index=True, sort=False)
 
     # normaliza nomes de colunas conhecidos
     # (a CVM pode alterar; aqui é tolerante)
