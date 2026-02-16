@@ -291,6 +291,7 @@ def ingest_from_ri(
 def ingest_strategy_for_tickers(
     tickers: Sequence[str],
     *,
+    years: Optional[int] = None,
     anos: int = 2,
     max_docs_por_ticker: int = 25,
     sleep_s: float = 0.2,
@@ -305,20 +306,35 @@ def ingest_strategy_for_tickers(
         return {"ok": False, "error": "Lista vazia", "by_ticker": {}}
 
     out: Dict[str, Any] = {"ok": True, "by_ticker": {}}
+    # compat: "anos" antigo -> "years"
+    eff_years = int(years) if years is not None else int(anos)
+    if eff_years < 0:
+        eff_years = 0
+
 
     # A: CVM/IPE
     if "A" in strategy:
         try:
             from pickup.ingest_docs_cvm_ipe import ingest_ipe_for_tickers  # type: ignore
-            resA = ingest_ipe_for_tickers(tks, anos=anos, max_docs_por_ticker=max_docs_por_ticker, sleep_s=sleep_s)
+            resA = ingest_ipe_for_tickers(tks, years=eff_years, max_docs_por_ticker=max_docs_por_ticker, sleep_s=sleep_s)
         except Exception as e:
             resA = {"ok": False, "stats": {}, "errors": {"__A__": f"{type(e).__name__}: {e}"}}
 
+        # Propaga erros "globais" (__map__/__ipe__/__all__/__A__) para cada ticker,
+        # para aparecer no UI e facilitar o diagnóstico.
+        global_err = None
+        for k in ("__A__", "__map__", "__ipe__", "__all__"):
+            if (resA.get("errors") or {}).get(k):
+                global_err = (resA.get("errors") or {}).get(k)
+                break
+
         for tk in tks:
             out["by_ticker"].setdefault(tk, {})
-            stats = (resA.get("stats") or {}).get(tk)
-            err = (resA.get("errors") or {}).get(tk)
+            stats = (resA.get("stats") or {}).get(tk) or {}
+            err = (resA.get("errors") or {}).get(tk) or global_err
             out["by_ticker"][tk]["A"] = {"stats": stats, "error": err}
+            if err:
+                out["ok"] = False
 
     # B: RI fallback
     if "B" in strategy:
