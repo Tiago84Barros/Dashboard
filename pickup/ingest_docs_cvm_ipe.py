@@ -157,6 +157,39 @@ def _extract_pdf_text(pdf_bytes: bytes, max_pages: int = 25) -> str:
 def _engine():
     return get_supabase_engine()
 
+# cache simples para evitar consultar schema a cada linha
+_TEXT_COL_CACHE: Optional[str] = None
+
+def _get_text_column(conn) -> str:
+    """Detecta dinamicamente a coluna de texto em public.docs_corporativos.
+
+    Compatibilidade:
+    - schemas antigos: coluna 'texto'
+    - schemas novos:  coluna 'raw_text'
+    """
+    global _TEXT_COL_CACHE
+    if _TEXT_COL_CACHE:
+        return _TEXT_COL_CACHE
+    rows = conn.execute(
+        text(
+            """
+            select column_name
+            from information_schema.columns
+            where table_schema='public'
+              and table_name='docs_corporativos'
+              and column_name in ('raw_text','texto')
+            """
+        )
+    ).fetchall()
+    cols = {str(r[0]) for r in (rows or [])}
+    if 'raw_text' in cols:
+        _TEXT_COL_CACHE = 'raw_text'
+        return _TEXT_COL_CACHE
+    if 'texto' in cols:
+        _TEXT_COL_CACHE = 'texto'
+        return _TEXT_COL_CACHE
+    raise RuntimeError("docs_corporativos não possui coluna 'texto' nem 'raw_text'. Ajuste o schema ou o ingest.")
+
 def get_cvm_codes_for_tickers(tickers: Sequence[str]) -> Dict[str, int]:
     """
     Lê mapeamento CVM->Ticker na tabela public.cvm_to_ticker.
