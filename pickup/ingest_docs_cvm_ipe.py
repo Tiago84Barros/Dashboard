@@ -259,6 +259,7 @@ def ingest_ipe_for_tickers(
     anos: int = 2,
     max_docs_por_ticker: int = 25,
     sleep_s: float = 0.0,
+    years: Optional[int] = None,
     # novos parâmetros (podem ser ignorados pelo caller)
     months_back: int = 12,
     max_runtime_s: Optional[int] = None,
@@ -276,6 +277,16 @@ def ingest_ipe_for_tickers(
       }
     """
     start_t = time.time()
+
+    # Compat: alguns callers antigos passam `years=`. Aqui tratamos como anos.
+    if years is not None:
+        try:
+            y = int(years)
+            if y > 0:
+                months_back = y * 12
+        except Exception:
+            pass
+
 
     tks = [_norm_ticker(t) for t in (tickers or []) if str(t).strip()]
     tks = list(dict.fromkeys(tks))
