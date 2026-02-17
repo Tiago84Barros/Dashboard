@@ -337,11 +337,11 @@ def ingest_ipe_for_tickers(
     df = pd.concat(dfs, ignore_index=True)
 
     # Identifica colunas
-    col_cvm = _pick_col(df, ["CD_CVM", "COD_CVM", "CVM", "CD_CVM_CIA"])
+    col_cvm = _pick_col(df, ["CD_CVM", "COD_CVM", "CODIGO_CVM", "CVM", "CD_CVM_CIA"])
     col_assunto = _pick_col(df, ["ASSUNTO", "TITULO", "DESCRICAO"])
     col_categoria = _pick_col(df, ["CATEG_DOC", "CATEGORIA", "CATEG"])
     col_especie = _pick_col(df, ["ESPECIE", "TIPO_DOC", "TIPO"])
-    col_data = _pick_col(df, ["DT_REFER", "DT_RECEB", "DT_RECEBIMENTO", "DT_ENTREGA", "DATA"])
+    col_data = _pick_col(df, ["DT_REFER", "DATA_REFERENCIA", "DT_RECEB", "DT_RECEBIMENTO", "DT_ENTREGA", "DATA_ENTREGA", "DATA"])
 
     col_link = _pick_col(df, ["LINK_DOC", "LINK_DOWNLOAD", "LINK", "URL"])
 
