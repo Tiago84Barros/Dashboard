@@ -1,15 +1,11 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 
 from sqlalchemy import text
-
 from core.db_loader import get_supabase_engine
-
-# Ajuste o import abaixo se seu projeto usar outro caminho para embeddings
-from core.ai_models.llm_client import get_embedding
-
+from core.ai_models.llm_client.factory import get_llm_client
 
 CHUNK_SIZE = 1200
 CHUNK_OVERLAP = 200
@@ -37,10 +33,6 @@ def hash_chunk(text_chunk: str) -> str:
 
 
 def process_document_chunks(doc_id: int) -> int:
-    """
-    Gera chunks/embeddings para UM documento (doc_id) e grava em docs_corporativos_chunks.
-    Requer public.docs_corporativos.texto com conteúdo.
-    """
     engine = get_supabase_engine()
     inserted = 0
 
@@ -49,6 +41,7 @@ def process_document_chunks(doc_id: int) -> int:
             text("SELECT id, ticker, texto FROM public.docs_corporativos WHERE id = :id"),
             {"id": doc_id},
         ).fetchone()
+
         if not row:
             return 0
 
@@ -58,6 +51,9 @@ def process_document_chunks(doc_id: int) -> int:
             return 0
 
         chunks = split_text(texto)
+
+        # instancia cliente UMA VEZ por documento
+        llm = get_llm_client()
 
         for idx, chunk_text in enumerate(chunks):
             chunk_hash = hash_chunk(chunk_text)
@@ -74,7 +70,7 @@ def process_document_chunks(doc_id: int) -> int:
             if exists:
                 continue
 
-            embedding = get_embedding(chunk_text)
+            embedding = llm.embed([chunk_text])[0]
 
             conn.execute(
                 text("""
@@ -103,10 +99,6 @@ def process_missing_chunks_for_ticker(
     limit_docs: int = 50,
     only_with_text: bool = True,
 ) -> Dict[str, int]:
-    """
-    Processa em batch documentos do ticker que ainda NÃO têm chunks.
-    Retorna contadores.
-    """
     tk = (ticker or "").strip().upper().replace(".SA", "")
     if not tk:
         return {"docs": 0, "docs_processed": 0, "chunks_inserted": 0}
