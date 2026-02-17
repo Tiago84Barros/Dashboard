@@ -3,33 +3,42 @@ from __future__ import annotations
 """
 pickup/ingest_docs_cvm_ipe.py
 ----------------------------
-OPÇÃO A (robusta): ingestão de metadados do IPE via *dados.cvm.gov.br* (dataset público),
-filtrando por Código CVM a partir da tabela public.cvm_to_ticker (criada por você).
+OPÇÃO A (CVM/IPE) — ingestão *estratégica* para o Patch 6.
 
-Por que isso existe?
-- O endpoint RAD/ENET (ConsultaExternaCVM.aspx/ConsultarDocumentos) costuma mudar e/ou dar 404.
-- O dataset de "dados abertos" da CVM é mais estável.
+Objetivo:
+- Capturar APENAS documentos com potencial de "intenção estratégica futura"
+  (releases de resultados, fatos relevantes, comunicados estratégicos, etc.)
+- Janela temporal: últimos 12 meses (configurável via months_back)
+- Inserir em public.docs_corporativos (metadados + raw_text quando possível)
+- Sem depender de scraping HTML de diretórios: usa URL determinística por ano:
+    https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/ipe_cia_aberta_{YYYY}.zip
 
-O que é ingerido?
-- Por padrão, *metadados* do IPE (Assunto, Categoria, Tipo, Datas, Link_Download etc.).
-- Quando o Link_Download apontar para HTML/TXT, tenta baixar e extrair texto.
-- Se for PDF, **não faz OCR** (mantém metadados + link, para não ficar lento).
+Observações de performance:
+- Filtra no CSV ANTES de baixar PDFs (reduz drasticamente volume).
+- Por padrão tenta extrair texto do PDF (sem OCR). Se falhar, insere só metadados.
+- Suporta max_runtime_s para impedir execução "infinita" em Streamlit.
 
 Tabelas esperadas (Supabase/Postgres):
-- public.docs_corporativos (com UNIQUE(doc_hash))
-- public.docs_corporativos_chunks (com UNIQUE(chunk_hash))
-- public.cvm_to_ticker (colunas: "CVM" int, "Ticker" text)  ← você já criou
+- public.docs_corporativos (colunas: ticker, data, fonte, tipo, titulo, url, raw_text, doc_hash; UNIQUE(doc_hash))
+- public.cvm_to_ticker (colunas: "CVM" int, "Ticker" text)
 
 Dependências:
 - requests, pandas, sqlalchemy, streamlit
+- (opcional) pdfminer.six para extrair texto de PDF (sem OCR)
+
+Compatibilidade:
+- Mantém assinatura chamada por pickup.ingest_docs_fallback.ingest_strategy_for_tickers:
+    ingest_ipe_for_tickers(tickers, anos=2, max_docs_por_ticker=25, sleep_s=0.2)
+
 """
 
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+from datetime import datetime
 import hashlib
 import io
 import re
 import time
-from functools import lru_cache
+import zipfile
 
 import pandas as pd
 import requests
@@ -52,208 +61,171 @@ def _clean_text(s: str) -> str:
     s = re.sub(r"\s+", " ", s)
     return s
 
-def _chunk_text(texto: str, chunk_chars: int = 1500, overlap: int = 200) -> List[str]:
-    t = (texto or "").strip()
-    if not t:
-        return []
-    t = t.replace("\r\n", "\n")
-    out: List[str] = []
-    i, n = 0, len(t)
-    while i < n:
-        j = min(n, i + chunk_chars)
-        out.append(t[i:j])
-        if j >= n:
-            break
-        i = max(0, j - overlap)
-    return out
+def _now_utc_naive() -> pd.Timestamp:
+    # Evita tz-aware vs tz-naive no pandas
+    return pd.Timestamp.utcnow().tz_localize(None)
+
+def _year_zip_url(year: int) -> str:
+    return f"https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/ipe_cia_aberta_{year}.zip"
 
 
-# ───────────────────────── CVM DADOS ABERTOS ─────────────────────────
+# ───────────────────────── Filtros Estratégicos ─────────────────────────
 
-# Tentativas em ordem: primeiro o CSV "único" (mais provável), depois variações.
-IPE_URL_CANDIDATES = [
-    "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/ipe_cia_aberta.csv",
-    "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/IPE_CIA_ABERTA.csv",
-    # algumas estruturas antigas (caso a CVM altere novamente)
-    "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/ipe_cia_aberta.zip",
+# Categorias / espécies "tipicamente estratégicas" (variações comuns)
+_CATEGORY_PATTERNS = [
+    r"fato\s+relevante",
+    r"release",  # release de resultados, press release
+    r"apresenta",  # apresentação de resultados
+    r"resultado",  # resultados
+    r"comunicado\s+ao\s+mercado",
+    r"aviso\s+ao\s+mercado",
+    r"guidance",
+    r"outlook",
+    r"investidor",  # apresentações para investidores às vezes
 ]
 
-def _fetch_first_working_ipe_url(timeout: int = 45) -> Tuple[Optional[str], Dict[str, Any]]:
+# Palavras-chave em assunto/título que sinalizam intenção futura (pt/en)
+_KEYWORD_PATTERNS = [
+    r"guidance|outlook|proje[cç][aã]o|previs[aã]o",
+    r"capex|investimento|investir|expans[aã]o|plano\s+de\s+neg[oó]cios|plano\s+estrat[eé]gico",
+    r"aquisi[cç][aã]o|fus[aã]o|m&a|incorpora[cç][aã]o|joint\s+venture|cis[aã]o|spin[-\s]?off",
+    r"desalavanc|redu[cç][aã]o\s+de\s+d[ií]vida|refinanci|alongamento\s+de\s+d[ií]vida",
+    r"reorganiza[cç][aã]o|reestrutura[cç][aã]o|turnaround|efici[eê]ncia|otimiza[cç][aã]o",
+    r"desinvest|venda\s+de\s+ativos|alien[aã]o\s+de\s+ativos",
+    r"nova\s+f[aá]brica|nova\s+planta|greenfield|brownfield|expans[aã]o\s+de\s+capacidade",
+    r"internacionaliza[cç][aã]o|novo\s+mercado|novos\s+mercados|entrada\s+em\s+segmento",
+]
+
+_RE_CATEGORY = re.compile("|".join(_CATEGORY_PATTERNS), re.I)
+_RE_KEYWORDS = re.compile("|".join(_KEYWORD_PATTERNS), re.I)
+
+
+def _is_strategic_row(row: pd.Series, *, category_col: str, subject_col: str, specie_col: Optional[str]) -> bool:
+    cat = str(row.get(category_col, "") or "")
+    subj = str(row.get(subject_col, "") or "")
+    spc = str(row.get(specie_col, "") or "") if specie_col else ""
+    hay = " | ".join([cat, spc, subj])
+    # "Use ambos": aceita se categoria/especie OU keywords sinalizarem estratégia
+    return bool(_RE_CATEGORY.search(hay) or _RE_KEYWORDS.search(hay))
+
+
+# ───────────────────────── Leitura do IPE ─────────────────────────
+
+@st.cache_data(ttl=60 * 60, show_spinner=False)
+def _load_ipe_year_df(year: int) -> pd.DataFrame:
     """
-    Retorna (url_ok, debug) testando uma lista de URLs.
+    Baixa e carrega o IPE do ano (ZIP->CSV) em DataFrame.
+    Cache por ano para não rebaixar a cada clique.
     """
-    debug: Dict[str, Any] = {"candidates": []}
-    for url in IPE_URL_CANDIDATES:
-        try:
-            r = requests.get(url, stream=True, timeout=timeout)
-            ok = (r.status_code == 200)
-            debug["candidates"].append({"url": url, "status": r.status_code, "ok": ok})
-            if ok:
-                return url, debug
-        except Exception as e:
-            debug["candidates"].append({"url": url, "error": f"{type(e).__name__}: {e}", "ok": False})
-    return None, debug
+    url = _year_zip_url(year)
+    r = requests.get(url, timeout=60)
+    if r.status_code != 200:
+        raise RuntimeError(f"IPE {year} indisponível (HTTP {r.status_code})")
+    z = zipfile.ZipFile(io.BytesIO(r.content))
+    csv_names = [n for n in z.namelist() if n.lower().endswith(".csv")]
+    if not csv_names:
+        raise RuntimeError(f"ZIP IPE {year} sem CSV")
+    # Escolhe o maior CSV (mais seguro)
+    csv_name = sorted(csv_names, key=lambda n: z.getinfo(n).file_size, reverse=True)[0]
+    with z.open(csv_name) as f:
+        data = f.read()
 
-
-@st.cache_data(ttl=60 * 30, show_spinner=False)
-@lru_cache(maxsize=8)
-def _load_ipe_dataframe(url: str) -> pd.DataFrame:
-    """
-    Carrega o dataset IPE (CSV) em DataFrame.
-    Observação: o dataset costuma ser grande; cache ajuda muito.
-    """
-    # download em memória
-    r = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0 (Patch6; +https://dados.cvm.gov.br)"})
-    r.raise_for_status()
-
-    content = r.content
-
-    # Se vier ZIP, tenta abrir o primeiro CSV dentro
-    if url.lower().endswith(".zip"):
-        import zipfile
-        z = zipfile.ZipFile(io.BytesIO(content))
-        names = [n for n in z.namelist() if n.lower().endswith(".csv")]
-        if not names:
-            raise RuntimeError("ZIP baixado mas nenhum CSV encontrado.")
-        with z.open(names[0]) as f:
-            content = f.read()
-
-    # CSV da CVM costuma ser ';' e latin1
-    # Se falhar, tenta ',' e utf-8.
+    # CSV CVM tipicamente usa ';' e latin-1
+    # tenta combos com fallback
+    last_err: Optional[Exception] = None
     for sep, enc in [(";", "latin1"), (";", "utf-8"), (",", "utf-8"), (",", "latin1")]:
         try:
-            df = pd.read_csv(io.BytesIO(content), sep=sep, encoding=enc, low_memory=False)
-            if len(df.columns) >= 5:
-                return df
-        except Exception:
-            continue
-
-    raise RuntimeError("Falha ao ler CSV do IPE com separadores/encodings testados.")
+            df = pd.read_csv(io.BytesIO(data), sep=sep, encoding=enc, low_memory=False)
+            return df
+        except Exception as e:
+            last_err = e
+    raise RuntimeError(f"Falha ao ler CSV IPE {year}: {last_err}")
 
 
-def _get_cvm_codes_for_tickers(tickers: Sequence[str]) -> Dict[str, int]:
+def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.columns = [str(c).strip().upper() for c in df.columns]
+    return df
+
+
+def _pick_col(df: pd.DataFrame, candidates: Sequence[str]) -> Optional[str]:
+    for c in candidates:
+        cU = c.strip().upper()
+        if cU in df.columns:
+            return cU
+    return None
+
+
+def _parse_date_series(s: pd.Series) -> pd.Series:
+    # pandas: mantém tz-naive
+    dt = pd.to_datetime(s, errors="coerce", dayfirst=True, utc=False)
+    # Se vier tz-aware, remove tz
+    try:
+        if hasattr(dt.dt, "tz_localize"):
+            dt = dt.dt.tz_localize(None)  # type: ignore
+    except Exception:
+        pass
+    return dt
+
+
+def _extract_pdf_text(pdf_bytes: bytes) -> str:
     """
-    Busca na tabela public.cvm_to_ticker: retorna {TICKER: CODIGO_CVM}.
+    Extrai texto do PDF sem OCR.
+    Se pdfminer não estiver disponível, retorna "".
+    """
+    try:
+        from pdfminer.high_level import extract_text  # type: ignore
+        return _clean_text(extract_text(io.BytesIO(pdf_bytes)) or "")
+    except Exception:
+        return ""
+
+
+# ───────────────────────── Banco / Upsert ─────────────────────────
+
+def _fetch_cvm_map(tickers: Sequence[str]) -> Dict[str, int]:
+    """
+    Busca CVM code por ticker em public.cvm_to_ticker.
+    Espera colunas: "CVM" (int) e "Ticker" (text).
     """
     tks = [_norm_ticker(t) for t in (tickers or []) if str(t).strip()]
     tks = list(dict.fromkeys(tks))
     if not tks:
         return {}
-
     engine = get_supabase_engine()
     sql = text(
         """
-        select upper("Ticker") as ticker, "CVM" as codigo_cvm
+        select upper("Ticker") as ticker, "CVM" as cvm
         from public.cvm_to_ticker
         where upper("Ticker") = any(:tks)
         """
     )
+    out: Dict[str, int] = {}
     with engine.begin() as conn:
         rows = conn.execute(sql, {"tks": tks}).fetchall()
-
-    out: Dict[str, int] = {}
     for r in rows:
         out[str(r[0]).upper()] = int(r[1])
     return out
 
 
-def _extract_text_from_link(url: str, timeout: int = 45) -> str:
-    """
-    Tenta baixar e extrair texto somente quando for HTML/TXT.
-    PDF é ignorado (sem OCR).
-    """
-    u = (url or "").strip()
-    if not u:
-        return ""
-    low = u.lower()
-    if any(low.endswith(ext) for ext in [".pdf", ".zip", ".rar"]):
-        return ""
-    # se não tiver extensão, ainda pode ser HTML — tenta, mas limita tamanho
-    try:
-        r = requests.get(u, timeout=timeout, headers={"User-Agent": "Mozilla/5.0 (Patch6)"})
-        r.raise_for_status()
-        ctype = (r.headers.get("content-type") or "").lower()
-
-        # corta respostas gigantes
-        raw = r.text
-        raw = raw[:200_000]
-
-        if "html" in ctype:
-            # strip tags simples
-            raw = re.sub(r"(?is)<(script|style).*?>.*?(</\1>)", " ", raw)
-            raw = re.sub(r"(?is)<.*?>", " ", raw)
-            raw = re.sub(r"\s+", " ", raw).strip()
-            return raw
-        if "text" in ctype or low.endswith(".txt"):
-            return re.sub(r"\s+", " ", raw).strip()
-
-        # fallback: tenta limpar como texto mesmo
-        if len(raw) > 0 and len(raw) < 200_000:
-            raw = re.sub(r"\s+", " ", raw).strip()
-            return raw
-    except Exception:
-        return ""
-    return ""
-
-
-def _build_raw_text_from_row(row: Dict[str, Any]) -> str:
-    """
-    Gera um texto mínimo (metadados) para indexação.
-    """
-    parts = []
-    def add(k: str, label: str):
-        v = row.get(k)
-        if v is None:
-            return
-        s = str(v).strip()
-        if s and s.lower() != "nan":
-            parts.append(f"{label}: {s}")
-    add("Nome_Companhia", "Empresa")
-    add("Codigo_CVM", "Codigo_CVM")
-    add("CNPJ_Companhia", "CNPJ")
-    add("Categoria", "Categoria")
-    add("Tipo", "Tipo")
-    add("Especie", "Especie")
-    add("Assunto", "Assunto")
-    add("Data_Referencia", "Data_Referencia")
-    add("Data_Entrega", "Data_Entrega")
-    add("Tipo_Apresentacao", "Tipo_Apresentacao")
-    add("Protocolo_Entrega", "Protocolo_Entrega")
-    add("Versao", "Versao")
-    add("Link_Download", "Link")
-    return _clean_text(" | ".join(parts))
-
-
-def _upsert_doc_and_chunks(
+def _insert_doc(
     *,
     ticker: str,
-    data: Optional[str],
+    data: Optional[pd.Timestamp],
     fonte: str,
     tipo: str,
     titulo: str,
     url: str,
     raw_text: str,
-    chunk_chars: int = 1500,
-    overlap: int = 200,
-) -> Tuple[bool, str]:
+) -> Tuple[bool, Optional[int]]:
     """
-    Insere doc + chunks. Retorna (inseriu, doc_hash).
+    Insere em docs_corporativos (idempotente por doc_hash).
+    Retorna (inserted?, id|None).
     """
-    tk = _norm_ticker(ticker)
-    if not tk:
-        return False, ""
-
-    fonte = (fonte or "CVM").strip()
-    tipo = (tipo or "ipe").strip()
-    titulo = (titulo or "").strip()
-    url = (url or "").strip()
-    raw_text = (raw_text or "").strip()
-
-    doc_hash = _sha256("|".join([tk, fonte, tipo, titulo, url, raw_text]))
-
     engine = get_supabase_engine()
 
-    sql_doc = text(
+    doc_hash = _sha256("|".join([_norm_ticker(ticker), (url or "").strip(), (titulo or "").strip()]))
+
+    sql = text(
         """
         insert into public.docs_corporativos (ticker, data, fonte, tipo, titulo, url, raw_text, doc_hash)
         values (:ticker, :data, :fonte, :tipo, :titulo, :url, :raw_text, :doc_hash)
@@ -261,50 +233,21 @@ def _upsert_doc_and_chunks(
         returning id
         """
     )
-
+    payload = {
+        "ticker": _norm_ticker(ticker),
+        "data": (data.to_pydatetime() if isinstance(data, pd.Timestamp) and pd.notna(data) else None),
+        "fonte": fonte,
+        "tipo": tipo,
+        "titulo": titulo[:500] if titulo else "",
+        "url": url,
+        "raw_text": raw_text or "",
+        "doc_hash": doc_hash,
+    }
     with engine.begin() as conn:
-        res = conn.execute(sql_doc, {
-            "ticker": tk,
-            "data": data,
-            "fonte": fonte,
-            "tipo": tipo,
-            "titulo": titulo,
-            "url": url,
-            "raw_text": raw_text,
-            "doc_hash": doc_hash,
-        })
-        row = res.first()
-        if row is None:
-            return False, doc_hash
-
-        doc_id = int(row[0])
-
-        chunks = _chunk_text(raw_text, chunk_chars=int(chunk_chars), overlap=int(overlap))
-        if not chunks:
-            return True, doc_hash
-
-        sql_chunk = text(
-            """
-            insert into public.docs_corporativos_chunks (doc_id, ticker, chunk_index, chunk_text, chunk_hash)
-            values (:doc_id, :ticker, :chunk_index, :chunk_text, :chunk_hash)
-            on conflict (chunk_hash) do nothing
-            """
-        )
-
-        for i, ch in enumerate(chunks):
-            ch_clean = ch.strip()
-            if not ch_clean:
-                continue
-            ch_hash = _sha256("|".join([str(doc_id), tk, str(i), ch_clean]))
-            conn.execute(sql_chunk, {
-                "doc_id": doc_id,
-                "ticker": tk,
-                "chunk_index": int(i),
-                "chunk_text": ch_clean,
-                "chunk_hash": ch_hash,
-            })
-
-    return True, doc_hash
+        row = conn.execute(sql, payload).fetchone()
+    if row is None:
+        return (False, None)
+    return (True, int(row[0]))
 
 
 # ───────────────────────── API pública ─────────────────────────
@@ -312,173 +255,185 @@ def _upsert_doc_and_chunks(
 def ingest_ipe_for_tickers(
     tickers: Sequence[str],
     *,
-    years: int = 2,
+    # compat com caller
+    anos: int = 2,
     max_docs_por_ticker: int = 25,
-    sleep_s: float = 0.05,
-    chunk_chars: int = 1500,
-    overlap: int = 200,
-    fetch_html_text: bool = False,
-    max_runtime_s: float = 25.0,
+    sleep_s: float = 0.0,
+    # novos parâmetros (podem ser ignorados pelo caller)
+    months_back: int = 12,
+    max_runtime_s: Optional[int] = None,
+    fetch_pdf_text: bool = True,
+    request_timeout: int = 35,
 ) -> Dict[str, Any]:
     """
-    Ingestão IPE por tickers usando:
-      1) public.cvm_to_ticker -> Codigo_CVM
-      2) dataset IPE (dados.cvm.gov.br) filtrado por Codigo_CVM
-      3) upsert em docs_corporativos (+ chunks)
+    Ingestão estratégica do IPE para uma lista de tickers.
 
     Retorno:
       {
         "ok": bool,
-        "url_ipe": str|None,
-        "stats": { "TICKER": {"matched":N,"inserted":M,"skipped":K} },
-        "errors": { "TICKER": "...", "__ipe__": "..."},
-        "debug": {...}
+        "stats": { TICKER: {"matched":int,"inserted":int,"skipped":int,"pdf_fetched":int,"pdf_text_ok":int} },
+        "errors": { TICKER: "..." }
       }
     """
+    start_t = time.time()
+
     tks = [_norm_ticker(t) for t in (tickers or []) if str(t).strip()]
     tks = list(dict.fromkeys(tks))
     if not tks:
-        return {"ok": False, "url_ipe": None, "stats": {}, "errors": {"__all__": "Lista de tickers vazia."}, "debug": {}}
+        return {"ok": False, "stats": {}, "errors": {"__A__": "Lista vazia"}}
 
-    # 1) map tickers -> codigo_cvm
-    tk2cvm = _get_cvm_codes_for_tickers(tks)
-    missing = [t for t in tks if t not in tk2cvm]
-    if missing:
-        return {
-            "ok": False,
-            "url_ipe": None,
-            "stats": {},
-            "errors": {"__map__": f"Tickers sem mapeamento em public.cvm_to_ticker: {missing}"},
-            "debug": {"have": tk2cvm},
-        }
+    out_stats: Dict[str, Dict[str, int]] = {tk: {"matched": 0, "inserted": 0, "skipped": 0, "pdf_fetched": 0, "pdf_text_ok": 0} for tk in tks}
+    out_errs: Dict[str, str] = {}
 
-    # 2) encontra url do dataset IPE
-    url_ipe, debug = _fetch_first_working_ipe_url()
-    if not url_ipe:
-        return {
-            "ok": False,
-            "url_ipe": None,
-            "stats": {},
-            "errors": {"__ipe__": "Nenhum CSV IPE disponível (todas as URLs candidatas falharam)."},
-            "debug": debug,
-        }
+    # Janela temporal (últimos N meses)
+    now = _now_utc_naive()
+    cutoff = (now - pd.DateOffset(months=int(months_back))).normalize()
 
-    # 3) carrega dataframe
-    try:
-        df = _load_ipe_dataframe(url_ipe)
-    except Exception as e:
-        return {
-            "ok": False,
-            "url_ipe": url_ipe,
-            "stats": {},
-            "errors": {"__ipe__": f"Falha ao carregar CSV IPE: {type(e).__name__}: {e}"},
-            "debug": debug,
-        }
+    # anos necessários para cobrir cutoff..now
+    years_needed = list(range(int(cutoff.year), int(now.year) + 1))
+    # compat: se user passar anos maior, amplia para trás
+    if int(anos) > len(years_needed):
+        extra_years = int(anos) - len(years_needed)
+        years_needed = list(range(int(cutoff.year) - extra_years + 1, int(now.year) + 1))
 
-    # normaliza nomes de colunas conhecidos
-    # (a CVM pode alterar; aqui é tolerante)
-    cols = {c.lower(): c for c in df.columns}
-    def col(name: str) -> Optional[str]:
-        return cols.get(name.lower())
+    # mapa ticker -> CVM
+    tk2cvm = _fetch_cvm_map(tks)
+    missing = [tk for tk in tks if tk not in tk2cvm]
+    for tk in missing:
+        out_errs[tk] = "ticker_sem_mapeamento_cvm (preencha public.cvm_to_ticker)"
 
-    c_cvm = col("Codigo_CVM") or col("CodigoCVM") or col("codigo_cvm")
-    c_dt = col("Data_Entrega") or col("DataEntrega") or col("data_entrega")
-    c_assunto = col("Assunto") or col("assunto")
-    c_link = col("Link_Download") or col("LinkDownload") or col("link_download")
+    # Carrega DF(s) anuais
+    dfs: List[pd.DataFrame] = []
+    year_errors: List[str] = []
+    for y in years_needed:
+        if max_runtime_s and (time.time() - start_t) > max_runtime_s:
+            break
+        try:
+            dfy = _load_ipe_year_df(int(y))
+            dfs.append(_normalize_columns(dfy))
+        except Exception as e:
+            year_errors.append(f"{y}: {type(e).__name__}: {e}")
 
-    if not c_cvm:
-        return {
-            "ok": False,
-            "url_ipe": url_ipe,
-            "stats": {},
-            "errors": {"__ipe__": f"CSV IPE sem coluna Codigo_CVM. Colunas: {list(df.columns)[:50]}"},
-            "debug": debug,
-        }
+    if not dfs:
+        # Propaga erro global por ticker (para UI enxergar)
+        msg = "Nenhum CSV IPE disponível (todas as URLs candidatas falharam)."
+        if year_errors:
+            msg = "Falha ao carregar IPE: " + " | ".join(year_errors[:5])
+        for tk in tks:
+            out_errs.setdefault(tk, msg)
+        return {"ok": False, "stats": out_stats, "errors": out_errs}
 
-    # filtra por códigos CVM
-    cvm_codes = sorted(set(tk2cvm.values()))
-    df2 = df[df[c_cvm].isin(cvm_codes)].copy()
+    df = pd.concat(dfs, ignore_index=True)
 
-    # filtra por janela de anos se Data_Entrega existir
-    if c_dt:
-        dt = pd.to_datetime(df2[c_dt], errors="coerce", dayfirst=True, utc=True).dt.tz_localize(None)
-        df2["_dt"] = dt
-        cutoff = pd.Timestamp.utcnow().normalize() - pd.Timedelta(days=365 * max(0, int(years)))
-        df2 = df2[df2["_dt"].isna() | (df2["_dt"] >= cutoff)].copy()
+    # Identifica colunas
+    col_cvm = _pick_col(df, ["CD_CVM", "COD_CVM", "CVM", "CD_CVM_CIA"])
+    col_assunto = _pick_col(df, ["ASSUNTO", "TITULO", "DESCRICAO"])
+    col_categoria = _pick_col(df, ["CATEG_DOC", "CATEGORIA", "CATEG"])
+    col_especie = _pick_col(df, ["ESPECIE", "TIPO_DOC", "TIPO"])
+    col_data = _pick_col(df, ["DT_REFER", "DT_RECEB", "DT_RECEBIMENTO", "DT_ENTREGA", "DATA"])
 
-    stats: Dict[str, Dict[str, int]] = {tk: {"matched": 0, "inserted": 0, "skipped": 0} for tk in tks}
-    errors: Dict[str, str] = {}
+    col_link = _pick_col(df, ["LINK_DOC", "LINK_DOWNLOAD", "LINK", "URL"])
 
-    # index por codigo_cvm -> ticker
-    cvm2tk = {v: k for k, v in tk2cvm.items()}
+    required = [col_cvm, col_assunto, col_categoria, col_data, col_link]
+    if any(c is None for c in required):
+        msg = f"CSV IPE sem colunas necessárias. Encontradas={list(df.columns)[:40]}"
+        for tk in tks:
+            out_errs.setdefault(tk, msg)
+        return {"ok": False, "stats": out_stats, "errors": out_errs}
 
-    # ordena por data (desc) se tiver
-    if c_dt:
-        df2 = df2.sort_values(by=c_dt, ascending=False)
+    assert col_cvm and col_assunto and col_categoria and col_data and col_link
 
-    # loop
-    t0 = time.time()
-    for cvm_code, grp in df2.groupby(c_cvm):
-        tk = cvm2tk.get(int(cvm_code))
-        if not tk:
+    # Parse data e filtra janela de 12 meses
+    df[col_data] = _parse_date_series(df[col_data])
+    df = df[pd.notna(df[col_data])]
+    df = df[df[col_data] >= cutoff]
+
+    # Converte CD_CVM para int quando possível
+    def to_int(x: Any) -> Optional[int]:
+        try:
+            if pd.isna(x):
+                return None
+            return int(str(x).strip())
+        except Exception:
+            return None
+
+    df["_CVM_INT"] = df[col_cvm].apply(to_int)
+    df = df[pd.notna(df["_CVM_INT"])]
+
+    # Pré-filtro estratégico (categoria + keywords)
+    df["_IS_STRAT"] = df.apply(lambda r: _is_strategic_row(r, category_col=col_categoria, subject_col=col_assunto, specie_col=col_especie), axis=1)
+    df = df[df["_IS_STRAT"] == True]  # noqa: E712
+
+    # Para cada ticker: filtra pelo CVM e ingere
+    for tk in tks:
+        if max_runtime_s and (time.time() - start_t) > max_runtime_s:
+            out_errs.setdefault(tk, f"timeout (max_runtime_s={max_runtime_s})")
+            break
+
+        if tk not in tk2cvm:
             continue
 
-        rows = grp.to_dict(orient="records")
-        stats[tk]["matched"] = int(len(rows))
+        cvm = tk2cvm[tk]
+        dft = df[df["_CVM_INT"] == cvm].copy()
+        if dft.empty:
+            # sem docs estratégicos no período
+            out_stats[tk]["matched"] = 0
+            continue
 
-        for row in rows[: int(max_docs_por_ticker)]:
-            # limite de tempo total para evitar ingest infinito em ambiente Streamlit
-            if max_runtime_s and (time.time() - t0) > float(max_runtime_s):
-                errors["__timeout__"] = f"timeout: excedeu {max_runtime_s}s"
+        # Ordena por data desc
+        dft = dft.sort_values(col_data, ascending=False)
+
+        matched = int(len(dft))
+        out_stats[tk]["matched"] = matched
+
+        # Mesmo que você não queira "limitar tanto", ainda precisamos de um freio
+        # para evitar ingest enorme em empresas extremamente comunicativas.
+        # max_docs_por_ticker vem do caller; se vier alto, tudo bem.
+        if isinstance(max_docs_por_ticker, int) and max_docs_por_ticker > 0:
+            dft = dft.head(int(max_docs_por_ticker))
+
+        for _, row in dft.iterrows():
+            if max_runtime_s and (time.time() - start_t) > max_runtime_s:
+                out_errs.setdefault(tk, f"timeout (max_runtime_s={max_runtime_s})")
                 break
-            try:
-                titulo = str(row.get(c_assunto) or "").strip() if c_assunto else ""
-                url = str(row.get(c_link) or "").strip() if c_link else ""
 
-                # data ISO
-                data_iso = None
-                if c_dt:
-                    d = pd.to_datetime(row.get(c_dt), errors="coerce", dayfirst=True, utc=True)
-                    try:
-                        # remove timezone if present
-                        d = d.tz_localize(None)
-                    except Exception:
-                        pass
-                    if pd.notna(d):
-                        data_iso = d.date().isoformat()
+            url = str(row.get(col_link, "") or "").strip()
+            titulo = _clean_text(str(row.get(col_assunto, "") or ""))[:500]
+            data_ref = row.get(col_data)
+            tipo = "IPE"
+            fonte = "CVM_IPE"
 
-                raw_text = _build_raw_text_from_row(row)
+            raw_text = ""
 
-                # tenta enriquecer com texto do link (só html/txt)
-                if fetch_html_text and url:
-                    extra = _extract_text_from_link(url)
-                    if extra:
-                        raw_text = _clean_text(raw_text + " | Conteudo: " + extra)
+            # (Opcional) baixa PDF e extrai texto
+            if fetch_pdf_text and url and url.lower().endswith(".pdf"):
+                try:
+                    r = requests.get(url, timeout=request_timeout)
+                    if r.status_code == 200 and r.content:
+                        out_stats[tk]["pdf_fetched"] += 1
+                        raw_text = _extract_pdf_text(r.content)
+                        if raw_text:
+                            out_stats[tk]["pdf_text_ok"] += 1
+                except Exception:
+                    # mantém metadados mesmo sem texto
+                    raw_text = ""
 
-                if not raw_text:
-                    stats[tk]["skipped"] += 1
-                    continue
+            inserted, _id = _insert_doc(
+                ticker=tk,
+                data=data_ref if isinstance(data_ref, pd.Timestamp) else None,
+                fonte=fonte,
+                tipo=tipo,
+                titulo=titulo,
+                url=url,
+                raw_text=raw_text,
+            )
+            if inserted:
+                out_stats[tk]["inserted"] += 1
+            else:
+                out_stats[tk]["skipped"] += 1
 
-                inserted, _ = _upsert_doc_and_chunks(
-                    ticker=tk,
-                    data=data_iso,
-                    fonte="CVM",
-                    tipo="ipe",
-                    titulo=titulo,
-                    url=url,
-                    raw_text=raw_text,
-                    chunk_chars=int(chunk_chars),
-                    overlap=int(overlap),
-                )
-                if inserted:
-                    stats[tk]["inserted"] += 1
-                else:
-                    stats[tk]["skipped"] += 1
+            if sleep_s:
+                time.sleep(float(sleep_s))
 
-                if sleep_s and float(sleep_s) > 0:
-                    time.sleep(float(sleep_s))
-            except Exception as e:
-                errors[tk] = f"{type(e).__name__}: {e}"
-
-    ok = (len(errors) == 0)
-    return {"ok": ok, "url_ipe": url_ipe, "stats": stats, "errors": errors, "debug": debug}
+    ok = all((out_stats.get(tk, {}).get("inserted", 0) > 0) for tk in tks if tk in tk2cvm) if tk2cvm else False
+    return {"ok": bool(ok), "stats": out_stats, "errors": out_errs}
