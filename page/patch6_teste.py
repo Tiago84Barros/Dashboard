@@ -5,11 +5,13 @@ from __future__ import annotations
 import importlib
 import inspect
 import json
+import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
 import streamlit as st
 from sqlalchemy import text
+
 
 # ---------------------------------------------------------------------
 # Helpers
@@ -137,7 +139,8 @@ def get_recent_docs(ticker: str, limit: int = 20) -> pd.DataFrame:
     return _read_sql_df(
         """
         select id, ticker, data, fonte, tipo, titulo, url, created_at,
-               (case when coalesce(texto,'')<>'' then length(texto) else 0 end) as texto_len
+               (case when coalesce(texto,'')<>'' then length(texto) else 0 end) as texto_len,
+               (case when coalesce(raw_text,'')<>'' then length(raw_text) else 0 end) as raw_text_len
         from public.docs_corporativos
         where ticker = :tk
         order by id desc
@@ -187,23 +190,25 @@ def _try_find_ingest_runner() -> Optional[Callable[..., Any]]:
 
 
 # ---------------------------------------------------------------------
-# Chunking batch
+# Chunker (unificado ao ingest)
 # ---------------------------------------------------------------------
-def _try_find_chunker() -> Optional[Callable[..., Any]]:
-    candidates = [
-        ("core.patch6_store", ["process_missing_chunks_for_ticker"]),
-        ("core.patch6_store", ["process_document_chunks"]),
-    ]
-    for mod_name, fns in candidates:
-        try:
-            mod = importlib.import_module(mod_name)
-        except Exception:
-            continue
-        for fn in fns:
-            f = getattr(mod, fn, None)
-            if callable(f):
-                return f
-    return None
+def _import_chunker_or_error() -> Tuple[Optional[Callable[..., Any]], Optional[str]]:
+    """
+    Retorna (callable, error_message). Importa core.patch6_store e procura um chunker.
+    Se falhar, devolve o erro real (não engole).
+    """
+    try:
+        mod = importlib.import_module("core.patch6_store")
+    except Exception as e:
+        return None, f"core.patch6_store: {type(e).__name__}: {e}"
+
+    # preferência: process_missing_chunks_for_ticker (mais seguro)
+    for fn in ("process_missing_chunks_for_ticker", "process_document_chunks"):
+        f = getattr(mod, fn, None)
+        if callable(f):
+            return f, None
+
+    return None, "core.patch6_store importado, mas nenhuma função de chunking conhecida foi encontrada."
 
 
 # ---------------------------------------------------------------------
@@ -312,53 +317,75 @@ def render() -> None:
     with col3:
         max_pdfs = st.number_input("Máx PDFs por ticker", min_value=0, max_value=50, value=12, step=1)
 
+    st.markdown("### A) 📥 Ingest + 🧩 Chunking (CVM/IPE)")
     col4, col5 = st.columns([1, 1], gap="large")
     with col4:
-        auto_chunk = st.toggle("Gerar chunks automaticamente após ingest", value=True)
+        # aqui o limite precisa ser maior para incluir chunking + inserts
+        max_runtime_s = st.number_input("Limite total de tempo (s)", min_value=10, max_value=300, value=90, step=10)
     with col5:
-        max_runtime_s = st.number_input("Limite total de tempo (s)", min_value=10, max_value=180, value=25, step=5)
+        only_with_text = st.toggle("Chunk apenas com texto", value=True)
 
-    st.markdown("### A) 📥 Ingest (CVM/IPE)")
     ingest_runner = _try_find_ingest_runner()
     if ingest_runner is None:
         st.error("Não encontrei pickup.ingest_docs_cvm_ipe.ingest_ipe_for_tickers (ou core.*).")
-    else:
-        if st.button("⬇️ Rodar ingest agora", use_container_width=True):
-            with st.spinner("Ingerindo documentos CVM/IPE..."):
-                out = _safe_call(
-                    ingest_runner,
-                    tickers=tickers,
-                    window_months=int(window_months),
-                    max_docs_per_ticker=int(max_docs_ingest),
-                    strategic_only=bool(strategic_only),
-                    download_pdfs=bool(download_pdfs),
-                    max_pdfs_per_ticker=int(max_pdfs),
-                    max_runtime_s=float(max_runtime_s),
-                    verbose=False,
-                )
-            st.subheader("Resultado do ingest")
-            st.json(out)
+        st.stop()
 
-            # auto chunking
-            if auto_chunk:
-                chunker = _try_find_chunker()
-                if chunker is None:
-                    st.warning("Chunker não encontrado (core.patch6_store).")
-                else:
-                    with st.spinner("Gerando chunks para docs ainda sem chunks..."):
-                        from core.patch6_store import process_missing_chunks_for_ticker
-                        res_all = {}
-                        for tk in tickers:
-                            res_all[tk] = process_missing_chunks_for_ticker(_norm_tk(tk), limit_docs=50, only_with_text=True)
-                    st.subheader("Resultado do chunking (missing chunks)")
-                    st.json(res_all)
+    if st.button("⬇️ Rodar ingest + chunking agora", use_container_width=True):
+        t0 = time.monotonic()
+        out: Dict[str, Any] = {"ok": False}
 
-            # contagens
-            total_docs, by_docs = count_docs_by_tickers(tickers)
-            total_chunks, by_chunks = count_chunks_by_tickers(tickers)
-            st.info(f"Após ingestão → docs: {total_docs} | chunks: {total_chunks}")
-            st.session_state["patch6_docs_by"] = by_docs
-            st.session_state["patch6_chunks_by"] = by_chunks
+        with st.spinner("Ingerindo documentos CVM/IPE..."):
+            ingest_out = _safe_call(
+                ingest_runner,
+                tickers=tickers,
+                window_months=int(window_months),
+                max_docs_per_ticker=int(max_docs_ingest),
+                strategic_only=bool(strategic_only),
+                download_pdfs=bool(download_pdfs),
+                max_pdfs_per_ticker=int(max_pdfs),
+                max_runtime_s=float(max_runtime_s),
+                verbose=False,
+            )
+
+        out["ingest"] = ingest_out
+
+        # chunking imediatamente após ingest (unificado)
+        chunk_fn, chunk_err = _import_chunker_or_error()
+        if chunk_fn is None:
+            out["chunking"] = {"ok": False, "error": chunk_err or "Chunker indisponível."}
+            st.error(out["chunking"]["error"])
+        else:
+            with st.spinner("Gerando chunks para docs ainda sem chunks..."):
+                res_all = {}
+                # budget de tempo residual (se o chunker suportar)
+                elapsed = time.monotonic() - t0
+                remaining = max(0.0, float(max_runtime_s) - elapsed)
+
+                for tk in tickers:
+                    # preferimos process_missing_chunks_for_ticker(ticker, limit_docs=..., only_with_text=...)
+                    try:
+                        res_all[tk] = _safe_call(
+                            chunk_fn,
+                            ticker=_norm_tk(tk),
+                            tk=_norm_tk(tk),
+                            symbol=_norm_tk(tk),
+                            limit_docs=50,
+                            only_with_text=bool(only_with_text),
+                            max_runtime_s=float(remaining) if remaining > 0 else None,
+                        )
+                    except Exception as e:
+                        res_all[tk] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+                out["chunking"] = {"ok": True, "by_ticker": res_all}
+
+        # contagens finais
+        total_docs, by_docs = count_docs_by_tickers(tickers)
+        total_chunks, by_chunks = count_chunks_by_tickers(tickers)
+        out["counts"] = {"docs_total": total_docs, "chunks_total": total_chunks, "docs_by": by_docs, "chunks_by": by_chunks}
+        out["ok"] = True
+
+        st.subheader("Resultado (Ingest + Chunking)")
+        st.json(out)
+        st.info(f"Após ingest+chunking → docs: {total_docs} | chunks: {total_chunks}")
 
     st.divider()
     st.markdown("### B) 📚 Inspeção no Supabase")
@@ -366,13 +393,11 @@ def render() -> None:
     with cA:
         if st.button("Contar docs", use_container_width=True):
             total_docs, by_docs = count_docs_by_tickers(tickers)
-            st.session_state["patch6_docs_by"] = by_docs
             st.success(f"Docs: {total_docs}")
             st.json(by_docs)
     with cB:
         if st.button("Contar chunks", use_container_width=True):
             total_chunks, by_chunks = count_chunks_by_tickers(tickers)
-            st.session_state["patch6_chunks_by"] = by_chunks
             st.success(f"Chunks: {total_chunks}")
             st.json(by_chunks)
 
@@ -381,13 +406,6 @@ def render() -> None:
         lim = st.number_input("Limite", min_value=5, max_value=100, value=20, step=5)
         df_docs = get_recent_docs(tk_sel, limit=int(lim))
         st.dataframe(df_docs, use_container_width=True, hide_index=True)
-
-    # manual chunking
-    st.markdown("### B2) 🧩 Chunking manual (se precisar)")
-    if st.button("Gerar chunks agora (somente missing)", use_container_width=True):
-        from core.patch6_store import process_missing_chunks_for_ticker
-        res_all = {tk: process_missing_chunks_for_ticker(_norm_tk(tk), limit_docs=50, only_with_text=True) for tk in tickers}
-        st.json(res_all)
 
     st.divider()
     st.markdown("### C) 🧠 Teste da LLM (RAG + texto manual opcional)")
