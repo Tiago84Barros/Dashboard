@@ -1,16 +1,47 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import text
+
 from core.db_loader import get_supabase_engine
+
+# Ajuste o import abaixo se seu projeto usar outro caminho para embeddings
 from core.ai_models.llm_client.factory import get_llm_client
+
 
 CHUNK_SIZE = 1200
 CHUNK_OVERLAP = 200
 
 
+def _get_text_column(conn) -> str:
+    """Compatibilidade de schema: algumas versões usam 'texto', outras 'raw_text'."""
+    try:
+        rows = conn.execute(text("""
+            select column_name
+            from information_schema.columns
+            where table_schema='public' and table_name='docs_corporativos'
+        """)).fetchall()
+        cols = {str(r[0]).lower() for r in rows}
+        if "texto" in cols:
+            return "texto"
+        if "raw_text" in cols:
+            return "raw_text"
+    except Exception:
+        pass
+    return "texto"
+
+
+def _embed_texts(texts: List[str]) -> List[List[float]]:
+    """Retorna embeddings via cliente configurado.
+
+    Espera que o cliente tenha método .embed(texts).
+    """
+    llm = get_llm_client()
+    if not hasattr(llm, "embed"):
+        raise ImportError("LLM client não expõe método embed(). Verifique core.ai_models.llm_client.openai_client.")
+    return llm.embed(texts)
 def split_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[str]:
     if not text:
         return []
@@ -33,15 +64,19 @@ def hash_chunk(text_chunk: str) -> str:
 
 
 def process_document_chunks(doc_id: int) -> int:
+    """
+    Gera chunks/embeddings para UM documento (doc_id) e grava em docs_corporativos_chunks.
+    Requer public.docs_corporativos.texto com conteúdo.
+    """
     engine = get_supabase_engine()
     inserted = 0
 
     with engine.begin() as conn:
+        text_col = _get_text_column(conn)
         row = conn.execute(
-            text("SELECT id, ticker, texto FROM public.docs_corporativos WHERE id = :id"),
+            text(f"SELECT id, ticker, {text_col} FROM public.docs_corporativos WHERE id = :id"),
             {"id": doc_id},
         ).fetchone()
-
         if not row:
             return 0
 
@@ -51,9 +86,6 @@ def process_document_chunks(doc_id: int) -> int:
             return 0
 
         chunks = split_text(texto)
-
-        # instancia cliente UMA VEZ por documento
-        llm = get_llm_client()
 
         for idx, chunk_text in enumerate(chunks):
             chunk_hash = hash_chunk(chunk_text)
@@ -70,7 +102,7 @@ def process_document_chunks(doc_id: int) -> int:
             if exists:
                 continue
 
-            embedding = llm.embed([chunk_text])[0]
+            embedding = _embed_texts([chunk_text])[0]
 
             conn.execute(
                 text("""
@@ -99,13 +131,18 @@ def process_missing_chunks_for_ticker(
     limit_docs: int = 50,
     only_with_text: bool = True,
 ) -> Dict[str, int]:
+    """
+    Processa em batch documentos do ticker que ainda NÃO têm chunks.
+    Retorna contadores.
+    """
     tk = (ticker or "").strip().upper().replace(".SA", "")
     if not tk:
         return {"docs": 0, "docs_processed": 0, "chunks_inserted": 0}
 
     engine = get_supabase_engine()
     with engine.begin() as conn:
-        sql = """
+        text_col = _get_text_column(conn)
+        sql = f"""
         SELECT d.id
         FROM public.docs_corporativos d
         WHERE d.ticker = :tk
@@ -115,7 +152,7 @@ def process_missing_chunks_for_ticker(
           )
         """
         if only_with_text:
-            sql += " AND COALESCE(d.texto,'') <> '' "
+            sql += f" AND COALESCE(d.{text_col},'') <> '' "
         sql += " ORDER BY d.id DESC LIMIT :lim"
 
         rows = conn.execute(text(sql), {"tk": tk, "lim": int(limit_docs)}).fetchall()
