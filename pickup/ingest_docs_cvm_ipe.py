@@ -88,8 +88,27 @@ def _now_minus_months(months: int) -> datetime:
     return _utcnow() - timedelta(days=int(months) * 30)
 
 def _looks_like_pdf(url: str) -> bool:
-    u = (url or "").lower()
-    return u.endswith(".pdf") or "pdf" in u
+    """Heurística para decidir se vale tentar baixar como PDF.
+
+    Observação: links da CVM (ENET/frmDownloadDocumento.aspx) NÃO terminam em .pdf.
+    Então tratamos esses endpoints como PDF prováveis.
+    """
+    u = (url or "").lower().strip()
+    if not u:
+        return False
+    if u.endswith(".pdf") or "pdf" in u:
+        return True
+    # CVM ENET / RAD download endpoints (comuns no IPE)
+    if "frmdownloaddocumento.aspx" in u:
+        return True
+    if "www.rad.cvm.gov.br" in u and "enet" in u and "download" in u:
+        return True
+    return False
+
+
+def _is_pdf_bytes(b: bytes) -> bool:
+    return bool(b) and b[:4] == b"%PDF"
+
 
 # ──────────────────────────────────────────────────────────────
 # PDF text extraction (sem OCR)
@@ -158,12 +177,35 @@ def get_cvm_codes_for_tickers(tickers: Sequence[str]) -> Dict[str, int]:
     return out
 
 
-def _doc_exists(conn, doc_hash: str) -> bool:
-    row = conn.execute(
-        text("select 1 from public.docs_corporativos where doc_hash = :h limit 1"),
-        {"h": doc_hash},
-    ).fetchone()
-    return bool(row)
+def _get_doc_status(conn, doc_hash: str) -> Optional[Dict[str, Any]]:
+    """Retorna status do doc se existir: id e se tem texto.
+
+    Compatível com schemas que usam 'texto' ou 'raw_text'.
+    """
+    text_col = _get_text_column(conn)
+    sql = f"""
+        select id,
+               (case when coalesce({text_col},'')<>'' then 1 else 0 end) as has_text
+        from public.docs_corporativos
+        where doc_hash = :h
+        limit 1
+    """
+    row = conn.execute(text(sql), {"h": doc_hash}).fetchone()
+    if not row:
+        return None
+    return {"id": int(row[0]), "has_text": bool(row[1])}
+
+
+def _update_doc_text(conn, *, doc_id: int, texto: str) -> None:
+    text_col = _get_text_column(conn)
+    sql = f"""
+        update public.docs_corporativos
+        set {text_col} = :texto
+        where id = :id
+    """
+    conn.execute(text(sql), {"id": int(doc_id), "texto": texto})
+
+
 
 
 def _insert_doc(
@@ -178,15 +220,17 @@ def _insert_doc(
     texto: str,
     doc_hash: str,
 ) -> Optional[int]:
+    text_col = _get_text_column(conn)
+    sql = f"""
+        insert into public.docs_corporativos
+        (ticker, titulo, url, fonte, tipo, data, {text_col}, doc_hash)
+        values
+        (:ticker, :titulo, :url, :fonte, :tipo, :data, :texto, :doc_hash)
+        on conflict (doc_hash) do nothing
+        returning id
+    """
     row = conn.execute(
-        text("""
-            insert into public.docs_corporativos
-            (ticker, titulo, url, fonte, tipo, data, texto, doc_hash)
-            values
-            (:ticker, :titulo, :url, :fonte, :tipo, :data, :texto, :doc_hash)
-            on conflict (doc_hash) do nothing
-            returning id
-        """),
+        text(sql),
         {
             "ticker": ticker,
             "titulo": titulo[:4000],
@@ -199,6 +243,7 @@ def _insert_doc(
         },
     ).fetchone()
     return int(row[0]) if row else None
+
 
 
 # ──────────────────────────────────────────────────────────────
@@ -352,6 +397,7 @@ def ingest_ipe_for_tickers(
             pdf_fetched = 0
             pdf_text_ok = 0
             pdf_used = 0
+            updated_text = 0
 
             for _, r in dft.iterrows():
                 if (time.time() - started) > max_runtime_s:
@@ -363,12 +409,36 @@ def ingest_ipe_for_tickers(
                     skipped += 1
                     continue
 
-                titulo = _clean_text(str(r.get(col_assunto, "") or "")) or "Documento CVM/IPE"
+                titulo = _clean_text(str(r.get(col_assunto, "") or ""))
+                if titulo.lower() == "nan":
+                    titulo = ""
+                titulo = titulo or "Documento CVM/IPE"
                 tipo = _clean_text(str(r.get(col_tipo, "") or "")) or "IPE"
                 dt = r.get("_dt")
 
                 doc_hash = _sha256(f"{tk}|{url}|{titulo}|{dt}")
-                if _doc_exists(conn, doc_hash):
+                status = _get_doc_status(conn, doc_hash)
+                if status is not None:
+                    # Doc já existe. Se ele não tem texto e estamos habilitados a baixar PDFs,
+                    # tentamos "backfill" do texto e atualizamos a linha existente.
+                    if (not status["has_text"]) and download_pdfs:
+                        texto = ""
+                        if _looks_like_pdf(url) and pdf_used < int(max_pdfs_per_ticker):
+                            try:
+                                resp = requests.get(url, timeout=request_timeout, allow_redirects=True)
+                                resp.raise_for_status()
+                                if _is_pdf_bytes(resp.content) or ("application/pdf" in (resp.headers.get("content-type","").lower())):
+                                    pdf_fetched += 1
+                                    pdf_used += 1
+                                    tpdf = _extract_pdf_text(resp.content, max_pages=int(pdf_max_pages))
+                                    if tpdf and len(tpdf) >= 200:
+                                        texto = tpdf
+                                        pdf_text_ok += 1
+                            except Exception:
+                                texto = ""
+                        if texto:
+                            _update_doc_text(conn, doc_id=status["id"], texto=texto)
+                            updated_text += 1
                     skipped += 1
                     continue
 
@@ -376,8 +446,11 @@ def ingest_ipe_for_tickers(
                 # Se PDF e permitido, tenta baixar e extrair texto
                 if download_pdfs and _looks_like_pdf(url) and pdf_used < int(max_pdfs_per_ticker):
                     try:
-                        resp = requests.get(url, timeout=request_timeout)
+                        resp = requests.get(url, timeout=request_timeout, allow_redirects=True)
                         resp.raise_for_status()
+                        # Links da CVM nem sempre terminam em .pdf; valide pelo header/magic bytes
+                        if not (_is_pdf_bytes(resp.content) or ("application/pdf" in (resp.headers.get("content-type","").lower()))):
+                            raise ValueError("download não retornou PDF")
                         pdf_fetched += 1
                         pdf_used += 1
                         tpdf = _extract_pdf_text(resp.content, max_pages=int(pdf_max_pages))
@@ -415,6 +488,7 @@ def ingest_ipe_for_tickers(
                 "skipped": skipped,
                 "pdf_fetched": pdf_fetched,
                 "pdf_text_ok": pdf_text_ok,
+                "updated_text": updated_text,
             }
 
     ok = (len(out_errors) == 0)
