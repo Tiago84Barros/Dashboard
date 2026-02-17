@@ -29,7 +29,7 @@ import hashlib
 import io
 import re
 import time
-from datetime import datetime
+from functools import lru_cache
 
 import pandas as pd
 import requests
@@ -70,76 +70,40 @@ def _chunk_text(texto: str, chunk_chars: int = 1500, overlap: int = 200) -> List
 
 # ───────────────────────── CVM DADOS ABERTOS ─────────────────────────
 
-# Tentativas:
-# 1) Tenta descobrir os arquivos anuais via index do diretório (mais robusto).
-# 2) Fallback: gera URLs por ano (últimos N anos) e testa.
-#
-# Observação importante:
-# No portal dados.cvm.gov.br, o IPE costuma estar disponível como ZIP anual:
-#   https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/ipe_cia_aberta_YYYY.zip
-# e o ZIP contém CSV(s) com metadados e links de download.
-IPE_DIR_INDEX_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/"
+# Tentativas em ordem: primeiro o CSV "único" (mais provável), depois variações.
+IPE_URL_CANDIDATES = [
+    "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/ipe_cia_aberta.csv",
+    "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/IPE_CIA_ABERTA.csv",
+    # algumas estruturas antigas (caso a CVM altere novamente)
+    "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/ipe_cia_aberta.zip",
+]
 
-def _discover_ipe_year_urls(years_back: int = 6, timeout: int = 20) -> Tuple[List[str], Dict[str, Any]]:
-    """Descobre URLs anuais do IPE (ZIP) a partir do index do diretório.
-
-    Retorna (urls_ordenadas_desc, debug).
+def _fetch_first_working_ipe_url(timeout: int = 45) -> Tuple[Optional[str], Dict[str, Any]]:
     """
-    debug: Dict[str, Any] = {"index_url": IPE_DIR_INDEX_URL, "discovered": [], "generated": []}
-    urls: List[str] = []
-    try:
-        r = requests.get(IPE_DIR_INDEX_URL, timeout=timeout)
-        r.raise_for_status()
-        html = r.text or ""
-        years = sorted({int(y) for y in re.findall(r"ipe_cia_aberta_(\d{4})\.zip", html)}, reverse=True)
-        if years:
-            # limita ao intervalo desejado (anos_back)
-            cur = datetime.utcnow().year
-            min_year = max(1900, cur - years_back + 1)
-            years = [y for y in years if y >= min_year]
-            for y in years:
-                urls.append(f"{IPE_DIR_INDEX_URL}ipe_cia_aberta_{y}.zip")
-        debug["discovered"] = urls[:]
-    except Exception as e:
-        debug["index_error"] = f"{type(e).__name__}: {e}"
-
-    if urls:
-        return urls, debug
-
-    # fallback: gera URLs por ano
-    cur = datetime.utcnow().year
-    gen = [f"{IPE_DIR_INDEX_URL}ipe_cia_aberta_{y}.zip" for y in range(cur, cur - years_back, -1)]
-    debug["generated"] = gen[:]
-    return gen, debug
-
-def _fetch_working_ipe_urls(years_back: int, timeout: int = 45) -> Tuple[List[str], Dict[str, Any]]:
-    """Testa URLs anuais do IPE e retorna as que estão disponíveis (HTTP 200)."""
-    candidates, debug = _discover_ipe_year_urls(years_back=years_back, timeout=min(20, timeout))
-    debug["candidates_tested"] = []
-    ok_urls: List[str] = []
-    headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; DashboardAnalise/1.0; +https://dados.cvm.gov.br/)"
-    }
-    for url in candidates:
+    Retorna (url_ok, debug) testando uma lista de URLs.
+    """
+    debug: Dict[str, Any] = {"candidates": []}
+    for url in IPE_URL_CANDIDATES:
         try:
-            r = requests.get(url, stream=True, timeout=timeout, headers=headers)
+            r = requests.get(url, stream=True, timeout=timeout)
             ok = (r.status_code == 200)
-            debug["candidates_tested"].append({"url": url, "status": r.status_code, "ok": ok})
+            debug["candidates"].append({"url": url, "status": r.status_code, "ok": ok})
             if ok:
-                ok_urls.append(url)
+                return url, debug
         except Exception as e:
-            debug["candidates_tested"].append({"url": url, "error": f"{type(e).__name__}: {e}", "ok": False})
-    return ok_urls, debug
+            debug["candidates"].append({"url": url, "error": f"{type(e).__name__}: {e}", "ok": False})
+    return None, debug
 
 
 @st.cache_data(ttl=60 * 30, show_spinner=False)
+@lru_cache(maxsize=8)
 def _load_ipe_dataframe(url: str) -> pd.DataFrame:
     """
     Carrega o dataset IPE (CSV) em DataFrame.
     Observação: o dataset costuma ser grande; cache ajuda muito.
     """
     # download em memória
-    r = requests.get(url, timeout=60)
+    r = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0 (Patch6; +https://dados.cvm.gov.br)"})
     r.raise_for_status()
 
     content = r.content
@@ -206,7 +170,7 @@ def _extract_text_from_link(url: str, timeout: int = 45) -> str:
         return ""
     # se não tiver extensão, ainda pode ser HTML — tenta, mas limita tamanho
     try:
-        r = requests.get(u, timeout=timeout)
+        r = requests.get(u, timeout=timeout, headers={"User-Agent": "Mozilla/5.0 (Patch6)"})
         r.raise_for_status()
         ctype = (r.headers.get("content-type") or "").lower()
 
@@ -353,7 +317,8 @@ def ingest_ipe_for_tickers(
     sleep_s: float = 0.05,
     chunk_chars: int = 1500,
     overlap: int = 200,
-    fetch_html_text: bool = True,
+    fetch_html_text: bool = False,
+    max_runtime_s: float = 25.0,
 ) -> Dict[str, Any]:
     """
     Ingestão IPE por tickers usando:
@@ -387,37 +352,28 @@ def ingest_ipe_for_tickers(
             "debug": {"have": tk2cvm},
         }
 
-    # 2) encontra URLs anuais do dataset IPE (ZIP por ano) conforme janela desejada
-    # years=2 => tenta ano corrente e anterior (e assim por diante).
-    years_back = max(1, int(years or 1))
-    url_list, debug = _fetch_working_ipe_urls(years_back=years_back)
-    if not url_list:
+    # 2) encontra url do dataset IPE
+    url_ipe, debug = _fetch_first_working_ipe_url()
+    if not url_ipe:
         return {
             "ok": False,
             "url_ipe": None,
             "stats": {},
-            "errors": {"__ipe__": "Nenhum ZIP anual do IPE disponível (todas as URLs candidatas falharam)."},
+            "errors": {"__ipe__": "Nenhum CSV IPE disponível (todas as URLs candidatas falharam)."},
             "debug": debug,
         }
-    url_ipe = url_list[0]  # mantém compatibilidade com retornos/telemetria
 
-    # 3) carrega dataframe (concat dos anos disponíveis)
-    dfs: List[pd.DataFrame] = []
-    last_err: Optional[str] = None
-    for u in url_list:
-        try:
-            dfs.append(_load_ipe_dataframe(u))
-        except Exception as e:
-            last_err = f"{type(e).__name__}: {e}"
-    if not dfs:
+    # 3) carrega dataframe
+    try:
+        df = _load_ipe_dataframe(url_ipe)
+    except Exception as e:
         return {
             "ok": False,
-            "url_ipe": url_list[0],
+            "url_ipe": url_ipe,
             "stats": {},
-            "errors": {"__ipe__": f"Falha ao carregar ZIPs do IPE (ex.: {last_err})"},
+            "errors": {"__ipe__": f"Falha ao carregar CSV IPE: {type(e).__name__}: {e}"},
             "debug": debug,
         }
-    df = pd.concat(dfs, ignore_index=True, sort=False)
 
     # normaliza nomes de colunas conhecidos
     # (a CVM pode alterar; aqui é tolerante)
@@ -445,12 +401,9 @@ def ingest_ipe_for_tickers(
 
     # filtra por janela de anos se Data_Entrega existir
     if c_dt:
-        dt = pd.to_datetime(df2[c_dt], errors="coerce", dayfirst=True)
+        dt = pd.to_datetime(df2[c_dt], errors="coerce", dayfirst=True, utc=True).dt.tz_localize(None)
         df2["_dt"] = dt
-        cutoff = (pd.Timestamp.utcnow().tz_localize(None).normalize()
-                  - pd.Timedelta(days=365 * max(0, int(years))))
-        # garante comparação tz-naive (evita: Invalid comparison between dtype=datetime64[ns] and Timestamp)
-        df2["_dt"] = pd.to_datetime(df2["_dt"], errors="coerce", utc=True).dt.tz_convert(None)
+        cutoff = pd.Timestamp.utcnow().normalize() - pd.Timedelta(days=365 * max(0, int(years)))
         df2 = df2[df2["_dt"].isna() | (df2["_dt"] >= cutoff)].copy()
 
     stats: Dict[str, Dict[str, int]] = {tk: {"matched": 0, "inserted": 0, "skipped": 0} for tk in tks}
@@ -464,6 +417,7 @@ def ingest_ipe_for_tickers(
         df2 = df2.sort_values(by=c_dt, ascending=False)
 
     # loop
+    t0 = time.time()
     for cvm_code, grp in df2.groupby(c_cvm):
         tk = cvm2tk.get(int(cvm_code))
         if not tk:
@@ -473,6 +427,10 @@ def ingest_ipe_for_tickers(
         stats[tk]["matched"] = int(len(rows))
 
         for row in rows[: int(max_docs_por_ticker)]:
+            # limite de tempo total para evitar ingest infinito em ambiente Streamlit
+            if max_runtime_s and (time.time() - t0) > float(max_runtime_s):
+                errors["__timeout__"] = f"timeout: excedeu {max_runtime_s}s"
+                break
             try:
                 titulo = str(row.get(c_assunto) or "").strip() if c_assunto else ""
                 url = str(row.get(c_link) or "").strip() if c_link else ""
@@ -480,7 +438,12 @@ def ingest_ipe_for_tickers(
                 # data ISO
                 data_iso = None
                 if c_dt:
-                    d = pd.to_datetime(row.get(c_dt), errors="coerce", dayfirst=True)
+                    d = pd.to_datetime(row.get(c_dt), errors="coerce", dayfirst=True, utc=True)
+                    try:
+                        # remove timezone if present
+                        d = d.tz_localize(None)
+                    except Exception:
+                        pass
                     if pd.notna(d):
                         data_iso = d.date().isoformat()
 

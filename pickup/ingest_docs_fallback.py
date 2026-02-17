@@ -145,7 +145,7 @@ def ingest_from_ri(
     max_pages: int = 30,
     max_depth: int = 2,
     timeout: int = 25,
-    sleep_s: float = 0.2,
+    sleep_s: float = 0.0,
     keywords: Sequence[str] = DEFAULT_KEYWORDS,
 ) -> Dict[str, Any]:
     """Crawler minimalista para RI (HTML + PDFs)."""
@@ -291,12 +291,12 @@ def ingest_from_ri(
 def ingest_strategy_for_tickers(
     tickers: Sequence[str],
     *,
-    years: Optional[int] = None,
-    anos: int = 2,
-    max_docs_por_ticker: int = 25,
-    sleep_s: float = 0.2,
-    strategy: str = "A->B",
+    anos: int = 1,
+    max_docs_por_ticker: int = 12,
+    sleep_s: float = 0.0,
+    strategy: str = "A",
     ri_map_table: str = "public.ri_map",
+    max_runtime_s: float = 25.0,
     enable_c: bool = False,
 ) -> Dict[str, Any]:
     """Executa ingestão em camadas A/B/C e retorna um dicionário unificado."""
@@ -306,35 +306,34 @@ def ingest_strategy_for_tickers(
         return {"ok": False, "error": "Lista vazia", "by_ticker": {}}
 
     out: Dict[str, Any] = {"ok": True, "by_ticker": {}}
-    # compat: "anos" antigo -> "years"
-    eff_years = int(years) if years is not None else int(anos)
-    if eff_years < 0:
-        eff_years = 0
-
 
     # A: CVM/IPE
     if "A" in strategy:
         try:
             from pickup.ingest_docs_cvm_ipe import ingest_ipe_for_tickers  # type: ignore
-            resA = ingest_ipe_for_tickers(tks, years=eff_years, max_docs_por_ticker=max_docs_por_ticker, sleep_s=sleep_s)
+            resA = ingest_ipe_for_tickers(
+                tks,
+                years=int(anos),
+                max_docs_por_ticker=int(max_docs_por_ticker),
+                sleep_s=float(sleep_s),
+                fetch_html_text=False,
+                max_runtime_s=float(max_runtime_s),
+            )
         except Exception as e:
             resA = {"ok": False, "stats": {}, "errors": {"__A__": f"{type(e).__name__}: {e}"}}
 
-        # Propaga erros "globais" (__map__/__ipe__/__all__/__A__) para cada ticker,
-        # para aparecer no UI e facilitar o diagnóstico.
-        global_err = None
-        for k in ("__A__", "__map__", "__ipe__", "__all__"):
-            if (resA.get("errors") or {}).get(k):
-                global_err = (resA.get("errors") or {}).get(k)
-                break
-
         for tk in tks:
             out["by_ticker"].setdefault(tk, {})
-            stats = (resA.get("stats") or {}).get(tk) or {}
-            err = (resA.get("errors") or {}).get(tk) or global_err
+            stats = (resA.get("stats") or {}).get(tk)
+            err = (resA.get("errors") or {}).get(tk)
+            # propaga erro global (ex.: __ipe__/__map__/__A__) para facilitar diagnóstico na UI
+            if not err:
+                errs = (resA.get("errors") or {})
+                for k in ("__ipe__", "__map__", "__A__", "__all__"):
+                    if k in errs and errs.get(k):
+                        err = errs.get(k)
+                        break
             out["by_ticker"][tk]["A"] = {"stats": stats, "error": err}
-            if err:
-                out["ok"] = False
 
     # B: RI fallback
     if "B" in strategy:
