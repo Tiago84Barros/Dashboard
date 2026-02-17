@@ -296,7 +296,12 @@ def ingest_ipe_for_tickers(
     # parse dates once
     df["_dt"] = df[col_data].apply(_parse_date)
     df = df[~df["_dt"].isna()].copy()
-    df = df[df["_dt"] >= pd.Timestamp(min_dt)].copy()
+    # Normaliza para evitar comparação tz-aware vs tz-naive (pandas pode lançar TypeError)
+    min_ts = pd.Timestamp(min_dt)
+    if getattr(min_ts, "tzinfo", None) is not None:
+        # remove timezone mantendo o instante em "naive" (UTC)
+        min_ts = min_ts.tz_localize(None)
+    df = df[df["_dt"] >= min_ts].copy()
 
     # filtros estratégicos (heurístico)
     if strategic_only:
