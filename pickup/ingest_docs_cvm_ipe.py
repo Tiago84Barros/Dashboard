@@ -1,54 +1,42 @@
 from __future__ import annotations
-
 """
-pickup/ingest_docs_cvm_ipe.py
-----------------------------
-OPÇÃO A (CVM/IPE) — ingestão *estratégica* para o Patch 6.
+pickup/ingest_docs_cvm_ipe.py  (Patch6 - CVM/IPE)
+-----------------------------------------------
+Ingestão de documentos do dataset público da CVM (IPE) para a tabela public.docs_corporativos.
 
-Objetivo:
-- Capturar APENAS documentos com potencial de "intenção estratégica futura"
-  (releases de resultados, fatos relevantes, comunicados estratégicos, etc.)
-- Janela temporal: últimos 12 meses (configurável via months_back)
-- Inserir em public.docs_corporativos (metadados + raw_text quando possível)
-- Sem depender de scraping HTML de diretórios: usa URL determinística por ano:
-    https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/ipe_cia_aberta_{YYYY}.zip
+Objetivo do Patch 6:
+- Capturar intenção estratégica futura (guidance, capex, expansão, M&A, desalavancagem, alocação de capital etc.)
+- Alimentar RAG (chunks + embeddings) em docs_corporativos_chunks.
 
-Observações de performance:
-- Filtra no CSV ANTES de baixar PDFs (reduz drasticamente volume).
-- Por padrão tenta extrair texto do PDF (sem OCR). Se falhar, insere só metadados.
-- Suporta max_runtime_s para impedir execução "infinita" em Streamlit.
+Notas importantes:
+- O CSV do IPE muda nomes de colunas ao longo do tempo. Este módulo é tolerante a variações:
+  CODIGO_CVM / CD_CVM / CVM, DATA_ENTREGA / DT_RECEB / DT_REFER / DATA_REFERENCIA etc.
+- PDFs: por padrão, **baixamos e tentamos extrair texto** (sem OCR). Muitos PDFs da CVM possuem texto selecionável.
+  Se não houver texto, armazenamos o metadado + link mesmo assim.
+- Performance: janela padrão é 12 meses e com limites por ticker. Todos os limites são configuráveis pelo chamador.
 
-Tabelas esperadas (Supabase/Postgres):
-- public.docs_corporativos (colunas: ticker, data, fonte, tipo, titulo, url, raw_text, doc_hash; UNIQUE(doc_hash))
-- public.cvm_to_ticker (colunas: "CVM" int, "Ticker" text)
-
-Dependências:
-- requests, pandas, sqlalchemy, streamlit
-- (opcional) pdfminer.six para extrair texto de PDF (sem OCR)
-
-Compatibilidade:
-- Mantém assinatura chamada por pickup.ingest_docs_fallback.ingest_strategy_for_tickers:
-    ingest_ipe_for_tickers(tickers, anos=2, max_docs_por_ticker=25, sleep_s=0.2)
-
+Requer:
+- public.cvm_to_ticker (colunas: CVM int, Ticker text)  (ou ajuste get_cvm_codes_for_tickers)
+- public.docs_corporativos com campos (ticker,titulo,url,fonte,tipo,data,texto,doc_hash,created_at...)
+- public.docs_corporativos_chunks com campos (doc_id,ticker,chunk_index,chunk_text,embedding,chunk_hash,created_at...)
 """
-
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-from datetime import datetime
 import hashlib
 import io
 import re
 import time
-import zipfile
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import requests
-import streamlit as st
 from sqlalchemy import text
 
 from core.db_loader import get_supabase_engine
 
 
-# ───────────────────────── Helpers ─────────────────────────
+# ──────────────────────────────────────────────────────────────
+# Helpers
+# ──────────────────────────────────────────────────────────────
 
 def _norm_ticker(t: str) -> str:
     return (t or "").upper().replace(".SA", "").strip()
@@ -61,390 +49,368 @@ def _clean_text(s: str) -> str:
     s = re.sub(r"\s+", " ", s)
     return s
 
-def _now_utc_naive() -> pd.Timestamp:
-    # Evita tz-aware vs tz-naive no pandas
-    return pd.Timestamp.utcnow().tz_localize(None)
+def _chunk_text(texto: str, chunk_chars: int = 1500, overlap: int = 200) -> List[str]:
+    t = (texto or "").strip()
+    if not t:
+        return []
+    t = t.replace("\r\n", "\n")
+    out: List[str] = []
+    i, n = 0, len(t)
+    while i < n:
+        j = min(n, i + chunk_chars)
+        out.append(t[i:j])
+        if j >= n:
+            break
+        i = max(0, j - overlap)
+    return out
 
-def _year_zip_url(year: int) -> str:
-    return f"https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/ipe_cia_aberta_{year}.zip"
-
-
-# ───────────────────────── Filtros Estratégicos ─────────────────────────
-
-# Categorias / espécies "tipicamente estratégicas" (variações comuns)
-_CATEGORY_PATTERNS = [
-    r"fato\s+relevante",
-    r"release",  # release de resultados, press release
-    r"apresenta",  # apresentação de resultados
-    r"resultado",  # resultados
-    r"comunicado\s+ao\s+mercado",
-    r"aviso\s+ao\s+mercado",
-    r"guidance",
-    r"outlook",
-    r"investidor",  # apresentações para investidores às vezes
-]
-
-# Palavras-chave em assunto/título que sinalizam intenção futura (pt/en)
-_KEYWORD_PATTERNS = [
-    r"guidance|outlook|proje[cç][aã]o|previs[aã]o",
-    r"capex|investimento|investir|expans[aã]o|plano\s+de\s+neg[oó]cios|plano\s+estrat[eé]gico",
-    r"aquisi[cç][aã]o|fus[aã]o|m&a|incorpora[cç][aã]o|joint\s+venture|cis[aã]o|spin[-\s]?off",
-    r"desalavanc|redu[cç][aã]o\s+de\s+d[ií]vida|refinanci|alongamento\s+de\s+d[ií]vida",
-    r"reorganiza[cç][aã]o|reestrutura[cç][aã]o|turnaround|efici[eê]ncia|otimiza[cç][aã]o",
-    r"desinvest|venda\s+de\s+ativos|alien[aã]o\s+de\s+ativos",
-    r"nova\s+f[aá]brica|nova\s+planta|greenfield|brownfield|expans[aã]o\s+de\s+capacidade",
-    r"internacionaliza[cç][aã]o|novo\s+mercado|novos\s+mercados|entrada\s+em\s+segmento",
-]
-
-_RE_CATEGORY = re.compile("|".join(_CATEGORY_PATTERNS), re.I)
-_RE_KEYWORDS = re.compile("|".join(_KEYWORD_PATTERNS), re.I)
-
-
-def _is_strategic_row(row: pd.Series, *, category_col: str, subject_col: str, specie_col: Optional[str]) -> bool:
-    cat = str(row.get(category_col, "") or "")
-    subj = str(row.get(subject_col, "") or "")
-    spc = str(row.get(specie_col, "") or "") if specie_col else ""
-    hay = " | ".join([cat, spc, subj])
-    # "Use ambos": aceita se categoria/especie OU keywords sinalizarem estratégia
-    return bool(_RE_CATEGORY.search(hay) or _RE_KEYWORDS.search(hay))
-
-
-# ───────────────────────── Leitura do IPE ─────────────────────────
-
-@st.cache_data(ttl=60 * 60, show_spinner=False)
-def _load_ipe_year_df(year: int) -> pd.DataFrame:
-    """
-    Baixa e carrega o IPE do ano (ZIP->CSV) em DataFrame.
-    Cache por ano para não rebaixar a cada clique.
-    """
-    url = _year_zip_url(year)
-    r = requests.get(url, timeout=60)
-    if r.status_code != 200:
-        raise RuntimeError(f"IPE {year} indisponível (HTTP {r.status_code})")
-    z = zipfile.ZipFile(io.BytesIO(r.content))
-    csv_names = [n for n in z.namelist() if n.lower().endswith(".csv")]
-    if not csv_names:
-        raise RuntimeError(f"ZIP IPE {year} sem CSV")
-    # Escolhe o maior CSV (mais seguro)
-    csv_name = sorted(csv_names, key=lambda n: z.getinfo(n).file_size, reverse=True)[0]
-    with z.open(csv_name) as f:
-        data = f.read()
-
-    # CSV CVM tipicamente usa ';' e latin-1
-    # tenta combos com fallback
-    last_err: Optional[Exception] = None
-    for sep, enc in [(";", "latin1"), (";", "utf-8"), (",", "utf-8"), (",", "latin1")]:
-        try:
-            df = pd.read_csv(io.BytesIO(data), sep=sep, encoding=enc, low_memory=False)
-            return df
-        except Exception as e:
-            last_err = e
-    raise RuntimeError(f"Falha ao ler CSV IPE {year}: {last_err}")
-
-
-def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df.columns = [str(c).strip().upper() for c in df.columns]
-    return df
-
-
-def _pick_col(df: pd.DataFrame, candidates: Sequence[str]) -> Optional[str]:
-    for c in candidates:
-        cU = c.strip().upper()
-        if cU in df.columns:
-            return cU
+def _pick_col(cols: Sequence[str], *candidates: str) -> Optional[str]:
+    """Retorna o primeiro candidato existente em cols (case-insensitive)."""
+    lower = {c.lower(): c for c in cols}
+    for cand in candidates:
+        if cand.lower() in lower:
+            return lower[cand.lower()]
     return None
 
-
-def _parse_date_series(s: pd.Series) -> pd.Series:
-    # pandas: mantém tz-naive
-    dt = pd.to_datetime(s, errors="coerce", dayfirst=True, utc=False)
-    # Se vier tz-aware, remove tz
+def _parse_date(val: Any) -> Optional[pd.Timestamp]:
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return None
     try:
-        if hasattr(dt.dt, "tz_localize"):
-            dt = dt.dt.tz_localize(None)  # type: ignore
+        return pd.to_datetime(val, errors="coerce", dayfirst=True)
+    except Exception:
+        return None
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+def _now_minus_months(months: int) -> datetime:
+    # Aproximação segura (30 dias/mês) para filtro rápido no ingest
+    return _utcnow() - timedelta(days=int(months) * 30)
+
+def _looks_like_pdf(url: str) -> bool:
+    u = (url or "").lower()
+    return u.endswith(".pdf") or "pdf" in u
+
+# ──────────────────────────────────────────────────────────────
+# PDF text extraction (sem OCR)
+# ──────────────────────────────────────────────────────────────
+
+def _extract_pdf_text(pdf_bytes: bytes, max_pages: int = 25) -> str:
+    """
+    Tenta extrair texto de PDF sem OCR.
+    Preferência: PyPDF2 (rápido). Fallback: pdfminer.six (mais robusto, mas mais lento).
+    """
+    if not pdf_bytes:
+        return ""
+
+    # PyPDF2
+    try:
+        import PyPDF2  # type: ignore
+        reader = PyPDF2.PdfReader(io.BytesIO(pdf_bytes))
+        texts: List[str] = []
+        for i, page in enumerate(reader.pages):
+            if i >= max_pages:
+                break
+            t = page.extract_text() or ""
+            if t:
+                texts.append(t)
+        out = "\n".join(texts)
+        out = _clean_text(out)
+        if len(out) >= 200:  # mínimo para ser útil
+            return out
     except Exception:
         pass
-    return dt
 
-
-def _extract_pdf_text(pdf_bytes: bytes) -> str:
-    """
-    Extrai texto do PDF sem OCR.
-    Se pdfminer não estiver disponível, retorna "".
-    """
+    # pdfminer.six
     try:
         from pdfminer.high_level import extract_text  # type: ignore
-        return _clean_text(extract_text(io.BytesIO(pdf_bytes)) or "")
+        out = extract_text(io.BytesIO(pdf_bytes), maxpages=max_pages) or ""
+        out = _clean_text(out)
+        return out
     except Exception:
         return ""
 
 
-# ───────────────────────── Banco / Upsert ─────────────────────────
+# ──────────────────────────────────────────────────────────────
+# Supabase helpers
+# ──────────────────────────────────────────────────────────────
 
-def _fetch_cvm_map(tickers: Sequence[str]) -> Dict[str, int]:
+def _engine():
+    return get_supabase_engine()
+
+def get_cvm_codes_for_tickers(tickers: Sequence[str]) -> Dict[str, int]:
     """
-    Busca CVM code por ticker em public.cvm_to_ticker.
-    Espera colunas: "CVM" (int) e "Ticker" (text).
+    Lê mapeamento CVM->Ticker na tabela public.cvm_to_ticker.
     """
-    tks = [_norm_ticker(t) for t in (tickers or []) if str(t).strip()]
-    tks = list(dict.fromkeys(tks))
+    tks = [_norm_ticker(t) for t in tickers if (t or "").strip()]
     if not tks:
         return {}
-    engine = get_supabase_engine()
-    sql = text(
-        """
-        select upper("Ticker") as ticker, "CVM" as cvm
+    sql = """
+        select "Ticker" as ticker, "CVM" as cvm
         from public.cvm_to_ticker
-        where upper("Ticker") = any(:tks)
-        """
-    )
+        where "Ticker" = any(:tks)
+    """
+    with _engine().connect() as conn:
+        df = pd.read_sql_query(text(sql), conn, params={"tks": tks})
     out: Dict[str, int] = {}
-    with engine.begin() as conn:
-        rows = conn.execute(sql, {"tks": tks}).fetchall()
-    for r in rows:
-        out[str(r[0]).upper()] = int(r[1])
+    for _, r in df.iterrows():
+        out[str(r["ticker"]).upper()] = int(r["cvm"])
     return out
 
 
+def _doc_exists(conn, doc_hash: str) -> bool:
+    row = conn.execute(
+        text("select 1 from public.docs_corporativos where doc_hash = :h limit 1"),
+        {"h": doc_hash},
+    ).fetchone()
+    return bool(row)
+
+
 def _insert_doc(
+    conn,
     *,
     ticker: str,
-    data: Optional[pd.Timestamp],
-    fonte: str,
-    tipo: str,
     titulo: str,
     url: str,
-    raw_text: str,
-) -> Tuple[bool, Optional[int]]:
+    fonte: str,
+    tipo: str,
+    data: Optional[pd.Timestamp],
+    texto: str,
+    doc_hash: str,
+) -> Optional[int]:
+    row = conn.execute(
+        text("""
+            insert into public.docs_corporativos
+            (ticker, titulo, url, fonte, tipo, data, texto, doc_hash)
+            values
+            (:ticker, :titulo, :url, :fonte, :tipo, :data, :texto, :doc_hash)
+            on conflict (doc_hash) do nothing
+            returning id
+        """),
+        {
+            "ticker": ticker,
+            "titulo": titulo[:4000],
+            "url": url[:4000],
+            "fonte": fonte,
+            "tipo": tipo[:200],
+            "data": (data.to_pydatetime() if isinstance(data, pd.Timestamp) and not pd.isna(data) else None),
+            "texto": texto,
+            "doc_hash": doc_hash,
+        },
+    ).fetchone()
+    return int(row[0]) if row else None
+
+
+# ──────────────────────────────────────────────────────────────
+# Core ingest
+# ──────────────────────────────────────────────────────────────
+
+def _load_ipe_csv(year: int, timeout: int = 30) -> pd.DataFrame:
     """
-    Insere em docs_corporativos (idempotente por doc_hash).
-    Retorna (inserted?, id|None).
+    Baixa e lê o CSV do IPE (CIA_ABERTA) do ano informado.
     """
-    engine = get_supabase_engine()
+    url_zip = f"https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/ipe_cia_aberta_{year}.zip"
+    r = requests.get(url_zip, timeout=timeout)
+    r.raise_for_status()
 
-    doc_hash = _sha256("|".join([_norm_ticker(ticker), (url or "").strip(), (titulo or "").strip()]))
+    # o zip contém um único csv com o mesmo nome base
+    import zipfile
+    zf = zipfile.ZipFile(io.BytesIO(r.content))
+    # pega o primeiro CSV do zip
+    csv_names = [n for n in zf.namelist() if n.lower().endswith(".csv")]
+    if not csv_names:
+        raise RuntimeError("ZIP do IPE não contém CSV")
+    raw = zf.read(csv_names[0])
 
-    sql = text(
-        """
-        insert into public.docs_corporativos (ticker, data, fonte, tipo, titulo, url, raw_text, doc_hash)
-        values (:ticker, :data, :fonte, :tipo, :titulo, :url, :raw_text, :doc_hash)
-        on conflict (doc_hash) do nothing
-        returning id
-        """
-    )
-    payload = {
-        "ticker": _norm_ticker(ticker),
-        "data": (data.to_pydatetime() if isinstance(data, pd.Timestamp) and pd.notna(data) else None),
-        "fonte": fonte,
-        "tipo": tipo,
-        "titulo": titulo[:500] if titulo else "",
-        "url": url,
-        "raw_text": raw_text or "",
-        "doc_hash": doc_hash,
-    }
-    with engine.begin() as conn:
-        row = conn.execute(sql, payload).fetchone()
-    if row is None:
-        return (False, None)
-    return (True, int(row[0]))
+    # encoding pode variar; latin-1 costuma funcionar
+    for enc in ("utf-8", "latin1"):
+        try:
+            df = pd.read_csv(io.BytesIO(raw), sep=";", encoding=enc, dtype=str)
+            return df
+        except Exception:
+            continue
+    # fallback
+    df = pd.read_csv(io.BytesIO(raw), sep=";", encoding="latin1", dtype=str)
+    return df
 
-
-# ───────────────────────── API pública ─────────────────────────
 
 def ingest_ipe_for_tickers(
     tickers: Sequence[str],
     *,
-    # compat com caller
-    anos: int = 2,
-    max_docs_por_ticker: int = 25,
+    window_months: int = 12,
+    max_docs_per_ticker: int = 60,
+    strategic_only: bool = True,
+    download_pdfs: bool = True,
+    max_pdfs_per_ticker: int = 12,
+    pdf_max_pages: int = 25,
+    request_timeout: int = 25,
+    max_runtime_s: float = 25.0,
     sleep_s: float = 0.0,
-    years: Optional[int] = None,
-    # novos parâmetros (podem ser ignorados pelo caller)
-    months_back: int = 12,
-    max_runtime_s: Optional[int] = None,
-    fetch_pdf_text: bool = True,
-    request_timeout: int = 35,
+    verbose: bool = False,
 ) -> Dict[str, Any]:
     """
-    Ingestão estratégica do IPE para uma lista de tickers.
+    Ingest por tickers usando o dataset IPE.
+    Retorna dict com stats por ticker.
 
-    Retorno:
-      {
-        "ok": bool,
-        "stats": { TICKER: {"matched":int,"inserted":int,"skipped":int,"pdf_fetched":int,"pdf_text_ok":int} },
-        "errors": { TICKER: "..." }
-      }
+    strategic_only:
+      filtra por termos-chave em ASSUNTO/CATEGORIA/TIPO para focar documentos estratégicos.
     """
-    start_t = time.time()
+    started = time.time()
+    tickers_n = [_norm_ticker(t) for t in tickers if (t or "").strip()]
+    cvm_map = get_cvm_codes_for_tickers(tickers_n)
 
-    # Compat: alguns callers antigos passam `years=`. Aqui tratamos como anos.
-    if years is not None:
-        try:
-            y = int(years)
-            if y > 0:
-                months_back = y * 12
-        except Exception:
-            pass
+    now = _utcnow()
+    min_dt = _now_minus_months(int(window_months))
 
-
-    tks = [_norm_ticker(t) for t in (tickers or []) if str(t).strip()]
-    tks = list(dict.fromkeys(tks))
-    if not tks:
-        return {"ok": False, "stats": {}, "errors": {"__A__": "Lista vazia"}}
-
-    out_stats: Dict[str, Dict[str, int]] = {tk: {"matched": 0, "inserted": 0, "skipped": 0, "pdf_fetched": 0, "pdf_text_ok": 0} for tk in tks}
-    out_errs: Dict[str, str] = {}
-
-    # Janela temporal (últimos N meses)
-    now = _now_utc_naive()
-    cutoff = (now - pd.DateOffset(months=int(months_back))).normalize()
-
-    # anos necessários para cobrir cutoff..now
-    years_needed = list(range(int(cutoff.year), int(now.year) + 1))
-    # compat: se user passar anos maior, amplia para trás
-    if int(anos) > len(years_needed):
-        extra_years = int(anos) - len(years_needed)
-        years_needed = list(range(int(cutoff.year) - extra_years + 1, int(now.year) + 1))
-
-    # mapa ticker -> CVM
-    tk2cvm = _fetch_cvm_map(tks)
-    missing = [tk for tk in tks if tk not in tk2cvm]
-    for tk in missing:
-        out_errs[tk] = "ticker_sem_mapeamento_cvm (preencha public.cvm_to_ticker)"
-
-    # Carrega DF(s) anuais
+    # carrega anos necessários (janela pode atravessar ano)
+    years = sorted({now.year, (min_dt.year)})
     dfs: List[pd.DataFrame] = []
-    year_errors: List[str] = []
-    for y in years_needed:
-        if max_runtime_s and (time.time() - start_t) > max_runtime_s:
-            break
+    for y in years:
         try:
-            dfy = _load_ipe_year_df(int(y))
-            dfs.append(_normalize_columns(dfy))
+            dfs.append(_load_ipe_csv(y, timeout=request_timeout))
         except Exception as e:
-            year_errors.append(f"{y}: {type(e).__name__}: {e}")
-
+            if verbose:
+                print(f"[IPE] Falha ao carregar {y}: {e}")
     if not dfs:
-        # Propaga erro global por ticker (para UI enxergar)
-        msg = "Nenhum CSV IPE disponível (todas as URLs candidatas falharam)."
-        if year_errors:
-            msg = "Falha ao carregar IPE: " + " | ".join(year_errors[:5])
-        for tk in tks:
-            out_errs.setdefault(tk, msg)
-        return {"ok": False, "stats": out_stats, "errors": out_errs}
+        return {"ok": False, "errors": {"__all__": "Nenhum CSV IPE disponível (falha ao baixar ZIP)."}, "stats": {}}
 
     df = pd.concat(dfs, ignore_index=True)
+    cols = list(df.columns)
 
-    # Identifica colunas
-    col_cvm = _pick_col(df, ["CD_CVM", "COD_CVM", "CODIGO_CVM", "CVM", "CD_CVM_CIA"])
-    col_assunto = _pick_col(df, ["ASSUNTO", "TITULO", "DESCRICAO"])
-    col_categoria = _pick_col(df, ["CATEG_DOC", "CATEGORIA", "CATEG"])
-    col_especie = _pick_col(df, ["ESPECIE", "TIPO_DOC", "TIPO"])
-    col_data = _pick_col(df, ["DT_REFER", "DATA_REFERENCIA", "DT_RECEB", "DT_RECEBIMENTO", "DT_ENTREGA", "DATA_ENTREGA", "DATA"])
+    col_cvm = _pick_col(cols, "CODIGO_CVM", "CD_CVM", "CVM", "COD_CVM")
+    col_data = _pick_col(cols, "DATA_ENTREGA", "DT_RECEB", "DT_REFER", "DATA_REFERENCIA", "DATA_REFER", "DT_ENTREGA")
+    col_link = _pick_col(cols, "LINK_DOWNLOAD", "LINK", "LINK_ARQUIVO", "LINK_DOC", "LINK_DOCUMENTO")
+    col_assunto = _pick_col(cols, "ASSUNTO", "ASSUNTO_EVENTO", "TITULO", "DESCRICAO")
+    col_categoria = _pick_col(cols, "CATEGORIA", "CATEGORIA_DOCUMENTO")
+    col_tipo = _pick_col(cols, "TIPO", "TIPO_DOCUMENTO")
+    col_especie = _pick_col(cols, "ESPECIE", "ESPECIE_DOCUMENTO")
 
-    col_link = _pick_col(df, ["LINK_DOC", "LINK_DOWNLOAD", "LINK", "URL"])
+    missing = [c for c in (col_cvm, col_data, col_link, col_assunto) if c is None]
+    if missing:
+        return {
+            "ok": False,
+            "errors": {"__all__": f"CSV IPE sem colunas necessárias. Encontradas={cols}"},
+            "stats": {},
+        }
 
-    required = [col_cvm, col_assunto, col_categoria, col_data, col_link]
-    if any(c is None for c in required):
-        msg = f"CSV IPE sem colunas necessárias. Encontradas={list(df.columns)[:40]}"
-        for tk in tks:
-            out_errs.setdefault(tk, msg)
-        return {"ok": False, "stats": out_stats, "errors": out_errs}
+    # parse dates once
+    df["_dt"] = df[col_data].apply(_parse_date)
+    df = df[~df["_dt"].isna()].copy()
+    df = df[df["_dt"] >= pd.Timestamp(min_dt)].copy()
 
-    assert col_cvm and col_assunto and col_categoria and col_data and col_link
+    # filtros estratégicos (heurístico)
+    if strategic_only:
+        # palavras comuns para "intenção estratégica"
+        pattern = re.compile(
+            r"(guidance|invest|capex|expans|projeto|plano|estrat[eé]g|aquisi|m&a|fus[aã]o|desalav|aloca|"
+            r"remunera|dividend|recompra|conselho|assembleia|fato relevante|comunicado|release|"
+            r"resultad|earnings|apresenta[cç][aã]o|teleconfer|call)",
+            re.IGNORECASE,
+        )
+        def _is_strategic(row) -> bool:
+            txt = " ".join([str(row.get(col_assunto, "") or ""),
+                            str(row.get(col_categoria, "") or ""),
+                            str(row.get(col_tipo, "") or ""),
+                            str(row.get(col_especie, "") or "")])
+            return bool(pattern.search(txt))
+        df = df[df.apply(_is_strategic, axis=1)].copy()
 
-    # Parse data e filtra janela de 12 meses
-    df[col_data] = _parse_date_series(df[col_data])
-    df = df[pd.notna(df[col_data])]
-    df = df[df[col_data] >= cutoff]
+    out_stats: Dict[str, Any] = {}
+    out_errors: Dict[str, str] = {}
 
-    # Converte CD_CVM para int quando possível
-    def to_int(x: Any) -> Optional[int]:
-        try:
-            if pd.isna(x):
-                return None
-            return int(str(x).strip())
-        except Exception:
-            return None
-
-    df["_CVM_INT"] = df[col_cvm].apply(to_int)
-    df = df[pd.notna(df["_CVM_INT"])]
-
-    # Pré-filtro estratégico (categoria + keywords)
-    df["_IS_STRAT"] = df.apply(lambda r: _is_strategic_row(r, category_col=col_categoria, subject_col=col_assunto, specie_col=col_especie), axis=1)
-    df = df[df["_IS_STRAT"] == True]  # noqa: E712
-
-    # Para cada ticker: filtra pelo CVM e ingere
-    for tk in tks:
-        if max_runtime_s and (time.time() - start_t) > max_runtime_s:
-            out_errs.setdefault(tk, f"timeout (max_runtime_s={max_runtime_s})")
-            break
-
-        if tk not in tk2cvm:
-            continue
-
-        cvm = tk2cvm[tk]
-        dft = df[df["_CVM_INT"] == cvm].copy()
-        if dft.empty:
-            # sem docs estratégicos no período
-            out_stats[tk]["matched"] = 0
-            continue
-
-        # Ordena por data desc
-        dft = dft.sort_values(col_data, ascending=False)
-
-        matched = int(len(dft))
-        out_stats[tk]["matched"] = matched
-
-        # Mesmo que você não queira "limitar tanto", ainda precisamos de um freio
-        # para evitar ingest enorme em empresas extremamente comunicativas.
-        # max_docs_por_ticker vem do caller; se vier alto, tudo bem.
-        if isinstance(max_docs_por_ticker, int) and max_docs_por_ticker > 0:
-            dft = dft.head(int(max_docs_por_ticker))
-
-        for _, row in dft.iterrows():
-            if max_runtime_s and (time.time() - start_t) > max_runtime_s:
-                out_errs.setdefault(tk, f"timeout (max_runtime_s={max_runtime_s})")
+    with _engine().begin() as conn:
+        for tk in tickers_n:
+            if (time.time() - started) > max_runtime_s:
+                out_errors["__runtime__"] = f"Tempo máximo atingido ({max_runtime_s}s)."
                 break
 
-            url = str(row.get(col_link, "") or "").strip()
-            titulo = _clean_text(str(row.get(col_assunto, "") or ""))[:500]
-            data_ref = row.get(col_data)
-            tipo = "IPE"
-            fonte = "CVM_IPE"
+            cvm = cvm_map.get(tk)
+            if not cvm:
+                out_errors[tk] = "ticker_sem_mapeamento_cvm (preencha public.cvm_to_ticker)"
+                out_stats[tk] = {"matched": 0, "inserted": 0, "skipped": 0, "pdf_fetched": 0, "pdf_text_ok": 0}
+                continue
 
-            raw_text = ""
+            dft = df[df[col_cvm].astype(str) == str(cvm)].copy()
+            # ordena por mais recente
+            dft = dft.sort_values("_dt", ascending=False)
 
-            # (Opcional) baixa PDF e extrai texto
-            if fetch_pdf_text and url and url.lower().endswith(".pdf"):
-                try:
-                    r = requests.get(url, timeout=request_timeout)
-                    if r.status_code == 200 and r.content:
-                        out_stats[tk]["pdf_fetched"] += 1
-                        raw_text = _extract_pdf_text(r.content)
-                        if raw_text:
-                            out_stats[tk]["pdf_text_ok"] += 1
-                except Exception:
-                    # mantém metadados mesmo sem texto
-                    raw_text = ""
+            matched = int(len(dft))
+            if matched == 0:
+                out_stats[tk] = {"matched": 0, "inserted": 0, "skipped": 0, "pdf_fetched": 0, "pdf_text_ok": 0}
+                continue
 
-            inserted, _id = _insert_doc(
-                ticker=tk,
-                data=data_ref if isinstance(data_ref, pd.Timestamp) else None,
-                fonte=fonte,
-                tipo=tipo,
-                titulo=titulo,
-                url=url,
-                raw_text=raw_text,
-            )
-            if inserted:
-                out_stats[tk]["inserted"] += 1
-            else:
-                out_stats[tk]["skipped"] += 1
+            # limita por ticker
+            dft = dft.head(int(max_docs_per_ticker)).copy()
 
-            if sleep_s:
-                time.sleep(float(sleep_s))
+            inserted = 0
+            skipped = 0
+            pdf_fetched = 0
+            pdf_text_ok = 0
+            pdf_used = 0
 
-    ok = all((out_stats.get(tk, {}).get("inserted", 0) > 0) for tk in tks if tk in tk2cvm) if tk2cvm else False
-    return {"ok": bool(ok), "stats": out_stats, "errors": out_errs}
+            for _, r in dft.iterrows():
+                if (time.time() - started) > max_runtime_s:
+                    out_errors["__runtime__"] = f"Tempo máximo atingido ({max_runtime_s}s)."
+                    break
+
+                url = str(r.get(col_link, "") or "").strip()
+                if not url:
+                    skipped += 1
+                    continue
+
+                titulo = _clean_text(str(r.get(col_assunto, "") or "")) or "Documento CVM/IPE"
+                tipo = _clean_text(str(r.get(col_tipo, "") or "")) or "IPE"
+                dt = r.get("_dt")
+
+                doc_hash = _sha256(f"{tk}|{url}|{titulo}|{dt}")
+                if _doc_exists(conn, doc_hash):
+                    skipped += 1
+                    continue
+
+                texto = ""
+                # Se PDF e permitido, tenta baixar e extrair texto
+                if download_pdfs and _looks_like_pdf(url) and pdf_used < int(max_pdfs_per_ticker):
+                    try:
+                        resp = requests.get(url, timeout=request_timeout)
+                        resp.raise_for_status()
+                        pdf_fetched += 1
+                        pdf_used += 1
+                        tpdf = _extract_pdf_text(resp.content, max_pages=int(pdf_max_pages))
+                        if tpdf and len(tpdf) >= 200:
+                            texto = tpdf
+                            pdf_text_ok += 1
+                    except Exception:
+                        # mantem metadados apenas
+                        pass
+
+                # Insere documento mesmo sem texto (metadados são úteis)
+                doc_id = _insert_doc(
+                    conn,
+                    ticker=tk,
+                    titulo=titulo,
+                    url=url,
+                    fonte="CVM/IPE",
+                    tipo=tipo,
+                    data=dt,
+                    texto=texto,
+                    doc_hash=doc_hash,
+                )
+                if doc_id is None:
+                    skipped += 1
+                else:
+                    inserted += 1
+
+                if sleep_s:
+                    time.sleep(float(sleep_s))
+
+            out_stats[tk] = {
+                "matched": matched,
+                "considered": int(len(dft)),
+                "inserted": inserted,
+                "skipped": skipped,
+                "pdf_fetched": pdf_fetched,
+                "pdf_text_ok": pdf_text_ok,
+            }
+
+    ok = (len(out_errors) == 0)
+    return {"ok": ok, "stats": out_stats, "errors": out_errors}
