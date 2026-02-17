@@ -317,19 +317,25 @@ def render() -> None:
     with colA:
         tickers_raw = st.text_input("Tickers (separados por vírgula)", value=default_tickers)
     with colB:
-        anos = st.number_input("Anos (janela para ingest)", min_value=0, max_value=15, value=2, step=1)
+        anos = st.number_input("Anos (janela para ingest)", min_value=0, max_value=15, value=1, step=1)
     with colC:
-        max_docs_ingest = st.number_input("Máx docs por ticker (ingest)", min_value=1, max_value=400, value=80, step=10)
+        max_docs_ingest = st.number_input("Máx docs por ticker (ingest)", min_value=1, max_value=200, value=12, step=1)
 
     tickers = _parse_tickers(tickers_raw)
 
     col1, col2, col3 = st.columns([1, 1, 1], gap="large")
     with col1:
-        max_pages_ri = st.number_input("Máx páginas RI (plano B)", min_value=1, max_value=200, value=25, step=5)
+        max_pages_ri = st.number_input("Máx páginas RI (plano B)", min_value=1, max_value=200, value=10, step=5)
     with col2:
-        allow_external = st.toggle("Permitir plano C (fontes seguras externas)", value=True)
+        allow_external = st.toggle("Permitir plano C (fontes seguras externas)", value=False)
     with col3:
-        verbose_debug = st.toggle("Debug detalhado", value=True)
+        verbose_debug = st.toggle("Debug detalhado", value=False)
+
+    col4, col5 = st.columns([1, 1], gap="large")
+    with col4:
+        cvm_only = st.toggle("Somente CVM (Plano A)", value=True)
+    with col5:
+        max_runtime_s = st.number_input("Limite total de tempo (s)", min_value=5, max_value=180, value=25, step=5)
 
     if not tickers:
         st.warning("Informe ao menos 1 ticker.")
@@ -353,6 +359,10 @@ def render() -> None:
                     tickers=tickers,
                     anos=int(anos),
                     max_docs_por_ticker=int(max_docs_ingest),
+                    # otimização: CVM-only evita crawling infinito em RI
+                    strategy=("A" if cvm_only else "A->B"),
+                    max_runtime_s=float(max_runtime_s),
+                    sleep_s=0.0,
                     max_pages=int(max_pages_ri),
                     allow_external=bool(allow_external),
                     verbose=bool(verbose_debug),
