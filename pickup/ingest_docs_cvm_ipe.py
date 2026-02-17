@@ -1,25 +1,20 @@
 from __future__ import annotations
 """
-pickup/ingest_docs_cvm_ipe.py  (Patch6 - CVM/IPE)
------------------------------------------------
+pickup/ingest_docs_cvm_ipe.py  (Patch6 - CVM/IPE) — Heurística A/B/C/D
+----------------------------------------------------------------------
 Ingestão de documentos do dataset público da CVM (IPE) para a tabela public.docs_corporativos.
 
-Objetivo do Patch 6:
-- Capturar intenção estratégica futura (guidance, capex, expansão, M&A, desalavancagem, alocação de capital etc.)
-- Alimentar RAG (chunks + embeddings) em docs_corporativos_chunks.
-
-Notas importantes:
-- O CSV do IPE muda nomes de colunas ao longo do tempo. Este módulo é tolerante a variações:
-  CODIGO_CVM / CD_CVM / CVM, DATA_ENTREGA / DT_RECEB / DT_REFER / DATA_REFERENCIA etc.
-- PDFs: por padrão, **baixamos e tentamos extrair texto** (sem OCR). Muitos PDFs da CVM possuem texto selecionável.
-  Se não houver texto, armazenamos o metadado + link mesmo assim.
-- Performance: janela padrão é 12 meses e com limites por ticker. Todos os limites são configuráveis pelo chamador.
+Camadas:
+- A/B/C/D: ranking e seleção "Somente estratégicos" por score explicável
+- PDFs: baixa e extrai texto (sem OCR), aceitando links CVM que não terminam em .pdf (frmDownloadDocumento.aspx)
+- Schema-safe: escreve no campo de texto existente (prioridade raw_text, fallback texto)
+- Backfill: se doc já existe mas não tem texto e conseguimos extrair, atualiza o texto (sem duplicar doc_hash)
 
 Requer:
-- public.cvm_to_ticker (colunas: CVM int, Ticker text)  (ou ajuste get_cvm_codes_for_tickers)
-- public.docs_corporativos com campos (ticker,titulo,url,fonte,tipo,data,texto,doc_hash,created_at...)
-- public.docs_corporativos_chunks com campos (doc_id,ticker,chunk_index,chunk_text,embedding,chunk_hash,created_at...)
+- public.cvm_to_ticker ("CVM" int, "Ticker" text)
+- public.docs_corporativos com doc_hash unique + coluna raw_text (preferida) ou texto
 """
+
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 import hashlib
 import io
@@ -33,10 +28,14 @@ from sqlalchemy import text
 
 from core.db_loader import get_supabase_engine
 
-
 # ──────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────
+
+_TEXT_COL_CACHE: Optional[str] = None
+
+def _engine():
+    return get_supabase_engine()
 
 def _norm_ticker(t: str) -> str:
     return (t or "").upper().replace(".SA", "").strip()
@@ -46,31 +45,17 @@ def _sha256(s: str) -> str:
 
 def _clean_text(s: str) -> str:
     s = (s or "").replace("\x00", " ").strip()
-    s = re.sub(r"\s+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    # normaliza "nan" literal
+    if s.lower() == "nan":
+        return ""
     return s
 
-def _chunk_text(texto: str, chunk_chars: int = 1500, overlap: int = 200) -> List[str]:
-    t = (texto or "").strip()
-    if not t:
-        return []
-    t = t.replace("\r\n", "\n")
-    out: List[str] = []
-    i, n = 0, len(t)
-    while i < n:
-        j = min(n, i + chunk_chars)
-        out.append(t[i:j])
-        if j >= n:
-            break
-        i = max(0, j - overlap)
-    return out
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
-def _pick_col(cols: Sequence[str], *candidates: str) -> Optional[str]:
-    """Retorna o primeiro candidato existente em cols (case-insensitive)."""
-    lower = {c.lower(): c for c in cols}
-    for cand in candidates:
-        if cand.lower() in lower:
-            return lower[cand.lower()]
-    return None
+def _now_minus_months(months: int) -> datetime:
+    return _utcnow() - timedelta(days=int(months) * 30)
 
 def _parse_date(val: Any) -> Optional[pd.Timestamp]:
     if val is None or (isinstance(val, float) and pd.isna(val)):
@@ -80,49 +65,138 @@ def _parse_date(val: Any) -> Optional[pd.Timestamp]:
     except Exception:
         return None
 
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+def _pick_col(cols: Sequence[str], *candidates: str) -> Optional[str]:
+    lower = {c.lower(): c for c in cols}
+    for cand in candidates:
+        if cand.lower() in lower:
+            return lower[cand.lower()]
+    return None
 
-def _now_minus_months(months: int) -> datetime:
-    # Aproximação segura (30 dias/mês) para filtro rápido no ingest
-    return _utcnow() - timedelta(days=int(months) * 30)
-
-def _looks_like_pdf(url: str) -> bool:
-    """Heurística para decidir se vale tentar baixar como PDF.
-
-    Observação: links da CVM (ENET/frmDownloadDocumento.aspx) NÃO terminam em .pdf.
-    Então tratamos esses endpoints como PDF prováveis.
+def _get_text_column(conn) -> str:
     """
-    u = (url or "").lower().strip()
-    if not u:
-        return False
-    if u.endswith(".pdf") or "pdf" in u:
-        return True
-    # CVM ENET / RAD download endpoints (comuns no IPE)
-    if "frmdownloaddocumento.aspx" in u:
-        return True
-    if "www.rad.cvm.gov.br" in u and "enet" in u and "download" in u:
-        return True
-    return False
+    Detecta coluna de texto em docs_corporativos:
+      - preferir raw_text
+      - fallback texto
+    Cacheado por processo.
+    """
+    global _TEXT_COL_CACHE
+    if _TEXT_COL_CACHE:
+        return _TEXT_COL_CACHE
 
+    rows = conn.execute(
+        text("""
+            select column_name
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'docs_corporativos'
+              and column_name in ('raw_text','texto')
+        """)
+    ).fetchall()
+    cols = {str(r[0]) for r in rows}
+    if "raw_text" in cols:
+        _TEXT_COL_CACHE = "raw_text"
+        return _TEXT_COL_CACHE
+    if "texto" in cols:
+        _TEXT_COL_CACHE = "texto"
+        return _TEXT_COL_CACHE
+    raise RuntimeError("docs_corporativos não possui coluna raw_text nem texto.")
 
-def _is_pdf_bytes(b: bytes) -> bool:
-    return bool(b) and b[:4] == b"%PDF"
+# ──────────────────────────────────────────────────────────────
+# Heurística A/B/C/D (Somente estratégicos)
+# ──────────────────────────────────────────────────────────────
 
+_POSITIVE_TYPES_HIGH = [
+    "fato relevante",
+    "comunicado ao mercado",
+    "reorganização societ",
+    "aquisi",
+    "m&a",
+    "fusão",
+    "cisão",
+    "incorp",
+    "guidance",
+    "proje",
+    "plano de investimento",
+    "capex",
+    "debênt",
+    "emissão",
+    "recompra",
+    "dividend",
+    "jcp",
+    "acordo",
+    "parceria",
+    "joint venture",
+    "opa",
+]
+_POSITIVE_TYPES_MED = [
+    "conselho de administração",
+    "assembleia",
+    "ago",
+    "age",
+    "política de dividend",
+    "remuneração",
+]
+
+_KEYWORDS = [
+    "capex", "invest", "expans", "guidance", "proje", "desalav", "dívida", "divida",
+    "debênt", "debent", "aquisi", "fus", "cis", "incorp", "parceria", "contrato",
+    "venda de ativo", "desinvest", "recompra", "dividendo", "jcp", "rating",
+    "alocação", "alocacao", "plano", "projeto", "estratég", "estrateg",
+]
+
+_NOISE = [
+    "eleição", "eleicao", "posse", "instalação", "instalacao", "regimento",
+    "calendário", "calendario", "atualização cadastral", "atualizacao cadastral",
+    "formulário", "formulario", "esclarecimento", "sem efeito", "retificação", "retificacao",
+]
+
+def _score_doc(tipo: str, titulo: str, assunto: str, categoria: str) -> int:
+    """
+    Score explicável para priorização estratégica.
+    - A) positivo por tipos e keywords
+    - B) penalização por ruído e títulos vazios/nan
+    """
+    tipo_n = (tipo or "").lower()
+    titulo_n = (titulo or "").lower()
+    assunto_n = (assunto or "").lower()
+    cat_n = (categoria or "").lower()
+    blob = f"{tipo_n} {titulo_n} {assunto_n} {cat_n}"
+
+    score = 0
+
+    # Tipos (alto)
+    for k in _POSITIVE_TYPES_HIGH:
+        if k in blob:
+            score += 8
+    # Tipos (médio)
+    for k in _POSITIVE_TYPES_MED:
+        if k in blob:
+            score += 4
+
+    # Keywords
+    for k in _KEYWORDS:
+        if k in blob:
+            score += 3
+
+    # Penalizações de ruído
+    for k in _NOISE:
+        if k in blob:
+            score -= 6
+
+    # Penalização por título vazio/nan
+    if not (titulo or "").strip() or (titulo or "").strip().lower() == "nan":
+        score -= 8
+
+    return score
 
 # ──────────────────────────────────────────────────────────────
 # PDF text extraction (sem OCR)
 # ──────────────────────────────────────────────────────────────
 
 def _extract_pdf_text(pdf_bytes: bytes, max_pages: int = 25) -> str:
-    """
-    Tenta extrair texto de PDF sem OCR.
-    Preferência: PyPDF2 (rápido). Fallback: pdfminer.six (mais robusto, mas mais lento).
-    """
     if not pdf_bytes:
         return ""
-
-    # PyPDF2
+    # PyPDF2 (rápido)
     try:
         import PyPDF2  # type: ignore
         reader = PyPDF2.PdfReader(io.BytesIO(pdf_bytes))
@@ -133,67 +207,50 @@ def _extract_pdf_text(pdf_bytes: bytes, max_pages: int = 25) -> str:
             t = page.extract_text() or ""
             if t:
                 texts.append(t)
-        out = "\n".join(texts)
-        out = _clean_text(out)
-        if len(out) >= 200:  # mínimo para ser útil
+        out = "\n".join(texts).strip()
+        if out:
             return out
     except Exception:
         pass
 
-    # pdfminer.six
+    # pdfminer.six (fallback)
     try:
         from pdfminer.high_level import extract_text  # type: ignore
         out = extract_text(io.BytesIO(pdf_bytes), maxpages=max_pages) or ""
-        out = _clean_text(out)
-        return out
+        return (out or "").strip()
     except Exception:
         return ""
 
+def _is_pdf_response(resp: requests.Response) -> bool:
+    ctype = (resp.headers.get("content-type") or "").lower()
+    if "pdf" in ctype:
+        return True
+    b = resp.content or b""
+    return b.startswith(b"%PDF")
+
+def _fetch_pdf_bytes(url: str, timeout: int = 25) -> Optional[bytes]:
+    """
+    CVM geralmente entrega PDF via frmDownloadDocumento.aspx; não confie em extensão.
+    """
+    if not url:
+        return None
+    # Heurística de elegibilidade de download (barata)
+    u = url.lower()
+    if not (u.endswith(".pdf") or "frmdownloaddocumento" in u or "download" in u):
+        # ainda pode ser pdf, mas evita gastar em links improváveis
+        return None
+    headers = {"User-Agent": "Mozilla/5.0"}
+    resp = requests.get(url, timeout=timeout, headers=headers)
+    resp.raise_for_status()
+    if not _is_pdf_response(resp):
+        return None
+    return resp.content
 
 # ──────────────────────────────────────────────────────────────
 # Supabase helpers
 # ──────────────────────────────────────────────────────────────
 
-def _engine():
-    return get_supabase_engine()
-
-# cache simples para evitar consultar schema a cada linha
-_TEXT_COL_CACHE: Optional[str] = None
-
-def _get_text_column(conn) -> str:
-    """Detecta dinamicamente a coluna de texto em public.docs_corporativos.
-
-    Compatibilidade:
-    - schemas antigos: coluna 'texto'
-    - schemas novos:  coluna 'raw_text'
-    """
-    global _TEXT_COL_CACHE
-    if _TEXT_COL_CACHE:
-        return _TEXT_COL_CACHE
-    rows = conn.execute(
-        text(
-            """
-            select column_name
-            from information_schema.columns
-            where table_schema='public'
-              and table_name='docs_corporativos'
-              and column_name in ('raw_text','texto')
-            """
-        )
-    ).fetchall()
-    cols = {str(r[0]) for r in (rows or [])}
-    if 'raw_text' in cols:
-        _TEXT_COL_CACHE = 'raw_text'
-        return _TEXT_COL_CACHE
-    if 'texto' in cols:
-        _TEXT_COL_CACHE = 'texto'
-        return _TEXT_COL_CACHE
-    raise RuntimeError("docs_corporativos não possui coluna 'texto' nem 'raw_text'. Ajuste o schema ou o ingest.")
-
 def get_cvm_codes_for_tickers(tickers: Sequence[str]) -> Dict[str, int]:
-    """
-    Lê mapeamento CVM->Ticker na tabela public.cvm_to_ticker.
-    """
     tks = [_norm_ticker(t) for t in tickers if (t or "").strip()]
     if not tks:
         return {}
@@ -209,37 +266,26 @@ def get_cvm_codes_for_tickers(tickers: Sequence[str]) -> Dict[str, int]:
         out[str(r["ticker"]).upper()] = int(r["cvm"])
     return out
 
-
-def _get_doc_status(conn, doc_hash: str) -> Optional[Dict[str, Any]]:
-    """Retorna status do doc se existir: id e se tem texto.
-
-    Compatível com schemas que usam 'texto' ou 'raw_text'.
+def _get_doc_status(conn, doc_hash: str) -> Dict[str, Any]:
+    """
+    Retorna:
+      exists: bool
+      id: Optional[int]
+      has_text: bool
     """
     text_col = _get_text_column(conn)
-    sql = f"""
-        select id,
-               (case when coalesce({text_col},'')<>'' then 1 else 0 end) as has_text
-        from public.docs_corporativos
-        where doc_hash = :h
-        limit 1
-    """
-    row = conn.execute(text(sql), {"h": doc_hash}).fetchone()
+    row = conn.execute(
+        text(f"""
+            select id, coalesce(nullif(trim({text_col}),''), '') as t
+            from public.docs_corporativos
+            where doc_hash = :h
+            limit 1
+        """),
+        {"h": doc_hash},
+    ).fetchone()
     if not row:
-        return None
-    return {"id": int(row[0]), "has_text": bool(row[1])}
-
-
-def _update_doc_text(conn, *, doc_id: int, texto: str) -> None:
-    text_col = _get_text_column(conn)
-    sql = f"""
-        update public.docs_corporativos
-        set {text_col} = :texto
-        where id = :id
-    """
-    conn.execute(text(sql), {"id": int(doc_id), "texto": texto})
-
-
-
+        return {"exists": False, "id": None, "has_text": False}
+    return {"exists": True, "id": int(row[0]), "has_text": bool(str(row[1] or "").strip())}
 
 def _insert_doc(
     conn,
@@ -254,63 +300,65 @@ def _insert_doc(
     doc_hash: str,
 ) -> Optional[int]:
     text_col = _get_text_column(conn)
-    sql = f"""
-        insert into public.docs_corporativos
-        (ticker, titulo, url, fonte, tipo, data, {text_col}, doc_hash)
-        values
-        (:ticker, :titulo, :url, :fonte, :tipo, :data, :texto, :doc_hash)
-        on conflict (doc_hash) do nothing
-        returning id
-    """
+    params = {
+        "ticker": ticker,
+        "titulo": (titulo or "")[:4000],
+        "url": (url or "")[:4000],
+        "fonte": fonte,
+        "tipo": (tipo or "")[:200],
+        "data": (data.to_pydatetime() if isinstance(data, pd.Timestamp) and not pd.isna(data) else None),
+        "doc_hash": doc_hash,
+        "text_value": texto or "",
+    }
     row = conn.execute(
-        text(sql),
-        {
-            "ticker": ticker,
-            "titulo": titulo[:4000],
-            "url": url[:4000],
-            "fonte": fonte,
-            "tipo": tipo[:200],
-            "data": (data.to_pydatetime() if isinstance(data, pd.Timestamp) and not pd.isna(data) else None),
-            "texto": texto,
-            "doc_hash": doc_hash,
-        },
+        text(f"""
+            insert into public.docs_corporativos
+            (ticker, titulo, url, fonte, tipo, data, {text_col}, doc_hash)
+            values
+            (:ticker, :titulo, :url, :fonte, :tipo, :data, :text_value, :doc_hash)
+            on conflict (doc_hash) do nothing
+            returning id
+        """),
+        params,
     ).fetchone()
     return int(row[0]) if row else None
 
-
+def _update_doc_text(conn, doc_id: int, texto: str) -> bool:
+    text_col = _get_text_column(conn)
+    if not (texto or "").strip():
+        return False
+    conn.execute(
+        text(f"""
+            update public.docs_corporativos
+            set {text_col} = :t
+            where id = :id
+        """),
+        {"t": texto, "id": int(doc_id)},
+    )
+    return True
 
 # ──────────────────────────────────────────────────────────────
 # Core ingest
 # ──────────────────────────────────────────────────────────────
 
 def _load_ipe_csv(year: int, timeout: int = 30) -> pd.DataFrame:
-    """
-    Baixa e lê o CSV do IPE (CIA_ABERTA) do ano informado.
-    """
     url_zip = f"https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/ipe_cia_aberta_{year}.zip"
     r = requests.get(url_zip, timeout=timeout)
     r.raise_for_status()
 
-    # o zip contém um único csv com o mesmo nome base
     import zipfile
     zf = zipfile.ZipFile(io.BytesIO(r.content))
-    # pega o primeiro CSV do zip
     csv_names = [n for n in zf.namelist() if n.lower().endswith(".csv")]
     if not csv_names:
         raise RuntimeError("ZIP do IPE não contém CSV")
     raw = zf.read(csv_names[0])
 
-    # encoding pode variar; latin-1 costuma funcionar
     for enc in ("utf-8", "latin1"):
         try:
-            df = pd.read_csv(io.BytesIO(raw), sep=";", encoding=enc, dtype=str)
-            return df
+            return pd.read_csv(io.BytesIO(raw), sep=";", encoding=enc, dtype=str)
         except Exception:
             continue
-    # fallback
-    df = pd.read_csv(io.BytesIO(raw), sep=";", encoding="latin1", dtype=str)
-    return df
-
+    return pd.read_csv(io.BytesIO(raw), sep=";", encoding="latin1", dtype=str)
 
 def ingest_ipe_for_tickers(
     tickers: Sequence[str],
@@ -322,16 +370,18 @@ def ingest_ipe_for_tickers(
     max_pdfs_per_ticker: int = 12,
     pdf_max_pages: int = 25,
     request_timeout: int = 25,
-    max_runtime_s: float = 25.0,
+    max_runtime_s: float = 90.0,
     sleep_s: float = 0.0,
     verbose: bool = False,
 ) -> Dict[str, Any]:
     """
     Ingest por tickers usando o dataset IPE.
-    Retorna dict com stats por ticker.
 
-    strategic_only:
-      filtra por termos-chave em ASSUNTO/CATEGORIA/TIPO para focar documentos estratégicos.
+    Implementa heurística A/B/C/D quando strategic_only=True:
+      A) score por sinal positivo (tipos/keywords)
+      B) penalização por ruído
+      C) cobertura mínima (fallback) se poucos docs estratégicos
+      D) auditoria (top 10 selecionados com score)
     """
     started = time.time()
     tickers_n = [_norm_ticker(t) for t in tickers if (t or "").strip()]
@@ -340,8 +390,7 @@ def ingest_ipe_for_tickers(
     now = _utcnow()
     min_dt = _now_minus_months(int(window_months))
 
-    # carrega anos necessários (janela pode atravessar ano)
-    years = sorted({now.year, (min_dt.year)})
+    years = sorted({now.year, min_dt.year})
     dfs: List[pd.DataFrame] = []
     for y in years:
         try:
@@ -349,8 +398,9 @@ def ingest_ipe_for_tickers(
         except Exception as e:
             if verbose:
                 print(f"[IPE] Falha ao carregar {y}: {e}")
+
     if not dfs:
-        return {"ok": False, "errors": {"__all__": "Nenhum CSV IPE disponível (falha ao baixar ZIP)."}, "stats": {}}
+        return {"ok": False, "errors": {"__all__": "Nenhum CSV IPE disponível."}, "stats": {}}
 
     df = pd.concat(dfs, ignore_index=True)
     cols = list(df.columns)
@@ -363,45 +413,42 @@ def ingest_ipe_for_tickers(
     col_tipo = _pick_col(cols, "TIPO", "TIPO_DOCUMENTO")
     col_especie = _pick_col(cols, "ESPECIE", "ESPECIE_DOCUMENTO")
 
-    missing = [c for c in (col_cvm, col_data, col_link, col_assunto) if c is None]
-    if missing:
-        return {
-            "ok": False,
-            "errors": {"__all__": f"CSV IPE sem colunas necessárias. Encontradas={cols}"},
-            "stats": {},
-        }
+    if any(c is None for c in (col_cvm, col_data, col_link, col_assunto)):
+        return {"ok": False, "errors": {"__all__": f"CSV IPE sem colunas necessárias. Encontradas={cols}"}, "stats": {}}
 
-    # parse dates once
     df["_dt"] = df[col_data].apply(_parse_date)
     df = df[~df["_dt"].isna()].copy()
-    # Normaliza para evitar comparação tz-aware vs tz-naive (pandas pode lançar TypeError)
-    min_ts = pd.Timestamp(min_dt)
-    if getattr(min_ts, "tzinfo", None) is not None:
-        # remove timezone mantendo o instante em "naive" (UTC)
-        min_ts = min_ts.tz_localize(None)
-    df = df[df["_dt"] >= min_ts].copy()
 
-    # filtros estratégicos (heurístico)
+    # tz-safe para evitar comparação dtype=datetime64[ns] vs Timestamp tz-aware
+    min_ts = pd.Timestamp(min_dt).tz_localize(None)
+    df["_dt_naive"] = df["_dt"].apply(lambda x: x.tz_localize(None) if hasattr(x, "tz_localize") and getattr(x, "tzinfo", None) is not None else x)
+    df = df[df["_dt_naive"] >= min_ts].copy()
+
+    # precompute campos textuais para scoring
     if strategic_only:
-        # palavras comuns para "intenção estratégica"
-        pattern = re.compile(
-            r"(guidance|invest|capex|expans|projeto|plano|estrat[eé]g|aquisi|m&a|fus[aã]o|desalav|aloca|"
-            r"remunera|dividend|recompra|conselho|assembleia|fato relevante|comunicado|release|"
-            r"resultad|earnings|apresenta[cç][aã]o|teleconfer|call)",
-            re.IGNORECASE,
-        )
-        def _is_strategic(row) -> bool:
-            txt = " ".join([str(row.get(col_assunto, "") or ""),
-                            str(row.get(col_categoria, "") or ""),
-                            str(row.get(col_tipo, "") or ""),
-                            str(row.get(col_especie, "") or "")])
-            return bool(pattern.search(txt))
-        df = df[df.apply(_is_strategic, axis=1)].copy()
+        df["_tipo"] = df[col_tipo].fillna("").map(_clean_text) if col_tipo else ""
+        df["_titulo"] = df[col_assunto].fillna("").map(_clean_text)
+        df["_assunto"] = df[col_assunto].fillna("").map(_clean_text)
+        df["_categoria"] = df[col_categoria].fillna("").map(_clean_text) if col_categoria else ""
+        df["_score"] = df.apply(lambda r: _score_doc(
+            str(r.get("_tipo","") or ""),
+            str(r.get("_titulo","") or ""),
+            str(r.get("_assunto","") or ""),
+            str(r.get("_categoria","") or "")
+        ), axis=1)
+    else:
+        df["_score"] = 0
 
     out_stats: Dict[str, Any] = {}
     out_errors: Dict[str, str] = {}
 
+    MIN_COVERAGE = 8   # C) cobertura mínima
+    MIN_SCORE_STRATEGIC = 3  # threshold leve, evita ficar vazio
+
     with _engine().begin() as conn:
+        # garante cache de coluna de texto inicializado (e falha cedo se schema inválido)
+        _ = _get_text_column(conn)
+
         for tk in tickers_n:
             if (time.time() - started) > max_runtime_s:
                 out_errors["__runtime__"] = f"Tempo máximo atingido ({max_runtime_s}s)."
@@ -410,29 +457,63 @@ def ingest_ipe_for_tickers(
             cvm = cvm_map.get(tk)
             if not cvm:
                 out_errors[tk] = "ticker_sem_mapeamento_cvm (preencha public.cvm_to_ticker)"
-                out_stats[tk] = {"matched": 0, "inserted": 0, "skipped": 0, "pdf_fetched": 0, "pdf_text_ok": 0}
+                out_stats[tk] = {"matched": 0, "considered": 0, "inserted": 0, "skipped": 0, "updated_text": 0, "pdf_fetched": 0, "pdf_text_ok": 0}
                 continue
 
-            dft = df[df[col_cvm].astype(str) == str(cvm)].copy()
-            # ordena por mais recente
-            dft = dft.sort_values("_dt", ascending=False)
+            dft_all = df[df[col_cvm].astype(str) == str(cvm)].copy()
+            dft_all = dft_all.sort_values("_dt_naive", ascending=False)
 
-            matched = int(len(dft))
+            matched = int(len(dft_all))
             if matched == 0:
-                out_stats[tk] = {"matched": 0, "inserted": 0, "skipped": 0, "pdf_fetched": 0, "pdf_text_ok": 0}
+                out_stats[tk] = {"matched": 0, "considered": 0, "inserted": 0, "skipped": 0, "updated_text": 0, "pdf_fetched": 0, "pdf_text_ok": 0}
                 continue
 
-            # limita por ticker
-            dft = dft.head(int(max_docs_per_ticker)).copy()
+            fallback_used = False
+            selected_strategic = 0
+
+            if strategic_only:
+                dft_ranked = dft_all.sort_values(["_score", "_dt_naive"], ascending=[False, False]).copy()
+
+                strategic = dft_ranked[dft_ranked["_score"] >= MIN_SCORE_STRATEGIC].copy()
+                strategic = strategic.head(int(max_docs_per_ticker))
+                selected = strategic.copy()
+                selected_strategic = int(len(selected))
+
+                # C) cobertura mínima
+                if selected_strategic < MIN_COVERAGE:
+                    fallback_used = True
+                    remaining = dft_ranked.loc[~dft_ranked.index.isin(selected.index)].sort_values("_dt_naive", ascending=False)
+                    need = int(max_docs_per_ticker) - selected_strategic
+                    if need > 0:
+                        selected = pd.concat([selected, remaining.head(need)], ignore_index=False)
+
+                # finalmente limita
+                selected = selected.head(int(max_docs_per_ticker)).copy()
+            else:
+                selected = dft_all.head(int(max_docs_per_ticker)).copy()
+
+            considered = int(len(selected))
+
+            # D) Auditoria top 10 selecionados
+            audit_top: List[Dict[str, Any]] = []
+            for _, rr in selected.head(10).iterrows():
+                audit_top.append({
+                    "data": str(rr.get("_dt_naive") or ""),
+                    "tipo": _clean_text(str(rr.get(col_tipo, "") or "")) if col_tipo else "",
+                    "titulo": _clean_text(str(rr.get(col_assunto, "") or "")),
+                    "categoria": _clean_text(str(rr.get(col_categoria, "") or "")) if col_categoria else "",
+                    "score": int(rr.get("_score") or 0),
+                    "url": str(rr.get(col_link, "") or "")[:300],
+                })
 
             inserted = 0
             skipped = 0
+            updated_text = 0
             pdf_fetched = 0
             pdf_text_ok = 0
             pdf_used = 0
-            updated_text = 0
 
-            for _, r in dft.iterrows():
+            for _, r in selected.iterrows():
                 if (time.time() - started) > max_runtime_s:
                     out_errors["__runtime__"] = f"Tempo máximo atingido ({max_runtime_s}s)."
                     break
@@ -442,63 +523,45 @@ def ingest_ipe_for_tickers(
                     skipped += 1
                     continue
 
-                titulo = _clean_text(str(r.get(col_assunto, "") or ""))
-                if titulo.lower() == "nan":
-                    titulo = ""
-                titulo = titulo or "Documento CVM/IPE"
-                tipo = _clean_text(str(r.get(col_tipo, "") or "")) or "IPE"
-                dt = r.get("_dt")
+                titulo = _clean_text(str(r.get(col_assunto, "") or "")) or ""
+                tipo = _clean_text(str(r.get(col_tipo, "") or "")) if col_tipo else ""
+                if not tipo:
+                    tipo = "IPE"
 
+                dt = r.get("_dt")  # Timestamp
                 doc_hash = _sha256(f"{tk}|{url}|{titulo}|{dt}")
+
                 status = _get_doc_status(conn, doc_hash)
-                if status is not None:
-                    # Doc já existe. Se ele não tem texto e estamos habilitados a baixar PDFs,
-                    # tentamos "backfill" do texto e atualizamos a linha existente.
-                    if (not status["has_text"]) and download_pdfs:
-                        texto = ""
-                        if _looks_like_pdf(url) and pdf_used < int(max_pdfs_per_ticker):
-                            try:
-                                resp = requests.get(url, timeout=request_timeout, allow_redirects=True)
-                                resp.raise_for_status()
-                                if _is_pdf_bytes(resp.content) or ("application/pdf" in (resp.headers.get("content-type","").lower())):
-                                    pdf_fetched += 1
-                                    pdf_used += 1
-                                    tpdf = _extract_pdf_text(resp.content, max_pages=int(pdf_max_pages))
-                                    if tpdf and len(tpdf) >= 200:
-                                        texto = tpdf
-                                        pdf_text_ok += 1
-                            except Exception:
-                                texto = ""
-                        if texto:
-                            _update_doc_text(conn, doc_id=status["id"], texto=texto)
-                            updated_text += 1
-                    skipped += 1
-                    continue
 
                 texto = ""
-                # Se PDF e permitido, tenta baixar e extrair texto
-                if download_pdfs and _looks_like_pdf(url) and pdf_used < int(max_pdfs_per_ticker):
+                if download_pdfs and pdf_used < int(max_pdfs_per_ticker):
                     try:
-                        resp = requests.get(url, timeout=request_timeout, allow_redirects=True)
-                        resp.raise_for_status()
-                        # Links da CVM nem sempre terminam em .pdf; valide pelo header/magic bytes
-                        if not (_is_pdf_bytes(resp.content) or ("application/pdf" in (resp.headers.get("content-type","").lower()))):
-                            raise ValueError("download não retornou PDF")
-                        pdf_fetched += 1
-                        pdf_used += 1
-                        tpdf = _extract_pdf_text(resp.content, max_pages=int(pdf_max_pages))
-                        if tpdf and len(tpdf) >= 200:
-                            texto = tpdf
-                            pdf_text_ok += 1
+                        pdf_bytes = _fetch_pdf_bytes(url, timeout=request_timeout)
+                        if pdf_bytes:
+                            pdf_fetched += 1
+                            pdf_used += 1
+                            tpdf = _extract_pdf_text(pdf_bytes, max_pages=int(pdf_max_pages))
+                            tpdf = tpdf.strip() if tpdf else ""
+                            if tpdf and len(tpdf) >= 200:
+                                texto = tpdf
+                                pdf_text_ok += 1
                     except Exception:
-                        # mantem metadados apenas
                         pass
 
-                # Insere documento mesmo sem texto (metadados são úteis)
+                # Se já existe:
+                if status["exists"]:
+                    if (not status["has_text"]) and texto:
+                        if _update_doc_text(conn, int(status["id"]), texto):
+                            updated_text += 1
+                    else:
+                        skipped += 1
+                    continue
+
+                # Novo documento
                 doc_id = _insert_doc(
                     conn,
                     ticker=tk,
-                    titulo=titulo,
+                    titulo=titulo or "Documento CVM/IPE",
                     url=url,
                     fonte="CVM/IPE",
                     tipo=tipo,
@@ -516,12 +579,16 @@ def ingest_ipe_for_tickers(
 
             out_stats[tk] = {
                 "matched": matched,
-                "considered": int(len(dft)),
+                "considered": considered,
                 "inserted": inserted,
                 "skipped": skipped,
+                "updated_text": updated_text,
                 "pdf_fetched": pdf_fetched,
                 "pdf_text_ok": pdf_text_ok,
-                "updated_text": updated_text,
+                # D) auditoria
+                "selected_strategic": selected_strategic if strategic_only else None,
+                "fallback_used": fallback_used if strategic_only else None,
+                "top_selected": audit_top,
             }
 
     ok = (len(out_errors) == 0)
