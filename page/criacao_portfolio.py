@@ -45,6 +45,7 @@ except Exception:
 try:
     # Patch 1 e 2 (estáveis)
     from page.portfolio_patches import (
+from page.portfolio_patches import render_patch5_ia_selecao_lideres
         render_patch1_regua_conviccao,
         render_patch2_dominancia,
     )
@@ -64,7 +65,6 @@ try:
 
     # Patch 5 (novo): desempenho das empresas (Preço/DY + Lucros)
     try:
-        from page.portfolio_patches import render_patch5_desempenho_empresas
     except Exception:
         render_patch5_desempenho_empresas = None  # type: ignore
 
@@ -848,62 +848,6 @@ def render():
         pass
 
 
-
-    # ─────────────────────────────────────────────────────────
-    # Persistência do Snapshot do Portfólio (Supabase)
-    # - NÃO altera score/seleção/backtest.
-    # - Apenas salva o resultado final (tickers + pesos + metadados mínimos)
-    #   para habilitar a página "Análises de Portfólio".
-    # ─────────────────────────────────────────────────────────
-    try:
-        from core.portfolio_snapshot_store import save_snapshot  # type: ignore
-
-        def _pick_selic_ref(df_macro: pd.DataFrame) -> float | None:
-            if df_macro is None or df_macro.empty:
-                return None
-            cols = [c for c in df_macro.columns]
-            cand = None
-            for name in ("Selic", "SELIC", "selic", "taxa_selic", "Selic_aa", "Selic_AA"):
-                if name in cols:
-                    cand = name
-                    break
-            if cand is None:
-                return None
-            s = pd.to_numeric(df_macro[cand], errors="coerce").dropna()
-            return float(s.iloc[-1]) if not s.empty else None
-
-        if empresas_lideres_finais:
-            header = {
-                "selic_ref": _pick_selic_ref(dados_macro) if "dados_macro" in locals() else None,
-                "margem_superior": float(margem_superior) if "margem_superior" in locals() else None,
-                "tipo_empresa": str(tipo_empresa) if "tipo_empresa" in locals() else None,
-                "filters_json": {
-                    "tipo_empresa": str(tipo_empresa) if "tipo_empresa" in locals() else None,
-                    "gate_rule": "n<=4:padrao else calibrado",
-                },
-            }
-
-            items = []
-            for e in empresas_lideres_finais:
-                items.append(
-                    {
-                        "ticker": _strip_sa(str(e.get("ticker", ""))),
-                        "segmento": str(e.get("segmento", "")),
-                        "peso": float(e.get("peso", 0.0) or 0.0),
-                        "meta_json": {
-                            "motivo_select": e.get("motivo_select"),
-                            "is_lider_ultimo": e.get("is_lider_ultimo"),
-                            "nivel_consolidacao": e.get("nivel_consolidacao"),
-                        },
-                    }
-                )
-
-            snapshot_id = save_snapshot(header=header, items=items)
-            st.session_state["portfolio_snapshot_id"] = snapshot_id
-    except Exception:
-        # Sem quebrar a execução do dashboard caso o store/tabelas ainda não existam
-        pass
-
     if empresas_lideres_finais:
         st.markdown("## 📑 Empresas líderes para o próximo ano")
         colunas_lideres = st.columns(3)
@@ -1096,14 +1040,25 @@ def render():
 
 
 
-        if 'render_patch5_desempenho_empresas' in globals() and render_patch5_desempenho_empresas is not None:
-            with st.expander("🧩 Patch 5 — Desempenho das Empresas (Preço/DY + Lucros)", expanded=False):
-                try:
-                    render_patch5_desempenho_empresas(empresas_lideres_finais)
-                except Exception as e:
-                    st.error(f"Patch 5 falhou: {type(e).__name__}: {e}")
-
-    # Desarma a execução após rodar (evita “auto-rerun armado”)
+        # [REMOVIDO] Patch 5 antigo (desempenho) desabilitado
+# Desarma a execução após rodar (evita “auto-rerun armado”)
     st.session_state["cp_should_run"] = False
 
     st.markdown("<hr>", unsafe_allow_html=True)
+
+
+
+    # ─────────────────────────────────────────────────────────
+    # 🧩 Patch 5 (NOVO) — Validação por IA da seleção de líderes
+    # ─────────────────────────────────────────────────────────
+    try:
+        if empresas_lideres_finais and 'score_global' in locals() and 'lideres_global' in locals():
+            with st.expander("🧩 Patch 5 — Validação por IA (Seleção de Líderes)", expanded=False):
+                render_patch5_ia_selecao_lideres(
+                    score_global=score_global,
+                    lideres_global=lideres_global,
+                    empresas_lideres_finais=empresas_lideres_finais,
+                    cache_hours=24,
+                )
+    except Exception as e:
+        st.error(f"Patch 5 (IA) falhou: {type(e).__name__}: {e}")
