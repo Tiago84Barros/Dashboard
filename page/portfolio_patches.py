@@ -6,7 +6,6 @@ import textwrap
 import hashlib
 import json
 import time
-import re
 
 import numpy as np
 import pandas as pd
@@ -512,362 +511,7 @@ def render_patch4_benchmark_segmento(
 
 
 # ─────────────────────────────────────────────────────────────
-
-# ─────────────────────────────────────────────────────────────
-# PATCH 5 — Desempenho das empresas do portfólio final
-# ─────────────────────────────────────────────────────────────
-
-def render_patch5_desempenho_empresas(
-    empresas_lideres_finais: List[Dict],
-    precos: Optional[pd.DataFrame],
-    score_global: Optional[pd.DataFrame] = None,
-    dividendos: Optional[Dict[str, pd.Series]] = None,
-    janela_anos: int = 5,
-) -> None:
-    """
-    Mostra (em cards) métricas por empresa:
-    - Volatilidade anualizada (retornos diários; janela ~ N anos)
-    - Retorno 12m e CAGR de preço (janela N anos; se houver)
-    - Máx drawdown (janela N anos)
-    - DY médio (últimos N anos; dividendos / preço médio anual)
-    - Crescimento de lucros (CAGR em N anos) se houver em score_global
-    Observação: usa apenas dados já carregados (preços) e, se necessário, tenta coletar dividendos via core.yf_data.
-    """
-    st.markdown("## 🧩 Patch 5 — Desempenho das empresas (métricas chave)")
-    st.caption(
-        "Resumo quantitativo por empresa para apoiar a decisão final. "
-        "Volatilidade e drawdown medem risco; retornos e CAGR medem crescimento; DY médio mede renda recorrente."
-    )
-
-    if not empresas_lideres_finais:
-        st.info("Patch 5 indisponível: portfólio final vazio.")
-        return
-
-    df_prices = _ensure_prices_df(precos)
-
-    # Tenta coletar dividendos somente se necessário (poucos tickers) e se o core existir
-    if dividendos is None:
-        try:
-            from core.yf_data import coletar_dividendos  # type: ignore
-            tks = [_norm_tk(e.get("ticker", "")) for e in empresas_lideres_finais if _norm_tk(e.get("ticker", ""))]
-            dividendos = coletar_dividendos([t + ".SA" if not str(t).endswith(".SA") else t for t in tks])
-        except Exception:
-            dividendos = {}
-
-    dividendos = dividendos or {}
-
-    # Normaliza score (para tentar puxar crescimento de lucros)
-    sg = _safe_df(score_global).copy()
-    if not sg.empty:
-        sg["Ano"] = pd.to_numeric(sg.get("Ano"), errors="coerce")
-        if "ticker" in sg.columns:
-            sg["ticker"] = sg["ticker"].astype(str).map(_norm_tk)
-
-    # Helpers de métrica
-    def _slice_last_years(df: pd.DataFrame, years: int) -> pd.DataFrame:
-        if df.empty:
-            return df
-        end = df.index.max()
-        start = (end - pd.DateOffset(years=years))
-        return df.loc[df.index >= start].copy()
-
-    def _annualized_vol(ser: pd.Series) -> Optional[float]:
-        ser = pd.to_numeric(ser, errors="coerce").dropna()
-        if ser.size < 60:
-            return None
-        ret = ser.pct_change().dropna()
-        if ret.size < 60:
-            return None
-        v = float(ret.std()) * (252.0 ** 0.5)
-        return v if np.isfinite(v) else None
-
-    def _max_drawdown(ser: pd.Series) -> Optional[float]:
-        ser = pd.to_numeric(ser, errors="coerce").dropna()
-        if ser.size < 60:
-            return None
-        cummax = ser.cummax()
-        dd = (ser / (cummax + 1e-12)) - 1.0
-        mdd = float(dd.min())
-        return mdd if np.isfinite(mdd) else None
-
-    def _cagr(ser: pd.Series, years: int) -> Optional[float]:
-        ser = pd.to_numeric(ser, errors="coerce").dropna()
-        if ser.size < 2:
-            return None
-        end = ser.index.max()
-        start = end - pd.DateOffset(years=years)
-        s = ser.loc[ser.index >= start]
-        if s.size < 2:
-            return None
-        v0 = float(s.iloc[0])
-        v1 = float(s.iloc[-1])
-        if not (np.isfinite(v0) and np.isfinite(v1)) or v0 <= 0:
-            return None
-        c = (v1 / v0) ** (1.0 / years) - 1.0
-        return float(c) if np.isfinite(c) else None
-
-    def _ret_12m(ser: pd.Series) -> Optional[float]:
-        ser = pd.to_numeric(ser, errors="coerce").dropna()
-        if ser.size < 2:
-            return None
-        end = ser.index.max()
-        start = end - pd.DateOffset(months=12)
-        s = ser.loc[ser.index >= start]
-        if s.size < 2:
-            return None
-        v0 = float(s.iloc[0])
-        v1 = float(s.iloc[-1])
-        if not (np.isfinite(v0) and np.isfinite(v1)) or v0 <= 0:
-            return None
-        r = (v1 / v0) - 1.0
-        return float(r) if np.isfinite(r) else None
-
-    def _dy_medio_anual(div: pd.Series, price: pd.Series, years: int) -> Optional[float]:
-        """
-        DY médio anual (últimos N anos): (dividendos anuais / preço médio anual), média simples.
-        """
-        if div is None or not isinstance(div, pd.Series) or div.empty:
-            return None
-        if price is None or not isinstance(price, pd.Series) or price.empty:
-            return None
-
-        div = div.copy()
-        div.index = pd.to_datetime(div.index, errors="coerce")
-        div = div.dropna()
-        if div.empty:
-            return None
-
-        price = pd.to_numeric(price, errors="coerce").dropna()
-        if price.empty:
-            return None
-
-        end = price.index.max()
-        start = end - pd.DateOffset(years=years)
-        price = price.loc[price.index >= start]
-        if price.empty:
-            return None
-
-        # anos calendário dentro da janela
-        anos = sorted(set(price.index.year.tolist()))[-years:]
-        if not anos:
-            return None
-
-        dys: List[float] = []
-        for a in anos:
-            p_year = price.loc[price.index.year == a]
-            if p_year.empty:
-                continue
-            div_year = div.loc[div.index.year == a]
-            if div_year.empty:
-                continue
-            div_total = float(pd.to_numeric(div_year, errors="coerce").sum())
-            p_mean = float(p_year.mean())
-            if p_mean > 0 and np.isfinite(div_total) and np.isfinite(p_mean):
-                dy = div_total / p_mean
-                if np.isfinite(dy):
-                    dys.append(float(dy))
-        if not dys:
-            return None
-        return float(np.mean(dys))
-
-    def _lucro_cagr_from_score(df_score: pd.DataFrame, tk: str, years: int) -> Optional[float]:
-        """
-        Tenta extrair uma série de lucros do score_global (se houver colunas de lucro por ano).
-        Heurística: procura a primeira coluna numérica que contenha 'lucro' no nome.
-        """
-        if df_score is None or df_score.empty:
-            return None
-        if "ticker" not in df_score.columns or "Ano" not in df_score.columns:
-            return None
-        sub = df_score[df_score["ticker"] == tk].copy()
-        if sub.empty:
-            return None
-
-        # escolhe coluna de lucro
-        cols = [c for c in sub.columns if re.search(r"(?i)\blucro\b|lucro", str(c)) and "margem" not in str(c).lower()]
-        cols = [c for c in cols if c not in ("ticker", "Ano")]
-        lucro_col = None
-        for c in cols:
-            s = pd.to_numeric(sub[c], errors="coerce")
-            if s.notna().sum() >= 4:
-                lucro_col = c
-                break
-        if lucro_col is None:
-            return None
-
-        sub = sub[["Ano", lucro_col]].dropna()
-        sub["Ano"] = pd.to_numeric(sub["Ano"], errors="coerce")
-        sub[lucro_col] = pd.to_numeric(sub[lucro_col], errors="coerce")
-        sub = sub.dropna()
-        sub = sub.sort_values("Ano")
-        if sub.empty:
-            return None
-
-        amax = int(sub["Ano"].max())
-        amin = amax - years
-        w = sub[sub["Ano"] >= amin].copy()
-        if w.shape[0] < 2:
-            return None
-
-        v0 = float(w.iloc[0][lucro_col])
-        v1 = float(w.iloc[-1][lucro_col])
-        if not (np.isfinite(v0) and np.isfinite(v1)) or v0 <= 0:
-            return None
-        c = (v1 / v0) ** (1.0 / years) - 1.0
-        return float(c) if np.isfinite(c) else None
-
-    # CSS cards (estilo “blocos”)
-    st.markdown(
-        """
-        <style>
-        .emp-grid {display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px;}
-        @media (max-width: 900px) { .emp-grid {grid-template-columns: 1fr;} }
-        .emp-card {
-            background: #0b1220;
-            border: 1px solid rgba(255,255,255,0.10);
-            border-radius: 16px;
-            padding: 14px 14px;
-            box-shadow: 0 10px 22px rgba(0,0,0,0.35);
-        }
-        .emp-head {display:flex; align-items:center; gap:10px; margin-bottom:10px;}
-        .emp-logo {width:44px; height:44px; object-fit:contain; border-radius:10px; background: rgba(255,255,255,0.05); padding:6px;}
-        .emp-name {font-size:16px; font-weight:700; color:#e7eefc; margin:0; line-height:1.15;}
-        .emp-meta {font-size:12px; color:rgba(231,238,252,0.70); margin:2px 0 0 0;}
-        .emp-kpis {display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:10px; margin-top:10px;}
-        .kpi {
-            background: rgba(255,255,255,0.04);
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 14px;
-            padding: 10px 10px;
-        }
-        .kpi .lbl {font-size:11px; color:rgba(231,238,252,0.70); margin:0;}
-        .kpi .val {font-size:18px; font-weight:800; color:#d9ffdd; margin:0; line-height:1.1;}
-        .kpi .val.neg {color:#ffd9d9;}
-        .kpi .sub {font-size:11px; color:rgba(231,238,252,0.55); margin:2px 0 0 0;}
-        .emp-foot {margin-top:10px; font-size:11px; color:rgba(231,238,252,0.60);}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # Monta cards
-    cards_html: List[str] = ['<div class="emp-grid">']
-
-    tks = [_norm_tk(e.get("ticker", "")) for e in empresas_lideres_finais if _norm_tk(e.get("ticker", ""))]
-    tks = list(dict.fromkeys(tks))
-
-    for e in empresas_lideres_finais:
-        tk = _norm_tk(e.get("ticker", ""))
-        if not tk:
-            continue
-
-        nome = str(e.get("nome") or tk)
-        setor = str(e.get("setor", "")).strip()
-        subsetor = str(e.get("subsetor", "")).strip()
-        segmento = str(e.get("segmento", "")).strip()
-        seg_path = " > ".join([x for x in [setor, subsetor, segmento] if x])
-
-        peso = _safe_float(e.get("peso"))
-        peso_txt = f"{peso*100:.1f}%" if (peso is not None) else "—"
-
-        # Série de preços (janela)
-        price_ser = df_prices[tk] if (not df_prices.empty and tk in df_prices.columns) else pd.Series(dtype=float)
-        price_win = _slice_last_years(price_ser.to_frame(tk), janela_anos)[tk] if not price_ser.empty else price_ser
-
-        vol = _annualized_vol(price_win)
-        mdd = _max_drawdown(price_win)
-        r12 = _ret_12m(price_win)
-        cagr = _cagr(price_win, janela_anos)
-
-        # DY médio (janela)
-        # Seleção segura do dividendos (evita ambiguidade de Series)
-            div_ser = dividendos.get(tk, None)
-            if div_ser is None:
-                div_ser = dividendos.get(tk + ".SA", None)
-
-            if isinstance(div_ser, pd.DataFrame):
-                div_ser = div_ser.iloc[:, 0] if div_ser.shape[1] else pd.Series(dtype="float64")
-            elif div_ser is None:
-                div_ser = pd.Series(dtype="float64")
-        dy = _dy_medio_anual(div_ser, price_ser, janela_anos)
-
-        # Crescimento de lucros (se der)
-        lucro_cagr = _lucro_cagr_from_score(sg, tk, janela_anos) if not sg.empty else None
-
-        # Formatação
-        def fmt_pct(x: Optional[float]) -> str:
-            if x is None or (not np.isfinite(x)):
-                return "—"
-            return f"{x*100:.1f}%"
-
-        def val_class(x: Optional[float]) -> str:
-            if x is None or (not np.isfinite(x)):
-                return ""
-            return "neg" if x < 0 else ""
-
-        logo_url = str(e.get("logo_url") or "").strip()
-
-        cards_html.append(
-            f"""
-            <div class="emp-card">
-              <div class="emp-head">
-                {f'<img class="emp-logo" src="{logo_url}" />' if logo_url else '<div class="emp-logo"></div>'}
-                <div>
-                  <p class="emp-name">{nome} ({tk})</p>
-                  <p class="emp-meta">{seg_path if seg_path else '—'} • Peso sugerido: {peso_txt}</p>
-                </div>
-              </div>
-
-              <div class="emp-kpis">
-                <div class="kpi">
-                  <p class="lbl">Retorno 12m (preço)</p>
-                  <p class="val {val_class(r12)}">{fmt_pct(r12)}</p>
-                  <p class="sub">Janela móvel 12 meses</p>
-                </div>
-
-                <div class="kpi">
-                  <p class="lbl">CAGR {janela_anos}a (preço)</p>
-                  <p class="val {val_class(cagr)}">{fmt_pct(cagr)}</p>
-                  <p class="sub">Crescimento anual composto</p>
-                </div>
-
-                <div class="kpi">
-                  <p class="lbl">Volatilidade anualizada</p>
-                  <p class="val {val_class(None)}">{fmt_pct(vol)}</p>
-                  <p class="sub">Std(retornos diários) × √252</p>
-                </div>
-
-                <div class="kpi">
-                  <p class="lbl">Máx drawdown</p>
-                  <p class="val neg">{fmt_pct(mdd)}</p>
-                  <p class="sub">Queda máxima na janela</p>
-                </div>
-
-                <div class="kpi">
-                  <p class="lbl">DY médio ({janela_anos}a)</p>
-                  <p class="val {val_class(None)}">{fmt_pct(dy)}</p>
-                  <p class="sub">Dividendos/Preço médio anual</p>
-                </div>
-
-                <div class="kpi">
-                  <p class="lbl">Crescimento de lucros ({janela_anos}a)</p>
-                  <p class="val {val_class(lucro_cagr)}">{fmt_pct(lucro_cagr)}</p>
-                  <p class="sub">Se disponível no score_global</p>
-                </div>
-              </div>
-
-              <div class="emp-foot">
-                Nota: métricas são aproximadas (preço sem reinvestimento). Use como diagnóstico rápido.
-              </div>
-            </div>
-            """
-        )
-
-    cards_html.append("</div>")
-    st.markdown("\n".join(cards_html), unsafe_allow_html=True)
-
-
-# PATCH 6 — IA (OpenAI) — Seleção/validação amigável (era Patch 6)
+# PATCH 5 — IA (OpenAI) — Seleção/validação amigável (era Patch 6)
 # ─────────────────────────────────────────────────────────────
 
 def _render_patch5_report(resp: Dict[str, Any], *, mostrar_tabela: bool = False) -> None:
@@ -1601,3 +1245,503 @@ def _render_patch6_output(payload: dict, empresas_lideres_finais: List[Dict]) ->
     if falhas:
         with st.expander("🛠️ Detalhes de falhas (debug)", expanded=False):
             st.json(falhas)
+
+
+
+# ─────────────────────────────────────────────────────────────
+# PATCH 6 (CVM/IPE) — Direcionalidade Estratégica (RAG) + Overlay de Aporte
+# (Novo Patch para Criação de Portfólio; UI enxuta, sem "chunk" (usa "variáveis úteis"))
+# ─────────────────────────────────────────────────────────────
+
+def render_patch6_cvm_ipe_direcionalidade(
+    *,
+    empresas_lideres_finais: List[Dict[str, Any]],
+    score_global: Optional[pd.DataFrame] = None,
+    precos: Optional[pd.DataFrame] = None,
+    aporte_mes: Optional[float] = None,
+    window_months_default: int = 12,
+    top_k_default: int = 25,
+) -> Optional[Dict[str, float]]:
+    """
+    Patch 6 (CVM/IPE): coleta docs -> chunking -> RAG -> LLM.
+    Saída: dicionário {ticker: pct_aporte} sugerido (0-1), baseado na perspectiva da LLM.
+    Não altera portfólio (não troca ativos). Apenas modula o aporte mensal.
+    """
+    st.markdown("## 🧠 Patch 6 — Direcionalidade Estratégica (CVM/IPE)")
+    st.caption(
+        "Este patch usa documentos **CVM/IPE** recentes (estratégicos) para inferir "
+        "direcionalidade (forte/moderada/fraca) e sugerir **modulação de aporte** dentro da cesta já selecionada."
+    )
+
+    if not empresas_lideres_finais:
+        st.info("Sem ativos selecionados — Patch 6 não tem o que analisar.")
+        return None
+
+    # CSS (cards) — enxuto e legível
+    st.markdown(
+        """
+        <style>
+          .p6x-wrap { display:block; margin: 8px 0 18px 0; }
+          .p6x-card {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.10);
+            border-radius: 14px;
+            padding: 14px 14px 12px 14px;
+            box-shadow: 0 6px 18px rgba(0,0,0,0.22);
+            margin: 10px 0;
+          }
+          .p6x-head { display:flex; justify-content:space-between; align-items:baseline; gap:12px; }
+          .p6x-title { font-weight: 900; font-size: 16px; color:#fff; }
+          .p6x-pill {
+            font-weight: 900;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            border: 1px solid rgba(255,255,255,0.14);
+            background: rgba(255,255,255,0.06);
+          }
+          .p6x-sub { color: rgba(255,255,255,0.75); font-size: 12.5px; margin-top: 6px; }
+          .p6x-grid { display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top: 10px; }
+          .p6x-box {
+            background: rgba(0,0,0,0.18);
+            border: 1px solid rgba(255,255,255,0.10);
+            border-radius: 12px;
+            padding: 10px 10px 8px 10px;
+          }
+          .p6x-box h4 { margin:0 0 6px 0; font-size: 13px; color: rgba(255,255,255,0.92); }
+          .p6x-box ul { margin: 0; padding-left: 16px; color: rgba(255,255,255,0.82); }
+          .p6x-box li { margin: 2px 0; font-size: 12.5px; }
+          .p6x-why { margin-top: 10px; color: rgba(255,255,255,0.86); font-size: 13px; }
+          .p6x-meta { margin-top: 8px; color: rgba(255,255,255,0.62); font-size: 12px; }
+          .p6x-divider { height:1px; background: rgba(255,255,255,0.08); margin: 10px 0; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Estado
+    st.session_state.setdefault("p6x_reports", {})   # ticker -> dict
+    st.session_state.setdefault("p6x_vars_count", {})  # ticker -> int
+    st.session_state.setdefault("p6x_last_ingest", None)
+    st.session_state.setdefault("p6x_last_run_key", None)
+
+    tickers = sorted({_norm_tk(e.get("ticker", "")) for e in (empresas_lideres_finais or []) if _norm_tk(e.get("ticker",""))})
+    if not tickers:
+        st.info("Tickers inválidos.")
+        return None
+
+    # Pequenas métricas quantitativas para enriquecer a LLM (opcional)
+    def _compute_quant_metrics() -> Dict[str, Dict[str, Any]]:
+        out: Dict[str, Dict[str, Any]] = {t: {} for t in tickers}
+
+        # Score do último ano (se houver)
+        try:
+            sg = score_global.copy() if isinstance(score_global, pd.DataFrame) else pd.DataFrame()
+            if not sg.empty and "ticker" in sg.columns:
+                sg["ticker"] = sg["ticker"].astype(str).map(_norm_tk)
+            if not sg.empty and "Ano" in sg.columns:
+                sg["Ano"] = pd.to_numeric(sg["Ano"], errors="coerce")
+                ultimo = int(sg["Ano"].max())
+                sg_last = sg[sg["Ano"] == ultimo].copy()
+                for t in tickers:
+                    r = sg_last[sg_last["ticker"] == t]
+                    if not r.empty:
+                        if "Score_Ajustado" in r.columns:
+                            out[t]["score_ultimo_ano"] = _safe_float(r.iloc[0].get("Score_Ajustado"))
+                        else:
+                            sc_cols = [c for c in r.columns if str(c).lower().startswith("score")]
+                            out[t]["score_ultimo_ano"] = _safe_float(r.iloc[0].get(sc_cols[0])) if sc_cols else None
+                        out[t]["ano_score"] = ultimo
+        except Exception:
+            pass
+
+        # Preço/vol/drawdown 12m (se houver)
+        try:
+            px = _ensure_prices_df(precos)
+            if not px.empty:
+                px = px.resample("B").last().ffill()
+                last_dt = px.index.max()
+                start_dt = last_dt - pd.Timedelta(days=365)
+                px12 = px.loc[px.index >= start_dt].copy()
+                rets = px12.pct_change().replace([np.inf, -np.inf], np.nan)
+                for t in tickers:
+                    if t in px12.columns:
+                        s = px12[t].dropna()
+                        if s.shape[0] >= 2:
+                            out[t]["retorno_12m_preco"] = float(s.iloc[-1] / (s.iloc[0] + 1e-12) - 1.0)
+                            rr = rets[t].dropna()
+                            if rr.shape[0] >= 10:
+                                out[t]["vol_12m_anualizada"] = float(rr.std() * np.sqrt(252))
+                            # drawdown
+                            roll_max = s.cummax()
+                            dd = (s / (roll_max + 1e-12) - 1.0).min()
+                            out[t]["drawdown_12m"] = float(dd)
+        except Exception:
+            pass
+
+        return out
+
+    quant_metrics = _compute_quant_metrics()
+
+    # Supabase helpers (para contar e ler "variáveis úteis")
+    def _get_engine():
+        from core.db_loader import get_supabase_engine
+        return get_supabase_engine()
+
+    def _read_sql_df(sql: str, params: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
+        from sqlalchemy import text as _sql_text
+        eng = _get_engine()
+        with eng.connect() as conn:
+            return pd.read_sql_query(_sql_text(sql), conn, params=params or {})
+
+    def _count_vars_uteis_by_tickers(tks: List[str]) -> Dict[str, int]:
+        if not tks:
+            return {}
+        df = _read_sql_df(
+            """
+            select ticker, count(*)::int as cnt
+            from public.docs_corporativos_chunks
+            where ticker = any(:tks)
+            group by ticker
+            """,
+            {"tks": tks},
+        )
+        out = {t: 0 for t in tks}
+        for _, r in df.iterrows():
+            out[str(r["ticker"])] = int(r["cnt"])
+        return out
+
+    def _get_vars_uteis_for_rag(ticker: str, top_k: int) -> List[Dict[str, Any]]:
+        df = _read_sql_df(
+            """
+            select id, doc_id, ticker, chunk_index, chunk_text, created_at
+            from public.docs_corporativos_chunks
+            where ticker = :tk
+            order by id desc
+            limit :lim
+            """,
+            {"tk": ticker, "lim": int(top_k)},
+        )
+        return [] if df is None or df.empty else df.to_dict(orient="records")
+
+    # LLM helpers
+    def _build_prompt(ticker: str, context: str, qvars: Dict[str, Any]) -> str:
+        q_block = json.dumps(qvars or {}, ensure_ascii=False)
+        return f"""
+Você é um analista fundamentalista buy-side focado em direcionalidade estratégica (capex, expansão, guidance, investimentos futuros,
+desalavancagem, alocação de capital e prioridades do management).
+
+Seu trabalho é avaliar a empresa **{ticker}** com base em:
+(1) variáveis úteis extraídas de documentos (CVM/IPE) e
+(2) variáveis quantitativas (se disponíveis).
+
+ENTREGA (responda em JSON):
+{{
+  "ticker": "{ticker}",
+  "perspectiva_compra": "forte|moderada|fraca",
+  "resumo": "2-4 frases, direto",
+  "pontos_chave": ["...","...","..."],
+  "riscos_ou_alertas": ["...","..."],
+  "sinais_de_investimento_futuro": ["capex","expansão","projetos","guidance","M&A","desalavancagem", "..."],
+  "porque": "1 parágrafo objetivo (por que forte/moderada/fraca)",
+  "evidencias": [
+    {{"fonte":"CVM/IPE","trecho":"<=240 chars","observacao":"por que isso importa"}}
+  ]
+}}
+
+REGRAS:
+- Não invente números/dados. Se não houver, diga explicitamente "não informado".
+- Foque em intenção estratégica e direcionamento, não em DFP/ITR.
+- Evidências devem vir do contexto fornecido (variáveis úteis).
+
+[VARIÁVEIS QUANTITATIVAS]
+{q_block}
+
+[VARIÁVEIS ÚTEIS - RAG]
+{context}
+""".strip()
+
+    def _run_llm(ticker: str, top_k: int) -> Dict[str, Any]:
+        vars_uteis = _get_vars_uteis_for_rag(ticker, top_k=int(top_k))
+        if not vars_uteis:
+            return {"ok": False, "error": f"Sem variáveis úteis no banco para {ticker}. Rode a aquisição antes."}
+
+        parts: List[str] = []
+        for c in vars_uteis[::-1]:
+            txt = str(c.get("chunk_text", "") or "").strip()
+            if txt:
+                parts.append(txt[:1800])
+        context = "\n\n---\n\n".join(parts)
+
+        prompt = _build_prompt(ticker=ticker, context=context, qvars=quant_metrics.get(ticker, {}))
+
+        schema_hint = r"""
+{
+  "ticker": "STRING",
+  "perspectiva_compra": "forte|moderada|fraca",
+  "resumo": "STRING",
+  "pontos_chave": ["STRING"],
+  "riscos_ou_alertas": ["STRING"],
+  "sinais_de_investimento_futuro": ["STRING"],
+  "porque": "STRING",
+  "evidencias": [{"fonte":"STRING","trecho":"STRING","observacao":"STRING"}]
+}
+""".strip()
+
+        from core.ai_models.llm_client.factory import get_llm_client
+        llm = get_llm_client()
+
+        system = """
+Você é um analista buy-side, cético e orientado a evidência.
+- NÃO invente fatos, números, datas.
+- Use APENAS o contexto fornecido.
+- Responda OBRIGATORIAMENTE em JSON válido.
+""".strip()
+
+        out = llm.generate_json(system=system, user=prompt, schema_hint=schema_hint, context=None)
+        return {"ok": True, "result": out, "meta": {"vars_uteis_usadas": len(vars_uteis), "top_k": int(top_k)}}
+
+    # UI
+    with st.form("p6x_form", clear_on_submit=False):
+        c1, c2, c3, c4 = st.columns([1.0, 1.0, 1.0, 1.1])
+        with c1:
+            window_months = st.number_input("Janela (meses)", min_value=1, max_value=24, value=int(window_months_default), step=1)
+        with c2:
+            max_docs = st.number_input("Máx docs por ticker", min_value=5, max_value=200, value=60, step=5)
+        with c3:
+            top_k = st.number_input("Variáveis úteis por empresa", min_value=5, max_value=120, value=int(top_k_default), step=5)
+        with c4:
+            strategic_only = st.checkbox("Somente estratégicos", value=True)
+
+        c5, c6 = st.columns([1.0, 1.0])
+        with c5:
+            btn_ingest = st.form_submit_button("⬇️ Buscar informações (CVM/IPE)")
+        with c6:
+            btn_llm = st.form_submit_button("🤖 Gerar relatórios (IA)")
+
+    # A) Aquisição + chunking
+    if btn_ingest:
+        try:
+            from pickup.ingest_docs_cvm_ipe import ingest_ipe_for_tickers
+        except Exception:
+            try:
+                from core.ingest_docs_cvm_ipe import ingest_ipe_for_tickers  # type: ignore
+            except Exception as e:
+                st.error(f"Não encontrei o ingest runner: {type(e).__name__}: {e}")
+                ingest_ipe_for_tickers = None  # type: ignore
+
+        if ingest_ipe_for_tickers is not None:
+            with st.spinner("Buscando documentos CVM/IPE (com heurística estratégica)..."):
+                out = ingest_ipe_for_tickers(
+                    tickers=tickers,
+                    window_months=int(window_months),
+                    max_docs_per_ticker=int(max_docs),
+                    strategic_only=bool(strategic_only),
+                    download_pdfs=True,
+                    max_pdfs_per_ticker=12,
+                    max_runtime_s=45.0,
+                    verbose=False,
+                )
+            st.session_state["p6x_last_ingest"] = out
+
+            # chunking integrado (missing chunks)
+            try:
+                from core.patch6_store import process_missing_chunks_for_ticker
+                res_all = {}
+                with st.spinner("Gerando variáveis úteis (chunking)..."):
+                    for tk in tickers:
+                        res_all[tk] = process_missing_chunks_for_ticker(tk, limit_docs=60, only_with_text=True)
+                st.success("Aquisição concluída + variáveis úteis geradas.")
+                with st.expander("Ver auditoria da aquisição (opcional)", expanded=False):
+                    st.json({"ingest": out, "chunking": res_all})
+            except Exception as e:
+                st.warning(f"Aquisição OK, mas chunking falhou: {type(e).__name__}: {e}")
+
+        # contagem de variáveis úteis
+        try:
+            counts = _count_vars_uteis_by_tickers(tickers)
+            st.session_state["p6x_vars_count"] = counts
+            st.info("Variáveis úteis disponíveis por empresa:")
+            st.json(counts)
+        except Exception as e:
+            st.warning(f"Não consegui contar variáveis úteis: {type(e).__name__}: {e}")
+
+    # B) Relatórios IA (progressivo)
+    if btn_llm:
+        counts = st.session_state.get("p6x_vars_count") or _count_vars_uteis_by_tickers(tickers)
+        st.session_state["p6x_vars_count"] = counts
+
+        # Evita recomputar se já tem resultado e nada mudou
+        run_key_payload = {
+            "tickers": tickers,
+            "top_k": int(top_k),
+            "window_months": int(window_months),
+            "ver": 1,
+        }
+        run_key = hashlib.md5(json.dumps(run_key_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+        st.session_state["p6x_last_run_key"] = run_key
+
+        st.markdown("### 📄 Relatórios por empresa (gerando...)")
+        wrap = st.container()
+        placeholders = {tk: wrap.empty() for tk in tickers}
+
+        # Mostra o que já existe imediatamente
+        existing = st.session_state.get("p6x_reports", {}) or {}
+        for tk in tickers:
+            if tk in existing:
+                placeholders[tk].markdown(_p6x_render_card_html(tk, existing[tk], counts.get(tk, 0)), unsafe_allow_html=True)
+
+        # Processa faltantes
+        for tk in tickers:
+            if tk in existing:
+                continue
+            with st.spinner(f"IA analisando {tk}..."):
+                try:
+                    out = _run_llm(tk, int(top_k))
+                    if out.get("ok"):
+                        rep = out.get("result") or {}
+                        meta = out.get("meta") or {}
+                        rep["_meta"] = meta
+                        st.session_state["p6x_reports"][tk] = rep
+                        placeholders[tk].markdown(_p6x_render_card_html(tk, rep, counts.get(tk, 0)), unsafe_allow_html=True)
+                    else:
+                        placeholders[tk].warning(out.get("error") or f"Falha ao analisar {tk}.")
+                except Exception as e:
+                    placeholders[tk].error(f"Erro em {tk}: {type(e).__name__}: {e}")
+
+        st.success("Relatórios concluídos.")
+
+    # Render cards (se já existem)
+    reports: Dict[str, Any] = st.session_state.get("p6x_reports", {}) or {}
+    counts: Dict[str, int] = st.session_state.get("p6x_vars_count", {}) or {}
+    if reports:
+        st.markdown("### 📌 Relatórios disponíveis")
+        for tk in tickers:
+            if tk in reports:
+                st.markdown(_p6x_render_card_html(tk, reports[tk], counts.get(tk, 0)), unsafe_allow_html=True)
+
+    # Sugestão de percentuais de aporte
+    if reports:
+        st.markdown("### 💰 Sugestão de aporte por empresa (com base na IA)")
+
+        def _mult(p: str) -> float:
+            p = (p or "").strip().lower()
+            if p == "forte":
+                return 1.15
+            if p == "fraca":
+                return 0.85
+            return 1.00
+
+        mults = {}
+        for tk in tickers:
+            rep = reports.get(tk) or {}
+            mults[tk] = _mult(str(rep.get("perspectiva_compra", "moderada")))
+        s = sum(mults.values()) or 1.0
+        pct = {tk: (mults[tk] / s) for tk in tickers}
+
+        df = pd.DataFrame(
+            [
+                {
+                    "Ticker": tk,
+                    "Empresa": _get_nome(tk, empresas_lideres_finais),
+                    "Perspectiva (IA)": str((reports.get(tk) or {}).get("perspectiva_compra", "moderada")),
+                    "% Aporte": round(pct[tk] * 100.0, 2),
+                }
+                for tk in tickers
+            ]
+        ).sort_values("% Aporte", ascending=False)
+
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+        if aporte_mes is not None:
+            try:
+                ap = float(aporte_mes)
+                if ap > 0:
+                    df2 = df.copy()
+                    df2["R$ Aporte sugerido"] = df2["% Aporte"].astype(float) / 100.0 * ap
+                    st.caption("Distribuição sugerida para o aporte do mês informado.")
+                    st.dataframe(df2, use_container_width=True, hide_index=True)
+            except Exception:
+                pass
+
+        # Persistir para uso posterior na ordem do mês (sem export)
+        st.session_state["patch6_overlay_pct"] = pct
+
+        return pct
+
+    st.info("1) Busque informações CVM/IPE. 2) Gere relatórios IA. 3) Veja a sugestão de aporte.")
+    return None
+
+
+def _p6x_render_card_html(ticker: str, rep: Dict[str, Any], vars_count: int) -> str:
+    tk = _norm_tk(ticker)
+    perspectiva = str(rep.get("perspectiva_compra", "") or "moderada").strip().lower()
+    pill = "MODERADA"
+    if perspectiva == "forte":
+        pill = "FORTE"
+    elif perspectiva == "fraca":
+        pill = "FRACA"
+
+    resumo = str(rep.get("resumo", "") or "").strip()
+    porque = str(rep.get("porque", "") or "").strip()
+
+    pontos = rep.get("pontos_chave", []) or []
+    riscos = rep.get("riscos_ou_alertas", []) or []
+    sinais = rep.get("sinais_de_investimento_futuro", []) or []
+    evs = rep.get("evidencias", []) or []
+    meta = rep.get("_meta", {}) or {}
+    used = int(meta.get("vars_uteis_usadas", vars_count) or vars_count)
+
+    def _lis(items, n=6):
+        out=[]
+        for x in (items or [])[:n]:
+            s=str(x).strip()
+            if s:
+                out.append(f"<li>{s}</li>")
+        return "".join(out) if out else "<li>—</li>"
+
+    ev_html = ""
+    if evs:
+        eparts = []
+        for it in evs[:4]:
+            trecho = str(it.get("trecho") or "").strip()
+            obs = str(it.get("observacao") or "").strip()
+            if trecho:
+                eparts.append(f"<li><b>Trecho:</b> {trecho} <br/><span style='opacity:.8'>{obs}</span></li>")
+        if eparts:
+            ev_html = f"""
+            <div class="p6x-box">
+              <h4>Evidências (amostra)</h4>
+              <ul>{''.join(eparts)}</ul>
+            </div>
+            """
+
+    return f"""
+    <div class="p6x-card">
+      <div class="p6x-head">
+        <div class="p6x-title">{tk}</div>
+        <div class="p6x-pill">{pill}</div>
+      </div>
+      <div class="p6x-sub">{resumo or ""}</div>
+
+      <div class="p6x-grid">
+        <div class="p6x-box">
+          <h4>Pontos-chave</h4>
+          <ul>{_lis(pontos, 6)}</ul>
+        </div>
+        <div class="p6x-box">
+          <h4>Riscos/alertas</h4>
+          <ul>{_lis(riscos, 6)}</ul>
+        </div>
+        <div class="p6x-box">
+          <h4>Sinais de investimento futuro</h4>
+          <ul>{_lis(sinais, 6)}</ul>
+        </div>
+        {ev_html}
+      </div>
+
+      <div class="p6x-divider"></div>
+      <div class="p6x-why">{porque}</div>
+      <div class="p6x-meta">Variáveis úteis usadas: <b>{used}</b> (disponíveis no banco: {int(vars_count)})</div>
+    </div>
+    """
