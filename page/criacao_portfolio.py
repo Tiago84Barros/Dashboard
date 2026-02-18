@@ -41,39 +41,34 @@ except Exception:
 # <<< PATCH SCORE V2
 
 
-# >>> PATCHES (portfolio_patches) — import opcional (teste incremental)
-try:
-    # Patch 1 e 2 (estáveis)
-    from page.portfolio_patches import (
-        render_patch1_regua_conviccao,
-        render_patch2_dominancia,
-    )
+# >>> PATCHES (portfolio_patches) — import opcional (robusto)
+# Import granular: se 1 patch falhar, os demais continuam disponíveis.
+_patch_import_errors = []
 
-    # Patch 3 (novo): diversificação (antigo Patch 4)
+def _try_import(name: str):
     try:
-        from page.portfolio_patches import render_patch3_diversificacao
-    except Exception:
-        # compat: se você ainda não renomeou no portfolio_patches.py
-        from page.portfolio_patches import render_patch4_diversificacao as render_patch3_diversificacao  # type: ignore
+        module = __import__("page.portfolio_patches", fromlist=[name])
+        return getattr(module, name, None)
+    except Exception as e:
+        _patch_import_errors.append(f"{name}: {type(e).__name__}: {e}")
+        return None
 
-    # Patch 4 (novo): benchmark do segmento (antigo Patch 5)
-    try:
-        from page.portfolio_patches import render_patch4_benchmark_segmento
-    except Exception:
-        from page.portfolio_patches import render_patch5_benchmark_segmento as render_patch4_benchmark_segmento  # type: ignore
+# Patch 1 e 2 (estáveis)
+render_patch1_regua_conviccao = _try_import("render_patch1_regua_conviccao")
+render_patch2_dominancia = _try_import("render_patch2_dominancia")
 
-    # Patch 5 (novo): desempenho das empresas (Preço/DY + Lucros)
-    try:
-        from page.portfolio_patches import render_patch5_desempenho_empresas
-    except Exception:
-        render_patch5_desempenho_empresas = None  # type: ignore
+# Patch 3 (diversificação) — compat com nomes antigos
+render_patch3_diversificacao = _try_import("render_patch3_diversificacao")
+if render_patch3_diversificacao is None:
+    render_patch3_diversificacao = _try_import("render_patch4_diversificacao")  # type: ignore
 
-except Exception:
-    render_patch1_regua_conviccao = None  # type: ignore
-    render_patch2_dominancia = None  # type: ignore
-    render_patch3_diversificacao = None  # type: ignore
-    render_patch4_benchmark_segmento = None  # type: ignore
-    render_patch5_desempenho_empresas = None  # type: ignore
+# Patch 4 (benchmark do segmento) — compat com nomes antigos
+render_patch4_benchmark_segmento = _try_import("render_patch4_benchmark_segmento")
+if render_patch4_benchmark_segmento is None:
+    render_patch4_benchmark_segmento = _try_import("render_patch5_benchmark_segmento")  # type: ignore
+
+# Patch 5 (desempenho: CAGR/Vol/Drawdown/DY) — único Patch 5 desejado
+render_patch5_desempenho_empresas = _try_import("render_patch5_desempenho_empresas")
 
 # <<< PATCHES (portfolio_patches)
 
@@ -1004,6 +999,13 @@ def render():
         st.markdown("---")
         st.caption("🧪 Teste incremental: habilite os patches um a um para detectar reinícios (reruns) anormais.")
 
+        # Se algum patch falhar no import, mostre o motivo aqui (sem quebrar a página)
+        if '_patch_import_errors' in globals() and _patch_import_errors:
+            st.warning('Alguns patches não puderam ser carregados:')
+            for _err in _patch_import_errors:
+                st.write(f"- {_err}")
+
+
         if render_patch1_regua_conviccao is not None:
             with st.expander("🧩 Patch 1 — Régua de Convicção", expanded=False):
                 try:
@@ -1040,10 +1042,10 @@ def render():
 
 
 
-        if render_patch5_desempenho_empresas is not None:
+        if 'render_patch5_desempenho_empresas' in globals() and render_patch5_desempenho_empresas is not None:
             with st.expander("🧩 Patch 5 — Desempenho das Empresas (Preço/DY + Lucros)", expanded=False):
                 try:
-                    render_patch5_desempenho_empresas(empresas_lideres_finais=empresas_lideres_finais, precos=df_prices_global, score_global=score_global, dividendos=None, janela_anos=5)
+                    render_patch5_desempenho_empresas(empresas_lideres_finais)
                 except Exception as e:
                     st.error(f"Patch 5 falhou: {type(e).__name__}: {e}")
 
