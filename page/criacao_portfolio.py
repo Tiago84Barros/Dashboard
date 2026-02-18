@@ -12,6 +12,94 @@ import streamlit as st
 import matplotlib.pyplot as plt
 
 # yfinance (opcional) — usado para pesos por consolidação
+# ---------------------------------------------------------------------
+# Persistência do Portfólio (para páginas dependentes, ex. Análise de Portfólio)
+# ---------------------------------------------------------------------
+def _cp_get_engine():
+    """Engine do Supabase via core.db_loader.get_supabase_engine."""
+    from core.db_loader import get_supabase_engine
+    return get_supabase_engine()
+
+def _cp_ensure_tables():
+    """Cria tabelas mínimas (idempotente)."""
+    from sqlalchemy import text as _text
+    eng = _cp_get_engine()
+    ddl = """
+    create table if not exists public.portfolio_plans (
+        plan_hash text primary key,
+        created_at timestamptz not null default now(),
+        ultimo_ano int,
+        margem_superior double precision,
+        payload jsonb not null
+    );
+    create index if not exists portfolio_plans_created_at_idx
+      on public.portfolio_plans (created_at desc);
+    """
+    with eng.begin() as conn:
+        conn.execute(_text(ddl))
+
+def _cp_plan_hash(empresas_lideres_finais: list, ultimo_ano: int, margem_superior: float) -> str:
+    import hashlib, json
+    # hash determinístico do plano (tickers+pesos)
+    items = []
+    for e in (empresas_lideres_finais or []):
+        tk = str(e.get("ticker","")).upper().replace(".SA","").strip()
+        peso = float(e.get("peso", 0.0) or 0.0)
+        items.append((tk, round(peso, 12)))
+    items.sort(key=lambda x: x[0])
+    blob = {
+        "tickers_pesos": items,
+        "ultimo_ano": int(ultimo_ano) if ultimo_ano is not None else None,
+        "margem_superior": float(margem_superior) if margem_superior is not None else None,
+    }
+    return hashlib.sha1(json.dumps(blob, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+def _cp_persist_portfolio_plan(empresas_lideres_finais: list, ultimo_ano: int, margem_superior: float):
+    """Persiste plano anual (tickers + pesos) para uso em outras páginas."""
+    from sqlalchemy import text as _text
+    import json, datetime
+    if not empresas_lideres_finais:
+        return None
+
+    _cp_ensure_tables()
+    plan_hash = _cp_plan_hash(empresas_lideres_finais, ultimo_ano, margem_superior)
+
+    payload = {
+        "ultimo_ano": int(ultimo_ano) if ultimo_ano is not None else None,
+        "margem_superior": float(margem_superior) if margem_superior is not None else None,
+        "ativos": [
+            {
+                "ticker": str(e.get("ticker","")).upper().replace(".SA","").strip(),
+                "peso": float(e.get("peso", 0.0) or 0.0),
+                "segmento": e.get("segmento"),
+                "ano_lider": e.get("ano_lider"),
+                "motivo_select": e.get("motivo_select"),
+            }
+            for e in empresas_lideres_finais
+        ],
+    }
+
+    eng = _cp_get_engine()
+    with eng.begin() as conn:
+        conn.execute(
+            _text("""
+                insert into public.portfolio_plans (plan_hash, ultimo_ano, margem_superior, payload)
+                values (:plan_hash, :ultimo_ano, :margem_superior, :payload::jsonb)
+                on conflict (plan_hash) do update
+                set ultimo_ano = excluded.ultimo_ano,
+                    margem_superior = excluded.margem_superior,
+                    payload = excluded.payload,
+                    created_at = now()
+            """),
+            {
+                "plan_hash": plan_hash,
+                "ultimo_ano": int(ultimo_ano) if ultimo_ano is not None else None,
+                "margem_superior": float(margem_superior) if margem_superior is not None else None,
+                "payload": json.dumps(payload, ensure_ascii=False),
+            },
+        )
+    return plan_hash
+
 try:
     import yfinance as yf  # type: ignore
 except Exception:
@@ -844,7 +932,17 @@ def render():
             if lvl:
                 e["nivel_consolidacao"] = str(lvl)
 
-    except Exception:
+            # ─────────────────────────────────────────────────────────
+        # Persistência do plano anual para "Análise de Portfólio"
+        # ─────────────────────────────────────────────────────────
+        try:
+            plan_hash = _cp_persist_portfolio_plan(empresas_lideres_finais, ultimo_ano, margem_superior)
+            if plan_hash:
+                st.session_state["portfolio_plan_hash"] = plan_hash
+        except Exception:
+            pass
+
+except Exception:
         pass
 
 
