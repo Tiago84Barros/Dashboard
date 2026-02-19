@@ -54,19 +54,19 @@ try:
         from page.portfolio_patches import render_patch4_benchmark_segmento
     except Exception:
         from page.portfolio_patches import render_patch5_benchmark_segmento as render_patch4_benchmark_segmento  # type: ignore
-
-# Patch 5 — desempenho das empresas (Preço/DY + Lucros)
-try:
-    from page.portfolio_patches import render_patch5_desempenho_empresas
-except Exception:
-    render_patch5_desempenho_empresas = None  # type: ignore
+    # Patch 5 (novo): desempenho das empresas (Preço/DY + Lucros)
+    try:
+        from page.portfolio_patches import render_patch5_desempenho_empresas
+    except Exception:
+        render_patch5_desempenho_empresas = None  # type: ignore
 
 
 except Exception:
     render_patch1_regua_conviccao = None  # type: ignore
     render_patch2_dominancia = None  # type: ignore
     render_patch3_diversificacao = None  # type: ignore
-    render_patch4_benchmark_segmento = None  # type: ignore
+    render_patch4_benchmark_segmento = None  # type: ignore    render_patch5_desempenho_empresas = None  # type: ignore
+
 
 # <<< PATCHES (portfolio_patches)
 
@@ -681,19 +681,17 @@ def render():
                 except Exception as e:
                     st.error(f"Patch 4 falhou: {type(e).__name__}: {e}")
 
-if 'render_patch5_desempenho_empresas' in globals() and render_patch5_desempenho_empresas is not None and empresas_lideres_finais:
-    with st.expander("🧩 Patch 5 — Desempenho das Empresas (Preço/DY + Lucros)", expanded=True):
+if render_patch5_desempenho_empresas is not None and empresas_lideres_finais:
+    with st.expander("🧩 Patch 5 — Desempenho das Empresas (Preço/DY + Lucros)", expanded=False):
         try:
             render_patch5_desempenho_empresas(
                 score_global=score_global,
+                lideres_global=lideres_global,
                 empresas_lideres_finais=empresas_lideres_finais,
                 precos=df_prices_global,
-                months=12,
             )
         except Exception as e:
             st.error(f"Patch 5 falhou: {type(e).__name__}: {e}")
-
-
 
 
     # Desarma a execução após rodar (evita “auto-rerun armado”)
