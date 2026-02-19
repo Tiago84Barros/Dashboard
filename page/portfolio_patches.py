@@ -10,6 +10,7 @@ import time
 import numpy as np
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 import matplotlib.pyplot as plt
 
 
@@ -1956,8 +1957,7 @@ def render_patch5_desempenho_empresas(
 
         rank_line = f"{medal(i)} #{i+1} | Score de Qualidade: {r.get('quality_score', float('nan')):.1f}/100" if pd.notna(r.get("quality_score")) else f"{medal(i)} #{i+1} | Score de Qualidade: —"
 
-        st.markdown(
-            f"""<div class="metric-card">
+        card_html = f"""<div class="metric-card">
                 <div class="metric-rank">{rank_line}</div>
                 <div class="metric-title">{tk} — {nome}</div>
                 <div class="metric-grid">
@@ -1983,6 +1983,7 @@ def render_patch5_desempenho_empresas(
                     <b>Notas:</b> Retorno/valorização e CAGR são sobre <u>preço</u> (sem dividendos). Volatilidade 12m é anualizada a partir dos retornos diários dos últimos ~252 pregões.
                     Dividend CAGR (5a) usa o total anual de dividendos do histórico (quando disponível). Percentil no segmento usa o universo do <i>score_global</i> no último ano disponível.
                 </div>
-            </div>""",
-            unsafe_allow_html=True,
-        )
+            </div>"""
+
+        # Render via components.html para evitar qualquer escape/markdown em alguns ambientes
+        components.html(card_html, height=255, scrolling=False)
