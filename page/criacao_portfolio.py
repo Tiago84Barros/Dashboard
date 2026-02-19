@@ -621,7 +621,9 @@ def render():
             )
 
         # ─────────────────────────────────────────────────────────
-    # PATCHES — Teste incremental (Patch 1, 2 e 3)
+    # 
+    # ─────────────────────────────────────────────────────────
+    # PATCHES — Teste incremental (Patch 1, 2, 3, 4, 5)
     # (Rodam APÓS a construção do portfólio; nunca rodam em import)
     # ─────────────────────────────────────────────────────────
     try:
@@ -631,7 +633,6 @@ def render():
         score_global = pd.DataFrame()
         lideres_global = pd.DataFrame()
 
-    # Preços globais (para Patch 5) — sem baixar novamente
     try:
         df_prices_global = pd.concat(precos_global_parts, axis=1) if precos_global_parts else pd.DataFrame()
         if not df_prices_global.empty:
@@ -660,15 +661,14 @@ def render():
                 except Exception as e:
                     st.error(f"Patch 2 falhou: {type(e).__name__}: {e}")
 
-        if render_patch3_diversificacao is not None and empresas_lideres_finais:
+        if render_patch3_diversificacao is not None:
             with st.expander("🧩 Patch 3 — Diversificação e Concentração de Risco", expanded=False):
                 try:
-                    # contrib_globais é opcional; aqui usamos apenas pesos iguais por padrão
                     render_patch3_diversificacao(empresas_lideres_finais, contrib_globais=None)
                 except Exception as e:
                     st.error(f"Patch 3 falhou: {type(e).__name__}: {e}")
 
-        if render_patch4_benchmark_segmento is not None and empresas_lideres_finais:
+        if render_patch4_benchmark_segmento is not None:
             with st.expander("🧩 Patch 4 — Benchmark do Segmento (último ano do score)", expanded=False):
                 try:
                     render_patch4_benchmark_segmento(
@@ -680,23 +680,18 @@ def render():
                 except Exception as e:
                     st.error(f"Patch 4 falhou: {type(e).__name__}: {e}")
 
+        if render_patch5_desempenho_empresas is not None:
+            with st.expander("🧩 Patch 5 — Desempenho das Empresas (Preço/DY + Lucros)", expanded=False):
+                try:
+                    render_patch5_desempenho_empresas(
+                        score_global=score_global,
+                        lideres_global=lideres_global,
+                        empresas_lideres_finais=empresas_lideres_finais,
+                        precos=df_prices_global,
+                        max_empresas=20,
+                    )
+                except Exception as e:
+                    st.error(f"Patch 5 falhou: {type(e).__name__}: {e}")
 
-if render_patch5_desempenho_empresas is not None and empresas_lideres_finais:
-    with st.expander("🧩 Patch 5 — Desempenho das Empresas (Preço/DY + Lucros)", expanded=False):
-        try:
-            render_patch5_desempenho_empresas(
-                score_global=score_global,
-                lideres_global=lideres_global,
-                empresas_lideres_finais=empresas_lideres_finais,
-                precos=df_prices_global,
-                max_empresas=20,
-            )
-        except Exception as e:
-            st.error(f"Patch 5 falhou: {type(e).__name__}: {e}")
-
-
-
-    # Desarma a execução após rodar (evita “auto-rerun armado”)
     st.session_state["cp_should_run"] = False
-
     st.markdown("<hr>", unsafe_allow_html=True)
