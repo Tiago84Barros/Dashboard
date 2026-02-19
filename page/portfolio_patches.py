@@ -10,7 +10,6 @@ import time
 import numpy as np
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 import matplotlib.pyplot as plt
 
 
@@ -1306,7 +1305,7 @@ def _css_metric_cards() -> None:
         }
         .metric-title {
             font-weight: 900;
-            font-size: 18px; /* ↑ */
+            font-size: 16px;
             margin-bottom: 10px;
             color: #ffffff;
         }
@@ -1320,17 +1319,15 @@ def _css_metric_cards() -> None:
             justify-content: space-between;
             padding: 6px 0;
             border-bottom: 1px solid rgba(255,255,255,0.05);
-            font-size: 14px; /* ↑ */
+            font-size: 13px;
         }
         .metric-label { color: #cfcfcf; }
         .metric-value { font-weight: 800; color: #ffffff; }
-        .metric-note { color: rgba(255,255,255,0.75); font-size: 13px; margin-top: 10px; } /* ↑ */
-        .metric-rank { font-size: 14px; font-weight: 900; margin-bottom: 6px; color: rgba(255,255,255,0.85); }
+        .metric-note { color: rgba(255,255,255,0.7); font-size: 12px; margin-top: 8px; }
         </style>
         """,
         unsafe_allow_html=True,
     )
-
 
 
 def _safe_last_number(df: pd.DataFrame, col_candidates: List[str]) -> Optional[float]:
@@ -1440,7 +1437,7 @@ def _get_prices_series(ticker: str, precos: Optional[pd.DataFrame]) -> Optional[
     # fallback: baixar via yfinance
     try:
         from core.yf_data import baixar_precos
-        df = baixar_precos([ticker], period="6y")
+        df = baixar_precos([ticker], period="2y")
         if isinstance(df, pd.DataFrame) and (not df.empty) and ticker in df.columns:
             s = pd.to_numeric(df[ticker], errors="coerce").dropna()
             return s if not s.empty else None
@@ -1481,509 +1478,548 @@ def _calc_metrics_from_prices(prices: pd.Series) -> Dict[str, Optional[float]]:
     return {"ret_12m": ret_12m, "cagr": cagr, "vol": vol, "mdd": mdd}
 
 
-
-def _calc_price_metrics(prices: pd.Series) -> Dict[str, Optional[float]]:
-    """Métricas de preço (sem dividendos), com foco em 12m e 5 anos."""
-    prices = pd.to_numeric(prices, errors="coerce").dropna()
-    if prices is None or prices.empty or len(prices) < 60:
-        return {
-            "ret_12m": None,
-            "vol_12m": None,
-            "cagr_5y": None,
-            "ret_5y": None,
-            "mdd_5y": None,
-        }
-
-    # returns diários
-    rets = prices.pct_change().dropna()
-    if rets.empty:
-        return {
-            "ret_12m": None,
-            "vol_12m": None,
-            "cagr_5y": None,
-            "ret_5y": None,
-            "mdd_5y": None,
-        }
-
-    # janela 12m (~252 pregões)
-    w12 = min(252, len(prices) - 1) if len(prices) > 1 else 0
-    ret_12m = None
-    vol_12m = None
-    if w12 >= 30:
-        p0 = float(prices.iloc[-w12])
-        p1 = float(prices.iloc[-1])
-        ret_12m = (p1 / p0 - 1.0) if (p0 and p0 > 0) else None
-
-        rets_12m = rets.iloc[-w12:]
-        vol_12m = float(rets_12m.std()) * (252.0 ** 0.5) if len(rets_12m) > 20 else None
-
-    # janela 5y (~1260 pregões)
-    w5 = min(252 * 5, len(prices) - 1) if len(prices) > 1 else 0
-    cagr_5y = None
-    ret_5y = None
-    mdd_5y = None
-    if w5 >= 252:
-        p0 = float(prices.iloc[-w5])
-        p1 = float(prices.iloc[-1])
-        ret_5y = (p1 / p0 - 1.0) if (p0 and p0 > 0) else None
-
-        years = w5 / 252.0
-        cagr_5y = (p1 / p0) ** (1.0 / years) - 1.0 if (p0 and p0 > 0) else None
-
-        rets_5y = rets.iloc[-w5:]
-        acc = (1.0 + rets_5y).cumprod()
-        peak = acc.cummax()
-        dd = acc / peak - 1.0
-        mdd_5y = float(dd.min()) if not dd.empty else None
-
-    return {
-        "ret_12m": ret_12m,
-        "vol_12m": vol_12m,
-        "cagr_5y": cagr_5y,
-        "ret_5y": ret_5y,
-        "mdd_5y": mdd_5y,
-    }
-
-
-def _extract_last_n_years(score_global: pd.DataFrame, ticker: str, value_cols: List[str], n: int = 6) -> pd.DataFrame:
-    """Extrai últimas N observações anuais para um ticker, tentando colunas candidatas."""
-    df = _safe_df(score_global)
-    if df.empty or "ticker" not in df.columns:
-        return pd.DataFrame()
-
-    d = df.copy()
-    d["ticker"] = d["ticker"].astype(str).str.upper()
-    tk = str(ticker).upper()
-    d = d.loc[d["ticker"] == tk].copy()
-    if d.empty:
-        return pd.DataFrame()
-
-    # ordenar por Ano se existir
-    if "Ano" in d.columns:
-        d["Ano"] = pd.to_numeric(d["Ano"], errors="coerce")
-        d = d.sort_values("Ano")
-    else:
-        d = d.reset_index(drop=True)
-
-    # encontra coluna de valor
-    col = None
-    for c in value_cols:
-        if c in d.columns:
-            col = c
-            break
-    if col is None:
-        return pd.DataFrame()
-
-    d = d[["Ano", col]].copy() if "Ano" in d.columns else d[[col]].copy()
-    d[col] = pd.to_numeric(d[col], errors="coerce")
-    d = d.dropna(subset=[col])
-    if d.empty:
-        return pd.DataFrame()
-
-    return d.tail(n)
-
-
-def _mean_last_years(score_global: pd.DataFrame, ticker: str, col_candidates: List[str], years: int = 5) -> Optional[float]:
-    d = _extract_last_n_years(score_global, ticker, col_candidates, n=years)
-    if d.empty:
-        return None
-    col = [c for c in d.columns if c != "Ano"][0] if "Ano" in d.columns else d.columns[0]
-    s = pd.to_numeric(d[col], errors="coerce").dropna()
-    return float(s.mean()) if not s.empty else None
-
-
-def _cagr_from_series(values: pd.Series) -> Optional[float]:
-    v = pd.to_numeric(values, errors="coerce").dropna()
-    if v.empty or len(v) < 2:
-        return None
-    v0 = float(v.iloc[0])
-    v1 = float(v.iloc[-1])
-    if (v0 is None) or (v1 is None) or (v0 <= 0) or (v1 <= 0):
-        return None
-    n = len(v) - 1
-    years = max(n, 1)  # assume anual
-    return (v1 / v0) ** (1.0 / years) - 1.0
-
-
-def _cagr_last_years(score_global: pd.DataFrame, ticker: str, col_candidates: List[str], years: int = 5) -> Optional[float]:
-    d = _extract_last_n_years(score_global, ticker, col_candidates, n=years + 1)
-    if d.empty:
-        return None
-    col = [c for c in d.columns if c != "Ano"][0] if "Ano" in d.columns else d.columns[0]
-    return _cagr_from_series(d[col])
-
-
-def _dividendo_cagr_5y_from_yf(ticker: str) -> Optional[float]:
-    """CAGR do total anual de dividendos (últimos ~5 anos) via histórico de dividendos (yfinance)."""
-    try:
-        from core.yf_data import coletar_dividendos
-        div = coletar_dividendos(ticker)
-        if not isinstance(div, pd.DataFrame) or div.empty:
-            return None
-
-        # tenta achar coluna de valor
-        col_val = None
-        for c in ["Dividendo", "dividendo", "dividends", "Dividendos", "valor", "Value", "amount"]:
-            if c in div.columns:
-                col_val = c
-                break
-        if col_val is None:
-            return None
-
-        col_date = None
-        for c in ["Data", "data", "Date", "date"]:
-            if c in div.columns:
-                col_date = c
-                break
-        if col_date is None:
-            return None
-
-        d = div[[col_date, col_val]].copy()
-        d[col_date] = pd.to_datetime(d[col_date], errors="coerce")
-        d[col_val] = pd.to_numeric(d[col_val], errors="coerce")
-        d = d.dropna(subset=[col_date, col_val])
-        if d.empty:
-            return None
-
-        d["ano"] = d[col_date].dt.year
-        anos = sorted(d["ano"].unique().tolist())
-        if len(anos) < 3:
-            return None
-
-        # pega os últimos 6 anos para tentar obter 5 intervalos
-        anos = anos[-6:]
-        tot = d.groupby("ano")[col_val].sum().reindex(anos).dropna()
-        if len(tot) < 3:
-            return None
-
-        # CAGR entre primeiro e último ano da janela
-        v0 = float(tot.iloc[0])
-        v1 = float(tot.iloc[-1])
-        if v0 <= 0 or v1 <= 0:
-            return None
-        years = int(tot.index.max() - tot.index.min())
-        years = max(years, 1)
-        return (v1 / v0) ** (1.0 / years) - 1.0
-    except Exception:
-        return None
-
-
-def _dy_medio_5y(ticker: str, precos: Optional[pd.DataFrame]) -> Optional[float]:
-    """DY médio aproximado (média dos DYs anuais) nos últimos 5 anos, usando dividendos + preço médio anual."""
-    prices = _get_prices_series(ticker, precos)
-    if prices is None or prices.empty:
-        return None
-
-    try:
-        from core.yf_data import coletar_dividendos
-        div = coletar_dividendos(ticker)
-        if not isinstance(div, pd.DataFrame) or div.empty:
-            return None
-
-        # colunas
-        col_val = None
-        for c in ["Dividendo", "dividendo", "dividends", "Dividendos", "valor", "Value", "amount"]:
-            if c in div.columns:
-                col_val = c
-                break
-        col_date = None
-        for c in ["Data", "data", "Date", "date"]:
-            if c in div.columns:
-                col_date = c
-                break
-        if col_val is None or col_date is None:
-            return None
-
-        d = div[[col_date, col_val]].copy()
-        d[col_date] = pd.to_datetime(d[col_date], errors="coerce")
-        d[col_val] = pd.to_numeric(d[col_val], errors="coerce")
-        d = d.dropna(subset=[col_date, col_val])
-        if d.empty:
-            return None
-        d["ano"] = d[col_date].dt.year
-
-        p = pd.to_numeric(prices, errors="coerce").dropna()
-        if p.empty:
-            return None
-        p.index = pd.to_datetime(p.index, errors="coerce")
-        p = p.dropna()
-
-        # anos comuns (últimos 5)
-        anos = sorted(set(d["ano"].unique().tolist()) & set(p.index.year.tolist()))
-        if len(anos) < 2:
-            return None
-        anos = anos[-5:]
-
-        dys=[]
-        for ano in anos:
-            div_ano = float(d.loc[d["ano"] == ano, col_val].sum())
-            # preço médio no ano
-            p_ano = p.loc[p.index.year == ano]
-            if p_ano.empty:
-                continue
-            preco_med = float(p_ano.mean())
-            if preco_med > 0:
-                dys.append(div_ano / preco_med)
-
-        if not dys:
-            return None
-        return float(np.mean(dys))
-    except Exception:
-        return None
-
-
-def _build_quality_score(df: pd.DataFrame) -> pd.DataFrame:
-    """Cria score 0-100 baseado em métricas (mais alto = melhor)."""
-    if df is None or df.empty:
-        return df
-
-    out = df.copy()
-
-    # colunas e direções
-    cols_hi = ["roic_avg5y", "rev_cagr5y", "earn_cagr5y", "div_cagr5y", "dy_avg5y", "price_cagr5y"]
-    cols_lo = ["netdebt_ebitda", "vol_12m", "mdd_5y"]
-
-    def zscore(s: pd.Series) -> pd.Series:
-        x = pd.to_numeric(s, errors="coerce")
-        mu = x.mean(skipna=True)
-        sd = x.std(skipna=True)
-        if sd is None or sd == 0 or pd.isna(sd):
-            return pd.Series([0.0] * len(x), index=x.index)
-        return (x - mu) / sd
-
-    z_parts=[]
-    for c in cols_hi:
-        if c in out.columns:
-            z_parts.append(zscore(out[c]))
-    for c in cols_lo:
-        if c in out.columns:
-            z_parts.append(-zscore(out[c]))  # invertido
-
-    if not z_parts:
-        out["quality_score"] = np.nan
-        return out
-
-    zsum = pd.concat(z_parts, axis=1).mean(axis=1, skipna=True)
-    # escala para 0-100 (percentil)
-    out["quality_score"] = zsum.rank(pct=True) * 100.0
-    return out
-
-
-def _percentil_no_segmento(score_global: pd.DataFrame, ticker: str, quality_score: float) -> Optional[float]:
-    """Percentil do score dentro do segmento (usando score_global para universo)."""
-    df = _safe_df(score_global)
-    if df.empty or ("ticker" not in df.columns):
-        return None
-
-    # tenta mapear segmento no último ano disponível do ticker
-    required = {"Ano", "ticker", "SETOR", "SUBSETOR", "SEGMENTO"}
-    if not required.issubset(set(df.columns)):
-        return None
-
-    d = df.copy()
-    d["Ano"] = pd.to_numeric(d["Ano"], errors="coerce")
-    d["ticker"] = d["ticker"].astype(str).str.upper()
-    tk = str(ticker).upper()
-
-    d_tk = d.loc[d["ticker"] == tk].dropna(subset=["Ano"])
-    if d_tk.empty:
-        return None
-    last_ano = int(d_tk["Ano"].max())
-    meta = d_tk.loc[d_tk["Ano"] == last_ano, ["SETOR", "SUBSETOR", "SEGMENTO"]].iloc[-1].to_dict()
-    id_seg = f"{meta.get('SETOR','')} > {meta.get('SUBSETOR','')} > {meta.get('SEGMENTO','')}".strip()
-
-    # universo do mesmo segmento no mesmo ano
-    d_ano = d.loc[d["Ano"] == last_ano].copy()
-    d_ano["id_seg"] = d_ano["SETOR"].astype(str) + " > " + d_ano["SUBSETOR"].astype(str) + " > " + d_ano["SEGMENTO"].astype(str)
-    uni = d_ano.loc[d_ano["id_seg"] == id_seg, "ticker"].dropna().unique().tolist()
-    if len(uni) < 5:
-        return None
-
-    # constrói um score-proxy rápido para o universo (sem yfinance), usando ROIC/DL_EBITDA/DY e crescimento quando houver
-    rows=[]
-    for u in uni:
-        roic = _mean_last_years(score_global, u, ["ROIC", "roic", "Roic"], years=5)
-        dl = _mean_last_years(score_global, u, ["DIV_LIQ_EBITDA", "DividaLiquida_EBITDA", "Dívida Líquida/EBITDA", "divida_liquida_ebitda", "DL_EBITDA"], years=5)
-        dy = _mean_last_years(score_global, u, ["DY", "Dividend Yield", "DIVIDEND_YIELD", "dividend_yield", "dy"], years=5)
-        rev = _cagr_last_years(score_global, u, ["RECEITA_LIQ", "Receita", "Receita Líquida", "RECEITA", "receita_liquida"], years=5)
-        earn = _cagr_last_years(score_global, u, ["LUCRO_LIQ", "Lucro Líquido", "LUCRO_LIQUIDO", "lucro_liquido", "Net Income"], years=5)
-        rows.append({"ticker": u, "roic": roic, "dl": dl, "dy": dy, "rev": rev, "earn": earn})
-    uni_df = pd.DataFrame(rows)
-    if uni_df.empty:
-        return None
-
-    # score simples (z-score médio)
-    uni_df = uni_df.replace([np.inf, -np.inf], np.nan)
-
-    def z(s):
-        x = pd.to_numeric(s, errors="coerce")
-        mu=x.mean(skipna=True)
-        sd=x.std(skipna=True)
-        if sd is None or sd==0 or pd.isna(sd):
-            return pd.Series([0.0]*len(x), index=x.index)
-        return (x-mu)/sd
-
-    parts=[]
-    for c in ["roic","dy","rev","earn"]:
-        if c in uni_df.columns:
-            parts.append(z(uni_df[c]))
-    if "dl" in uni_df.columns:
-        parts.append(-z(uni_df["dl"]))
-    if not parts:
-        return None
-    uni_df["score_proxy"]=pd.concat(parts,axis=1).mean(axis=1, skipna=True)
-
-    # percentil do ticker no universo
-    # se não houver score_proxy do ticker, usa quality_score do patch5 como fallback não comparável
-    s = uni_df["score_proxy"].dropna()
-    if s.empty:
-        return None
-    # rank do ticker
-    val = float(uni_df.loc[uni_df["ticker"]==tk, "score_proxy"].dropna().iloc[-1]) if not uni_df.loc[uni_df["ticker"]==tk, "score_proxy"].dropna().empty else None
-    if val is None:
-        return None
-    pct = (s.rank(pct=True)[uni_df.loc[uni_df["ticker"]==tk, "score_proxy"].dropna().index[0]])
-    return float(pct) * 100.0 if pct is not None else None
-
-
 def render_patch5_desempenho_empresas(
-    score_global: pd.DataFrame,
-    lideres_global: pd.DataFrame,
-    empresas_lideres_finais: List[Dict[str, Any]],
-    *,
-    precos: Optional[pd.DataFrame] = None,
+    score_global: "pd.DataFrame",
+    lideres_global: "pd.DataFrame",
+    empresas_lideres_finais: "list[dict]",
+    precos: "pd.DataFrame" | None = None,
     max_empresas: int = 20,
-) -> None:
-    """Patch 5: painel de qualidade (fundamentos + risco + dividendos) e ranking."""
-    _css_metric_cards()
+):
+    """
+    Patch 5 — Painel profissional (sem HTML/iframe) com métricas de qualidade/estabilidade.
 
-    if not empresas_lideres_finais:
-        st.info("Sem líderes finais — Patch 5 não tem o que mostrar.")
+    Ordenação por Score de Qualidade (0–100), combinando:
+      - ROIC médio 5a (↑)
+      - CAGR Receita 5a (↑)
+      - Crescimento do Lucro 5a (↑)
+      - Dividend CAGR 5a (↑)
+      - DY médio 5a (↑)
+      - Dívida Líq./EBITDA (↓)
+      - Volatilidade 12m (↓)
+      - Máx. queda (drawdown) 5a (↓)
+      - CAGR do preço 5a (↑)
+      - Valorização do preço 5a (↑)  [informativo; não entra com peso grande]
+      - Percentil no segmento (↑)     [derivado do Score de Qualidade dentro do segmento]
+    """
+    import streamlit as st
+    import pandas as pd
+    import numpy as np
+
+    # ------------------------- helpers -------------------------
+    def _to_num(x):
+        try:
+            if x is None:
+                return np.nan
+            if isinstance(x, (int, float, np.number)):
+                return float(x)
+            s = str(x).strip().replace(".", "").replace(",", ".")
+            return float(s)
+        except Exception:
+            return np.nan
+
+    def _safe_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
+        if df is None or df.empty:
+            return None
+        cols = {c.lower(): c for c in df.columns}
+        for cand in candidates:
+            if cand.lower() in cols:
+                return cols[cand.lower()]
+        return None
+
+    def _zscore(s: pd.Series) -> pd.Series:
+        s = pd.to_numeric(s, errors="coerce")
+        mu = s.mean(skipna=True)
+        sd = s.std(skipna=True)
+        if sd is None or sd == 0 or np.isnan(sd):
+            return pd.Series(np.nan, index=s.index)
+        return (s - mu) / sd
+
+    def _winsorize(s: pd.Series, p=0.05) -> pd.Series:
+        s = pd.to_numeric(s, errors="coerce")
+        lo = s.quantile(p)
+        hi = s.quantile(1 - p)
+        return s.clip(lo, hi)
+
+    def _cagr(first, last, years):
+        try:
+            if first is None or last is None:
+                return np.nan
+            first = float(first)
+            last = float(last)
+            if first <= 0 or last <= 0 or years <= 0:
+                return np.nan
+            return (last / first) ** (1.0 / years) - 1.0
+        except Exception:
+            return np.nan
+
+    def _fmt_pct(x):
+        if x is None or (isinstance(x, float) and np.isnan(x)):
+            return "—"
+        return f"{x*100:.2f}%"
+
+    def _fmt_num(x):
+        if x is None or (isinstance(x, float) and np.isnan(x)):
+            return "—"
+        return f"{x:.2f}"
+
+    def _fmt_cur(x):
+        if x is None or (isinstance(x, float) and np.isnan(x)):
+            return "—"
+        # sem R$ para não poluir; mantemos compacto
+        if abs(x) >= 1e9:
+            return f"{x/1e9:.2f} bi"
+        if abs(x) >= 1e6:
+            return f"{x/1e6:.2f} mi"
+        if abs(x) >= 1e3:
+            return f"{x/1e3:.2f} mil"
+        return f"{x:.0f}"
+
+    def _max_drawdown(series: pd.Series) -> float:
+        s = pd.to_numeric(series, errors="coerce").dropna()
+        if s.empty:
+            return np.nan
+        peak = s.cummax()
+        dd = (s / peak) - 1.0
+        return float(dd.min())  # negativo
+
+    def _vol_annualized(returns: pd.Series) -> float:
+        r = pd.to_numeric(returns, errors="coerce").dropna()
+        if r.empty:
+            return np.nan
+        return float(r.std() * np.sqrt(252))
+
+    def _ret_12m(prices: pd.Series) -> float:
+        s = pd.to_numeric(prices, errors="coerce").dropna()
+        if len(s) < 2:
+            return np.nan
+        # ~252 pregões
+        if len(s) >= 253:
+            base = s.iloc[-253]
+        else:
+            base = s.iloc[0]
+        if base == 0:
+            return np.nan
+        return float(s.iloc[-1] / base - 1.0)
+
+    def _cagr_price_5y(prices: pd.Series) -> float:
+        s = pd.to_numeric(prices, errors="coerce").dropna()
+        if len(s) < 2:
+            return np.nan
+        # tenta usar 5 anos (~252*5)
+        if len(s) >= 252*5 + 1:
+            first = s.iloc[-(252*5+1)]
+            last = s.iloc[-1]
+            return _cagr(first, last, 5)
+        # fallback: CAGR proporcional ao período disponível
+        first = s.iloc[0]
+        last = s.iloc[-1]
+        years = max(len(s) / 252.0, 1e-9)
+        return _cagr(first, last, years)
+
+    def _valorizacao_5y(prices: pd.Series) -> float:
+        s = pd.to_numeric(prices, errors="coerce").dropna()
+        if len(s) < 2:
+            return np.nan
+        if len(s) >= 252*5 + 1:
+            first = s.iloc[-(252*5+1)]
+            last = s.iloc[-1]
+        else:
+            first = s.iloc[0]
+            last = s.iloc[-1]
+        if first == 0:
+            return np.nan
+        return float(last / first - 1.0)
+
+    def _dy_media_5y_from_prices_and_div(df_score: pd.DataFrame, ticker: str) -> float:
+        """
+        DY médio 5a:
+        - usa (DIVIDENDOS DO ANO / PREÇO MÉDIO DO ANO) por ano, e tira a média dos últimos 5 anos disponíveis.
+        - precisa existir no score_global algum campo anual de dividendos ou dividend yield.
+        Se não houver dados consistentes, retorna NaN.
+        """
+        if df_score is None or df_score.empty:
+            return np.nan
+
+        # candidatos comuns (ajuste para o seu schema)
+        col_year = _safe_col(df_score, ["ano", "year", "exercicio", "dt_ref"])
+        col_dy = _safe_col(df_score, ["dividend_yield", "dy", "div_yield", "dividend yield"])
+        col_div = _safe_col(df_score, ["dividendos", "dividendos_pagos", "proventos", "dividendos_ano"])
+
+        dft = df_score[df_score.get("ticker", df_score.get("Ticker", "")).astype(str).str.upper() == ticker.upper()].copy()
+        if dft.empty:
+            return np.nan
+
+        # tenta obter "ano"
+        if col_year is None:
+            # fallback: se houver data
+            col_date = _safe_col(dft, ["data", "dt", "dt_fim", "dt_ref", "periodo_fim"])
+            if col_date is not None:
+                dft["_ano"] = pd.to_datetime(dft[col_date], errors="coerce").dt.year
+                col_year_use = "_ano"
+            else:
+                return np.nan
+        else:
+            if "dt_ref" in col_year.lower():
+                dft["_ano"] = pd.to_datetime(dft[col_year], errors="coerce").dt.year
+                col_year_use = "_ano"
+            else:
+                dft["_ano"] = pd.to_numeric(dft[col_year], errors="coerce").astype("Int64")
+                col_year_use = "_ano"
+
+        # se já tiver DY, usa direto
+        if col_dy is not None:
+            dft["_dy"] = pd.to_numeric(dft[col_dy], errors="coerce")
+        elif col_div is not None:
+            # sem preço médio anual, fica difícil — evita inventar
+            # (poderia usar preço anual médio do "precos" se existir)
+            return np.nan
+        else:
+            return np.nan
+
+        dft = dft.dropna(subset=[col_year_use, "_dy"])
+        if dft.empty:
+            return np.nan
+
+        dft = dft.sort_values(col_year_use).tail(5)
+        return float(dft["_dy"].mean())
+
+    def _infer_segmento(d: dict) -> str:
+        for k in ["segmento", "Segmento", "setor", "Setor", "subsetor", "Subsetor"]:
+            if k in d and d[k]:
+                return str(d[k])
+        return "—"
+
+    # ------------------------- base tickers -------------------------
+    tickers = []
+    for d in empresas_lideres_finais[:max_empresas]:
+        t = (d.get("ticker") or d.get("Ticker") or "").strip().upper()
+        if t:
+            tickers.append(t)
+    tickers = list(dict.fromkeys(tickers))
+    if not tickers:
+        st.info("Nenhuma empresa para exibir no Patch 5.")
         return
 
-    # tickers (únicos, mantendo ordem)
-    tickers = []
-    for e in empresas_lideres_finais:
-        tk = str(e.get("ticker", "")).strip()
-        if tk:
-            tickers.append(tk)
-    seen = set()
-    tickers = [t for t in tickers if not (t in seen or seen.add(t))]
-    tickers = tickers[: max_empresas]
+    # ------------------------- normalize score_global schema -------------------------
+    df_score = score_global.copy() if isinstance(score_global, pd.DataFrame) else pd.DataFrame()
+    if not df_score.empty:
+        # normaliza coluna ticker
+        if "ticker" not in df_score.columns:
+            tcol = _safe_col(df_score, ["Ticker", "TICKER", "papel", "codigo"])
+            if tcol is not None:
+                df_score = df_score.rename(columns={tcol: "ticker"})
+        df_score["ticker"] = df_score["ticker"].astype(str).str.upper()
 
-    st.caption(
-        "Ordenação por **Score de Qualidade** (0–100), combinando: ROIC médio 5a, CAGR Receita 5a, "
-        "crescimento do lucro 5a, Dividend CAGR 5a, DY médio 5a, Dívida Líq./EBITDA, volatilidade 12m, "
-        "máx. queda (drawdown) 5a e CAGR do preço 5a."
-    )
+    # candidatos comuns
+    col_roic = _safe_col(df_score, ["roic", "ROIC"])
+    col_receita = _safe_col(df_score, ["receita_liquida", "receita", "receita líquida", "net_revenue", "revenue"])
+    col_lucro = _safe_col(df_score, ["lucro_liquido", "lucro", "net_income", "profit"])
+    col_div = _safe_col(df_score, ["dividendos", "dividendos_pagos", "proventos", "dividendos_ano"])
+    col_dl = _safe_col(df_score, ["divida_liquida", "divida líquida", "net_debt"])
+    col_ebitda = _safe_col(df_score, ["ebitda", "EBITDA"])
+    col_segmento = _safe_col(df_score, ["segmento", "setor", "subsetor", "Segmento", "Setor", "Subsetor"])
+    col_ano = _safe_col(df_score, ["ano", "year", "exercicio", "dt_ref"])
 
+    # ------------------------- prices prep -------------------------
+    df_prices = None
+    if precos is not None and isinstance(precos, pd.DataFrame) and not precos.empty:
+        df_prices = precos.copy()
+        # garante índice datetime
+        if not isinstance(df_prices.index, pd.DatetimeIndex):
+            df_prices.index = pd.to_datetime(df_prices.index, errors="coerce")
+        df_prices = df_prices.sort_index()
+
+    # ------------------------- compute metrics per ticker -------------------------
     rows = []
-    for tk in tickers:
-        nome = next((e.get("nome") for e in empresas_lideres_finais if str(e.get("ticker", "")).strip() == tk), tk)
+    for t in tickers:
+        seg = "—"
+        # tenta achar segmento vindo do score_global
+        if col_segmento is not None and not df_score.empty:
+            seg_vals = df_score.loc[df_score["ticker"] == t, col_segmento].dropna()
+            if not seg_vals.empty:
+                seg = str(seg_vals.iloc[-1])
 
-        # Preços (até ~6 anos)
-        prices = _get_prices_series(tk, precos)
-        pm = _calc_price_metrics(prices) if prices is not None else {
-            "ret_12m": None, "vol_12m": None, "cagr_5y": None, "ret_5y": None, "mdd_5y": None
-        }
+        # ROIC médio 5a
+        roic_5a = np.nan
+        if col_roic is not None and col_ano is not None and not df_score.empty:
+            dft = df_score[df_score["ticker"] == t].copy()
+            # ano
+            if "dt_ref" in str(col_ano).lower():
+                dft["_ano"] = pd.to_datetime(dft[col_ano], errors="coerce").dt.year
+            else:
+                dft["_ano"] = pd.to_numeric(dft[col_ano], errors="coerce")
+            dft = dft.dropna(subset=["_ano", col_roic]).sort_values("_ano")
+            if not dft.empty:
+                roic_5a = float(pd.to_numeric(dft[col_roic], errors="coerce").tail(5).mean())
 
-        # Fundamentos via score_global (preferência)
-        roic_avg5y = _mean_last_years(score_global, tk, ["ROIC", "roic", "Roic"], years=5)
-        rev_cagr5y = _cagr_last_years(score_global, tk, ["RECEITA_LIQ", "Receita", "Receita Líquida", "RECEITA", "receita_liquida"], years=5)
-        earn_cagr5y = _cagr_last_years(score_global, tk, ["LUCRO_LIQ", "Lucro Líquido", "LUCRO_LIQUIDO", "lucro_liquido", "Net Income"], years=5)
-        netdebt_ebitda = _mean_last_years(score_global, tk, ["DIV_LIQ_EBITDA", "DividaLiquida_EBITDA", "Dívida Líquida/EBITDA", "divida_liquida_ebitda", "DL_EBITDA"], years=5)
+        # CAGR Receita 5a
+        cagr_receita_5a = np.nan
+        if col_receita is not None and col_ano is not None and not df_score.empty:
+            dft = df_score[df_score["ticker"] == t].copy()
+            if "dt_ref" in str(col_ano).lower():
+                dft["_ano"] = pd.to_datetime(dft[col_ano], errors="coerce").dt.year
+            else:
+                dft["_ano"] = pd.to_numeric(dft[col_ano], errors="coerce")
+            dft["_rev"] = pd.to_numeric(dft[col_receita], errors="coerce")
+            dft = dft.dropna(subset=["_ano", "_rev"]).sort_values("_ano")
+            if len(dft) >= 2:
+                last5 = dft.tail(6)  # 6 pontos para ~5 intervalos
+                if len(last5) >= 2:
+                    first = float(last5["_rev"].iloc[0])
+                    last = float(last5["_rev"].iloc[-1])
+                    years = max(int(last5["_ano"].iloc[-1] - last5["_ano"].iloc[0]), 1)
+                    # limita a 5 anos se possível
+                    years = min(years, 5)
+                    cagr_receita_5a = _cagr(first, last, years)
 
-        # Dividendos
-        dy_avg5y = _dy_medio_5y(tk, precos)
-        div_cagr5y = _dividendo_cagr_5y_from_yf(tk)
+        # Crescimento do lucro 5a
+        cagr_lucro_5a = np.nan
+        if col_lucro is not None and col_ano is not None and not df_score.empty:
+            dft = df_score[df_score["ticker"] == t].copy()
+            if "dt_ref" in str(col_ano).lower():
+                dft["_ano"] = pd.to_datetime(dft[col_ano], errors="coerce").dt.year
+            else:
+                dft["_ano"] = pd.to_numeric(dft[col_ano], errors="coerce")
+            dft["_ni"] = pd.to_numeric(dft[col_lucro], errors="coerce")
+            dft = dft.dropna(subset=["_ano", "_ni"]).sort_values("_ano")
+            if len(dft) >= 2:
+                last5 = dft.tail(6)
+                if len(last5) >= 2:
+                    first = float(last5["_ni"].iloc[0])
+                    last = float(last5["_ni"].iloc[-1])
+                    years = max(int(last5["_ano"].iloc[-1] - last5["_ano"].iloc[0]), 1)
+                    years = min(years, 5)
+                    cagr_lucro_5a = _cagr(abs(first), abs(last), years) if first != 0 and last != 0 else np.nan
 
-        # fallback de DY (se cálculo falhar)
-        if dy_avg5y is None:
-            dy_last = _get_dy_from_sources(tk, score_global)
-            dy_avg5y = dy_last
+        # Dividend CAGR 5a (usa dividendos anuais se existir; fallback: DY não)
+        div_cagr_5a = np.nan
+        if col_div is not None and col_ano is not None and not df_score.empty:
+            dft = df_score[df_score["ticker"] == t].copy()
+            if "dt_ref" in str(col_ano).lower():
+                dft["_ano"] = pd.to_datetime(dft[col_ano], errors="coerce").dt.year
+            else:
+                dft["_ano"] = pd.to_numeric(dft[col_ano], errors="coerce")
+            dft["_div"] = pd.to_numeric(dft[col_div], errors="coerce")
+            dft = dft.dropna(subset=["_ano", "_div"]).sort_values("_ano")
+            if len(dft) >= 2:
+                last5 = dft.tail(6)
+                if len(last5) >= 2:
+                    first = float(last5["_div"].iloc[0])
+                    last = float(last5["_div"].iloc[-1])
+                    years = max(int(last5["_ano"].iloc[-1] - last5["_ano"].iloc[0]), 1)
+                    years = min(years, 5)
+                    div_cagr_5a = _cagr(first, last, years)
 
-        # Percentil dentro do segmento (universo score_global)
-        # calcularemos depois do score (precisa quality_score)
+        # DY médio 5a
+        dy_med_5a = _dy_media_5y_from_prices_and_div(df_score, t)
+
+        # Dívida Líq./EBITDA (último disponível; ou média 3 anos se der)
+        dl_ebitda = np.nan
+        if col_dl is not None and col_ebitda is not None and col_ano is not None and not df_score.empty:
+            dft = df_score[df_score["ticker"] == t].copy()
+            if "dt_ref" in str(col_ano).lower():
+                dft["_ano"] = pd.to_datetime(dft[col_ano], errors="coerce").dt.year
+            else:
+                dft["_ano"] = pd.to_numeric(dft[col_ano], errors="coerce")
+            dft["_dl"] = pd.to_numeric(dft[col_dl], errors="coerce")
+            dft["_ebitda"] = pd.to_numeric(dft[col_ebitda], errors="coerce")
+            dft = dft.dropna(subset=["_ano", "_dl", "_ebitda"]).sort_values("_ano")
+            if not dft.empty:
+                tail = dft.tail(3)
+                ratio = tail["_dl"] / tail["_ebitda"].replace(0, np.nan)
+                dl_ebitda = float(ratio.mean())
+
+        # Preço/retornos/risco
+        ret_12m = np.nan
+        vol_12m = np.nan
+        dd_5a = np.nan
+        cagr_preco_5a = np.nan
+        val_preco_5a = np.nan
+
+        if df_prices is not None and t in df_prices.columns:
+            p = df_prices[t].dropna()
+            if not p.empty:
+                r = p.pct_change()
+                # volatilidade 12m: usa últimos 252 retornos
+                if len(r.dropna()) >= 30:
+                    r12 = r.dropna().tail(252)
+                    vol_12m = _vol_annualized(r12)
+                ret_12m = _ret_12m(p)
+                cagr_preco_5a = _cagr_price_5y(p)
+                val_preco_5a = _valorizacao_5y(p)
+                dd_5a = _max_drawdown(p.tail(252*5+10) if len(p) > 252*5 else p)
+
+        # lucro líquido último (informativo)
+        lucro_last = np.nan
+        if col_lucro is not None and col_ano is not None and not df_score.empty:
+            dft = df_score[df_score["ticker"] == t].copy()
+            if "dt_ref" in str(col_ano).lower():
+                dft["_ano"] = pd.to_datetime(dft[col_ano], errors="coerce").dt.year
+            else:
+                dft["_ano"] = pd.to_numeric(dft[col_ano], errors="coerce")
+            dft["_ni"] = pd.to_numeric(dft[col_lucro], errors="coerce")
+            dft = dft.dropna(subset=["_ano", "_ni"]).sort_values("_ano")
+            if not dft.empty:
+                lucro_last = float(dft["_ni"].iloc[-1])
+
         rows.append(
             {
-                "ticker": tk,
-                "nome": nome,
-                "roic_avg5y": roic_avg5y,
-                "rev_cagr5y": rev_cagr5y,
-                "earn_cagr5y": earn_cagr5y,
-                "div_cagr5y": div_cagr5y,
-                "dy_avg5y": dy_avg5y,
-                "netdebt_ebitda": netdebt_ebitda,
-                "price_cagr5y": pm.get("cagr_5y"),
-                "price_ret5y": pm.get("ret_5y"),
-                "ret_12m": pm.get("ret_12m"),
-                "vol_12m": pm.get("vol_12m"),
-                "mdd_5y": pm.get("mdd_5y"),
+                "ticker": t,
+                "segmento": seg,
+                "roic_5a": roic_5a,
+                "cagr_receita_5a": cagr_receita_5a,
+                "cagr_lucro_5a": cagr_lucro_5a,
+                "div_cagr_5a": div_cagr_5a,
+                "dy_med_5a": dy_med_5a,
+                "dl_ebitda": dl_ebitda,
+                "val_preco_5a": val_preco_5a,
+                "cagr_preco_5a": cagr_preco_5a,
+                "ret_12m": ret_12m,
+                "vol_12m": vol_12m,
+                "dd_5a": dd_5a,
+                "lucro_last": lucro_last,
             }
         )
 
-    df = pd.DataFrame(rows).replace([np.inf, -np.inf], np.nan)
-    df = _build_quality_score(df)
+    df = pd.DataFrame(rows)
+    if df.empty:
+        st.info("Sem dados suficientes para exibir o Patch 5.")
+        return
 
-    # percentil no segmento
-    seg_pcts=[]
-    for _, r in df.iterrows():
-        pct = _percentil_no_segmento(score_global, str(r["ticker"]), float(r["quality_score"]) if pd.notna(r.get("quality_score")) else float("nan"))
-        seg_pcts.append(pct)
-    df["percentil_segmento"] = seg_pcts
+    # ------------------------- Score de Qualidade -------------------------
+    # winsoriza para robustez e z-score; inverte onde "menor é melhor"
+    score_parts = {}
 
-    # ordena por score
-    df = df.sort_values(["quality_score", "dy_avg5y", "roic_avg5y"], ascending=[False, False, False]).reset_index(drop=True)
+    # maior é melhor
+    for col in ["roic_5a", "cagr_receita_5a", "cagr_lucro_5a", "div_cagr_5a", "dy_med_5a", "cagr_preco_5a"]:
+        score_parts[col] = _zscore(_winsorize(df[col], 0.05))
 
-    def fmt_pct(x: Optional[float]) -> str:
-        return "—" if x is None or pd.isna(x) else f"{x * 100:.2f}%"
+    # menor é melhor
+    for col in ["dl_ebitda", "vol_12m"]:
+        score_parts[col] = -_zscore(_winsorize(df[col], 0.05))
 
-    def fmt_pct100(x: Optional[float]) -> str:
-        return "—" if x is None or pd.isna(x) else f"{x:.0f}º pct"
+    # drawdown: dd_5a é negativo; menos negativo é melhor => zscore do próprio (maior é melhor)
+    score_parts["dd_5a"] = _zscore(_winsorize(df["dd_5a"], 0.05))
 
-    def fmt_num(x: Optional[float]) -> str:
-        return "—" if x is None or pd.isna(x) else f"{x:,.0f}".replace(",", ".")
+    # pesos (ajustáveis)
+    weights = {
+        "roic_5a": 0.18,
+        "cagr_receita_5a": 0.12,
+        "cagr_lucro_5a": 0.12,
+        "div_cagr_5a": 0.10,
+        "dy_med_5a": 0.14,
+        "dl_ebitda": 0.10,
+        "vol_12m": 0.10,
+        "dd_5a": 0.10,
+        "cagr_preco_5a": 0.04,
+    }
 
-    def fmt_ratio(x: Optional[float]) -> str:
-        return "—" if x is None or pd.isna(x) else f"{x:.2f}x"
+    zsum = pd.Series(0.0, index=df.index)
+    wsum = 0.0
+    for k, w in weights.items():
+        z = score_parts.get(k)
+        if z is None:
+            continue
+        # ignora colunas totalmente NaN
+        if z.notna().sum() == 0:
+            continue
+        zsum = zsum + z.fillna(0.0) * w
+        wsum += w
 
-    def medal(i: int) -> str:
-        return "🥇" if i == 0 else ("🥈" if i == 1 else ("🥉" if i == 2 else ""))
+    if wsum == 0:
+        df["score_qualidade"] = np.nan
+    else:
+        # normaliza para 0–100 usando percentil (robusto)
+        raw = zsum / wsum
+        pct = raw.rank(pct=True)
+        df["score_qualidade"] = (pct * 100.0).round(1)
 
-    # Render cards
-    for i, r in df.iterrows():
-        tk = str(r["ticker"])
-        nome = str(r.get("nome", tk))
+    # percentil no segmento (derivado do score_qualidade)
+    df["pct_segmento"] = np.nan
+    for seg, g in df.groupby("segmento"):
+        if g["score_qualidade"].notna().sum() >= 2:
+            df.loc[g.index, "pct_segmento"] = (g["score_qualidade"].rank(pct=True) * 100.0).round(0)
 
-        rank_line = f"{medal(i)} #{i+1} | Score de Qualidade: {r.get('quality_score', float('nan')):.1f}/100" if pd.notna(r.get("quality_score")) else f"{medal(i)} #{i+1} | Score de Qualidade: —"
+    # ordena
+    df = df.sort_values(["score_qualidade", "ticker"], ascending=[False, True]).reset_index(drop=True)
 
-        card_html = f"""<div class="metric-card">
-                <div class="metric-rank">{rank_line}</div>
-                <div class="metric-title">{tk} — {nome}</div>
-                <div class="metric-grid">
-                    <div class="metric-row"><span class="metric-label">ROIC médio (5a)</span><span class="metric-value">{fmt_pct(r.get("roic_avg5y"))}</span></div>
-                    <div class="metric-row"><span class="metric-label">Dívida Líq./EBITDA</span><span class="metric-value">{fmt_ratio(r.get("netdebt_ebitda"))}</span></div>
+    # ------------------------- UI (profissional, consistente mobile) -------------------------
+    st.markdown(
+        """
+        <style>
+        /* Patch 5 layout - profissional */
+        .p5-title { font-size: 1.05rem; font-weight: 800; margin: 0 0 .25rem 0; }
+        .p5-sub   { font-size: .9rem; opacity: .80; margin: 0 0 .6rem 0; }
+        .p5-help  { font-size: .9rem; opacity: .75; margin: 0 0 1rem 0; line-height: 1.35; }
 
-                    <div class="metric-row"><span class="metric-label">CAGR Receita (5a)</span><span class="metric-value">{fmt_pct(r.get("rev_cagr5y"))}</span></div>
-                    <div class="metric-row"><span class="metric-label">Crescimento Lucro (5a)</span><span class="metric-value">{fmt_pct(r.get("earn_cagr5y"))}</span></div>
+        /* melhora espaçamento em mobile */
+        @media (max-width: 480px){
+          .p5-title{ font-size: 1.0rem; }
+          .p5-sub{ font-size: .85rem; }
+          .p5-help{ font-size: .85rem; }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
-                    <div class="metric-row"><span class="metric-label">DY médio (5a)</span><span class="metric-value">{fmt_pct(r.get("dy_avg5y"))}</span></div>
-                    <div class="metric-row"><span class="metric-label">Dividend CAGR (5a)</span><span class="metric-value">{fmt_pct(r.get("div_cagr5y"))}</span></div>
+    st.markdown(
+        """
+        <div class="p5-help">
+        Ordenação por <b>Score de Qualidade (0–100)</b>, combinando: ROIC médio 5a, CAGR Receita 5a,
+        crescimento do lucro 5a, Dividend CAGR 5a, DY médio 5a, Dívida Líq./EBITDA,
+        volatilidade 12m, máx. queda (drawdown) 5a e CAGR do preço 5a.
+        <br><b>Retorno do preço (12m)</b> e <b>Valorização do preço (5a)</b> são informativos.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-                    <div class="metric-row"><span class="metric-label">Valorização preço (5a)</span><span class="metric-value">{fmt_pct(r.get("price_ret5y"))}</span></div>
-                    <div class="metric-row"><span class="metric-label">CAGR do preço (5a)</span><span class="metric-value">{fmt_pct(r.get("price_cagr5y"))}</span></div>
+    # grid com 2 colunas em telas maiores e 1 coluna em mobile
+    for i, row in df.head(max_empresas).iterrows():
+        rank = i + 1
+        medal = "🥇" if rank == 1 else ("🥈" if rank == 2 else ("🥉" if rank == 3 else "🏅"))
+        scoreq = row["score_qualidade"]
 
-                    <div class="metric-row"><span class="metric-label">Retorno do preço (12m)</span><span class="metric-value">{fmt_pct(r.get("ret_12m"))}</span></div>
-                    <div class="metric-row"><span class="metric-label">Volatilidade (12m, a.a.)</span><span class="metric-value">{fmt_pct(r.get("vol_12m"))}</span></div>
+        with st.container():
+            # cabeçalho
+            c1, c2 = st.columns([0.72, 0.28])
+            with c1:
+                st.markdown(f"**{medal} #{rank} | {row['ticker']}**")
+                st.caption(f"Segmento: {row['segmento']}")
+            with c2:
+                st.metric("Score de Qualidade", f"{_fmt_num(scoreq)}/100")
 
-                    <div class="metric-row"><span class="metric-label">Máx. queda (drawdown) 5a</span><span class="metric-value">{fmt_pct(r.get("mdd_5y"))}</span></div>
-                    <div class="metric-row"><span class="metric-label">Percentil no segmento</span><span class="metric-value">{fmt_pct100(r.get("percentil_segmento"))}</span></div>
-                </div>
-                <div class="metric-note">
-                    <b>Notas:</b> Retorno/valorização e CAGR são sobre <u>preço</u> (sem dividendos). Volatilidade 12m é anualizada a partir dos retornos diários dos últimos ~252 pregões.
-                    Dividend CAGR (5a) usa o total anual de dividendos do histórico (quando disponível). Percentil no segmento usa o universo do <i>score_global</i> no último ano disponível.
-                </div>
-            </div>"""
+            # linha 1
+            a, b, c = st.columns(3)
+            a.metric("ROIC médio (5a)", _fmt_pct(row["roic_5a"]))
+            b.metric("CAGR Receita (5a)", _fmt_pct(row["cagr_receita_5a"]))
+            c.metric("Cresc. Lucro (5a)", _fmt_pct(row["cagr_lucro_5a"]))
 
-        # Render via components.html para evitar qualquer escape/markdown em alguns ambientes
-        components.html(card_html, height=255, scrolling=False)
+            # linha 2
+            a, b, c = st.columns(3)
+            a.metric("DY médio (5a)", _fmt_pct(row["dy_med_5a"]))
+            b.metric("Dividend CAGR (5a)", _fmt_pct(row["div_cagr_5a"]))
+            c.metric("Dívida Líq./EBITDA", _fmt_num(row["dl_ebitda"]))
+
+            # linha 3
+            a, b, c = st.columns(3)
+            a.metric("Retorno do preço (12m)", _fmt_pct(row["ret_12m"]))
+            b.metric("Volatilidade (12m, a.a.)", _fmt_pct(row["vol_12m"]))
+            c.metric("Máx. queda (drawdown) 5a", _fmt_pct(row["dd_5a"]))
+
+            # linha 4 (preço 5a + segmento + lucro)
+            a, b, c = st.columns(3)
+            a.metric("Valorização do preço (5a)", _fmt_pct(row["val_preco_5a"]))
+            b.metric("CAGR do preço (5a)", _fmt_pct(row["cagr_preco_5a"]))
+            c.metric("Percentil no segmento", "—" if np.isnan(row["pct_segmento"]) else f"{int(row['pct_segmento'])}º")
+
+            st.divider()
+
+    st.caption(
+        "Notas: "
+        "CAGR = taxa anual composta. "
+        "Volatilidade 12m é anualizada (≈252 pregões). "
+        "Drawdown 5a = pior queda do preço no período (quanto menos negativo, melhor). "
+        "Percentil no segmento é calculado pelo score dentro do segmento."
+    )
