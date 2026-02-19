@@ -780,11 +780,7 @@ def render_patch5_desempenho_empresas(
         cagr = _cagr(price_win, janela_anos)
 
         # DY médio (janela)
-        div_ser = dividendos.get(tk)
-        if div_ser is None or (isinstance(div_ser, pd.Series) and div_ser.empty):
-            div_ser = dividendos.get(tk + ".SA")
-        if div_ser is None:
-            div_ser = pd.Series(dtype="float64")
+        div_ser = dividendos.get(tk) or dividendos.get(tk + ".SA") or pd.Series(dtype="float64")
         dy = _dy_medio_anual(div_ser, price_ser, janela_anos)
 
         # Crescimento de lucros (se der)
