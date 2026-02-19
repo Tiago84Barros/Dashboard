@@ -1040,10 +1040,10 @@ def render():
 
 
 
-        if render_patch5_desempenho_empresas is not None:
+        if 'render_patch5_desempenho_empresas' in globals() and render_patch5_desempenho_empresas is not None:
             with st.expander("🧩 Patch 5 — Desempenho das Empresas (Preço/DY + Lucros)", expanded=False):
                 try:
-                    render_patch5_desempenho_empresas(empresas_lideres_finais, df_prices_global if ('df_prices_global' in locals() and isinstance(df_prices_global, pd.DataFrame) and not df_prices_global.empty) else None, score_global=score_global if ('score_global' in locals() and isinstance(score_global, pd.DataFrame) and not score_global.empty) else None, dividendos=None)
+                    render_patch5_desempenho_empresas(empresas_lideres_finais, df_prices_global, score_global=score_global, dividendos=dividendos)
                 except Exception as e:
                     st.error(f"Patch 5 falhou: {type(e).__name__}: {e}")
 
