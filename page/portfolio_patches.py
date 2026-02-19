@@ -510,172 +510,6 @@ def render_patch4_benchmark_segmento(
             st.pyplot(fig)
 
 
-
-# ─────────────────────────────────────────────────────────────
-# PATCH 5 — Desempenho das Empresas (Preço/DY + Lucros)  [novo]
-# ─────────────────────────────────────────────────────────────
-
-def _pick_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
-    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
-        return None
-    cols_l = {c.lower(): c for c in df.columns}
-    for cand in candidates:
-        c = cols_l.get(cand.lower())
-        if c:
-            return c
-    return None
-
-
-def _series_cagr(px: pd.Series) -> float:
-    px = pd.to_numeric(px, errors="coerce").dropna()
-    if px.empty or len(px) < 2:
-        return float("nan")
-    p0 = float(px.iloc[0])
-    p1 = float(px.iloc[-1])
-    if not np.isfinite(p0) or not np.isfinite(p1) or p0 <= 0 or p1 <= 0:
-        return float("nan")
-    years = max(1e-9, (px.index[-1] - px.index[0]).days / 365.25)
-    return float((p1 / p0) ** (1.0 / years) - 1.0)
-
-
-def _max_drawdown(px: pd.Series) -> float:
-    px = pd.to_numeric(px, errors="coerce").dropna()
-    if px.empty:
-        return float("nan")
-    roll_max = px.cummax()
-    dd = (px / roll_max) - 1.0
-    return float(dd.min()) if not dd.empty else float("nan")
-
-
-def render_patch5_desempenho_empresas(
-    score_global: pd.DataFrame,
-    empresas_lideres_finais: List[Dict[str, Any]],
-    precos: Optional[pd.DataFrame],
-) -> None:
-    st.markdown("## 🧩 Patch 5 — Desempenho das empresas (métricas chave)")
-    st.caption(
-        "Resumo quantitativo por empresa para apoiar a decisão final. "
-        "Volatilidade e drawdown medem risco; retornos e CAGR medem crescimento; "
-        "DY médio (quando disponível no score) mede renda recorrente."
-    )
-
-    if not empresas_lideres_finais:
-        st.info("Patch 5 indisponível: portfólio final vazio.")
-        return
-
-    df_prices = _ensure_prices_df(precos)
-    if df_prices.empty:
-        st.info("Patch 5 indisponível: não há preços carregados nesta execução.")
-        return
-
-    tickers = sorted({_strip_sa(str(e.get("ticker", ""))) for e in (empresas_lideres_finais or []) if str(e.get("ticker", "")).strip()})
-    if not tickers:
-        st.info("Patch 5 indisponível: tickers inválidos.")
-        return
-
-    # normaliza score_global para tentar extrair DY e/ou lucro (se existir)
-    sg = score_global.copy() if isinstance(score_global, pd.DataFrame) else pd.DataFrame()
-    if not sg.empty and "ticker" in sg.columns:
-        sg["ticker"] = sg["ticker"].astype(str).map(_strip_sa)
-
-    # tenta identificar colunas de DY e Lucro (nomes variam por pipeline)
-    dy_col = _pick_col(sg, ["dy", "dividend_yield", "dividend yield", "dividendyield", "dividend_yield_%", "dy_%"])
-    lucro_col = _pick_col(sg, ["lucro_liquido", "lucro líquido", "lucro", "net_income", "earnings"])
-
-    # restringe a último ano disponível, se existir
-    ultimo_ano = None
-    if not sg.empty and "Ano" in sg.columns:
-        try:
-            ultimo_ano = int(pd.to_numeric(sg["Ano"], errors="coerce").max())
-        except Exception:
-            ultimo_ano = None
-
-    sg_last = pd.DataFrame()
-    if ultimo_ano is not None and (not sg.empty) and ("Ano" in sg.columns):
-        sg_last = sg[pd.to_numeric(sg["Ano"], errors="coerce") == ultimo_ano].copy()
-
-    linhas: List[Dict[str, Any]] = []
-    faltantes = []
-
-    for tk in tickers:
-        if tk not in df_prices.columns:
-            faltantes.append(tk)
-            continue
-
-        px = pd.to_numeric(df_prices[tk], errors="coerce").dropna()
-        if px.empty or len(px) < 20:
-            faltantes.append(tk)
-            continue
-
-        # reamostra em dias úteis e preenche (evita buracos de calendário)
-        px = px.copy()
-        px.index = pd.to_datetime(px.index, errors="coerce")
-        px = px[~px.index.isna()].sort_index()
-        px = px.resample("B").last().ffill().dropna()
-        if px.empty or len(px) < 20:
-            faltantes.append(tk)
-            continue
-
-        rets = px.pct_change().dropna()
-        vol = float(rets.std(ddof=0) * np.sqrt(252)) if len(rets) >= 2 else float("nan")
-        mdd = _max_drawdown(px)
-        cagr = _series_cagr(px)
-
-        # retorno 12m (se houver ~252 pregões), senão retorno total da janela disponível
-        if len(px) >= 252:
-            ret_12m = float((float(px.iloc[-1]) / (float(px.iloc[-252]) + 1e-12)) - 1.0)
-        else:
-            ret_12m = float((float(px.iloc[-1]) / (float(px.iloc[0]) + 1e-12)) - 1.0)
-
-        # DY médio (se existir no score do último ano)
-        dy_mean = float("nan")
-        if dy_col and (not sg_last.empty):
-            try:
-                vals = pd.to_numeric(sg_last.loc[sg_last["ticker"] == tk, dy_col], errors="coerce").dropna()
-                if not vals.empty:
-                    dy_mean = float(vals.mean())
-            except Exception:
-                dy_mean = float("nan")
-
-        # Lucro (último ano) — apenas informativo se existir
-        lucro_last = float("nan")
-        if lucro_col and (not sg_last.empty):
-            try:
-                vals = pd.to_numeric(sg_last.loc[sg_last["ticker"] == tk, lucro_col], errors="coerce").dropna()
-                if not vals.empty:
-                    lucro_last = float(vals.iloc[0])
-            except Exception:
-                lucro_last = float("nan")
-
-        linhas.append(
-            {
-                "empresa": _get_nome(tk, empresas_lideres_finais),
-                "ticker": tk,
-                "retorno_12m_%": ret_12m * 100.0,
-                "CAGR_%a.a.": cagr * 100.0 if pd.notna(cagr) else float("nan"),
-                "vol_aa_%": vol * 100.0 if pd.notna(vol) else float("nan"),
-                "max_drawdown_%": mdd * 100.0 if pd.notna(mdd) else float("nan"),
-                "DY_medio_%": dy_mean * 100.0 if pd.notna(dy_mean) else float("nan"),
-                "lucro_ultimo_ano": lucro_last,
-            }
-        )
-
-    if not linhas:
-        st.warning("Patch 5 não conseguiu montar métricas: preços ausentes ou insuficientes para os tickers.")
-        if faltantes:
-            st.caption("Tickers sem preços suficientes: " + ", ".join(sorted(set(faltantes))))
-        return
-
-    out = pd.DataFrame(linhas)
-    # ordena por retorno 12m e depois por menor drawdown (melhor)
-    out = out.sort_values(["retorno_12m_%", "max_drawdown_%"], ascending=[False, True]).reset_index(drop=True)
-
-    st.dataframe(out, use_container_width=True)
-
-    if faltantes:
-        st.warning("Alguns tickers não tinham preços suficientes para cálculo: " + ", ".join(sorted(set(faltantes))))
-
-
 # ─────────────────────────────────────────────────────────────
 # PATCH 5 — IA (OpenAI) — Seleção/validação amigável (era Patch 6)
 # ─────────────────────────────────────────────────────────────
@@ -1411,3 +1245,385 @@ def _render_patch6_output(payload: dict, empresas_lideres_finais: List[Dict]) ->
     if falhas:
         with st.expander("🛠️ Detalhes de falhas (debug)", expanded=False):
             st.json(falhas)
+
+
+
+# ─────────────────────────────────────────────────────────────
+# PATCH 5 — Desempenho das Empresas (Preço/DY + Lucros)
+# Objetivo: resumo por empresa para apoiar decisão final.
+# Robustez: nunca avaliar Series/DataFrame como boolean diretamente.
+# Fontes:
+#   1) df_prices_global (se fornecido)
+#   2) yfinance (core.yf_data) para preços e dividendos
+#   3) Supabase (core.db_loader) para Lucro_Liquido (DFP/ITR)
+# ─────────────────────────────────────────────────────────────
+
+def _patch5_inject_cards_css() -> None:
+    css = '''
+    <style>
+      .metric-card {
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(255,255,255,0.10);
+        border-radius: 14px;
+        padding: 16px;
+        box-shadow: 0 4px 18px rgba(0,0,0,0.25);
+        margin-bottom: 14px;
+      }
+      .metric-title {
+        font-weight: 900;
+        font-size: 16px;
+        margin-bottom: 10px;
+        color: #ffffff;
+        display:flex;
+        align-items:center;
+        gap:10px;
+      }
+      .metric-subtitle{
+        font-size: 12px;
+        color: rgba(255,255,255,0.70);
+        margin-bottom: 12px;
+      }
+      .metric-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px 18px;
+      }
+      .metric-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 6px 0;
+        border-bottom: 1px solid rgba(255,255,255,0.06);
+        font-size: 13px;
+      }
+      .metric-label { color: rgba(255,255,255,0.75); }
+      .metric-value { font-weight: 800; color: #ffffff; text-align:right; }
+      .metric-muted { color: rgba(255,255,255,0.55); font-weight: 700; }
+      .metric-badge {
+        font-size: 11px;
+        padding: 3px 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.14);
+        color: rgba(255,255,255,0.85);
+        background: rgba(255,255,255,0.04);
+      }
+    </style>
+    '''
+    st.markdown(css, unsafe_allow_html=True)
+
+
+def _fmt_pct(x: Any) -> str:
+    try:
+        if x is None or (isinstance(x, float) and not np.isfinite(x)):
+            return "—"
+        return f"{float(x)*100:.2f}%"
+    except Exception:
+        return "—"
+
+
+def _fmt_money_brl(x: Any) -> str:
+    try:
+        if x is None or (isinstance(x, float) and not np.isfinite(x)):
+            return "—"
+        v = float(x)
+        s = f"{v:,.0f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        return f"R$ {s}"
+    except Exception:
+        return "—"
+
+
+def _safe_last_valid(series: pd.Series) -> Optional[float]:
+    try:
+        if series is None or len(series) == 0:
+            return None
+        s = pd.to_numeric(series, errors="coerce").dropna()
+        if len(s) == 0:
+            return None
+        return float(s.iloc[-1])
+    except Exception:
+        return None
+
+
+def _pick_price_series(df_prices_global: Optional[pd.DataFrame], ticker: str) -> pd.Series:
+    if df_prices_global is None or (not isinstance(df_prices_global, pd.DataFrame)) or df_prices_global.empty:
+        return pd.Series(dtype="float64")
+
+    tk = _norm_tk(ticker)
+    cols = list(df_prices_global.columns)
+
+    candidates = []
+    for c in cols:
+        if _norm_tk(str(c)) == tk:
+            candidates.append(c)
+
+    if not candidates:
+        tk2 = tk.replace(".SA", "")
+        for c in cols:
+            cc = _norm_tk(str(c)).replace(".SA", "")
+            if cc == tk2:
+                candidates.append(c)
+
+    if not candidates:
+        return pd.Series(dtype="float64")
+
+    s = df_prices_global[candidates[0]]
+    try:
+        s = pd.to_numeric(s, errors="coerce")
+        s.index = pd.to_datetime(s.index, errors="coerce")
+        s = s.dropna()
+        return s.astype(float)
+    except Exception:
+        return pd.Series(dtype="float64")
+
+
+def _fetch_prices_yf(ticker: str, months: int = 24) -> pd.Series:
+    try:
+        from core.yf_data import baixar_precos
+    except Exception:
+        return pd.Series(dtype="float64")
+
+    try:
+        df = baixar_precos([ticker], months=months)
+        if df is None or (not isinstance(df, pd.DataFrame)) or df.empty:
+            return pd.Series(dtype="float64")
+
+        tk = _norm_tk(ticker).replace(".SA", "")
+        for c in df.columns:
+            if _norm_tk(str(c)).replace(".SA", "") == tk:
+                s = pd.to_numeric(df[c], errors="coerce").dropna()
+                s.index = pd.to_datetime(s.index, errors="coerce")
+                return s.astype(float)
+
+        s = pd.to_numeric(df.iloc[:, 0], errors="coerce").dropna()
+        s.index = pd.to_datetime(s.index, errors="coerce")
+        return s.astype(float)
+    except Exception:
+        return pd.Series(dtype="float64")
+
+
+def _calc_metrics_from_prices(prices: pd.Series) -> Dict[str, Optional[float]]:
+    out: Dict[str, Optional[float]] = {"ret_12m": None, "cagr": None, "vol": None, "mdd": None, "last": None}
+    try:
+        if prices is None or len(prices) < 30:
+            return out
+
+        p = prices.sort_index()
+        p = pd.to_numeric(p, errors="coerce").dropna()
+        if len(p) < 30:
+            return out
+
+        out["last"] = float(p.iloc[-1])
+
+        p12 = p.iloc[-min(len(p), 252):]
+        if len(p12) >= 30:
+            out["ret_12m"] = float(p12.iloc[-1] / p12.iloc[0] - 1.0)
+
+        rets = p.pct_change().dropna()
+        if len(rets) >= 30:
+            out["vol"] = float(rets.std() * np.sqrt(252))
+            cum = (1 + rets).cumprod()
+            dd = (cum / cum.cummax() - 1.0)
+            out["mdd"] = float(dd.min())
+
+        if len(p) >= 60:
+            years = max(len(p) / 252.0, 1e-9)
+            out["cagr"] = float((p.iloc[-1] / p.iloc[0]) ** (1.0 / years) - 1.0)
+
+        return out
+    except Exception:
+        return out
+
+
+def _calc_dy_medio_trailing_12m(ticker: str, prices: pd.Series) -> Optional[float]:
+    try:
+        if prices is None or len(prices) < 30:
+            return None
+
+        from core.yf_data import coletar_dividendos, get_fundamentals_yf
+
+        divs = coletar_dividendos([ticker]).get(_norm_tk(ticker).replace(".SA", ""), None)
+        if divs is not None and isinstance(divs, pd.Series) and len(divs) > 0:
+            divs = divs.copy()
+            divs.index = pd.to_datetime(divs.index, errors="coerce")
+            divs = divs.dropna()
+            if len(divs) > 0:
+                cutoff = pd.Timestamp.today() - pd.Timedelta(days=365)
+                div12 = divs[divs.index >= cutoff]
+                if len(div12) > 0:
+                    div_sum = float(pd.to_numeric(div12, errors="coerce").dropna().sum())
+                    last_price = float(prices.sort_index().iloc[-1])
+                    if last_price > 0:
+                        return div_sum / last_price
+
+        try:
+            fyf = get_fundamentals_yf(ticker)
+            if isinstance(fyf, pd.DataFrame) and (not fyf.empty) and ("DY" in fyf.columns):
+                dy = fyf.loc[0, "DY"]
+                if dy is None:
+                    return None
+                dy = float(dy)
+                if np.isfinite(dy) and dy > 0:
+                    return dy
+        except Exception:
+            pass
+
+        return None
+    except Exception:
+        return None
+
+
+def _fetch_lucro_liquido_supabase(ticker: str) -> Optional[float]:
+    try:
+        from core.db_loader import load_data_from_db, load_data_tri_from_db
+    except Exception:
+        return None
+
+    try:
+        df = load_data_from_db(ticker)
+        if isinstance(df, pd.DataFrame) and (not df.empty) and ("Lucro_Liquido" in df.columns):
+            val = _safe_last_valid(df["Lucro_Liquido"])
+            if val is not None:
+                return val
+    except Exception:
+        pass
+
+    try:
+        df = load_data_tri_from_db(ticker)
+        if isinstance(df, pd.DataFrame) and (not df.empty) and ("Lucro_Liquido" in df.columns):
+            val = _safe_last_valid(df["Lucro_Liquido"])
+            if val is not None:
+                return val
+    except Exception:
+        pass
+
+    return None
+
+
+def _dy_from_score_global(score_global: pd.DataFrame, ticker: str) -> Optional[float]:
+    if not isinstance(score_global, pd.DataFrame) or score_global.empty:
+        return None
+
+    tk = _norm_tk(ticker).replace(".SA", "")
+    cand_ticker_cols = ["Ticker", "ticker", "ATIVO", "Ativo"]
+    tcol = next((c for c in cand_ticker_cols if c in score_global.columns), None)
+    if tcol is None:
+        return None
+
+    df = score_global.copy()
+    try:
+        df[tcol] = df[tcol].astype(str).str.upper().str.strip().str.replace(".SA", "", regex=False)
+    except Exception:
+        return None
+
+    dft = df[df[tcol] == tk]
+    if dft.empty:
+        return None
+
+    dy_cols = ["DY", "Dividend_Yield", "DividendYield", "Div_Yield", "DY_%", "Dividend Yield"]
+    dy_col = next((c for c in dy_cols if c in dft.columns), None)
+    if dy_col is None:
+        return None
+
+    s = pd.to_numeric(dft[dy_col], errors="coerce").dropna()
+    if len(s) == 0:
+        return None
+
+    m = float(s.mean())
+    if m > 1.5:
+        return m / 100.0
+    return m
+
+
+def render_patch5_desempenho_empresas(
+    score_global: pd.DataFrame,
+    lideres_global: pd.DataFrame,
+    empresas_lideres_finais: List[Dict[str, Any]],
+    *,
+    df_prices_global: Optional[pd.DataFrame] = None,
+) -> None:
+    st.markdown("## 🧩 Patch 5 — Desempenho das Empresas (métricas chave)")
+    st.caption(
+        "Resumo quantitativo por empresa para apoiar a decisão final. "
+        "Volatilidade e drawdown medem risco; retornos e CAGR medem crescimento; "
+        "DY médio mede renda recorrente; lucro líquido vem das demonstrações (Supabase) quando disponível."
+    )
+
+    if not empresas_lideres_finais:
+        st.info("Sem líderes finais nesta execução — Patch 5 não tem o que analisar.")
+        return
+
+    _patch5_inject_cards_css()
+
+    tickers = sorted({_norm_tk(e.get("ticker", "")).replace(".SA", "") for e in empresas_lideres_finais if _norm_tk(e.get("ticker", ""))})
+    if not tickers:
+        st.info("Tickers inválidos para o Patch 5.")
+        return
+
+    c1, c2, c3 = st.columns([1.2, 1.0, 1.0])
+    with c1:
+        months_prices = st.number_input("Janela de preços (meses)", 6, 120, 24, 6, key="patch5_months_prices")
+    with c2:
+        mostrar_grafico = st.checkbox("Mostrar gráfico (12m)", value=False, key="patch5_show_chart")
+    with c3:
+        colunas = st.selectbox("Layout", ["2 colunas", "1 coluna"], index=0, key="patch5_layout")
+
+    ncols = 2 if colunas == "2 colunas" else 1
+    grid_cols = st.columns(ncols)
+
+    if "patch5_desempenho_cache" not in st.session_state:
+        st.session_state["patch5_desempenho_cache"] = {}
+
+    for i, tk in enumerate(tickers):
+        prices = _pick_price_series(df_prices_global, tk)
+        if prices is None or len(prices) < 30:
+            prices = _fetch_prices_yf(tk, months=int(months_prices))
+
+        metrics = _calc_metrics_from_prices(prices)
+        dy = _dy_from_score_global(score_global, tk)
+        if dy is None:
+            dy = _calc_dy_medio_trailing_12m(tk, prices) if prices is not None else None
+
+        cache = st.session_state["patch5_desempenho_cache"]
+        if tk in cache and isinstance(cache[tk], dict) and ("lucro" in cache[tk]):
+            lucro = cache[tk]["lucro"]
+        else:
+            lucro = _fetch_lucro_liquido_supabase(tk)
+            cache[tk] = {"lucro": lucro}
+
+        seg = None
+        try:
+            seg = next((e.get("segmento") for e in empresas_lideres_finais if _norm_tk(e.get("ticker","")).replace(".SA","") == tk), None)
+        except Exception:
+            seg = None
+
+        badge = f'<span class="metric-badge">{seg}</span>' if seg else '<span class="metric-badge">líder</span>'
+
+        html = f'''
+        <div class="metric-card">
+          <div class="metric-title">🧩 {tk} {badge}</div>
+          <div class="metric-subtitle">Preço atual: <b>{_fmt_money_brl(metrics.get("last"))}</b></div>
+
+          <div class="metric-grid">
+            <div class="metric-row"><span class="metric-label">Retorno 12m</span><span class="metric-value">{_fmt_pct(metrics.get("ret_12m"))}</span></div>
+            <div class="metric-row"><span class="metric-label">CAGR (hist.)</span><span class="metric-value">{_fmt_pct(metrics.get("cagr"))}</span></div>
+            <div class="metric-row"><span class="metric-label">Volatilidade (a.a.)</span><span class="metric-value">{_fmt_pct(metrics.get("vol"))}</span></div>
+            <div class="metric-row"><span class="metric-label">Max Drawdown</span><span class="metric-value">{_fmt_pct(metrics.get("mdd"))}</span></div>
+            <div class="metric-row"><span class="metric-label">DY médio</span><span class="metric-value">{_fmt_pct(dy) if dy is not None else "—"}</span></div>
+            <div class="metric-row"><span class="metric-label">Lucro líquido</span><span class="metric-value">{_fmt_money_brl(lucro)}</span></div>
+          </div>
+        </div>
+        '''
+
+        target_col = grid_cols[i % ncols]
+        with target_col:
+            st.markdown(html, unsafe_allow_html=True)
+
+            if mostrar_grafico and prices is not None and len(prices) >= 30:
+                try:
+                    p12 = prices.sort_index().iloc[-min(len(prices), 252):]
+                    if len(p12) >= 30:
+                        base = float(p12.iloc[0]) if float(p12.iloc[0]) != 0 else 1.0
+                        norm = (p12 / base) * 100.0
+                        st.line_chart(norm)
+                except Exception:
+                    pass

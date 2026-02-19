@@ -682,18 +682,18 @@ def render():
                     st.error(f"Patch 4 falhou: {type(e).__name__}: {e}")
 
 
-        if render_patch5_desempenho_empresas is not None and empresas_lideres_finais:
-            with st.expander("🧩 Patch 5 — Desempenho das Empresas (Preço/DY + Lucros)", expanded=False):
-                try:
-                    render_patch5_desempenho_empresas(
-                        score_global=score_global,
-                        empresas_lideres_finais=empresas_lideres_finais,
-                        precos=df_prices_global,
-                    )
-                except Exception as e:
-                    st.error(f"Patch 5 falhou: {type(e).__name__}: {e}")
-        
-        
+if render_patch5_desempenho_empresas is not None and empresas_lideres_finais:
+    with st.expander("🧩 Patch 5 — Desempenho das Empresas (Preço/DY + Lucros)", expanded=False):
+        try:
+            render_patch5_desempenho_empresas(
+                score_global=score_global,
+                empresas_lideres_finais=empresas_lideres_finais,
+                precos=df_prices_global,
+            )
+        except Exception as e:
+            st.error(f"Patch 5 falhou: {type(e).__name__}: {e}")
+
+
     # Desarma a execução após rodar (evita “auto-rerun armado”)
     st.session_state["cp_should_run"] = False
 
