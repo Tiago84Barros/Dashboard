@@ -17,46 +17,6 @@ import matplotlib.pyplot as plt
 # Helpers internos
 # ─────────────────────────────────────────────────────────────
 
-
-
-# ─────────────────────────────────────────────────────────────
-# Debug (Patch 5) — utilitário para stacktrace e inspeção
-# Ative na sidebar: "Debug Patch 5 (variáveis)" e "Debug Patch 5 (stacktrace)"
-# ─────────────────────────────────────────────────────────────
-try:
-    from core.debug_tools import dbg, show_trace  # type: ignore
-except Exception:
-    dbg = None  # type: ignore
-    show_trace = None  # type: ignore
-
-def _patch_debug_guard(patch_label: str):
-    """Decorator: envolve o patch com try/except e (opcionalmente) imprime snapshots."""
-    def _decorator(fn):
-        def _wrapped(*args, **kwargs):
-            import streamlit as st  # local import para evitar circular
-
-            debug_vars = st.sidebar.toggle(f"Debug {patch_label} (variáveis)", value=False, key=f"dbg_{patch_label}_vars")
-            debug_trace = st.sidebar.toggle(f"Debug {patch_label} (stacktrace)", value=False, key=f"dbg_{patch_label}_trace")
-
-            try:
-                if debug_vars and dbg is not None:
-                    # snapshot genérico dos primeiros argumentos (útil para achar Series/DataFrame problemáticos)
-                    for i, a in enumerate(list(args)[:6]):
-                        dbg(f"{patch_label}.arg{i}", a)
-                    for k, v in list(kwargs.items())[:6]:
-                        dbg(f"{patch_label}.kw_{k}", v)
-
-                return fn(*args, **kwargs)
-
-            except Exception as e:
-                if debug_trace and show_trace is not None:
-                    show_trace(e, title=f"{patch_label} falhou (stacktrace)")
-                else:
-                    st.error(f"{patch_label} falhou: {type(e).__name__}: {e}")
-                st.stop()
-        return _wrapped
-    return _decorator
-
 def _norm_tk(t: str) -> str:
     return (t or "").upper().replace(".SA", "").strip()
 
@@ -550,6 +510,172 @@ def render_patch4_benchmark_segmento(
             st.pyplot(fig)
 
 
+
+# ─────────────────────────────────────────────────────────────
+# PATCH 5 — Desempenho das Empresas (Preço/DY + Lucros)  [novo]
+# ─────────────────────────────────────────────────────────────
+
+def _pick_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        return None
+    cols_l = {c.lower(): c for c in df.columns}
+    for cand in candidates:
+        c = cols_l.get(cand.lower())
+        if c:
+            return c
+    return None
+
+
+def _series_cagr(px: pd.Series) -> float:
+    px = pd.to_numeric(px, errors="coerce").dropna()
+    if px.empty or len(px) < 2:
+        return float("nan")
+    p0 = float(px.iloc[0])
+    p1 = float(px.iloc[-1])
+    if not np.isfinite(p0) or not np.isfinite(p1) or p0 <= 0 or p1 <= 0:
+        return float("nan")
+    years = max(1e-9, (px.index[-1] - px.index[0]).days / 365.25)
+    return float((p1 / p0) ** (1.0 / years) - 1.0)
+
+
+def _max_drawdown(px: pd.Series) -> float:
+    px = pd.to_numeric(px, errors="coerce").dropna()
+    if px.empty:
+        return float("nan")
+    roll_max = px.cummax()
+    dd = (px / roll_max) - 1.0
+    return float(dd.min()) if not dd.empty else float("nan")
+
+
+def render_patch5_desempenho_empresas(
+    score_global: pd.DataFrame,
+    empresas_lideres_finais: List[Dict[str, Any]],
+    precos: Optional[pd.DataFrame],
+) -> None:
+    st.markdown("## 🧩 Patch 5 — Desempenho das empresas (métricas chave)")
+    st.caption(
+        "Resumo quantitativo por empresa para apoiar a decisão final. "
+        "Volatilidade e drawdown medem risco; retornos e CAGR medem crescimento; "
+        "DY médio (quando disponível no score) mede renda recorrente."
+    )
+
+    if not empresas_lideres_finais:
+        st.info("Patch 5 indisponível: portfólio final vazio.")
+        return
+
+    df_prices = _ensure_prices_df(precos)
+    if df_prices.empty:
+        st.info("Patch 5 indisponível: não há preços carregados nesta execução.")
+        return
+
+    tickers = sorted({_strip_sa(str(e.get("ticker", ""))) for e in (empresas_lideres_finais or []) if str(e.get("ticker", "")).strip()})
+    if not tickers:
+        st.info("Patch 5 indisponível: tickers inválidos.")
+        return
+
+    # normaliza score_global para tentar extrair DY e/ou lucro (se existir)
+    sg = score_global.copy() if isinstance(score_global, pd.DataFrame) else pd.DataFrame()
+    if not sg.empty and "ticker" in sg.columns:
+        sg["ticker"] = sg["ticker"].astype(str).map(_strip_sa)
+
+    # tenta identificar colunas de DY e Lucro (nomes variam por pipeline)
+    dy_col = _pick_col(sg, ["dy", "dividend_yield", "dividend yield", "dividendyield", "dividend_yield_%", "dy_%"])
+    lucro_col = _pick_col(sg, ["lucro_liquido", "lucro líquido", "lucro", "net_income", "earnings"])
+
+    # restringe a último ano disponível, se existir
+    ultimo_ano = None
+    if not sg.empty and "Ano" in sg.columns:
+        try:
+            ultimo_ano = int(pd.to_numeric(sg["Ano"], errors="coerce").max())
+        except Exception:
+            ultimo_ano = None
+
+    sg_last = pd.DataFrame()
+    if ultimo_ano is not None and (not sg.empty) and ("Ano" in sg.columns):
+        sg_last = sg[pd.to_numeric(sg["Ano"], errors="coerce") == ultimo_ano].copy()
+
+    linhas: List[Dict[str, Any]] = []
+    faltantes = []
+
+    for tk in tickers:
+        if tk not in df_prices.columns:
+            faltantes.append(tk)
+            continue
+
+        px = pd.to_numeric(df_prices[tk], errors="coerce").dropna()
+        if px.empty or len(px) < 20:
+            faltantes.append(tk)
+            continue
+
+        # reamostra em dias úteis e preenche (evita buracos de calendário)
+        px = px.copy()
+        px.index = pd.to_datetime(px.index, errors="coerce")
+        px = px[~px.index.isna()].sort_index()
+        px = px.resample("B").last().ffill().dropna()
+        if px.empty or len(px) < 20:
+            faltantes.append(tk)
+            continue
+
+        rets = px.pct_change().dropna()
+        vol = float(rets.std(ddof=0) * np.sqrt(252)) if len(rets) >= 2 else float("nan")
+        mdd = _max_drawdown(px)
+        cagr = _series_cagr(px)
+
+        # retorno 12m (se houver ~252 pregões), senão retorno total da janela disponível
+        if len(px) >= 252:
+            ret_12m = float((float(px.iloc[-1]) / (float(px.iloc[-252]) + 1e-12)) - 1.0)
+        else:
+            ret_12m = float((float(px.iloc[-1]) / (float(px.iloc[0]) + 1e-12)) - 1.0)
+
+        # DY médio (se existir no score do último ano)
+        dy_mean = float("nan")
+        if dy_col and (not sg_last.empty):
+            try:
+                vals = pd.to_numeric(sg_last.loc[sg_last["ticker"] == tk, dy_col], errors="coerce").dropna()
+                if not vals.empty:
+                    dy_mean = float(vals.mean())
+            except Exception:
+                dy_mean = float("nan")
+
+        # Lucro (último ano) — apenas informativo se existir
+        lucro_last = float("nan")
+        if lucro_col and (not sg_last.empty):
+            try:
+                vals = pd.to_numeric(sg_last.loc[sg_last["ticker"] == tk, lucro_col], errors="coerce").dropna()
+                if not vals.empty:
+                    lucro_last = float(vals.iloc[0])
+            except Exception:
+                lucro_last = float("nan")
+
+        linhas.append(
+            {
+                "empresa": _get_nome(tk, empresas_lideres_finais),
+                "ticker": tk,
+                "retorno_12m_%": ret_12m * 100.0,
+                "CAGR_%a.a.": cagr * 100.0 if pd.notna(cagr) else float("nan"),
+                "vol_aa_%": vol * 100.0 if pd.notna(vol) else float("nan"),
+                "max_drawdown_%": mdd * 100.0 if pd.notna(mdd) else float("nan"),
+                "DY_medio_%": dy_mean * 100.0 if pd.notna(dy_mean) else float("nan"),
+                "lucro_ultimo_ano": lucro_last,
+            }
+        )
+
+    if not linhas:
+        st.warning("Patch 5 não conseguiu montar métricas: preços ausentes ou insuficientes para os tickers.")
+        if faltantes:
+            st.caption("Tickers sem preços suficientes: " + ", ".join(sorted(set(faltantes))))
+        return
+
+    out = pd.DataFrame(linhas)
+    # ordena por retorno 12m e depois por menor drawdown (melhor)
+    out = out.sort_values(["retorno_12m_%", "max_drawdown_%"], ascending=[False, True]).reset_index(drop=True)
+
+    st.dataframe(out, use_container_width=True)
+
+    if faltantes:
+        st.warning("Alguns tickers não tinham preços suficientes para cálculo: " + ", ".join(sorted(set(faltantes))))
+
+
 # ─────────────────────────────────────────────────────────────
 # PATCH 5 — IA (OpenAI) — Seleção/validação amigável (era Patch 6)
 # ─────────────────────────────────────────────────────────────
@@ -639,7 +765,6 @@ def _render_patch5_report(resp: Dict[str, Any], *, mostrar_tabela: bool = False)
         st.json(resp)
 
 
-@_patch_debug_guard("Patch 5")
 def render_patch5_ia_selecao_lideres(
     score_global: pd.DataFrame,
     lideres_global: pd.DataFrame,
