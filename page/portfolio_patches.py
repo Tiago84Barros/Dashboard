@@ -6,7 +6,6 @@ import textwrap
 import hashlib
 import json
 import time
-import re
 
 import numpy as np
 import pandas as pd
@@ -17,6 +16,46 @@ import matplotlib.pyplot as plt
 # ─────────────────────────────────────────────────────────────
 # Helpers internos
 # ─────────────────────────────────────────────────────────────
+
+
+
+# ─────────────────────────────────────────────────────────────
+# Debug (Patch 5) — utilitário para stacktrace e inspeção
+# Ative na sidebar: "Debug Patch 5 (variáveis)" e "Debug Patch 5 (stacktrace)"
+# ─────────────────────────────────────────────────────────────
+try:
+    from core.debug_tools import dbg, show_trace  # type: ignore
+except Exception:
+    dbg = None  # type: ignore
+    show_trace = None  # type: ignore
+
+def _patch_debug_guard(patch_label: str):
+    """Decorator: envolve o patch com try/except e (opcionalmente) imprime snapshots."""
+    def _decorator(fn):
+        def _wrapped(*args, **kwargs):
+            import streamlit as st  # local import para evitar circular
+
+            debug_vars = st.sidebar.toggle(f"Debug {patch_label} (variáveis)", value=False, key=f"dbg_{patch_label}_vars")
+            debug_trace = st.sidebar.toggle(f"Debug {patch_label} (stacktrace)", value=False, key=f"dbg_{patch_label}_trace")
+
+            try:
+                if debug_vars and dbg is not None:
+                    # snapshot genérico dos primeiros argumentos (útil para achar Series/DataFrame problemáticos)
+                    for i, a in enumerate(list(args)[:6]):
+                        dbg(f"{patch_label}.arg{i}", a)
+                    for k, v in list(kwargs.items())[:6]:
+                        dbg(f"{patch_label}.kw_{k}", v)
+
+                return fn(*args, **kwargs)
+
+            except Exception as e:
+                if debug_trace and show_trace is not None:
+                    show_trace(e, title=f"{patch_label} falhou (stacktrace)")
+                else:
+                    st.error(f"{patch_label} falhou: {type(e).__name__}: {e}")
+                st.stop()
+        return _wrapped
+    return _decorator
 
 def _norm_tk(t: str) -> str:
     return (t or "").upper().replace(".SA", "").strip()
@@ -512,354 +551,7 @@ def render_patch4_benchmark_segmento(
 
 
 # ─────────────────────────────────────────────────────────────
-
-# ─────────────────────────────────────────────────────────────
-# PATCH 5 — Desempenho das empresas do portfólio final
-# ─────────────────────────────────────────────────────────────
-
-def render_patch5_desempenho_empresas(
-    empresas_lideres_finais: List[Dict],
-    precos: Optional[pd.DataFrame],
-    score_global: Optional[pd.DataFrame] = None,
-    dividendos: Optional[Dict[str, pd.Series]] = None,
-    janela_anos: int = 5,
-) -> None:
-    """
-    Mostra (em cards) métricas por empresa:
-    - Volatilidade anualizada (retornos diários; janela ~ N anos)
-    - Retorno 12m e CAGR de preço (janela N anos; se houver)
-    - Máx drawdown (janela N anos)
-    - DY médio (últimos N anos; dividendos / preço médio anual)
-    - Crescimento de lucros (CAGR em N anos) se houver em score_global
-    Observação: usa apenas dados já carregados (preços) e, se necessário, tenta coletar dividendos via core.yf_data.
-    """
-    st.markdown("## 🧩 Patch 5 — Desempenho das empresas (métricas chave)")
-    st.caption(
-        "Resumo quantitativo por empresa para apoiar a decisão final. "
-        "Volatilidade e drawdown medem risco; retornos e CAGR medem crescimento; DY médio mede renda recorrente."
-    )
-
-    if not empresas_lideres_finais:
-        st.info("Patch 5 indisponível: portfólio final vazio.")
-        return
-
-    df_prices = _ensure_prices_df(precos)
-
-    # Tenta coletar dividendos somente se necessário (poucos tickers) e se o core existir
-    if dividendos is None:
-        try:
-            from core.yf_data import coletar_dividendos  # type: ignore
-            tks = [_norm_tk(e.get("ticker", "")) for e in empresas_lideres_finais if _norm_tk(e.get("ticker", ""))]
-            dividendos = coletar_dividendos([t + ".SA" if not str(t).endswith(".SA") else t for t in tks])
-        except Exception:
-            dividendos = {}
-
-    dividendos = dividendos or {}
-
-    # Normaliza score (para tentar puxar crescimento de lucros)
-    sg = _safe_df(score_global).copy()
-    if not sg.empty:
-        sg["Ano"] = pd.to_numeric(sg.get("Ano"), errors="coerce")
-        if "ticker" in sg.columns:
-            sg["ticker"] = sg["ticker"].astype(str).map(_norm_tk)
-
-    # Helpers de métrica
-    def _slice_last_years(df: pd.DataFrame, years: int) -> pd.DataFrame:
-        if df.empty:
-            return df
-        end = df.index.max()
-        start = (end - pd.DateOffset(years=years))
-        return df.loc[df.index >= start].copy()
-
-    def _annualized_vol(ser: pd.Series) -> Optional[float]:
-        ser = pd.to_numeric(ser, errors="coerce").dropna()
-        if ser.size < 60:
-            return None
-        ret = ser.pct_change().dropna()
-        if ret.size < 60:
-            return None
-        v = float(ret.std()) * (252.0 ** 0.5)
-        return v if np.isfinite(v) else None
-
-    def _max_drawdown(ser: pd.Series) -> Optional[float]:
-        ser = pd.to_numeric(ser, errors="coerce").dropna()
-        if ser.size < 60:
-            return None
-        cummax = ser.cummax()
-        dd = (ser / (cummax + 1e-12)) - 1.0
-        mdd = float(dd.min())
-        return mdd if np.isfinite(mdd) else None
-
-    def _cagr(ser: pd.Series, years: int) -> Optional[float]:
-        ser = pd.to_numeric(ser, errors="coerce").dropna()
-        if ser.size < 2:
-            return None
-        end = ser.index.max()
-        start = end - pd.DateOffset(years=years)
-        s = ser.loc[ser.index >= start]
-        if s.size < 2:
-            return None
-        v0 = float(s.iloc[0])
-        v1 = float(s.iloc[-1])
-        if not (np.isfinite(v0) and np.isfinite(v1)) or v0 <= 0:
-            return None
-        c = (v1 / v0) ** (1.0 / years) - 1.0
-        return float(c) if np.isfinite(c) else None
-
-    def _ret_12m(ser: pd.Series) -> Optional[float]:
-        ser = pd.to_numeric(ser, errors="coerce").dropna()
-        if ser.size < 2:
-            return None
-        end = ser.index.max()
-        start = end - pd.DateOffset(months=12)
-        s = ser.loc[ser.index >= start]
-        if s.size < 2:
-            return None
-        v0 = float(s.iloc[0])
-        v1 = float(s.iloc[-1])
-        if not (np.isfinite(v0) and np.isfinite(v1)) or v0 <= 0:
-            return None
-        r = (v1 / v0) - 1.0
-        return float(r) if np.isfinite(r) else None
-
-    def _dy_medio_anual(div: pd.Series, price: pd.Series, years: int) -> Optional[float]:
-        """
-        DY médio anual (últimos N anos): (dividendos anuais / preço médio anual), média simples.
-        """
-        if div is None or not isinstance(div, pd.Series) or div.empty:
-            return None
-        if price is None or not isinstance(price, pd.Series) or price.empty:
-            return None
-
-        div = div.copy()
-        div.index = pd.to_datetime(div.index, errors="coerce")
-        div = div.dropna()
-        if div.empty:
-            return None
-
-        price = pd.to_numeric(price, errors="coerce").dropna()
-        if price.empty:
-            return None
-
-        end = price.index.max()
-        start = end - pd.DateOffset(years=years)
-        price = price.loc[price.index >= start]
-        if price.empty:
-            return None
-
-        # anos calendário dentro da janela
-        anos = sorted(set(price.index.year.tolist()))[-years:]
-        if not anos:
-            return None
-
-        dys: List[float] = []
-        for a in anos:
-            p_year = price.loc[price.index.year == a]
-            if p_year.empty:
-                continue
-            div_year = div.loc[div.index.year == a]
-            if div_year.empty:
-                continue
-            div_total = float(pd.to_numeric(div_year, errors="coerce").sum())
-            p_mean = float(p_year.mean())
-            if p_mean > 0 and np.isfinite(div_total) and np.isfinite(p_mean):
-                dy = div_total / p_mean
-                if np.isfinite(dy):
-                    dys.append(float(dy))
-        if not dys:
-            return None
-        return float(np.mean(dys))
-
-    def _lucro_cagr_from_score(df_score: pd.DataFrame, tk: str, years: int) -> Optional[float]:
-        """
-        Tenta extrair uma série de lucros do score_global (se houver colunas de lucro por ano).
-        Heurística: procura a primeira coluna numérica que contenha 'lucro' no nome.
-        """
-        if df_score is None or df_score.empty:
-            return None
-        if "ticker" not in df_score.columns or "Ano" not in df_score.columns:
-            return None
-        sub = df_score[df_score["ticker"] == tk].copy()
-        if sub.empty:
-            return None
-
-        # escolhe coluna de lucro
-        cols = [c for c in sub.columns if re.search(r"(?i)\blucro\b|lucro", str(c)) and "margem" not in str(c).lower()]
-        cols = [c for c in cols if c not in ("ticker", "Ano")]
-        lucro_col = None
-        for c in cols:
-            s = pd.to_numeric(sub[c], errors="coerce")
-            if s.notna().sum() >= 4:
-                lucro_col = c
-                break
-        if lucro_col is None:
-            return None
-
-        sub = sub[["Ano", lucro_col]].dropna()
-        sub["Ano"] = pd.to_numeric(sub["Ano"], errors="coerce")
-        sub[lucro_col] = pd.to_numeric(sub[lucro_col], errors="coerce")
-        sub = sub.dropna()
-        sub = sub.sort_values("Ano")
-        if sub.empty:
-            return None
-
-        amax = int(sub["Ano"].max())
-        amin = amax - years
-        w = sub[sub["Ano"] >= amin].copy()
-        if w.shape[0] < 2:
-            return None
-
-        v0 = float(w.iloc[0][lucro_col])
-        v1 = float(w.iloc[-1][lucro_col])
-        if not (np.isfinite(v0) and np.isfinite(v1)) or v0 <= 0:
-            return None
-        c = (v1 / v0) ** (1.0 / years) - 1.0
-        return float(c) if np.isfinite(c) else None
-
-    # CSS cards (estilo “blocos”)
-    st.markdown(
-        """
-        <style>
-        .emp-grid {display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px;}
-        @media (max-width: 900px) { .emp-grid {grid-template-columns: 1fr;} }
-        .emp-card {
-            background: #0b1220;
-            border: 1px solid rgba(255,255,255,0.10);
-            border-radius: 16px;
-            padding: 14px 14px;
-            box-shadow: 0 10px 22px rgba(0,0,0,0.35);
-        }
-        .emp-head {display:flex; align-items:center; gap:10px; margin-bottom:10px;}
-        .emp-logo {width:44px; height:44px; object-fit:contain; border-radius:10px; background: rgba(255,255,255,0.05); padding:6px;}
-        .emp-name {font-size:16px; font-weight:700; color:#e7eefc; margin:0; line-height:1.15;}
-        .emp-meta {font-size:12px; color:rgba(231,238,252,0.70); margin:2px 0 0 0;}
-        .emp-kpis {display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:10px; margin-top:10px;}
-        .kpi {
-            background: rgba(255,255,255,0.04);
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 14px;
-            padding: 10px 10px;
-        }
-        .kpi .lbl {font-size:11px; color:rgba(231,238,252,0.70); margin:0;}
-        .kpi .val {font-size:18px; font-weight:800; color:#d9ffdd; margin:0; line-height:1.1;}
-        .kpi .val.neg {color:#ffd9d9;}
-        .kpi .sub {font-size:11px; color:rgba(231,238,252,0.55); margin:2px 0 0 0;}
-        .emp-foot {margin-top:10px; font-size:11px; color:rgba(231,238,252,0.60);}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # Monta cards
-    cards_html: List[str] = ['<div class="emp-grid">']
-
-    tks = [_norm_tk(e.get("ticker", "")) for e in empresas_lideres_finais if _norm_tk(e.get("ticker", ""))]
-    tks = list(dict.fromkeys(tks))
-
-    for e in empresas_lideres_finais:
-        tk = _norm_tk(e.get("ticker", ""))
-        if not tk:
-            continue
-
-        nome = str(e.get("nome") or tk)
-        setor = str(e.get("setor", "")).strip()
-        subsetor = str(e.get("subsetor", "")).strip()
-        segmento = str(e.get("segmento", "")).strip()
-        seg_path = " > ".join([x for x in [setor, subsetor, segmento] if x])
-
-        peso = _safe_float(e.get("peso"))
-        peso_txt = f"{peso*100:.1f}%" if (peso is not None) else "—"
-
-        # Série de preços (janela)
-        price_ser = df_prices[tk] if (not df_prices.empty and tk in df_prices.columns) else pd.Series(dtype=float)
-        price_win = _slice_last_years(price_ser.to_frame(tk), janela_anos)[tk] if not price_ser.empty else price_ser
-
-        vol = _annualized_vol(price_win)
-        mdd = _max_drawdown(price_win)
-        r12 = _ret_12m(price_win)
-        cagr = _cagr(price_win, janela_anos)
-
-        # DY médio (janela)
-        div_ser = dividendos.get(tk) or dividendos.get(tk + ".SA") or pd.Series(dtype="float64")
-        dy = _dy_medio_anual(div_ser, price_ser, janela_anos)
-
-        # Crescimento de lucros (se der)
-        lucro_cagr = _lucro_cagr_from_score(sg, tk, janela_anos) if not sg.empty else None
-
-        # Formatação
-        def fmt_pct(x: Optional[float]) -> str:
-            if x is None or (not np.isfinite(x)):
-                return "—"
-            return f"{x*100:.1f}%"
-
-        def val_class(x: Optional[float]) -> str:
-            if x is None or (not np.isfinite(x)):
-                return ""
-            return "neg" if x < 0 else ""
-
-        logo_url = str(e.get("logo_url") or "").strip()
-
-        cards_html.append(
-            f"""
-            <div class="emp-card">
-              <div class="emp-head">
-                {f'<img class="emp-logo" src="{logo_url}" />' if logo_url else '<div class="emp-logo"></div>'}
-                <div>
-                  <p class="emp-name">{nome} ({tk})</p>
-                  <p class="emp-meta">{seg_path if seg_path else '—'} • Peso sugerido: {peso_txt}</p>
-                </div>
-              </div>
-
-              <div class="emp-kpis">
-                <div class="kpi">
-                  <p class="lbl">Retorno 12m (preço)</p>
-                  <p class="val {val_class(r12)}">{fmt_pct(r12)}</p>
-                  <p class="sub">Janela móvel 12 meses</p>
-                </div>
-
-                <div class="kpi">
-                  <p class="lbl">CAGR {janela_anos}a (preço)</p>
-                  <p class="val {val_class(cagr)}">{fmt_pct(cagr)}</p>
-                  <p class="sub">Crescimento anual composto</p>
-                </div>
-
-                <div class="kpi">
-                  <p class="lbl">Volatilidade anualizada</p>
-                  <p class="val {val_class(None)}">{fmt_pct(vol)}</p>
-                  <p class="sub">Std(retornos diários) × √252</p>
-                </div>
-
-                <div class="kpi">
-                  <p class="lbl">Máx drawdown</p>
-                  <p class="val neg">{fmt_pct(mdd)}</p>
-                  <p class="sub">Queda máxima na janela</p>
-                </div>
-
-                <div class="kpi">
-                  <p class="lbl">DY médio ({janela_anos}a)</p>
-                  <p class="val {val_class(None)}">{fmt_pct(dy)}</p>
-                  <p class="sub">Dividendos/Preço médio anual</p>
-                </div>
-
-                <div class="kpi">
-                  <p class="lbl">Crescimento de lucros ({janela_anos}a)</p>
-                  <p class="val {val_class(lucro_cagr)}">{fmt_pct(lucro_cagr)}</p>
-                  <p class="sub">Se disponível no score_global</p>
-                </div>
-              </div>
-
-              <div class="emp-foot">
-                Nota: métricas são aproximadas (preço sem reinvestimento). Use como diagnóstico rápido.
-              </div>
-            </div>
-            """
-        )
-
-    cards_html.append("</div>")
-    st.markdown("\n".join(cards_html), unsafe_allow_html=True)
-
-
-# PATCH 6 — IA (OpenAI) — Seleção/validação amigável (era Patch 6)
+# PATCH 5 — IA (OpenAI) — Seleção/validação amigável (era Patch 6)
 # ─────────────────────────────────────────────────────────────
 
 def _render_patch5_report(resp: Dict[str, Any], *, mostrar_tabela: bool = False) -> None:
@@ -947,6 +639,7 @@ def _render_patch5_report(resp: Dict[str, Any], *, mostrar_tabela: bool = False)
         st.json(resp)
 
 
+@_patch_debug_guard("Patch 5")
 def render_patch5_ia_selecao_lideres(
     score_global: pd.DataFrame,
     lideres_global: pd.DataFrame,
