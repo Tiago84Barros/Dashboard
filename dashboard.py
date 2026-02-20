@@ -115,7 +115,7 @@ def _load_page_renderer(page_key: str) -> Callable[[], None]:
         "Básica": ("page.basic", "basic"),
         "Avançada": ("page.advanced", "advanced"),
         "Criação de Portfólio": ("page.criacao_portfolio", "criacao_portfolio"),
-        "Análises de Portfólio": ("page.patch6_teste", "patch6_teste"),
+        "Análises de Portfólio": ("page.analises_portfolio", "analises_portfolio"),
         "Configurações": ("page.configuracoes", "configuracoes"),
     }
     paths = mapping.get(page_key)
