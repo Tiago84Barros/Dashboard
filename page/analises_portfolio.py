@@ -4,7 +4,7 @@ import json
 
 from portfolio_snapshot_store import get_latest_snapshot
 from patch6_runs_store import save_patch6_run
-from docs_corporativos_store import (
+from core.docs_corporativos_store import (
     count_docs,
     count_chunks,
     process_missing_chunks_for_ticker,
