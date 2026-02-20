@@ -1,8 +1,22 @@
-# docs_corporativos_store.py
+# -*- coding: utf-8 -*-
+"""
+core/docs_corporativos_store.py
+
+Store de documentos e chunks do Patch 6 (CVM/IPE).
+
+Objetivos:
+- Contar docs/chunks por ticker
+- Gerar chunks ausentes (chunking) de forma resiliente:
+  * Não depende de UNIQUE em chunk_hash
+  * Não depende de coluna created_at
+  * Lê texto de coalesce(raw_text, texto) quando existir
+- Buscar Top-K chunks para RAG
+"""
+
 from __future__ import annotations
 
 import hashlib
-from typing import List, Dict, Any
+from typing import List
 
 import pandas as pd
 from sqlalchemy import text
@@ -19,7 +33,7 @@ def count_docs(ticker: str) -> int:
     with engine.connect() as conn:
         r = conn.execute(
             text("select count(*) from public.docs_corporativos where ticker = :tk"),
-            {"tk": ticker.upper()},
+            {"tk": (ticker or "").strip().upper()},
         )
         return int(r.scalar() or 0)
 
@@ -29,7 +43,7 @@ def count_chunks(ticker: str) -> int:
     with engine.connect() as conn:
         r = conn.execute(
             text("select count(*) from public.docs_corporativos_chunks where ticker = :tk"),
-            {"tk": ticker.upper()},
+            {"tk": (ticker or "").strip().upper()},
         )
         return int(r.scalar() or 0)
 
@@ -39,61 +53,117 @@ def count_chunks(ticker: str) -> int:
 # ============================================================
 
 def _split_text(texto: str, max_chars: int = 1500) -> List[str]:
-    partes = []
-    atual = ""
-    for linha in texto.split("\n"):
-        if len(atual) + len(linha) < max_chars:
-            atual += linha + "\n"
+    """
+    Divide texto em blocos aproximados, preservando quebras de linha.
+    """
+    if not texto:
+        return []
+    partes: List[str] = []
+    atual: List[str] = []
+    tam = 0
+    for linha in texto.splitlines():
+        linha = linha.rstrip()
+        if not linha:
+            # mantém parágrafos
+            linha = ""
+        add = len(linha) + 1
+        if tam + add <= max_chars and atual:
+            atual.append(linha)
+            tam += add
+        elif not atual and add <= max_chars:
+            atual = [linha]
+            tam = add
         else:
-            partes.append(atual.strip())
-            atual = linha + "\n"
-    if atual.strip():
-        partes.append(atual.strip())
-    return partes
+            # fecha bloco atual
+            if atual:
+                partes.append("\n".join(atual).strip())
+            # inicia novo
+            atual = [linha]
+            tam = add
+    if atual:
+        partes.append("\n".join(atual).strip())
+    # remove vazios
+    return [p for p in partes if p.strip()]
 
 
-def process_missing_chunks_for_ticker(ticker: str, limit_docs: int = 50):
+def process_missing_chunks_for_ticker(
+    ticker: str,
+    limit_docs: int = 60,
+    max_chars: int = 1500,
+) -> int:
+    """
+    Gera chunks para os docs mais recentes do ticker.
+    Retorna quantos chunks foram inseridos.
+    """
+    tk = (ticker or "").strip().upper()
+    if not tk:
+        return 0
+
     engine = get_supabase_engine()
+    inserted = 0
 
     with engine.begin() as conn:
+        # Busca docs recentes; tenta ler texto de raw_text ou texto (qual existir)
         docs = pd.read_sql_query(
             text("""
-                select id, coalesce(raw_text, texto) as texto
+                select
+                    id,
+                    coalesce(raw_text, texto, '') as texto
                 from public.docs_corporativos
                 where ticker = :tk
-                order by data desc
+                order by data desc nulls last, id desc
                 limit :lim
             """),
             conn,
-            params={"tk": ticker.upper(), "lim": limit_docs},
+            params={"tk": tk, "lim": int(limit_docs)},
         )
+
+        if docs.empty:
+            return 0
 
         for _, row in docs.iterrows():
             doc_id = row["id"]
-            texto = row["texto"] or ""
-            if not texto.strip():
+            texto = (row["texto"] or "").strip()
+            if not texto:
                 continue
 
-            partes = _split_text(texto)
+            partes = _split_text(texto, max_chars=max_chars)
 
             for idx, chunk in enumerate(partes):
-                h = hashlib.md5(chunk.encode()).hexdigest()
+                h = hashlib.md5(chunk.encode("utf-8")).hexdigest()
+
+                # Não depende de UNIQUE. Evita duplicar por SELECT existence.
+                exists = conn.execute(
+                    text("""
+                        select 1
+                        from public.docs_corporativos_chunks
+                        where chunk_hash = :h
+                        limit 1
+                    """),
+                    {"h": h},
+                ).fetchone()
+
+                if exists:
+                    continue
 
                 conn.execute(
                     text("""
                         insert into public.docs_corporativos_chunks
-                        (doc_id, ticker, chunk_index, chunk_text, chunk_hash)
-                        values (:doc_id, :tk, :idx, :txt, :h)
-                        on conflict (chunk_hash) do nothing
+                            (doc_id, ticker, chunk_index, chunk_text, chunk_hash)
+                        values
+                            (:doc_id, :tk, :idx, :txt, :h)
                     """),
                     {
                         "doc_id": doc_id,
-                        "tk": ticker.upper(),
-                        "idx": idx,
+                        "tk": tk,
+                        "idx": int(idx),
                         "txt": chunk,
                         "h": h,
                     },
                 )
+                inserted += 1
+
+    return inserted
 
 
 # ============================================================
@@ -101,17 +171,25 @@ def process_missing_chunks_for_ticker(ticker: str, limit_docs: int = 50):
 # ============================================================
 
 def fetch_topk_chunks(ticker: str, k: int = 6) -> List[str]:
+    """
+    Retorna lista de textos de chunks recentes.
+    Não depende de created_at; usa doc_id desc + chunk_index.
+    """
+    tk = (ticker or "").strip().upper()
+    if not tk:
+        return []
+
     engine = get_supabase_engine()
     with engine.connect() as conn:
         df = pd.read_sql_query(
             text("""
-                select chunk_text
-                from public.docs_corporativos_chunks
-                where ticker = :tk
-                order by created_at desc
+                select c.chunk_text
+                from public.docs_corporativos_chunks c
+                where c.ticker = :tk
+                order by c.doc_id desc, c.chunk_index asc
                 limit :k
             """),
             conn,
-            params={"tk": ticker.upper(), "k": k},
+            params={"tk": tk, "k": int(k)},
         )
-    return df["chunk_text"].tolist()
+    return df["chunk_text"].tolist() if not df.empty else []
