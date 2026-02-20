@@ -1,18 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-dashboard/page/analises_portfolio.py
+page/analises_portfolio.py
 
-Página "Análises de Portfólio" (Patch 6) — com LOGS detalhados por ticker.
+Patch 6 — Página padrão com LOGS completos (Ingest + Chunking) por ticker.
 
-IMPORTANTE:
-- O dashboard.py do seu projeto carrega páginas via função render().
-- Portanto, TODO o código Streamlit desta página fica dentro de render().
+Por que isso existe:
+- "chunks = 0" geralmente NÃO é erro do chunking, é falta de documentos no Supabase.
+- O botão anterior estava rodando apenas chunking, então tickers com docs=0 "passavam rápido"
+  e não mostravam motivo.
 
-Dependências:
-- core.portfolio_snapshot_store
-- core.docs_corporativos_store
-- core.patch6_runs_store
-- core.ai_models.llm_client.factory
+Agora:
+- Para cada ticker: roda Ingest (CVM/IPE) -> mostra relatório -> roda Chunking -> mostra resultado
+- Se docs continuar 0 após ingest, você verá isso explicitamente e o relatório do ingest
 """
 
 from __future__ import annotations
@@ -20,7 +19,9 @@ from __future__ import annotations
 import json
 import time
 import traceback
-from typing import Any, Dict, List
+import importlib
+import inspect
+from typing import Any, Dict, List, Optional, Callable, Tuple
 
 import streamlit as st
 
@@ -29,23 +30,95 @@ from core.docs_corporativos_store import (
     count_docs,
     count_chunks,
     process_missing_chunks_for_ticker,
-    fetch_topk_chunks,
 )
 from core.patch6_runs_store import save_patch6_run, list_patch6_history
 
 import core.ai_models.llm_client.factory as llm_factory
 
 
+# ------------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------------
 def _now_ms() -> int:
     return int(time.time() * 1000)
-
 
 def _fmt_s(ms: int) -> str:
     return f"{ms/1000:.1f}s"
 
-
 def _safe_upper(x: Any) -> str:
     return str(x or "").strip().upper()
+
+def _import_first(*module_paths: str):
+    errors = []
+    for p in module_paths:
+        try:
+            return importlib.import_module(p)
+        except Exception as e:
+            errors.append((p, e))
+    msg = "Falha ao importar módulos. Tentativas:\n" + "\n".join([f"- {p}: {repr(e)}" for p, e in errors])
+    raise ImportError(msg)
+
+def _import_ingest() -> Callable[..., Any]:
+    """
+    Tenta localizar o ingest do CVM/IPE com fallback.
+    Ajuste os paths aqui se no seu repo estiver diferente.
+    """
+    mod = _import_first("pickup.ingest_docs_cvm_ipe", "ingest_docs_cvm_ipe", "pickup.ingest_docs_cvm", "ingest_docs_cvm")
+    # nomes comuns
+    for fn_name in ("ingest_docs_cvm_ipe", "run_ingest", "main", "ingest"):
+        fn = getattr(mod, fn_name, None)
+        if callable(fn):
+            return fn
+    raise ImportError("Não encontrei função de ingest no módulo pickup.ingest_docs_cvm_ipe (ou fallbacks).")
+
+def _safe_call(fn: Callable[..., Any], **kwargs):
+    """
+    Chama função adaptando para assinaturas diferentes.
+    """
+    try:
+        sig = inspect.signature(fn)
+        accepted = {k: v for k, v in kwargs.items() if k in sig.parameters}
+
+        # alias comuns
+        # ticker
+        if "ticker" in kwargs and "ticker" not in accepted:
+            for alt in ("tk", "symbol", "ticker_str"):
+                if alt in sig.parameters:
+                    accepted[alt] = kwargs["ticker"]
+                    break
+
+        # months window
+        if "window_months" in kwargs and "window_months" not in accepted:
+            for alt in ("months", "months_window", "janela_meses"):
+                if alt in sig.parameters:
+                    accepted[alt] = kwargs["window_months"]
+                    break
+
+        # max docs
+        if "max_docs" in kwargs and "max_docs" not in accepted:
+            for alt in ("limit_docs", "max_docs_per_ticker", "limite_docs"):
+                if alt in sig.parameters:
+                    accepted[alt] = kwargs["max_docs"]
+                    break
+
+        # max runtime
+        if "max_runtime_s" in kwargs and "max_runtime_s" not in accepted:
+            for alt in ("timeout_s", "runtime_s", "time_budget_s"):
+                if alt in sig.parameters:
+                    accepted[alt] = kwargs["max_runtime_s"]
+                    break
+
+        # max pdfs
+        if "max_pdfs" in kwargs and "max_pdfs" not in accepted:
+            for alt in ("max_pdfs_per_ticker", "limite_pdfs"):
+                if alt in sig.parameters:
+                    accepted[alt] = kwargs["max_pdfs"]
+                    break
+
+        return fn(**accepted)
+    except Exception:
+        # fallback: tenta direto
+        return fn(**kwargs)
 
 
 def render() -> None:
@@ -57,14 +130,7 @@ def render() -> None:
         st.stop()
 
     snapshot_id = str(snapshot.get("id") or "")
-    created_at = str(snapshot.get("created_at") or "")
-    selic_ref = snapshot.get("selic_ref")
-    margem_superior = snapshot.get("margem_superior")
-    tipo_empresa = snapshot.get("tipo_empresa")
-
     st.caption(f"Snapshot: `{snapshot_id}`")
-    st.caption(f"Criado em: {created_at}")
-    st.caption(f"Margem vs Selic: {margem_superior} | Selic ref: {selic_ref} | Tipo empresa: {tipo_empresa}")
 
     items = snapshot.get("items") or []
     tickers = [_safe_upper(it.get("ticker")) for it in items if _safe_upper(it.get("ticker"))]
@@ -79,25 +145,28 @@ def render() -> None:
     # Estado (sanidade)
     # ------------------------------------------------------------------
     st.subheader("📊 Sanidade no Supabase")
-    status_rows: List[Dict[str, Any]] = []
-    for tk in tickers:
-        status_rows.append({"ticker": tk, "docs": count_docs(tk), "chunks": count_chunks(tk)})
+    status_rows: List[Dict[str, Any]] = [{"ticker": tk, "docs": count_docs(tk), "chunks": count_chunks(tk)} for tk in tickers]
     st.dataframe(status_rows, use_container_width=True)
 
     st.divider()
 
     # ------------------------------------------------------------------
-    # Atualizar evidências -> chunking com logs por ticker
+    # Ingest + Chunking com logs por ticker
     # ------------------------------------------------------------------
-    st.subheader("📦 Atualizar evidências (CVM/IPE)")
+    st.subheader("📦 Atualizar evidências (CVM/IPE) — Ingest + Chunks (com logs)")
 
-    colA, colB, colC = st.columns([1, 1, 1])
-    with colA:
-        limit_docs = st.number_input("Limite de docs por ticker", min_value=5, max_value=200, value=60, step=5)
-    with colB:
-        max_chars = st.number_input("Tamanho do chunk (chars)", min_value=600, max_value=4000, value=1500, step=100)
-    with colC:
-        show_traceback = st.checkbox("Mostrar traceback completo", value=True)
+    col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+    with col1:
+        window_months = st.number_input("Janela (meses)", min_value=1, max_value=60, value=12, step=1)
+    with col2:
+        max_docs = st.number_input("Máx docs/ticker", min_value=5, max_value=300, value=80, step=5)
+    with col3:
+        max_pdfs = st.number_input("Máx PDFs/ticker", min_value=0, max_value=80, value=20, step=1)
+    with col4:
+        max_runtime_s = st.number_input("Tempo máx total (s)", min_value=5, max_value=180, value=60, step=5)
+
+    only_missing_docs = st.checkbox("Rodar ingest só quando docs=0", value=True)
+    show_traceback = st.checkbox("Mostrar traceback completo", value=False)
 
     btn = st.button("Atualizar documentos + chunks", type="primary")
 
@@ -106,9 +175,15 @@ def render() -> None:
     err_panel = st.empty()
 
     if btn:
+        # carrega ingest uma vez
+        try:
+            ingest_fn = _import_ingest()
+        except Exception as e:
+            st.error("Não consegui importar o módulo de ingest do CVM/IPE no deploy.")
+            st.code(str(e))
+            st.stop()
+
         t0 = _now_ms()
-        ok = 0
-        fail = 0
         results: List[Dict[str, Any]] = []
         errors: Dict[str, str] = {}
 
@@ -124,67 +199,124 @@ def render() -> None:
             with log_panel.container():
                 st.info(f"🔎 {tk} — início | docs={before_docs} | chunks={before_chunks}")
 
+            ingest_report: Optional[Dict[str, Any]] = None
+            ingest_ran = False
+
+            # ---- Ingest
             try:
-                inserted = process_missing_chunks_for_ticker(
-                    tk,
-                    limit_docs=int(limit_docs),
-                    max_chars=int(max_chars),
-                )
+                if (not only_missing_docs) or (before_docs == 0):
+                    ingest_ran = True
+                    r = _safe_call(
+                        ingest_fn,
+                        ticker=tk,
+                        window_months=int(window_months),
+                        max_docs=int(max_docs),
+                        max_runtime_s=float(max_runtime_s),
+                        max_pdfs=int(max_pdfs),
+                    )
+                    # normaliza relatório
+                    if isinstance(r, dict):
+                        ingest_report = r
+                    else:
+                        ingest_report = {"result": str(r)}
+                else:
+                    ingest_report = {"skipped": True, "reason": "docs já existem"}
+            except Exception as e:
+                tb = traceback.format_exc()
+                msg = f"Ingest {type(e).__name__}: {e}"
+                errors[f"{tk}::ingest"] = tb if show_traceback else msg
+                ingest_report = {"error": msg}
+                with log_panel.container():
+                    st.error(f"❌ {tk} — ingest falhou | {msg}")
+
+            mid_docs = count_docs(tk)
+            mid_chunks = count_chunks(tk)
+
+            with log_panel.container():
+                if ingest_ran:
+                    st.write(f"📥 {tk} — ingest concluído | docs agora={mid_docs} | chunks={mid_chunks}")
+                    if ingest_report:
+                        st.caption("Relatório ingest (resumo):")
+                        st.json({k: ingest_report[k] for k in ingest_report.keys() if k in {"matched","inserted","skipped","pdf_fetched","pdf_text_ok","error","result","skipped","reason"}})
+                else:
+                    st.write(f"📥 {tk} — ingest não executado (docs já existiam) | docs={mid_docs}")
+
+            # Se ainda não tem docs, explique claramente e pule chunking
+            if mid_docs == 0:
+                results.append({
+                    "ticker": tk,
+                    "status": "SEM_DOCS",
+                    "docs_before": before_docs,
+                    "chunks_before": before_chunks,
+                    "docs_after_ingest": mid_docs,
+                    "chunks_after_ingest": mid_chunks,
+                    "chunks_inseridos": 0,
+                    "chunks_after": mid_chunks,
+                    "tempo": _fmt_s(_now_ms() - start),
+                    "motivo": (ingest_report.get("reason") if isinstance(ingest_report, dict) else "") or "Sem documentos retornados para a janela/fonte atual.",
+                })
+                with log_panel.container():
+                    st.warning(
+                        f"⚠️ {tk} — sem docs após ingest. "
+                        f"Isso explica a execução rápida e ausência de chunks. "
+                        f"Verifique janela (meses), filtros do ingest e disponibilidade de documentos no CVM/IPE."
+                    )
+                table_panel.dataframe(results, use_container_width=True)
+                continue
+
+            # ---- Chunking
+            try:
+                inserted = process_missing_chunks_for_ticker(tk, limit_docs=int(max_docs), max_chars=1500)
                 after_docs = count_docs(tk)
                 after_chunks = count_chunks(tk)
-                ok += 1
 
                 results.append({
                     "ticker": tk,
                     "status": "OK",
                     "docs_before": before_docs,
                     "chunks_before": before_chunks,
+                    "docs_after_ingest": mid_docs,
+                    "chunks_after_ingest": mid_chunks,
                     "chunks_inseridos": int(inserted),
-                    "docs_after": after_docs,
                     "chunks_after": after_chunks,
                     "tempo": _fmt_s(_now_ms() - start),
-                    "erro": "",
+                    "motivo": "",
                 })
 
                 with log_panel.container():
-                    st.success(f"✅ {tk} — ok | +{inserted} chunks | docs={after_docs} | chunks={after_chunks} | {_fmt_s(_now_ms()-start)}")
+                    st.success(f"✅ {tk} — chunking ok | +{inserted} chunks | chunks={after_chunks} | {_fmt_s(_now_ms()-start)}")
 
             except Exception as e:
-                fail += 1
                 tb = traceback.format_exc()
-                msg = f"{type(e).__name__}: {e}"
-                errors[tk] = tb if show_traceback else msg
+                msg = f"Chunking {type(e).__name__}: {e}"
+                errors[f"{tk}::chunking"] = tb if show_traceback else msg
 
                 results.append({
                     "ticker": tk,
-                    "status": "FALHA",
+                    "status": "FALHA_CHUNK",
                     "docs_before": before_docs,
                     "chunks_before": before_chunks,
+                    "docs_after_ingest": mid_docs,
+                    "chunks_after_ingest": mid_chunks,
                     "chunks_inseridos": 0,
-                    "docs_after": None,
                     "chunks_after": None,
                     "tempo": _fmt_s(_now_ms() - start),
-                    "erro": msg,
+                    "motivo": msg,
                 })
 
                 with log_panel.container():
-                    st.error(f"❌ {tk} — falhou | {msg} | {_fmt_s(_now_ms()-start)}")
+                    st.error(f"❌ {tk} — chunking falhou | {msg} | {_fmt_s(_now_ms()-start)}")
 
             table_panel.dataframe(results, use_container_width=True)
 
         progress.progress(100, text="Concluído")
-
-        elapsed = _fmt_s(_now_ms() - t0)
-        if fail == 0:
-            st.success(f"Atualização concluída. OK: {ok} | Falhas: {fail} | Tempo: {elapsed}")
-        else:
-            st.warning(f"Atualização concluída. OK: {ok} | Falhas: {fail} | Tempo: {elapsed}")
+        st.success(f"Fim. Tempo total: {_fmt_s(_now_ms() - t0)}")
 
         if errors:
             with err_panel.container():
-                st.subheader("🧾 Logs de erro por ticker")
-                for tk, tb in errors.items():
-                    with st.expander(f"Erro — {tk}"):
+                st.subheader("🧾 Logs de erro (por etapa)")
+                for key, tb in errors.items():
+                    with st.expander(key):
                         st.code(tb)
 
     st.divider()
@@ -202,24 +334,27 @@ def render() -> None:
     period_ref = st.text_input("period_ref (ex.: 2024Q4)", value="2024Q4")
 
     if st.button("Rodar LLM agora"):
+        # Reusa fetch_topk_chunks do store; import local evita erro se você preferir
+        from core.docs_corporativos_store import fetch_topk_chunks
+
         chunks = fetch_topk_chunks(ticker_escolhido, int(top_k))
         if not chunks:
-            st.error("Sem chunks no Supabase para este ticker. Rode o chunking primeiro.")
+            st.error("Sem chunks no Supabase para este ticker. Rode o ingest+chunking primeiro.")
             st.stop()
 
         contexto = "\n\n".join(chunks)
         client = llm_factory.get_llm_client()
 
-        prompt = f"""\
+        prompt = f"""
 Você é um analista fundamentalista focado em direcionalidade estratégica.
 Use somente o CONTEXTO abaixo. Devolva APENAS JSON válido na estrutura:
 
 {{
-  \"perspectiva_compra\": \"forte|moderada|fraca\",
-  \"resumo\": \"texto curto\",
-  \"pontos_chave\": [\"...\"],
-  \"riscos\": [\"...\"],
-  \"evidencias\": [\"trechos literais do contexto\"]
+  "perspectiva_compra": "forte|moderada|fraca",
+  "resumo": "texto curto",
+  "pontos_chave": ["..."],
+  "riscos": ["..."],
+  "evidencias": ["trechos literais do contexto"]
 }}
 
 CONTEXTO:
@@ -238,7 +373,7 @@ CONTEXTO:
             st.stop()
 
         save_patch6_run(
-            snapshot_id=snapshot_id,
+            snapshot_id=str(snapshot_id),
             ticker=ticker_escolhido,
             period_ref=period_ref,
             result=resultado,
