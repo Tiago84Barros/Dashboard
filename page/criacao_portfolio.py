@@ -81,7 +81,6 @@ from core.yf_data import (
     baixar_precos_ano_corrente,
 )
 from core.weights import get_pesos
-from core.portfolio_snapshot_store import save_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -204,41 +203,13 @@ def _build_macro() -> Optional[pd.DataFrame]:
 def render():
     st.markdown("<h1 style='text-align: center;'>Criação de Portfólio</h1>", unsafe_allow_html=True)
 
-        # ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────
     # CONTROLES DE EXECUÇÃO (não roda sozinho)
     # ─────────────────────────────────────────────────────────────
     if "cp_last_params" not in st.session_state:
         st.session_state["cp_last_params"] = {"margem_superior": 10.0}
     if "cp_should_run" not in st.session_state:
-    # ─────────────────────────────────────────────────────────
-# Persistência: salva snapshot no Supabase (habilita Patch 6)
-# ─────────────────────────────────────────────────────────
-try:
-    if empresas_lideres_finais:
-        tipo_empresa = "ESTABELECIDA_10A"
-        filters_json = {
-            "tipo_empresa": tipo_empresa,
-            "min_anos_dre": 10,
-            "use_score_v2_auto": bool(calcular_score_acumulado_v2 is not None),
-            "selic_source": "macro_db_load_macro_summary",
-            "macro_last_date": str(pd.to_datetime(dados_macro["Data"], errors="coerce").max().date()) if (dados_macro is not None and "Data" in dados_macro.columns) else None,
-            "margem_superior_pct": float(margem_superior),
-        }
-        items = [{"ticker": e["ticker"], "peso": float(e.get("peso", 0.0))} for e in empresas_lideres_finais]
-        snap_id, plan_hash = save_snapshot(
-            items=items,
-            selic_ref=None,
-            margem_superior=float(margem_superior) / 100.0,
-            tipo_empresa=tipo_empresa,
-            filters_json=filters_json,
-            notes="Criado via Criação de Portfólio",
-        )
-        if snap_id:
-            st.success(f"Snapshot salvo no Supabase (plan_hash={plan_hash[:8]}…).")
-except Exception as e:
-    st.warning(f"Não foi possível salvar snapshot no Supabase: {type(e).__name__}: {e}")
-
-    st.session_state["cp_should_run"] = False
+        st.session_state["cp_should_run"] = False
 
     with st.sidebar:
         st.markdown("### ▶️ Execução")
@@ -257,7 +228,9 @@ except Exception as e:
             gerar = st.form_submit_button("🚀 Rodar Criação de Portfólio")
 
         if gerar:
-            st.session_state["cp_last_params"] = {"margem_superior": 10.0}
+            st.session_state["cp_last_params"] = {
+                "margem_superior": float(margem_superior),
+            }
             st.session_state["cp_should_run"] = True
 
     if not st.session_state["cp_should_run"]:
@@ -266,7 +239,7 @@ except Exception as e:
 
     # parâmetro efetivo usado na execução
     margem_superior = float(st.session_state["cp_last_params"]["margem_superior"])
-    use_score_v2 = bool(calcular_score_acumulado_v2 is not None)
+    use_score_v2 = (calcular_score_acumulado_v2 is not None)  # automático
 
     
     # ── Carrega setores (cache em sessão)
@@ -381,7 +354,7 @@ except Exception as e:
         ]
 
         # >>> PATCH SCORE V2 (switch v1/v2)
-        if calcular_score_acumulado_v2 is not None:
+        if (calcular_score_acumulado_v2 is not None):  # automático: usa V2 se disponível
             score = calcular_score_acumulado_v2(
                 lista_empresas=payload_empresas,
                 group_map=group_map,
@@ -497,89 +470,94 @@ except Exception as e:
                 unsafe_allow_html=True,
             )
 
-# ── Seleção (próximo ano) dentro do segmento aprovado
-# Regra: 1 ou 2 empresas (líder do último ano vs maior participação no backtest)
-ultimo_ano = int(pd.to_numeric(score["Ano"], errors="coerce").max())
-lideres_ano_anterior = lideres[lideres["Ano"] == ultimo_ano].copy()
-if lideres_ano_anterior is None or lideres_ano_anterior.empty:
-    continue
+        # líderes do último ano de score (para sugerir compra no próximo ano)
+        ultimo_ano = int(pd.to_numeric(score["Ano"], errors="coerce").max())
+        lideres_ano_anterior = lideres[lideres["Ano"] == ultimo_ano].copy()
 
-ticker_lider_ultimo = _strip_sa(str(lideres_ano_anterior.iloc[0]["ticker"]))
+        # 1) ticker líder do último ano (score)
+        ticker_lider_ultimo: str | None = None
+        if not lideres_ano_anterior.empty:
+            # tenta escolher o "melhor" se existir coluna de score/rank; senão pega o primeiro
+            for col in ("score", "Score", "SCORE", "rank", "Rank"):
+                if col in lideres_ano_anterior.columns:
+                    try:
+                        lideres_ano_anterior[col] = pd.to_numeric(lideres_ano_anterior[col], errors="coerce")
+                        lideres_ano_anterior = lideres_ano_anterior.sort_values(col, ascending=False)
+                        break
+                    except Exception:
+                        pass
+            ticker_lider_ultimo = _strip_sa(str(lideres_ano_anterior.iloc[0]["ticker"]))
 
-cols_empresas = patrimonio_empresas.columns.drop("Patrimônio", errors="ignore")
-ult_vals = patrimonio_empresas.iloc[-1][cols_empresas].apply(pd.to_numeric, errors="coerce").fillna(0.0)
-if ult_vals.empty:
-    continue
-ticker_maior_part = _strip_sa(str(ult_vals.idxmax()))
+        # 2) ticker com maior participação no segmento (último ponto do backtest)
+        ticker_maior_part: str | None = None
+        try:
+            cols_emp = patrimonio_empresas.columns.drop("Patrimônio", errors="ignore")
+            ult = patrimonio_empresas.iloc[-1][cols_emp].apply(pd.to_numeric, errors="coerce")
+            if not ult.empty and ult.notna().any():
+                ticker_maior_part = _strip_sa(str(ult.idxmax()))
+        except Exception:
+            ticker_maior_part = None
 
-if ticker_lider_ultimo == ticker_maior_part:
-    selecionados = [ticker_lider_ultimo]
-else:
-    selecionados = [ticker_lider_ultimo, ticker_maior_part]
+        # Regra: se iguais entra 1; se diferentes entra 2 (líder + maior participação)
+        selecionados = []
+        if ticker_lider_ultimo:
+            selecionados.append(ticker_lider_ultimo)
+        if ticker_maior_part and (ticker_maior_part not in selecionados):
+            selecionados.append(ticker_maior_part)
 
-for tk in selecionados:
-    tk = _strip_sa(str(tk))
-    nome_sel = next((e.nome for e in lista_empresas if _strip_sa(e.ticker) == tk), tk)
+        for tk in selecionados:
+            is_lider_ultimo = (ticker_lider_ultimo is not None and tk == ticker_lider_ultimo)
+            is_maior_part = (ticker_maior_part is not None and tk == ticker_maior_part)
 
-    # encontra valor final do ticker (coluna pode ter .SA)
-    valor_final = 0.0
-    for colname, v in ult_vals.items():
-        if _strip_sa(str(colname)) == tk:
-            valor_final = float(v)
-            break
+            motivos = []
+            if is_lider_ultimo:
+                motivos.append(f"LÍDER NO SCORE ({ultimo_ano})")
+            if is_maior_part:
+                motivos.append("MAIOR PARTICIPAÇÃO NO SEGMENTO")
 
-    perc_part = (valor_final / final_empresas) if final_empresas > 0 else 0.0
+            empresas_lideres_finais.append(
+                {
+                    "ticker": tk,
+                    "nome": next((e.nome for e in lista_empresas if _strip_sa(e.ticker) == tk), tk),
+                    "logo_url": get_logo_url(tk),
+                    "ano_lider": int(ultimo_ano) if is_lider_ultimo else None,
+                    "ano_compra": int(ultimo_ano) + 1,
+                    "setor": setor,
+                    "subsetor": subsetor,
+                    "segmento": segmento,
+                    "is_lider_ultimo": bool(is_lider_ultimo),
+                    "is_maior_part": bool(is_maior_part),
+                    "motivos": motivos,
+                }
+            )
 
-    is_lider_ultimo = (tk == ticker_lider_ultimo)
-    is_maior_part = (tk == ticker_maior_part)
-
-    motivos = []
-    if is_lider_ultimo:
-        motivos.append(f"LÍDER NO SCORE ({ultimo_ano})")
-    if is_maior_part:
-        motivos.append("MAIOR PARTICIPAÇÃO NO SEGMENTO")
-
-    empresas_lideres_finais.append(
-        {
-            "ticker": tk,
-            "nome": nome_sel,
-            "logo_url": get_logo_url(tk),
-            "ano_lider": ultimo_ano if is_lider_ultimo else None,
-            "ano_compra": ultimo_ano + 1,
-            "setor": setor,
-            "subsetor": subsetor,
-            "segmento": segmento,
-            "is_lider_ultimo": is_lider_ultimo,
-            "is_maior_part": is_maior_part,
-            "motivos": motivos,
-            "peso": float(perc_part),
-        }
-    )
-
-    # ─────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────
     # Bloco final: líderes para o próximo ano + distribuição setorial
     # ─────────────────────────────────────────────────────────
     if empresas_lideres_finais:
         st.markdown("## 📑 Empresas líderes para o próximo ano")
-
-for _emp in empresas_lideres_finais:
-    motivos = _emp.get("motivos") or []
-    if motivos:
-        _emp["motivos_html"] = "<br>".join([f"• {m}" for m in motivos])
-    else:
-        ano = _emp.get("ano_lider")
-        _emp["motivos_html"] = f"• LÍDER NO SCORE ({ano})" if ano else "• Selecionada"
-
-colunas_lideres = st.columns(3)
-for idx, emp in enumerate(empresas_lideres_finais):
+        colunas_lideres = st.columns(3)
+        for idx, emp in enumerate(empresas_lideres_finais):
             col = colunas_lideres[idx % 3]
+
+            motivos = emp.get("motivos") or []
+            if not motivos:
+                # compat: se vierem campos antigos
+                ms = (emp.get("motivo_select") or "").upper()
+                if "LIDER" in ms:
+                    ano = emp.get("ano_lider")
+                    motivos.append(f"LÍDER NO SCORE ({ano})" if ano else "LÍDER NO SCORE")
+                if ("GRANDE" in ms) or ("PART" in ms):
+                    motivos.append("MAIOR PARTICIPAÇÃO NO SEGMENTO")
+            motivos_html = "<br>".join([f"• {m}" for m in motivos]) if motivos else "• Selecionada"
+
             col.markdown(
                 f"""
                 <div style='border: 2px solid #28a745; border-radius: 10px; padding: 12px; margin-bottom: 10px; background-color: #f0fff4; text-align: center;'>
                     <img src="{emp['logo_url']}" width="45" />
                     <h5 style="margin: 5px 0 0;">{emp['nome']}</h5>
                     <p style="margin: 0; color: #666; font-size: 13px;">({emp['ticker']})</p>
-                    <p style="font-size: 12px; color: #333;">{emp.get('motivos_html','')}<br>Para compra em {emp['ano_compra']}</p>
+                    <p style="font-size: 12px; color: #333;">{motivos_html}<br>Para compra em {emp['ano_compra']}</p>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -764,33 +742,54 @@ for idx, emp in enumerate(empresas_lideres_finais):
                 except Exception as e:
                     st.error(f"Patch 5 falhou: {type(e).__name__}: {e}")
 
-# ─────────────────────────────────────────────────────────
-# Persistência: salva snapshot no Supabase (habilita Patch 6)
-# ─────────────────────────────────────────────────────────
-try:
-    if empresas_lideres_finais:
-        tipo_empresa = "ESTABELECIDA_10A"
-        filters_json = {
-            "tipo_empresa": tipo_empresa,
-            "min_anos_dre": 10,
-            "use_score_v2_auto": bool(calcular_score_acumulado_v2 is not None),
-            "selic_source": "macro_db_load_macro_summary",
-            "macro_last_date": str(pd.to_datetime(dados_macro["Data"], errors="coerce").max().date()) if (dados_macro is not None and "Data" in dados_macro.columns) else None,
-            "margem_superior_pct": float(margem_superior),
-        }
-        items = [{"ticker": e["ticker"], "peso": float(e.get("peso", 0.0))} for e in empresas_lideres_finais]
-        snap_id, plan_hash = save_snapshot(
-            items=items,
-            selic_ref=None,
-            margem_superior=float(margem_superior) / 100.0,
-            tipo_empresa=tipo_empresa,
-            filters_json=filters_json,
-            notes="Criado via Criação de Portfólio",
-        )
-        if snap_id:
-            st.success(f"Snapshot salvo no Supabase (plan_hash={plan_hash[:8]}…).")
-except Exception as e:
-    st.warning(f"Não foi possível salvar snapshot no Supabase: {type(e).__name__}: {e}")
+    
+    # ─────────────────────────────────────────────────────────
+    # Snapshot no Supabase (habilita Patch 6) — opcional
+    # ─────────────────────────────────────────────────────────
+    try:
+        from core.portfolio_snapshot_store import save_snapshot  # type: ignore
+
+        if empresas_lideres_finais:
+            # pesos simples (igualitário) apenas para persistência; pesos refinados podem ser calculados em outro patch
+            uniq = []
+            seen = set()
+            for e in empresas_lideres_finais:
+                tk = str(e.get("ticker", "")).strip().upper()
+                if tk and tk not in seen:
+                    uniq.append(tk)
+                    seen.add(tk)
+
+            w = (1.0 / len(uniq)) if uniq else 0.0
+            items = [{"ticker": tk, "peso": float(w)} for tk in uniq]
+
+            # filters_json para auditabilidade
+            try:
+                macro_last = str(pd.to_datetime(dados_macro["Data"], errors="coerce").max().date())
+            except Exception:
+                macro_last = None
+
+            filters_json = {
+                "tipo_empresa": "ESTABELECIDA_10A",
+                "min_anos_dre": 10,
+                "use_score_v2_auto": bool(calcular_score_acumulado_v2 is not None),
+                "selic_source": "macro_db_load_macro_summary",
+                "macro_last_date": macro_last,
+                "margem_superior_pct": float(margem_superior),
+            }
+
+            save_snapshot(
+                items=items,
+                selic_ref=None,
+                margem_superior=float(margem_superior) / 100.0,  # guarda em decimal
+                tipo_empresa="ESTABELECIDA_10A",
+                filters_json=filters_json,
+                notes="criado via criacao_portfolio",
+                status="active",
+            )
+    except Exception:
+        # não bloqueia a página se o Supabase não estiver configurado
+        pass
+
 
     st.session_state["cp_should_run"] = False
     st.markdown("<hr>", unsafe_allow_html=True)
