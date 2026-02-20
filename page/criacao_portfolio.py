@@ -82,6 +82,9 @@ from core.yf_data import (
 )
 from core.weights import get_pesos
 
+from core.portfolio_snapshot_store import save_snapshot, compute_plan_hash
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -746,50 +749,28 @@ def render():
     # ─────────────────────────────────────────────────────────
     # Snapshot no Supabase (habilita Patch 6) — opcional
     # ─────────────────────────────────────────────────────────
+    # ... depois de montar "items" e "filters_json" ...
+    
+    payload_hash = {
+        "items": items,  # lista de {"ticker","peso"}
+        "tipo_empresa": "ESTABELECIDA_10A",
+        "margem_superior": float(margem_superior) / 100.0,  # ou em % se você preferir padronizar
+        "filters_json": filters_json,
+        "status": "active",
+    }
+    plan_hash = compute_plan_hash(payload_hash)
+    
     try:
-        from core.portfolio_snapshot_store import save_snapshot  # type: ignore
-
-        if empresas_lideres_finais:
-            # pesos simples (igualitário) apenas para persistência; pesos refinados podem ser calculados em outro patch
-            uniq = []
-            seen = set()
-            for e in empresas_lideres_finais:
-                tk = str(e.get("ticker", "")).strip().upper()
-                if tk and tk not in seen:
-                    uniq.append(tk)
-                    seen.add(tk)
-
-            w = (1.0 / len(uniq)) if uniq else 0.0
-            items = [{"ticker": tk, "peso": float(w)} for tk in uniq]
-
-            # filters_json para auditabilidade
-            try:
-                macro_last = str(pd.to_datetime(dados_macro["Data"], errors="coerce").max().date())
-            except Exception:
-                macro_last = None
-
-            filters_json = {
-                "tipo_empresa": "ESTABELECIDA_10A",
-                "min_anos_dre": 10,
-                "use_score_v2_auto": bool(calcular_score_acumulado_v2 is not None),
-                "selic_source": "macro_db_load_macro_summary",
-                "macro_last_date": macro_last,
-                "margem_superior_pct": float(margem_superior),
-            }
-
-            save_snapshot(
-                items=items,
-                selic_ref=None,
-                margem_superior=float(margem_superior) / 100.0,  # guarda em decimal
-                tipo_empresa="ESTABELECIDA_10A",
-                filters_json=filters_json,
-                notes="criado via criacao_portfolio",
-                status="active",
-            )
-    except Exception:
-        # não bloqueia a página se o Supabase não estiver configurado
-        pass
-
-
-    st.session_state["cp_should_run"] = False
-    st.markdown("<hr>", unsafe_allow_html=True)
+        snapshot_id = save_snapshot(
+            items=items,
+            selic_ref=None,
+            margem_superior=float(margem_superior) / 100.0,
+            tipo_empresa="ESTABELECIDA_10A",
+            filters_json=filters_json,
+            notes="criado via criacao_portfolio",
+            status="active",
+            plan_hash=plan_hash,  # ✅ OBRIGATÓRIO
+        )
+        st.success(f"Snapshot salvo no Supabase ✅ id={snapshot_id}")
+    except Exception as e:
+        st.error(f"Falha ao salvar snapshot no Supabase: {type(e).__name__}: {e}")
