@@ -1,156 +1,154 @@
-
 from __future__ import annotations
 
-import hashlib
 import json
+import os
+import hashlib
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
-from sqlalchemy import text
 
-from core.db_loader import get_supabase_engine
+# Supabase client (supabase-py)
+def _get_client():
+    try:
+        from supabase import create_client  # type: ignore
+    except Exception:
+        return None
+
+    url = os.environ.get("SUPABASE_URL") or os.environ.get("SUPABASE_PROJECT_URL")
+    key = os.environ.get("SUPABASE_ANON_KEY") or os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_KEY")
+    if not url or not key:
+        return None
+    try:
+        return create_client(url, key)
+    except Exception:
+        return None
 
 
-def _hash_plan(payload: Dict[str, Any]) -> str:
-    canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+# Compatível com o schema informado pelo usuário (Supabase / Postgres)
+# Header: public.portfolio_snapshots (plan_hash único)
+# Items:  public.portfolio_snapshot_items (FK snapshot_id)
+SNAP_TABLE = os.environ.get("SNAPSHOT_TABLE", "portfolio_snapshots")
+ITEMS_TABLE = os.environ.get("SNAPSHOT_ITEMS_TABLE", "portfolio_snapshot_items")
 
 
-def save_snapshot(header: Dict[str, Any], items: List[Dict[str, Any]]) -> str:
-    """
-    Salva um snapshot (cabeçalho + itens) e retorna snapshot_id.
-    - Idempotente por plan_hash (determinístico).
-    - Não quebra o dashboard se rodar repetidas vezes com o mesmo plano.
-    """
-    engine = get_supabase_engine()
+def _now_iso() -> str:
+    return datetime.now().astimezone().isoformat()
 
-    payload_for_hash = {
-        "header": header,
-        "items": sorted(items, key=lambda x: (x.get("ticker") or "")),
+
+def _det_hash(payload: Dict[str, Any]) -> str:
+    try:
+        s = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+        return hashlib.md5(s.encode("utf-8")).hexdigest()
+    except Exception:
+        return ""
+
+
+def save_snapshot(
+    tickers: List[Dict[str, Any]],
+    selic_ref: float,
+    margem_superior: float,
+    tipo_empresa: str,
+    hash_value: str = "",
+    filters_json: Optional[Dict[str, Any]] = None,
+    notes: Optional[str] = None,
+) -> Optional[str]:
+    """Salva snapshot (header + items). Retorna snapshot_id (uuid/str) ou None."""
+    sb = _get_client()
+    if sb is None:
+        return None
+
+    tickers = tickers or []
+    # normaliza itens
+    items = []
+    for it in tickers:
+        tk = str(it.get("ticker") or "").strip().upper().replace(".SA", "")
+        if not tk:
+            continue
+        items.append({"ticker": tk, "peso": float(it.get("peso") or 0.0)})
+
+    # Hash determinístico do plano (idealmente NÃO depende do timestamp)
+    plan_payload = {
+        "tickers": items,
+        "selic_ref": float(selic_ref),
+        "margem_superior": float(margem_superior),
+        "tipo_empresa": str(tipo_empresa),
+        "filters_json": filters_json or {},
     }
-    plan_hash = _hash_plan(payload_for_hash)
+    hv = str(hash_value or _det_hash(plan_payload))
 
-    with engine.begin() as conn:
-        res = conn.execute(
-            text("""
-            insert into public.portfolio_snapshots
-                (selic_ref, margem_superior, tipo_empresa, filters_json, plan_hash, status)
-            values
-                (:selic_ref, :margem_superior, :tipo_empresa, :filters_json, :plan_hash, 'active')
-            on conflict (plan_hash) do update
-            set status = 'active'
-            returning id
-            """),
-            {
-                "selic_ref": header.get("selic_ref"),
-                "margem_superior": header.get("margem_superior"),
-                "tipo_empresa": header.get("tipo_empresa"),
-                "filters_json": json.dumps(header.get("filters_json", {}), ensure_ascii=False),
-                "plan_hash": plan_hash,
-            },
-        )
-        snapshot_id = str(res.fetchone()[0])
+    header = {
+        "created_at": _now_iso(),
+        "selic_ref": float(selic_ref),
+        "margem_superior": float(margem_superior),
+        "tipo_empresa": str(tipo_empresa),
+        "filters_json": filters_json or {},
+        "plan_hash": hv,
+        "status": "active",
+    }
+    if notes:
+        header["notes"] = str(notes)
 
-        # itens (upsert)
-        for item in items:
-            conn.execute(
-                text("""
-                insert into public.portfolio_snapshot_items
-                    (snapshot_id, ticker, segmento, peso, meta_json)
-                values
-                    (:snapshot_id, :ticker, :segmento, :peso, :meta_json)
-                on conflict (snapshot_id, ticker) do update
-                set segmento = excluded.segmento,
-                    peso = excluded.peso,
-                    meta_json = excluded.meta_json
-                """),
-                {
-                    "snapshot_id": snapshot_id,
-                    "ticker": (item.get("ticker") or "").strip().upper(),
-                    "segmento": item.get("segmento"),
-                    "peso": item.get("peso"),
-                    "meta_json": json.dumps(item.get("meta_json", {}), ensure_ascii=False),
-                },
-            )
+    # upsert header por plan_hash (índice único)
+    res = sb.table(SNAP_TABLE).upsert(header, on_conflict="plan_hash").execute()
+    data = getattr(res, "data", None) or (res.get("data") if isinstance(res, dict) else None)
+    if not data:
+        return None
+    snap_id = str(data[0].get("id") or "")
 
-    return snapshot_id
+    if not snap_id:
+        return None
+
+    # sincroniza items (remove antigos e insere novos)
+    if items:
+        try:
+            sb.table(ITEMS_TABLE).delete().eq("snapshot_id", snap_id).execute()
+        except Exception:
+            pass
+        rows = [{"snapshot_id": snap_id, "ticker": it["ticker"], "peso": it["peso"]} for it in items]
+        sb.table(ITEMS_TABLE).insert(rows).execute()
+
+    return snap_id
 
 
-def list_snapshots(limit: int = 30, status: str = "active") -> pd.DataFrame:
-    engine = get_supabase_engine()
-    with engine.connect() as conn:
-        return pd.read_sql_query(
-            text("""
-            select id, created_at, selic_ref, margem_superior, tipo_empresa, status, plan_hash
-            from public.portfolio_snapshots
-            where (:status is null) or (status = :status)
-            order by created_at desc
-            limit :lim
-            """),
-            conn,
-            params={"lim": int(limit), "status": status},
-        )
+def list_snapshots(limit: int = 25, status: str = "active") -> Optional[pd.DataFrame]:
+    sb = _get_client()
+    if sb is None:
+        return None
+    q = sb.table(SNAP_TABLE).select("*").order("created_at", desc=True).limit(int(limit))
+    if status:
+        q = q.eq("status", status)
+    res = q.execute()
+    data = getattr(res, "data", None) or (res.get("data") if isinstance(res, dict) else None)
+    if not data:
+        return pd.DataFrame()
+    return pd.DataFrame(data)
 
 
 def get_snapshot(snapshot_id: str) -> Optional[Dict[str, Any]]:
-    engine = get_supabase_engine()
-    with engine.connect() as conn:
-        row = conn.execute(
-            text("""
-            select id, created_at, selic_ref, margem_superior, tipo_empresa, filters_json, plan_hash, status
-            from public.portfolio_snapshots
-            where id = :sid
-            """),
-            {"sid": snapshot_id},
-        ).fetchone()
-
-        if not row:
-            return None
-
-        items = conn.execute(
-            text("""
-            select ticker, segmento, peso, meta_json
-            from public.portfolio_snapshot_items
-            where snapshot_id = :sid
-            order by ticker asc
-            """),
-            {"sid": snapshot_id},
-        ).fetchall()
-
-    return {
-        "id": str(row[0]),
-        "created_at": str(row[1]),
-        "selic_ref": row[2],
-        "margem_superior": row[3],
-        "tipo_empresa": row[4],
-        "filters_json": row[5],
-        "plan_hash": row[6],
-        "status": row[7],
-        "items": [
-            {
-                "ticker": r[0],
-                "segmento": r[1],
-                "peso": float(r[2]) if r[2] is not None else None,
-                "meta_json": r[3],
-            }
-            for r in items
-        ],
-    }
-
-
-def get_latest_snapshot(status: str = "active") -> Optional[Dict[str, Any]]:
-    engine = get_supabase_engine()
-    with engine.connect() as conn:
-        row = conn.execute(
-            text("""
-            select id
-            from public.portfolio_snapshots
-            where status = :st
-            order by created_at desc
-            limit 1
-            """),
-            {"st": status},
-        ).fetchone()
-    if not row:
+    sb = _get_client()
+    if sb is None:
         return None
-    return get_snapshot(str(row[0]))
+
+    sid = str(snapshot_id or "").strip()
+    if not sid:
+        return None
+
+    res = sb.table(SNAP_TABLE).select("*").eq("id", sid).limit(1).execute()
+    data = getattr(res, "data", None) or (res.get("data") if isinstance(res, dict) else None)
+    if not data:
+        return None
+    header = dict(data[0])
+
+    res2 = sb.table(ITEMS_TABLE).select("*").eq("snapshot_id", sid).execute()
+    items = getattr(res2, "data", None) or (res2.get("data") if isinstance(res2, dict) else None) or []
+    header["items"] = items
+    return header
+
+
+def get_latest_snapshot() -> Optional[Dict[str, Any]]:
+    df = list_snapshots(limit=1, status="active")
+    if df is None or df.empty:
+        return None
+    sid = str(df.iloc[0].get("id") or "")
+    return get_snapshot(sid) if sid else None
