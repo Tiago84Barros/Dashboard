@@ -746,31 +746,90 @@ def render():
                     st.error(f"Patch 5 falhou: {type(e).__name__}: {e}")
 
     
-    # ─────────────────────────────────────────────────────────
-    # Snapshot no Supabase (habilita Patch 6) — opcional
-    # ─────────────────────────────────────────────────────────
-    # ... depois de montar "items" e "filters_json" ...
+  
+    # ============================================================
+    # SNAPSHOT NO SUPABASE
+    # ============================================================
     
-    payload_hash = {
-        "items": items,  # lista de {"ticker","peso"}
-        "tipo_empresa": "ESTABELECIDA_10A",
-        "margem_superior": float(margem_superior) / 100.0,  # ou em % se você preferir padronizar
-        "filters_json": filters_json,
-        "status": "active",
-    }
-    plan_hash = compute_plan_hash(payload_hash)
+    from core.portfolio_snapshot_store import save_snapshot, compute_plan_hash
     
-    try:
-        snapshot_id = save_snapshot(
-            items=items,
-            selic_ref=None,
-            margem_superior=float(margem_superior) / 100.0,
-            tipo_empresa="ESTABELECIDA_10A",
-            filters_json=filters_json,
-            notes="criado via criacao_portfolio",
-            status="active",
-            plan_hash=plan_hash,  # ✅ OBRIGATÓRIO
-        )
-        st.success(f"Snapshot salvo no Supabase ✅ id={snapshot_id}")
-    except Exception as e:
-        st.error(f"Falha ao salvar snapshot no Supabase: {type(e).__name__}: {e}")
+    # ------------------------------------------------------------
+    # Monta itens (ticker / peso)
+    # ------------------------------------------------------------
+    items = []
+    
+    for e in (empresas_lideres_finais or []):
+        tk = str(e.get("ticker", "")).strip().upper()
+        if not tk:
+            continue
+    
+        # Se existir peso definido usa, senão será ajustado abaixo
+        peso = e.get("peso", e.get("peso_sugerido", None))
+    
+        items.append({
+            "ticker": tk,
+            "peso": float(peso) if peso is not None else None
+        })
+    
+    # Se não houver empresas, não salva snapshot
+    if not items:
+        st.warning("Nenhuma empresa selecionada — snapshot não será salvo.")
+    else:
+    
+        # ------------------------------------------------------------
+        # Normaliza pesos (igualitário se não houver definido)
+        # ------------------------------------------------------------
+        if any(it["peso"] is None for it in items):
+            peso_igual = 1.0 / len(items)
+            for it in items:
+                it["peso"] = peso_igual
+        else:
+            soma = sum(float(it["peso"]) for it in items)
+            if soma > 0:
+                for it in items:
+                    it["peso"] = float(it["peso"]) / soma
+    
+        # ------------------------------------------------------------
+        # Monta filters_json (auditoria/reprodutibilidade)
+        # ------------------------------------------------------------
+        filters_json = {
+            "tipo_empresa": "ESTABELECIDA_10A",
+            "margem_superior_percent": float(margem_superior),
+            "selic_source": "macro_db_load_macro_summary",
+            "macro_last_date": str(dados_macro["Data"].max().date())
+                if "Data" in dados_macro.columns else None,
+            "score_mode": "v2_auto_if_available"
+        }
+    
+        # ------------------------------------------------------------
+        # Payload para cálculo determinístico do hash
+        # ------------------------------------------------------------
+        payload_hash = {
+            "items": items,
+            "tipo_empresa": "ESTABELECIDA_10A",
+            "margem_superior_percent": float(margem_superior),
+            "filters_json": filters_json,
+            "status": "active",
+        }
+    
+        plan_hash = compute_plan_hash(payload_hash)
+    
+        # ------------------------------------------------------------
+        # Salva snapshot
+        # ------------------------------------------------------------
+        try:
+            snapshot_id = save_snapshot(
+                items=items,
+                selic_ref=None,  # Selic vem da macro histórica
+                margem_superior=float(margem_superior) / 100.0,
+                tipo_empresa="ESTABELECIDA_10A",
+                filters_json=filters_json,
+                notes="criado via criacao_portfolio",
+                status="active",
+                plan_hash=plan_hash,
+            )
+    
+            st.success(f"Snapshot salvo no Supabase ✅ id={snapshot_id}")
+    
+        except Exception as e:
+            st.error(f"Falha ao salvar snapshot no Supabase: {type(e).__name__}: {e}")
