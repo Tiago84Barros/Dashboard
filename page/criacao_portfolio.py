@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import logging
+import json
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional, Sequence, Tuple
 
 import pandas as pd
+import numpy as np
 import streamlit as st
 import matplotlib.pyplot as plt
 
@@ -72,6 +75,7 @@ except Exception:
 from core.portfolio import (
     calcular_patrimonio_selic_macro,
     gerir_carteira,
+    gerir_carteira_modulada,
     encontrar_proxima_data_valida,
     gerir_carteira_simples,
 )
@@ -81,6 +85,12 @@ from core.yf_data import (
     baixar_precos_ano_corrente,
 )
 from core.weights import get_pesos
+
+# Snapshot persistente (Supabase)
+try:
+    from core.portfolio_snapshot_store import save_snapshot
+except Exception:
+    save_snapshot = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +189,58 @@ def _filtrar_tickers_com_min_anos(tickers: Sequence[str], min_anos: int = 10, ma
     return sorted(set(ok))
 
 
+
+def _filtrar_tickers_por_tipo(
+    tickers: Sequence[str],
+    tipo: str,
+    max_workers: int = 12,
+) -> Tuple[List[str], dict]:
+    """
+    Filtro de histórico (tipo de empresa) — define o “n do gate”.
+
+    Retorna:
+      - tickers_validos (SEM '.SA')
+      - years_map: {ticker: anos_de_historico}
+
+    Regras:
+      - "Crescimento (<10 anos)": 1..9 anos
+      - "Estabelecida (≥10 anos)": >=10 anos
+      - "Todas": >=1 ano
+    """
+    tickers = [_strip_sa(t) for t in tickers if (t or "").strip()]
+    tickers = [t for t in tickers if t]
+    if not tickers:
+        return [], {}
+
+    def _year_check(tk: str) -> Tuple[str, int]:
+        try:
+            dre = load_data_from_db(_norm_sa(tk))
+            n = _safe_year_count_from_dre(dre)
+            return tk, int(n)
+        except Exception:
+            return tk, 0
+
+    years_map: dict = {}
+    max_workers = min(max_workers, max(2, len(tickers)))
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futs = [ex.submit(_year_check, tk) for tk in tickers]
+        for fut in as_completed(futs):
+            tk, n = fut.result()
+            years_map[tk] = int(n) if n is not None else 0
+
+    tipo0 = (tipo or "Todas").strip()
+    def _pass(tk: str) -> bool:
+        n = int(years_map.get(tk, 0))
+        if tipo0 == "Crescimento (<10 anos)":
+            return (n < 10) and (n > 0)
+        if tipo0 == "Estabelecida (≥10 anos)":
+            return n >= 10
+        return n > 0
+
+    ok = [tk for tk in tickers if _pass(tk)]
+    return sorted(set(ok)), years_map
+
+
 def _build_macro() -> Optional[pd.DataFrame]:
     """
     Retorna macro com coluna 'Data' (não index), alinhado ao padrão das outras páginas.
@@ -207,7 +269,7 @@ def render():
     # CONTROLES DE EXECUÇÃO (não roda sozinho)
     # ─────────────────────────────────────────────────────────────
     if "cp_last_params" not in st.session_state:
-        st.session_state["cp_last_params"] = {"margem_superior": 10.0, "use_score_v2": False}
+        st.session_state["cp_last_params"] = {"margem_superior": 10.0, "use_score_v2": False, "tipo_empresa_idx": 2, "selic_ref": 0.0}
     if "cp_should_run" not in st.session_state:
         st.session_state["cp_should_run"] = False
 
@@ -231,12 +293,32 @@ def render():
                 value=bool(st.session_state["cp_last_params"].get("use_score_v2", False)),
             )
 
+            tipo_empresa = st.radio(
+                "Perfil de empresa (histórico DRE):",
+                ["Crescimento (<10 anos)", "Estabelecida (≥10 anos)", "Todas"],
+                index=int(st.session_state["cp_last_params"].get("tipo_empresa_idx", 2)),
+                help="Este filtro define o universo elegível por segmento e também o gate binário do modo de carteira (igual ao advanced.py).",
+            )
+
+            selic_ref = st.number_input(
+                "Selic referência (% a.a.)",
+                min_value=0.0,
+                max_value=100.0,
+                value=float(st.session_state["cp_last_params"].get("selic_ref", 0.0)),
+                step=0.05,
+                format="%.2f",
+                help="Valor informativo para persistência no snapshot. O benchmark do backtest continua usando info_economica (macro).",
+            )
+
             gerar = st.form_submit_button("🚀 Rodar Criação de Portfólio")
 
         if gerar:
             st.session_state["cp_last_params"] = {
                 "margem_superior": float(margem_superior),
                 "use_score_v2": bool(use_score_v2),
+                "tipo_empresa_idx": int(["Crescimento (<10 anos)", "Estabelecida (≥10 anos)", "Todas"].index(tipo_empresa)),
+                "tipo_empresa": str(tipo_empresa),
+                "selic_ref": float(selic_ref),
             }
             st.session_state["cp_should_run"] = True
 
@@ -247,8 +329,10 @@ def render():
     # parâmetro efetivo usado na execução
     margem_superior = float(st.session_state["cp_last_params"]["margem_superior"])
     use_score_v2 = bool(st.session_state["cp_last_params"]["use_score_v2"])
+    tipo_empresa = str(st.session_state["cp_last_params"].get("tipo_empresa") or "Todas")
+    selic_ref = float(st.session_state["cp_last_params"].get("selic_ref") or 0.0)
+    policy_calibrada = {"mode": "heuristica_calibrada", "eps": 0.35}
 
-    
     # ── Carrega setores (cache em sessão)
     setores_df = st.session_state.get("setores_df")
     if setores_df is None or getattr(setores_df, "empty", True):
@@ -321,9 +405,14 @@ def render():
         if len(set(tickers_segmento)) <= 1:
             continue
 
-        # filtro de histórico mínimo (>=10 anos)
-        tickers_validos = _filtrar_tickers_com_min_anos(tickers_segmento, min_anos=10, max_workers=12)
-        if len(tickers_validos) <= 1:
+        # filtro de histórico (tipo de empresa) — define o “n do gate”
+        tickers_validos, years_map = _filtrar_tickers_por_tipo(
+            tickers_segmento,
+            tipo=tipo_empresa,
+            max_workers=12,
+        )
+        n_total_segmento = int(len(tickers_validos))
+        if n_total_segmento <= 1:
             continue
 
         tickers_validos_set = set(tickers_validos)
@@ -425,7 +514,17 @@ def render():
         except Exception:
             pass
 
-        patrimonio_empresas, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
+        # Gate binário do modo (igual ao advanced.py)
+        #   - n_total_segmento >= 5 -> Ajuste Calibrado (auto-tuning)
+        #   - n_total_segmento <= 4 -> Modelo Padrão (aportes iguais)
+        usar_calibrado = int(n_total_segmento) >= 5
+
+        if usar_calibrado:
+            patrimonio_empresas, datas_aportes = gerir_carteira_modulada(
+                precos, score, lideres, dividendos, policy=policy_calibrada
+            )
+        else:
+            patrimonio_empresas, datas_aportes = gerir_carteira(precos, score, lideres, dividendos)
         if patrimonio_empresas is None or patrimonio_empresas.empty:
             continue
 
@@ -477,22 +576,212 @@ def render():
                 unsafe_allow_html=True,
             )
 
-        # líderes do último ano de score (para sugerir compra no próximo ano)
+        # Seleção de empresas para “próximo ano” dentro do segmento aprovado
         ultimo_ano = int(pd.to_numeric(score["Ano"], errors="coerce").max())
-        lideres_ano_anterior = lideres[lideres["Ano"] == ultimo_ano]
 
-        for _, row in lideres_ano_anterior.iterrows():
-            tk = _strip_sa(str(row["ticker"]))
+        # líder do último ano (top1)
+        lider_ultimo_df = lideres[lideres["Ano"] == ultimo_ano].head(1)
+        if lider_ultimo_df is None or lider_ultimo_df.empty:
+            continue
+        ticker_lider_ultimo = _strip_sa(str(lider_ultimo_df.iloc[0]["ticker"]))
+
+        # maior participação no backtest (última linha, exclui "Patrimônio")
+        last_row = patrimonio_empresas.iloc[-1].drop(labels=["Patrimônio"], errors="ignore")
+        last_row = pd.to_numeric(last_row, errors="coerce").dropna()
+        last_row = last_row[last_row > 0]
+        if last_row.empty:
+            continue
+        ticker_maior_part = _strip_sa(str(last_row.sort_values(ascending=False).index[0]))
+
+        if ticker_lider_ultimo == ticker_maior_part:
+            escolhidos = [(ticker_lider_ultimo, True, "LÍDER")]
+        else:
+            escolhidos = [
+                (ticker_lider_ultimo, True, "LÍDER"),
+                (ticker_maior_part, False, "GRANDE_PARTICIPACAO"),
+            ]
+
+        # peso inicial proporcional à participação (no próprio segmento)
+        sel_vals = {}
+        for tk, _, _ in escolhidos:
+            v = last_row.get(tk)
+            if v is None:
+                v = last_row.get(tk + ".SA")
+            sel_vals[tk] = float(v) if v is not None else 0.0
+        s_vals = sum(sel_vals.values())
+        if s_vals <= 0:
+            s_vals = float(len(escolhidos))
+            sel_vals = {tk: 1.0 for tk, _, _ in escolhidos}
+
+        for tk, is_lider, motivo in escolhidos:
             empresas_lideres_finais.append(
                 {
                     "ticker": tk,
                     "nome": next((e.nome for e in lista_empresas if _strip_sa(e.ticker) == tk), tk),
                     "logo_url": get_logo_url(tk),
-                    "ano_lider": int(row["Ano"]),
-                    "ano_compra": int(row["Ano"]) + 1,
+                    "ano_lider": int(ultimo_ano),
+                    "ano_compra": int(ultimo_ano) + 1,
                     "setor": setor,
+                    "subsetor": subsetor,
+                    "segmento": segmento,
+                    "is_lider_ultimo": bool(is_lider),
+                    "motivo_select": str(motivo),
+                    "peso": float(sel_vals.get(tk, 0.0)) / float(s_vals),
                 }
             )
+
+
+    # ─────────────────────────────────────────────────────────
+    # Recalibração de “peso sugerido” (não muda seleção)
+    #   40% igualitário
+    #   30% consolidação (proxy: mcap + estabilidade via volatilidade)
+    #   30% qualidade via score do último ano disponível
+    # Aplica cap por ativo (default 30%)
+    # ─────────────────────────────────────────────────────────
+    def _cap_redistribute(w: dict, cap: float = 0.30, iters: int = 12) -> dict:
+        w = {k: float(v) for k, v in (w or {}).items() if k and v is not None}
+        s = sum(w.values())
+        if s <= 0:
+            return w
+        w = {k: v / s for k, v in w.items()}
+        for _ in range(iters):
+            over = {k: v for k, v in w.items() if v > cap}
+            if not over:
+                break
+            excess = sum(v - cap for v in over.values())
+            for k in over:
+                w[k] = cap
+            under = [k for k, v in w.items() if v < cap - 1e-12]
+            if not under or excess <= 0:
+                break
+            under_sum = sum(w[k] for k in under)
+            if under_sum <= 0:
+                add = excess / len(under)
+                for k in under:
+                    w[k] += add
+            else:
+                for k in under:
+                    w[k] += excess * (w[k] / under_sum)
+            s2 = sum(w.values())
+            if s2 > 0:
+                w = {k: v / s2 for k, v in w.items()}
+        s = sum(w.values())
+        return {k: v / s for k, v in w.items()} if s > 0 else w
+
+    if empresas_lideres_finais:
+        # agrega duplicatas por ticker (se ocorrer)
+        tickers_final = [str(e.get("ticker") or "").strip().upper().replace(".SA", "") for e in empresas_lideres_finais]
+        tickers_final = [t for t in tickers_final if t]
+        uniq = list(dict.fromkeys(tickers_final))
+
+        # 40% igualitário
+        n = len(uniq)
+        w_equal = {t: 1.0 / n for t in uniq} if n else {}
+
+        # 30% qualidade (score último ano)
+        quality_raw = {}
+        try:
+            if score_global_parts:
+                sg = pd.concat(score_global_parts, ignore_index=True)
+                sg["ticker"] = sg["ticker"].astype(str).str.upper().str.replace(".SA", "", regex=False).str.strip()
+                sg["Ano"] = pd.to_numeric(sg.get("Ano"), errors="coerce")
+                ultimo_ano_global = int(sg["Ano"].max()) if not sg.empty else None
+                if ultimo_ano_global is not None:
+                    sg_last = sg[sg["Ano"] == ultimo_ano_global].copy()
+                    col_score = None
+                    for c in ["Score_Ajustado", "Score", "score", "score_total"]:
+                        if c in sg_last.columns:
+                            col_score = c
+                            break
+                    if col_score:
+                        tmp = sg_last[["ticker", col_score]].copy()
+                        tmp[col_score] = pd.to_numeric(tmp[col_score], errors="coerce")
+                        tmp = tmp.dropna()
+                        for t in uniq:
+                            v = tmp.loc[tmp["ticker"] == t, col_score]
+                            if not v.empty:
+                                quality_raw[t] = float(v.iloc[0])
+        except Exception:
+            quality_raw = {}
+
+        if not quality_raw:
+            w_quality = w_equal.copy()
+        else:
+            vals = np.array([quality_raw.get(t, np.nan) for t in uniq], dtype=float)
+            mmin = np.nanmin(vals) if np.isfinite(vals).any() else 0.0
+            mmax = np.nanmax(vals) if np.isfinite(vals).any() else 1.0
+            denom = (mmax - mmin) if (mmax - mmin) != 0 else 1.0
+            w_quality = {t: max(0.0, (float(quality_raw.get(t, mmin)) - mmin) / denom) for t in uniq}
+            if sum(w_quality.values()) <= 0:
+                w_quality = w_equal.copy()
+            else:
+                s = sum(w_quality.values())
+                w_quality = {t: v / s for t, v in w_quality.items()}
+
+        # 30% consolidação (proxy: market cap + estabilidade via volatilidade)
+        cons_raw = {t: 0.0 for t in uniq}
+        try:
+            # market cap proxy via multiplos
+            mcap = {}
+            for t in uniq:
+                dfm = load_multiplos_from_db(_norm_sa(t))
+                if dfm is None or dfm.empty:
+                    continue
+                dfm = _clean_columns(dfm)
+                col_m = None
+                for c in ["MarketCap", "Valor_de_Mercado", "Valor de Mercado", "market_cap", "marketcap"]:
+                    if c in dfm.columns:
+                        col_m = c
+                        break
+                if col_m:
+                    v = pd.to_numeric(dfm[col_m], errors="coerce").dropna()
+                    if not v.empty:
+                        mcap[t] = float(v.iloc[-1])
+            # volatilidade proxy via preços (se disponível no acumulador global)
+            vol = {}
+            try:
+                if precos_global_parts:
+                    pg = pd.concat(precos_global_parts, axis=1)
+                    pg.index = pd.to_datetime(pg.index, errors="coerce")
+                    pg = pg.dropna(how="all")
+                    for t in uniq:
+                        col = _norm_sa(t)
+                        if col in pg.columns:
+                            s = pd.to_numeric(pg[col], errors="coerce").dropna()
+                            if len(s) >= 60:
+                                r = np.log(s).diff().dropna()
+                                vol[t] = float(r.tail(252).std()) if len(r) >= 10 else float(r.std())
+            except Exception:
+                vol = {}
+
+            mcap_vals = np.array([mcap.get(t, 0.0) for t in uniq], dtype=float)
+            vol_vals = np.array([vol.get(t, np.nan) for t in uniq], dtype=float)
+            mcap_rank = pd.Series(mcap_vals).rank(pct=True).to_numpy()
+            invvol = np.where(np.isfinite(vol_vals) & (vol_vals > 0), 1.0 / vol_vals, np.nan)
+            invvol_rank = pd.Series(invvol).rank(pct=True).fillna(0.5).to_numpy()
+            for i, t in enumerate(uniq):
+                cons_raw[t] = float(0.7 * mcap_rank[i] + 0.3 * invvol_rank[i])
+        except Exception:
+            cons_raw = {t: 1.0 for t in uniq}
+
+        if sum(cons_raw.values()) <= 0:
+            w_cons = w_equal.copy()
+        else:
+            s = sum(cons_raw.values())
+            w_cons = {t: float(cons_raw.get(t, 0.0)) / s for t in uniq}
+
+        # mistura final e cap
+        peso_sugerido = {}
+        for t in uniq:
+            peso_sugerido[t] = 0.40 * w_equal.get(t, 0.0) + 0.30 * w_cons.get(t, 0.0) + 0.30 * w_quality.get(t, 0.0)
+
+        peso_sugerido = _cap_redistribute(peso_sugerido, cap=0.30)
+
+        for e in empresas_lideres_finais:
+            tk = str(e.get("ticker") or "").strip().upper().replace(".SA", "")
+            if tk:
+                e["peso_sugerido"] = float(peso_sugerido.get(tk, 0.0))
+
 
     # ─────────────────────────────────────────────────────────
     # Bloco final: líderes para o próximo ano + distribuição setorial
@@ -692,6 +981,76 @@ def render():
                     )
                 except Exception as e:
                     st.error(f"Patch 5 falhou: {type(e).__name__}: {e}")
+
+
+    # ─────────────────────────────────────────────────────────
+    # Persistência do portfólio (snapshot) — Supabase
+    # ─────────────────────────────────────────────────────────
+    # filters_json: auditabilidade e reprodutibilidade
+    filters_json = {
+        "tipo_empresa": str(tipo_empresa),
+        "selic_ref": float(selic_ref),
+        "margem_superior": float(margem_superior),
+        "use_score_v2": bool(use_score_v2),
+        "min_anos": int(min_anos) if "min_anos" in locals() else None,
+        "gate_modo": {"regra": ">=5 modulado / <=4 padrão"},
+        "peso_sugerido_mix": {"equal": 0.40, "consolidacao": 0.30, "qualidade": 0.30, "cap": 0.30},
+        "seleciona_1_ou_2": "lider_ultimo vs maior_participacao",
+    }
+
+    snapshot = {
+        "tickers": [
+            {
+                "ticker": str(e.get("ticker") or "").strip().upper().replace(".SA", ""),
+                "peso": float(e.get("peso_sugerido") if e.get("peso_sugerido") is not None else e.get("peso") or 0.0),
+            }
+            for e in empresas_lideres_finais
+            if e.get("ticker")
+        ],
+        "selic_ref": float(selic_ref),
+        "margem_superior": float(margem_superior),
+        "tipo_empresa": str(tipo_empresa),
+        "filters_json": filters_json,
+        "created_at": datetime.now().isoformat(),
+    }
+
+    # plan_hash determinístico (não depende do timestamp)
+    try:
+        plan_payload = {
+            "tickers": snapshot["tickers"],
+            "selic_ref": snapshot["selic_ref"],
+            "margem_superior": snapshot["margem_superior"],
+            "tipo_empresa": snapshot["tipo_empresa"],
+            "filters_json": snapshot["filters_json"],
+        }
+        payload_det = json.dumps(plan_payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+        snapshot["plan_hash"] = hashlib.md5(payload_det.encode("utf-8")).hexdigest()
+    except Exception:
+        snapshot["plan_hash"] = ""
+
+    # Compatibilidade (não é gating): mantém em sessão para debug
+    st.session_state["portfolio_salvo"] = snapshot
+
+    snap_id = None
+    if save_snapshot is not None:
+        try:
+            snap_id = save_snapshot(
+                tickers=snapshot["tickers"],
+                selic_ref=snapshot["selic_ref"],
+                margem_superior=snapshot["margem_superior"],
+                tipo_empresa=snapshot["tipo_empresa"],
+                hash_value=str(snapshot.get("plan_hash") or ""),
+                filters_json=snapshot.get("filters_json") or {},
+                notes=f"n_empresas={int(len(snapshot['tickers']))}",
+            )
+        except Exception as e:
+            st.warning(f"Não foi possível salvar snapshot no Supabase: {type(e).__name__}: {e}")
+
+    if snap_id:
+        st.success(f"Snapshot salvo no Supabase: {snap_id}")
+    else:
+        st.info("Snapshot não persistido (store indisponível). Patch 6 ficará bloqueado se não houver snapshot salvo.")
+
 
     st.session_state["cp_should_run"] = False
     st.markdown("<hr>", unsafe_allow_html=True)
