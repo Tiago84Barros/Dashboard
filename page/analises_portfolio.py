@@ -2,18 +2,25 @@
 """
 pages/analises_portfolio.py
 
-Página padrão "Análises de Portfólio" (Patch 6) com:
-- Snapshot (entrada) via core.portfolio_snapshot_store
-- Docs/Chunks (RAG) via core.docs_corporativos_store
-- Histórico de resultados via core.patch6_runs_store
-- Progresso por ticker: mostra carregamento individual e resultado por ação
+Patch 6 (Página padrão) — versão com LOGS detalhados por ticker,
+no mesmo espírito do patch6_teste funcional.
+
+O objetivo é NUNCA mais ficar preso em:
+"Atualização concluída. OK: 0 | Falhas: 14"
+
+Agora você verá:
+- progresso (ticker atual)
+- logs por ticker
+- erro + traceback (quando houver)
+- contagem de docs/chunks antes e depois
 """
 
 from __future__ import annotations
 
 import json
 import time
-from typing import Dict, Any, List
+import traceback
+from typing import Any, Dict, List, Optional
 
 import streamlit as st
 
@@ -29,6 +36,22 @@ from core.docs_corporativos_store import (
 import core.ai_models.llm_client.factory as llm_factory
 
 
+# ------------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------------
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+def _fmt_s(ms: int) -> str:
+    return f"{ms/1000:.1f}s"
+
+def _safe_upper(x: Any) -> str:
+    return str(x or "").strip().upper()
+
+
+# ------------------------------------------------------------------
+# UI
+# ------------------------------------------------------------------
 st.title("🧠 Análises de Portfólio (LLM + RAG)")
 
 snapshot = get_latest_snapshot()
@@ -36,65 +59,73 @@ if not snapshot:
     st.warning("Nenhum snapshot ativo encontrado. Execute primeiro a Criação de Portfólio.")
     st.stop()
 
+snapshot_id = str(snapshot.get("id") or "")
+created_at = str(snapshot.get("created_at") or "")
+selic_ref = snapshot.get("selic_ref")
+margem_superior = snapshot.get("margem_superior")
+tipo_empresa = snapshot.get("tipo_empresa")
+
+st.caption(f"Snapshot: `{snapshot_id}`")
+st.caption(f"Criado em: {created_at}")
+st.caption(f"Margem vs Selic: {margem_superior} | Selic ref: {selic_ref} | Tipo empresa: {tipo_empresa}")
+
 items = snapshot.get("items") or []
-tickers = [str(it.get("ticker") or "").strip().upper() for it in items if (it.get("ticker") or "").strip()]
-tickers = sorted(list(dict.fromkeys(tickers)))  # unique + stable
+tickers = [_safe_upper(it.get("ticker")) for it in items if _safe_upper(it.get("ticker"))]
+tickers = sorted(list(dict.fromkeys(tickers)))
 
-if not tickers:
-    st.warning("Snapshot existe, mas não contém tickers.")
-    st.stop()
+with st.expander("Ver composição do portfólio"):
+    st.dataframe(items, use_container_width=True)
+
+st.divider()
 
 # ------------------------------------------------------------------
-# Estado
+# Estado (sanidade)
 # ------------------------------------------------------------------
-st.subheader("📊 Estado no Supabase (sanidade)")
-
-cols = st.columns([1.2, 1, 1])
-with cols[0]:
-    st.caption(f"Snapshot ativo: {snapshot.get('id')}")
-with cols[1]:
-    st.caption(f"Tickers: {len(tickers)}")
-with cols[2]:
-    st.caption("Fonte: docs_corporativos / docs_corporativos_chunks")
-
+st.subheader("📊 Sanidade no Supabase")
 status_rows: List[Dict[str, Any]] = []
 for tk in tickers:
     status_rows.append({"ticker": tk, "docs": count_docs(tk), "chunks": count_chunks(tk)})
-
 st.dataframe(status_rows, use_container_width=True)
 
 st.divider()
 
 # ------------------------------------------------------------------
-# Atualizar documentos + chunks (apenas chunks aqui; ingest fica no pickup)
+# Atualizar evidências (CVM/IPE) -> aqui faremos CHUNKING com logs
 # ------------------------------------------------------------------
-st.subheader("📦 Atualizar chunks (varredura por ticker)")
+st.subheader("📦 Atualizar evidências (CVM/IPE)")
 
-limit_docs = st.number_input("Limite de docs por ticker", min_value=5, max_value=200, value=60, step=5)
-max_chars = st.number_input("Tamanho do chunk (chars)", min_value=600, max_value=4000, value=1500, step=100)
+colA, colB, colC = st.columns([1, 1, 1])
+with colA:
+    limit_docs = st.number_input("Limite de docs por ticker", min_value=5, max_value=200, value=60, step=5)
+with colB:
+    max_chars = st.number_input("Tamanho do chunk (chars)", min_value=600, max_value=4000, value=1500, step=100)
+with colC:
+    show_traceback = st.checkbox("Mostrar traceback completo", value=True)
 
-run_btn = st.button("Atualizar chunks agora", type="primary")
+btn = st.button("Atualizar documentos + chunks", type="primary")
 
-# placeholders (progresso)
-progress_box = st.empty()
-ticker_box = st.empty()
-table_box = st.empty()
+log_panel = st.empty()
+table_panel = st.empty()
+err_panel = st.empty()
 
-if run_btn:
-    t0 = time.time()
+if btn:
+    t0 = _now_ms()
     ok = 0
     fail = 0
-
     results: List[Dict[str, Any]] = []
+    errors: Dict[str, str] = {}
 
-    progress = st.progress(0, text="Iniciando varredura...")
+    progress = st.progress(0, text="Iniciando...")
 
     for i, tk in enumerate(tickers, start=1):
-        pct = int((i - 1) / max(1, len(tickers)) * 100)
-        progress.progress(pct, text=f"Processando {i}/{len(tickers)} — {tk}")
+        start = _now_ms()
+        before_docs = count_docs(tk)
+        before_chunks = count_chunks(tk)
 
-        with ticker_box.container():
-            st.info(f"🔎 Varredura: **{tk}** ({i}/{len(tickers)})")
+        progress.progress(int((i-1) / max(1, len(tickers)) * 100), text=f"Processando {i}/{len(tickers)} — {tk}")
+
+        with log_panel.container():
+            st.info(f"🔎 {tk} — início | docs={before_docs} | chunks={before_chunks}")
 
         try:
             inserted = process_missing_chunks_for_ticker(
@@ -102,55 +133,72 @@ if run_btn:
                 limit_docs=int(limit_docs),
                 max_chars=int(max_chars),
             )
+            after_docs = count_docs(tk)
+            after_chunks = count_chunks(tk)
             ok += 1
+
             results.append({
                 "ticker": tk,
                 "status": "OK",
+                "docs_before": before_docs,
+                "chunks_before": before_chunks,
                 "chunks_inseridos": int(inserted),
-                "docs": count_docs(tk),
-                "chunks_total": count_chunks(tk),
+                "docs_after": after_docs,
+                "chunks_after": after_chunks,
+                "tempo": _fmt_s(_now_ms() - start),
                 "erro": "",
             })
+
+            with log_panel.container():
+                st.success(f"✅ {tk} — ok | +{inserted} chunks | docs={after_docs} | chunks={after_chunks} | {_fmt_s(_now_ms()-start)}")
+
         except Exception as e:
             fail += 1
+            tb = traceback.format_exc()
+            msg = f"{type(e).__name__}: {e}"
+            errors[tk] = tb if show_traceback else msg
+
             results.append({
                 "ticker": tk,
                 "status": "FALHA",
+                "docs_before": before_docs,
+                "chunks_before": before_chunks,
                 "chunks_inseridos": 0,
-                "docs": None,
-                "chunks_total": None,
-                "erro": f"{type(e).__name__}: {e}",
+                "docs_after": None,
+                "chunks_after": None,
+                "tempo": _fmt_s(_now_ms() - start),
+                "erro": msg,
             })
 
-        # Atualiza tabela a cada ticker (efeito "um por vez")
-        table_box.dataframe(results, use_container_width=True)
+            with log_panel.container():
+                st.error(f"❌ {tk} — falhou | {msg} | {_fmt_s(_now_ms()-start)}")
+
+        table_panel.dataframe(results, use_container_width=True)
 
     progress.progress(100, text="Concluído")
-    elapsed = time.time() - t0
 
-    # Resumo final
-    with progress_box.container():
-        if fail == 0:
-            st.success(f"Atualização concluída. OK: {ok} | Falhas: {fail} | Tempo: {elapsed:.1f}s")
-        else:
-            st.warning(f"Atualização concluída. OK: {ok} | Falhas: {fail} | Tempo: {elapsed:.1f}s")
+    elapsed = _fmt_s(_now_ms() - t0)
+    if fail == 0:
+        st.success(f"Atualização concluída. OK: {ok} | Falhas: {fail} | Tempo: {elapsed}")
+    else:
+        st.warning(f"Atualização concluída. OK: {ok} | Falhas: {fail} | Tempo: {elapsed}")
 
-    # Mostra erros (se houver)
-    errors = {r["ticker"]: r["erro"] for r in results if r["status"] == "FALHA" and r["erro"]}
     if errors:
-        st.error("Erros por ticker (para correção imediata):")
-        st.json(errors)
+        with err_panel.container():
+            st.subheader("🧾 Logs de erro por ticker")
+            for tk, tb in errors.items():
+                with st.expander(f"Erro — {tk}"):
+                    st.code(tb)
 
 st.divider()
 
 # ------------------------------------------------------------------
-# Rodar LLM
+# LLM
 # ------------------------------------------------------------------
-st.subheader("🤖 Análise qualitativa (RAG + LLM)")
+st.subheader("🤖 Análise qualitativa (LLM + RAG)")
 
 ticker_escolhido = st.selectbox("Ticker", tickers, index=0)
 top_k = st.slider("Top-K chunks (contexto)", min_value=3, max_value=12, value=6, step=1)
-
 period_ref = st.text_input("period_ref (ex.: 2024Q4)", value="2024Q4")
 
 if st.button("Rodar LLM agora"):
@@ -164,8 +212,8 @@ if st.button("Rodar LLM agora"):
     client = llm_factory.get_llm_client()
 
     prompt = f"""
-Você é um analista fundamentalista. Use somente o CONTEXTO (evidências) abaixo.
-Devolva APENAS JSON válido na estrutura:
+Você é um analista fundamentalista focado em direcionalidade estratégica.
+Use somente o CONTEXTO abaixo. Devolva APENAS JSON válido na estrutura:
 
 {{
   "perspectiva_compra": "forte|moderada|fraca",
@@ -191,7 +239,7 @@ CONTEXTO:
         st.stop()
 
     save_patch6_run(
-        snapshot_id=str(snapshot.get("id")),
+        snapshot_id=snapshot_id,
         ticker=ticker_escolhido,
         period_ref=period_ref,
         result=resultado,
