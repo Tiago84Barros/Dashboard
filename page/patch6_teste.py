@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+import traceback
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -16,6 +17,22 @@ from pickup.ingest_docs_cvm_ipe import ingest_ipe_for_tickers  # type: ignore
 
 # LLM client (já no seu projeto)
 from core.ai_models.llm_client.factory import get_llm_client
+
+# ---- Patch6 debug/instrumentação (pode remover depois) ----
+DEBUG_PATCH6_LOGS = True  # troque para False para silenciar logs na UI
+
+def _ui_log(log_box, msg: str) -> None:
+    """Append log line to a Streamlit placeholder without duplicar visual."""
+    if not DEBUG_PATCH6_LOGS:
+        return
+    st.session_state.setdefault("_p6_ui_logs", [])
+    st.session_state["_p6_ui_logs"].append(msg)
+    # Mantém o output leve (últimas 200 linhas)
+    st.session_state["_p6_ui_logs"] = st.session_state["_p6_ui_logs"][-200:]
+    log_box.code("\n".join(st.session_state["_p6_ui_logs"]), language="text")
+
+def _reset_ui_logs() -> None:
+    st.session_state["_p6_ui_logs"] = []
 
 
 def _quarter_ref(dt: datetime) -> str:
@@ -210,39 +227,78 @@ def render() -> None:
         st.markdown("### 📥 Atualizar evidências (CVM/IPE)")
         if st.button("Atualizar documentos + chunks", use_container_width=True):
             t0 = time.monotonic()
-            with st.spinner("Ingerindo documentos..."):
-                try:
-                    ingest_ipe_for_tickers(
-                        tickers=tickers,
-                        window_months=int(window_months),
-                        max_docs_per_ticker=int(max_docs_ingest),
-                        strategic_only=bool(strategic_only),
-                        download_pdfs=bool(download_pdfs),
-                        max_pdfs_per_ticker=int(max_pdfs),
-                        max_runtime_s=90.0,
-                        verbose=False,
-                    )
-                    st.success("Ingest concluído.")
-                except Exception as e:
-                    st.error(f"Falha no ingest: {type(e).__name__}: {e}")
-                    return
+            log_box = st.empty()
+status_box = st.empty()
+progress = st.progress(0)
 
-            with st.spinner("Gerando chunks faltantes..."):
-                ok_cnt, fail_cnt = 0, 0
-                for tk in tickers:
-                    try:
-                        process_missing_chunks_for_ticker(
-                            ticker=tk,
-                            limit_docs=50,
-                            only_with_text=bool(only_with_text),
-                            max_runtime_s=60.0,
-                        )
-                        ok_cnt += 1
-                    except Exception:
-                        fail_cnt += 1
+# Zera logs da execução anterior
+_reset_ui_logs()
 
-            elapsed = time.monotonic() - t0
-            st.info(f"Atualização concluída. OK: {ok_cnt} | Falhas: {fail_cnt} | Tempo: {elapsed:.1f}s")
+ok_ingest, fail_ingest = 0, 0
+ok_chunk, fail_chunk = 0, 0
+
+# Execução sequencial por ticker (mostra 1 por vez, evita repetição)
+for i, tk in enumerate(tickers, start=1):
+    progress.progress(int((i - 1) / max(1, len(tickers)) * 100))
+    status_box.info(f"🔎 [{i}/{len(tickers)}] {tk} — iniciando")
+
+    # 1) INGEST (CVM/IPE) — um ticker por vez para dar visibilidade e isolar falhas
+    t_ing = time.monotonic()
+    _ui_log(log_box, f"[{tk}] INGEST: início")
+    try:
+        ingest_ipe_for_tickers(
+            tickers=[tk],
+            window_months=int(window_months),
+            max_docs_per_ticker=int(max_docs_ingest),
+            strategic_only=bool(strategic_only),
+            download_pdfs=bool(download_pdfs),
+            max_pdfs_per_ticker=int(max_pdfs),
+            max_runtime_s=90.0,
+            verbose=False,  # se seu ingest tiver logs próprios, pode por True depois
+        )
+        ok_ingest += 1
+        _ui_log(log_box, f"[{tk}] INGEST: OK ({time.monotonic()-t_ing:.1f}s)")
+    except Exception as e:
+        fail_ingest += 1
+        _ui_log(log_box, f"[{tk}] INGEST: FALHA {type(e).__name__}: {e}")
+        _ui_log(log_box, traceback.format_exc())
+        # mesmo com falha no ingest, tenta chunking só se fizer sentido; aqui pulamos
+        status_box.error(f"❌ [{i}/{len(tickers)}] {tk} — falhou no ingest")
+        continue
+
+    # 2) CHUNKING — também por ticker
+    t_ch = time.monotonic()
+    _ui_log(log_box, f"[{tk}] CHUNK: início")
+    try:
+        process_missing_chunks_for_ticker(
+            ticker=tk,
+            limit_docs=50,
+            only_with_text=bool(only_with_text),
+            max_runtime_s=60.0,
+        )
+        ok_chunk += 1
+        _ui_log(log_box, f"[{tk}] CHUNK: OK ({time.monotonic()-t_ch:.1f}s)")
+        status_box.success(f"✅ [{i}/{len(tickers)}] {tk} — ingest + chunks concluídos")
+    except Exception as e:
+        fail_chunk += 1
+        _ui_log(log_box, f"[{tk}] CHUNK: FALHA {type(e).__name__}: {e}")
+        _ui_log(log_box, traceback.format_exc())
+        status_box.error(f"❌ [{i}/{len(tickers)}] {tk} — falhou no chunking")
+
+progress.progress(100)
+
+elapsed = time.monotonic() - t0
+st.info(
+    "Atualização concluída. "
+    f"Ingest OK: {ok_ingest} | Ingest Falhas: {fail_ingest} | "
+    f"Chunk OK: {ok_chunk} | Chunk Falhas: {fail_chunk} | "
+    f"Tempo: {elapsed:.1f}s"
+)
+
+if DEBUG_PATCH6_LOGS:
+    with st.expander("Logs desta execução (Patch6)", expanded=False):
+        st.code("\n".join(st.session_state.get("_p6_ui_logs", [])), language="text")
+
 
     # B) Rodar LLM para todos (ou por ticker)
     with colB:
