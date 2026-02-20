@@ -87,6 +87,15 @@ def _safe_call(fn: Callable[..., Any], **kwargs):
                     accepted[alt] = kwargs["ticker"]
                     break
 
+
+
+        # tickers (lista)
+        if "tickers" in kwargs and "tickers" not in accepted:
+            for alt in ("symbols", "ticker_list"):
+                if alt in sig.parameters:
+                    accepted[alt] = kwargs["tickers"]
+                    break
+
         # months window
         if "window_months" in kwargs and "window_months" not in accepted:
             for alt in ("months", "months_window", "janela_meses"):
@@ -208,11 +217,11 @@ def render() -> None:
                     ingest_ran = True
                     r = _safe_call(
                         ingest_fn,
-                        ticker=tk,
+                        tickers=[tk],
                         window_months=int(window_months),
-                        max_docs=int(max_docs),
+                        max_docs_per_ticker=int(max_docs),
                         max_runtime_s=float(max_runtime_s),
-                        max_pdfs=int(max_pdfs),
+                        max_pdfs_per_ticker=int(max_pdfs),
                     )
                     # normaliza relatório
                     if isinstance(r, dict):
