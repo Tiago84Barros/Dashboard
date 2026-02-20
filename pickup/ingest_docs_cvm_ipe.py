@@ -102,6 +102,18 @@ def _get_text_column(conn) -> str:
     raise RuntimeError("docs_corporativos não possui coluna raw_text nem texto.")
 
 # ──────────────────────────────────────────────────────────────
+# Sanitização de texto para Postgres
+# ──────────────────────────────────────────────────────────────
+
+def _sanitize_text(s: str) -> str:
+    """Remove caracteres inválidos para PostgreSQL (ex.: NUL/\x00)."""
+    if s is None:
+        return ""
+    # Postgres não aceita NUL em strings
+    return str(s).replace("\x00", "")
+
+
+# ──────────────────────────────────────────────────────────────
 # Heurística A/B/C/D (Somente estratégicos)
 # ──────────────────────────────────────────────────────────────
 
@@ -308,7 +320,7 @@ def _insert_doc(
         "tipo": (tipo or "")[:200],
         "data": (data.to_pydatetime() if isinstance(data, pd.Timestamp) and not pd.isna(data) else None),
         "doc_hash": doc_hash,
-        "text_value": texto or "",
+        "text_value": _sanitize_text(texto or ""),
     }
     row = conn.execute(
         text(f"""
@@ -333,7 +345,7 @@ def _update_doc_text(conn, doc_id: int, texto: str) -> bool:
             set {text_col} = :t
             where id = :id
         """),
-        {"t": texto, "id": int(doc_id)},
+        {"t": _sanitize_text(texto), "id": int(doc_id)},
     )
     return True
 
