@@ -351,316 +351,279 @@ def render() -> None:
     st.divider()
 
     # ------------------------------------------------------------------
-    # LLM (Batch para todo o portfólio)
+    # LLM
+    # ------------------------------------------------------------------
+    
+    # ------------------------------------------------------------------
+    # LLM (RAG + julgamento qualitativo)
     # ------------------------------------------------------------------
     st.subheader("🤖 Análise qualitativa (LLM + RAG)")
-
     if not tickers:
         st.info("Sem tickers no snapshot.")
         return
 
-    # Preferência: rodar para todo o portfólio (com cards por ticker)
-    rodar_todo_portfolio = st.checkbox("Rodar LLM para todo o portfólio (recomendado)", value=True)
+    # CSS dos cards
+    st.markdown(
+        """
+        <style>
+          .p6-card{border:1px solid rgba(255,255,255,.10);border-radius:16px;padding:16px 16px 12px 16px;
+                   background:rgba(255,255,255,.03);margin:12px 0;}
+          .p6-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+          .p6-title{font-size:18px;font-weight:700;letter-spacing:.2px}
+          .p6-badges{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+          .p6-pill{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.10);opacity:.95}
+          .p6-pill-forte{background:rgba(34,197,94,.15);border-color:rgba(34,197,94,.35)}
+          .p6-pill-moderada{background:rgba(234,179,8,.15);border-color:rgba(234,179,8,.35)}
+          .p6-pill-fraca{background:rgba(239,68,68,.15);border-color:rgba(239,68,68,.35)}
+          .p6-pill-info{background:rgba(59,130,246,.12);border-color:rgba(59,130,246,.30)}
+          .p6-grid{display:grid;grid-template-columns:1fr;gap:10px}
+          .p6-k{font-weight:700}
+          .p6-muted{opacity:.75}
+          .p6-list{margin:6px 0 0 18px}
+          .p6-hr{height:1px;background:rgba(255,255,255,.08);border:none;margin:12px 0}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    def _pill_class(p: str) -> str:
+        p = (p or "").strip().lower()
+        if p == "forte":
+            return "p6-pill p6-pill-forte"
+        if p == "moderada":
+            return "p6-pill p6-pill-moderada"
+        return "p6-pill p6-pill-fraca"
+
+    def _as_list(x: Any) -> List[str]:
+        if x is None:
+            return []
+        if isinstance(x, list):
+            return [str(i) for i in x if str(i).strip()]
+        if isinstance(x, str):
+            s = x.strip()
+            return [s] if s else []
+        return [str(x)]
+
+    def _render_card(ticker: str, result: Dict[str, Any], top_k_used: int, period_ref: str) -> None:
+        persp = str(result.get("perspectiva_compra", "")).strip()
+        resumo = str(result.get("resumo", "")).strip()
+
+        consider = (
+            result.get("consideracoes_llm")
+            or result.get("consideracoes")
+            or result.get("observacoes")
+            or result.get("rationale")
+            or ""
+        )
+        consider = str(consider).strip()
+
+        confianca = result.get("confianca", result.get("confidence", ""))
+        confianca = "" if confianca is None else str(confianca).strip()
+
+        pontos = _as_list(result.get("pontos_chave") or result.get("pontos-chave") or result.get("pontos"))
+        riscos = _as_list(result.get("riscos"))
+        evid = _as_list(result.get("evidencias") or result.get("evidence") or result.get("citacoes"))
+
+        # Card (HTML)
+        st.markdown(
+            f"""
+            <div class="p6-card">
+              <div class="p6-head">
+                <div class="p6-title">{ticker}</div>
+                <div class="p6-badges">
+                  <span class="{_pill_class(persp)}">{(persp or "—").upper()}</span>
+                  <span class="p6-pill p6-pill-info">Top-K: {top_k_used}</span>
+                  <span class="p6-pill p6-pill-info">period_ref: {period_ref}</span>
+                </div>
+              </div>
+
+              <div class="p6-grid">
+                <div><span class="p6-k">Resumo:</span> <span class="p6-muted">{resumo or "—"}</span></div>
+                {f'<div><span class="p6-k">Considerações da LLM:</span> <span class="p6-muted">{consider}</span></div>' if consider else ''}
+                {f'<div><span class="p6-k">Confiança:</span> <span class="p6-muted">{confianca}</span></div>' if confianca else ''}
+              </div>
+
+              <hr class="p6-hr"/>
+
+              <div class="p6-grid">
+                <div>
+                  <span class="p6-k">Pontos-chave</span>
+                  <ul class="p6-list">
+                    {''.join([f'<li>{st._utils.escape_markdown(p)}</li>' for p in pontos]) if pontos else '<li class="p6-muted">—</li>'}
+                  </ul>
+                </div>
+
+                <div>
+                  <span class="p6-k">Riscos</span>
+                  <ul class="p6-list">
+                    {''.join([f'<li>{st._utils.escape_markdown(r)}</li>' for r in riscos]) if riscos else '<li class="p6-muted">—</li>'}
+                  </ul>
+                </div>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        if evid:
+            with st.expander(f"📌 Evidências (trechos) — {ticker}", expanded=False):
+                for i, e in enumerate(evid[:12], start=1):
+                    st.markdown(f"**{i}.** {e}")
+
+    # Controles
+    rodar_todo = st.checkbox("Rodar LLM para todo o portfólio (recomendado)", value=True)
     usar_topk_inteligente = st.checkbox("Usar Top-K inteligente (intenção futura)", value=True)
     debug_topk = st.checkbox("Debug Top-K (score detalhado)", value=False)
 
     top_k = st.slider("Top-K chunks", min_value=3, max_value=12, value=6, step=1)
-    janela_meses = st.slider("Janela (meses) p/ Top-K inteligente", min_value=3, max_value=24, value=12, step=1)
+    st.number_input("Janela (meses) p/ Top-K inteligente", value=12, step=1, disabled=True)
+    window_months = 12
+
     period_ref = st.text_input("period_ref (ex.: 2024Q4)", value="2024Q4")
 
-    if not rodar_todo_portfolio:
-        ticker_escolhido = st.selectbox("Ticker", tickers, index=0)
-        tickers_alvo = [ticker_escolhido]
-    else:
-        tickers_alvo = list(tickers)
+    # Wrappers
+    def _call_llm(client: Any, prompt: str) -> str:
+        # tenta métodos conhecidos sem acoplar ao SDK
+        if hasattr(client, "complete") and callable(getattr(client, "complete")):
+            return client.complete(prompt)
+        if hasattr(client, "chat") and callable(getattr(client, "chat")):
+            return client.chat(prompt)
+        if hasattr(client, "invoke") and callable(getattr(client, "invoke")):
+            return client.invoke(prompt)
+        if callable(client):
+            return client(prompt)
+        raise AttributeError("Cliente LLM não expõe complete/chat/invoke nem é callável.")
 
-    # CSS simples para cards
-    st.markdown(
-    """
-    <style>
-    /* ---------- Patch6 Cards (Profissional) ---------- */
-    .p6-wrap { margin: 14px 0 18px 0; }
-    .p6-card{
-        border: 1px solid rgba(255,255,255,0.10);
-        border-radius: 16px;
-        padding: 16px 18px;
-        background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.03));
-        box-shadow: 0 10px 26px rgba(0,0,0,0.22);
-    }
-    .p6-top{
-        display:flex; align-items:flex-start; justify-content:space-between;
-        gap: 12px; margin-bottom: 10px;
-    }
-    .p6-title{
-        display:flex; align-items:center; gap:10px; flex-wrap:wrap;
-        margin:0; font-size:18px; font-weight:700;
-    }
-    .p6-sub{
-        margin: 2px 0 0 0; opacity:0.85; font-size:13px;
-    }
-    .p6-badges{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-    .p6-pill{
-        display:inline-flex; align-items:center; gap:6px;
-        padding: 4px 10px; border-radius:999px;
-        font-size:12px; font-weight:600;
-        border: 1px solid rgba(255,255,255,0.14);
-        background: rgba(255,255,255,0.05);
-    }
-    .p6-pill strong{ font-weight:800; }
-    .p6-forte{ background: rgba(34,197,94,0.16); border-color: rgba(34,197,94,0.35); }
-    .p6-moderada{ background: rgba(234,179,8,0.16); border-color: rgba(234,179,8,0.35); }
-    .p6-fraca{ background: rgba(239,68,68,0.16); border-color: rgba(239,68,68,0.35); }
-    .p6-meta{ opacity:0.78; font-size:12px; }
-    .p6-grid{
-        display:grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 12px;
-        margin-top: 12px;
-    }
-    @media (max-width: 900px){
-        .p6-grid{ grid-template-columns: 1fr; }
-    }
-    .p6-box{
-        border: 1px solid rgba(255,255,255,0.10);
-        border-radius: 14px;
-        padding: 12px 12px;
-        background: rgba(255,255,255,0.03);
-    }
-    .p6-box h4{
-        margin: 0 0 8px 0;
-        font-size: 13px;
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
-        opacity: 0.85;
-    }
-    .p6-divider{
-        height: 1px;
-        background: rgba(255,255,255,0.10);
-        margin: 12px 0;
-    }
-    .p6-cons{
-        font-size: 13px;
-        opacity: 0.9;
-        line-height: 1.45;
-    }
-    .p6-evid{
-        border-left: 3px solid rgba(255,255,255,0.18);
-        padding-left: 10px;
-        margin: 8px 0;
-        opacity: 0.92;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-def _pill_class(persp: str) -> str:
-        p = (persp or "").strip().lower()
-        if "fort" in p:
-            return "pill-forte"
-        if "mod" in p:
-            return "pill-moderada"
-        return "pill-fraca"
-
-    def _render_card(ticker: str, result: Dict[str, Any]) -> None:
-    """Renderiza um card profissional por ticker com resultado da LLM."""
-    persp = str(result.get("perspectiva_compra", "")).strip()
-    resumo = str(result.get("resumo", "")).strip()
-
-    pontos = result.get("pontos_chave") or result.get("pontos-chave") or result.get("pontos") or []
-    riscos = result.get("riscos") or []
-    evids = result.get("evidencias") or result.get("evidências") or []
-    consideracoes = (
-        result.get("consideracoes_llm")
-        or result.get("considerações_llm")
-        or result.get("consideracoes")
-        or result.get("observacoes")
-        or ""
-    )
-    confianca = result.get("confianca") or result.get("confidence") or ""
-
-    if isinstance(pontos, str): pontos = [pontos]
-    if isinstance(riscos, str): riscos = [riscos]
-    if isinstance(evids, str): evids = [evids]
-
-    pill_cls = _pill_class(persp)
-    persp_label = persp or "—"
-
-    st.markdown('<div class="p6-wrap"><div class="p6-card">', unsafe_allow_html=True)
-
-    st.markdown(
-        f'''
-        <div class="p6-top">
-          <div>
-            <div class="p6-title">📌 {ticker}
-              <span class="p6-pill {pill_cls}"><strong>{persp_label}</strong></span>
-            </div>
-            <div class="p6-sub">Intenção futura e alocação de capital (capex, dívida, expansão, dividendos, M&A) com evidências CVM/IPE.</div>
-          </div>
-          <div class="p6-badges">
-            <span class="p6-pill"><span class="p6-meta">Top-K</span> <strong>{int(top_k)}</strong></span>
-            <span class="p6-pill"><span class="p6-meta">Janela</span> <strong>{int(janela_meses)}m</strong></span>
-            <span class="p6-pill"><span class="p6-meta">period_ref</span> <strong>{period_ref}</strong></span>
-          </div>
-        </div>
-        ''',
-        unsafe_allow_html=True,
-    )
-
-    if resumo:
-        st.markdown(f'<div class="p6-cons">{resumo}</div>', unsafe_allow_html=True)
-    else:
-        st.markdown('<div class="p6-cons">—</div>', unsafe_allow_html=True)
-
-    if consideracoes:
-        st.markdown('<div class="p6-divider"></div>', unsafe_allow_html=True)
-        st.markdown('<div class="p6-box"><h4>Considerações da LLM</h4>', unsafe_allow_html=True)
-        st.markdown(f'<div class="p6-cons">{consideracoes}</div></div>', unsafe_allow_html=True)
-
-    if str(confianca).strip():
-        st.markdown(
-            f'<div class="p6-divider"></div><div class="p6-meta">Confiança (auto-relatada): <strong>{confianca}</strong></div>',
-            unsafe_allow_html=True,
-        )
-
-    st.markdown('<div class="p6-divider"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="p6-grid">', unsafe_allow_html=True)
-
-    st.markdown('<div class="p6-box"><h4>Pontos-chave</h4>', unsafe_allow_html=True)
-    st.write(pontos if pontos else ["—"])
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    st.markdown('<div class="p6-box"><h4>Riscos</h4>', unsafe_allow_html=True)
-    st.write(riscos if riscos else ["—"])
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    if evids:
-        with st.expander("📎 Evidências (trechos literais)"):
-            for ev in evids[:10]:
-                st.markdown(f'<div class="p6-evid">{ev}</div>', unsafe_allow_html=True)
-
-    st.markdown("</div></div>", unsafe_allow_html=True)
-
-def _get_chunks_para_ticker(ticker: str) -> Tuple[List[str], str]:
-        """Retorna (chunks, origem)."""
-        from core.docs_corporativos_store import fetch_topk_chunks
-
-        if not usar_topk_inteligente:
-            return fetch_topk_chunks(ticker, int(top_k)), "fetch_topk_chunks"
-
+    def _get_chunks_for_ticker(t: str) -> Tuple[List[str], str]:
+        # preferir Top-K inteligente; fallback para fetch_topk_chunks
         try:
-            from core.rag_retriever import get_topk_chunks_inteligente  # type: ignore
-            chunks, _debug = get_topk_chunks_inteligente(
-                ticker=ticker,
-                top_k=int(top_k),
-                months=int(janela_meses),
-                debug=bool(debug_topk),
-            )
-            if debug_topk and _debug:
-                with st.expander(f"Debug Top-K — {ticker}"):
-                    st.json(_debug)
-            return chunks, "topk_inteligente"
-        except Exception as e:
-            st.warning(
-                f"Top-K inteligente indisponível ({type(e).__name__}: {e}). "
-                "Caindo para fetch_topk_chunks."
-            )
-            return fetch_topk_chunks(ticker, int(top_k)), "fetch_topk_chunks_fallback"
+            if usar_topk_inteligente:
+                from core.rag_retriever import get_topk_chunks_inteligente  # type: ignore
+                chunks, meta = get_topk_chunks_inteligente(
+                    ticker=t,
+                    top_k=int(top_k),
+                    window_months=int(window_months),
+                    debug=bool(debug_topk),
+                )
+                return chunks or [], "topk_inteligente"
+        except Exception:
+            # cai no fetch simples
+            pass
 
-    def _run_llm_for_ticker(ticker: str) -> Dict[str, Any]:
-        chunks, origem = _get_chunks_para_ticker(ticker)
-        if not chunks:
-            raise RuntimeError(f"Sem chunks para {ticker} (origem={origem}). Rode ingest+chunking.")
+        from core.docs_corporativos_store import fetch_topk_chunks
+        chunks = fetch_topk_chunks(t, int(top_k))
+        return chunks or [], "fetch_topk_chunks"
 
-        context_payload = [{"chunk_index": i, "text": c} for i, c in enumerate(chunks)]
+    def _build_prompt(contexto: str) -> str:
+        return f"""
+Você é um analista fundamentalista focado em direcionalidade estratégica e alocação de capital.
+Use SOMENTE o CONTEXTO abaixo (RAG). Avalie o caminho futuro (capex/expansão, dívida/desalavancagem,
+guidance, M&A/desinvestimentos, dividendos/recompra) e impacto potencial no acionista minoritário.
 
-        system = (
-            "Você é um analista fundamentalista focado em direcionalidade estratégica. "
-            "Seu objetivo é julgar a intenção futura e alocação de capital com base nas evidências fornecidas."
-        )
+Devolva APENAS JSON válido no formato:
 
-        user = (
-            f"Analise o ticker {ticker} e responda com foco em:\n"
-            "- capex / expansão\n"
-            "- guidance / prioridades do management\n"
-            "- desalavancagem / gestão de dívida\n"
-            "- M&A / desinvestimentos\n"
-            "- dividendos / recompra / payout\n\n"
-            "Regras:\n"
-            "1) Use SOMENTE o contexto (RAG).\n"
-            "2) Evidências devem ser trechos literais do contexto.\n"
-            "3) Seja objetivo e útil para o acionista minoritário.\n"
-        )
-
-        schema_hint = """{
+{{
   "perspectiva_compra": "forte|moderada|fraca",
-  "resumo": "texto curto",
+  "resumo": "2-4 linhas objetivas",
+  "consideracoes_llm": "1-3 linhas com ressalvas/hipóteses (ex.: falta de dados, ambiguidade, dependências)",
+  "confianca": "alta|media|baixa",
   "pontos_chave": ["..."],
   "riscos": ["..."],
-  "evidencias": ["trechos literais do contexto"],
-  "consideracoes_llm": "como a LLM interpretou as evidências e limitações",
-  "confianca": "alta|média|baixa"
-}"""
+  "evidencias": ["trechos literais do contexto (curtos)"]
+}}
 
-        client = llm_factory.get_llm_client()
-        return client.generate_json(
-            system=system,
-            user=user,
-            schema_hint=schema_hint,
-            context=context_payload,
-        )
+CONTEXTO:
+{contexto}
+"""
 
     if st.button("Rodar LLM agora"):
-        progress = st.progress(0, text="Iniciando...")
+        client = llm_factory.get_llm_client()
+
+        tickers_run = tickers if rodar_todo else [st.selectbox("Ticker", tickers, index=0)]
+        total = len(tickers_run)
+
+        st.info("Iniciando leitura qualitativa… os cards aparecem à medida que cada ticker finalizar.")
+        prog = st.progress(0)
+        status_box = st.empty()
+
+        fortes = moderadas = fracas = erros = 0
         status_rows: List[Dict[str, Any]] = []
 
-        fortes = moderadas = fracas = 0
-        erros_sem_dados = 0
-
-        for i, tkr in enumerate(tickers_alvo, start=1):
-            progress.progress(int((i - 1) / max(len(tickers_alvo), 1) * 100), text=f"Processando {tkr} ({i}/{len(tickers_alvo)})...")
+        for i, t in enumerate(tickers_run, start=1):
+            status_box.markdown(f"✅ Processando **{t}** ({i}/{total})…")
+            t0 = time.time()
 
             try:
-                with st.status(f"Processando {tkr} ({i}/{len(tickers_alvo)})...", expanded=False) as stt:
-                    result = _run_llm_for_ticker(tkr)
-                    stt.update(label=f"{tkr}: LLM OK. Salvando...", state="running")
+                chunks, fonte_chunks = _get_chunks_for_ticker(t)
+                if not chunks:
+                    erros += 1
+                    status_rows.append({"ticker": t, "status": "SEM_CHUNKS", "erro": "Sem chunks no Supabase"})
+                    prog.progress(int(i / total * 100))
+                    continue
 
+                contexto = "\n\n".join(chunks)
+                raw = _call_llm(client, _build_prompt(contexto))
+
+                try:
+                    result = json.loads(raw)
+                except Exception:
+                    erros += 1
+                    status_rows.append({"ticker": t, "status": "JSON_INVALIDO", "erro": "LLM não retornou JSON"})
+                    with st.expander(f"⚠️ Resposta bruta (debug) — {t}", expanded=False):
+                        st.code(raw)
+                    prog.progress(int(i / total * 100))
+                    continue
+
+                # salva
                 save_patch6_run(
                     snapshot_id=str(snapshot_id),
-                    ticker=tkr,
+                    ticker=t,
                     period_ref=period_ref,
                     result=result,
                 )
 
-                _render_card(tkr, result)
-
-                persp = str(result.get("perspectiva_compra", "")).lower()
-                if "fort" in persp:
+                # conta perspectiva
+                p = str(result.get("perspectiva_compra", "")).strip().lower()
+                if p == "forte":
                     fortes += 1
-                elif "mod" in persp:
+                elif p == "moderada":
                     moderadas += 1
-                else:
+                elif p == "fraca":
                     fracas += 1
+                else:
+                    erros += 1
 
-                status_rows.append({"ticker": tkr, "status": "OK", "erro": ""})
+                # mostra card (IMEDIATO)
+                _render_card(ticker=t, result=result, top_k_used=int(top_k), period_ref=period_ref)
+
+                status_rows.append(
+                    {
+                        "ticker": t,
+                        "status": "OK",
+                        "metodo_chunks": fonte_chunks,
+                        "tempo_s": round(time.time() - t0, 1),
+                    }
+                )
 
             except Exception as e:
-                erros_sem_dados += 1
-                status_rows.append({"ticker": tkr, "status": "ERRO_LLM", "erro": f"{type(e).__name__}: {e}"})
+                erros += 1
+                status_rows.append({"ticker": t, "status": "ERRO_LLM", "erro": str(e)})
+                with st.expander(f"❌ Erro (traceback) — {t}", expanded=False):
+                    st.code(traceback.format_exc())
 
-        progress.progress(100, text="Concluído")
+            prog.progress(int(i / total * 100))
 
+        status_box.markdown("✅ Concluído.")
         st.subheader("📌 Parecer resumido do portfólio")
-        st.write(f"Forte: **{fortes}** | Moderada: **{moderadas}** | Fraca: **{fracas}** | Erros/sem dados: **{erros_sem_dados}**")
+        st.write(f"Forte: **{fortes}** | Moderada: **{moderadas}** | Fraca: **{fracas}** | Erros/sem dados: **{erros}**")
 
         st.subheader("🧾 Status por ticker")
         st.dataframe(status_rows, use_container_width=True)
 
+    # Histórico
     st.subheader("📜 Histórico (patch6_runs)")
     try:
-        ticker_hist = tickers_alvo[0] if tickers_alvo else tickers[0]
-        hist = list_patch6_history(ticker_hist, limit=12)
+        hist = list_patch6_history(ticker_escolhido, limit=8)
         st.dataframe(hist, use_container_width=True)
     except Exception as e:
         st.caption(f"Não foi possível carregar histórico: {type(e).__name__}: {e}")
