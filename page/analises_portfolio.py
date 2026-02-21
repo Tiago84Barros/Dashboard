@@ -58,17 +58,37 @@ def _import_first(*module_paths: str):
     msg = "Falha ao importar módulos. Tentativas:\n" + "\n".join([f"- {p}: {repr(e)}" for p, e in errors])
     raise ImportError(msg)
 
-def _import_ingest() -> Callable[..., Any]:
+def _import_ingest():
     """
-    Tenta localizar o ingest do CVM/IPE com fallback.
-    Ajuste os paths aqui se no seu repo estiver diferente.
+    Carrega ingest diretamente do arquivo físico,
+    ignorando problemas de PYTHONPATH no Streamlit Cloud.
     """
-    mod = _import_first("pickup.ingest_docs_cvm_ipe", "ingest_docs_cvm_ipe", "pickup.ingest_docs_cvm", "ingest_docs_cvm")
-    # nomes comuns
-    for fn_name in ("ingest_docs_cvm_ipe", "run_ingest", "main", "ingest"):
-        fn = getattr(mod, fn_name, None)
-        if callable(fn):
-            return fn
+    import importlib.util
+    from pathlib import Path
+
+    # sobe de page/ para raiz do projeto
+    base_dir = Path(__file__).resolve().parents[1]
+    ingest_path = base_dir / "pickup" / "ingest_docs_cvm_ipe.py"
+
+    if not ingest_path.exists():
+        raise ImportError(f"Arquivo não encontrado: {ingest_path}")
+
+    spec = importlib.util.spec_from_file_location(
+        "ingest_docs_cvm_ipe",
+        str(ingest_path)
+    )
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    fn = getattr(module, "ingest_ipe_for_tickers", None)
+
+    if not callable(fn):
+        raise ImportError(
+            "Função ingest_ipe_for_tickers não encontrada em ingest_docs_cvm_ipe.py"
+        )
+
+    return fn
     raise ImportError("Não encontrei função de ingest no módulo pickup.ingest_docs_cvm_ipe (ou fallbacks).")
 
 def _safe_call(fn: Callable[..., Any], **kwargs):
