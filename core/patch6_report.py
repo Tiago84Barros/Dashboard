@@ -1,356 +1,276 @@
-# core/patch6_report.py
-"""Relatório profissional do Patch6.
+"""core/patch6_report.py
 
-Este módulo é chamado pela página analises_portfolio.py.
+Renderização profissional do Patch6 (relatório estilo casa de análise) usando dados persistidos em public.patch6_runs.
 
-Objetivo:
-- Consolidar "qualidade" (heurística), "perspectiva 12m" e "cobertura" (quantidade de empresas com análise).
-- Exibir resumo executivo e cards por empresa.
-
-Importante: este arquivo deve ser robusto a variações de schema e não quebrar a página.
+- Não mexe no pipeline (ingest/chunk/RAG/LLM). Apenas consolida e apresenta.
+- Funciona mesmo sem LLM: usa templates + agregações.
+- Se um cliente LLM estiver disponível (via llm_factory.get_llm_client()), cria Resumo Executivo e Conclusão com linguagem institucional.
 """
 
 from __future__ import annotations
 
-import json
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Any, List, Optional
 
 import pandas as pd
 import streamlit as st
+from sqlalchemy import text
+
+from core.db_loader import get_supabase_engine
 
 
-def _get_engine():
-    for mod_name, fn_name in (
-        ("core.db_loader", "get_engine"),
-        ("core.db", "get_engine"),
-    ):
-        try:
-            mod = __import__(mod_name, fromlist=[fn_name])
-            return getattr(mod, fn_name)()
-        except Exception:
-            pass
+@dataclass
+class PortfolioStats:
+    fortes: int = 0
+    moderadas: int = 0
+    fracas: int = 0
+    desconhecidas: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.fortes + self.moderadas + self.fracas + self.desconhecidas
+
+    def label_qualidade(self) -> str:
+        # Heurística simples: converte perspectiva em "qualidade" agregada
+        if self.total == 0:
+            return "—"
+        if self.fortes >= max(1, int(0.4 * self.total)):
+            return "Alta"
+        if self.fracas >= max(1, int(0.4 * self.total)):
+            return "Baixa"
+        return "Moderada"
+
+    def label_perspectiva(self) -> str:
+        if self.total == 0:
+            return "—"
+        if self.fortes > self.fracas and self.fortes >= self.moderadas:
+            return "Construtiva"
+        if self.fracas > self.fortes and self.fracas >= self.moderadas:
+            return "Cautelosa"
+        return "Neutra"
+
+
+def _safe_call_llm(llm_client: Any, prompt: str) -> Optional[str]:
+    """Tenta chamar um cliente LLM sem acoplar ao SDK específico."""
+    try:
+        if llm_client is None:
+            return None
+        if hasattr(llm_client, "complete") and callable(getattr(llm_client, "complete")):
+            return llm_client.complete(prompt)
+        if hasattr(llm_client, "chat") and callable(getattr(llm_client, "chat")):
+            return llm_client.chat(prompt)
+        if hasattr(llm_client, "invoke") and callable(getattr(llm_client, "invoke")):
+            return llm_client.invoke(prompt)
+        if callable(llm_client):
+            return llm_client(prompt)
+    except Exception:
+        return None
     return None
 
 
-def _css() -> None:
-    st.markdown(
-        """
-<style>
-  .p6r-wrap{max-width:1200px;margin:0 auto;}
-  .p6r-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:14px 0 10px 0;}
-  @media (max-width:1100px){.p6r-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
-  @media (max-width:640px){.p6r-grid{grid-template-columns:1fr;}}
-
-  .p6r-card{border-radius:18px;border:1px solid rgba(255,255,255,0.10);
-    background:rgba(255,255,255,0.04);padding:14px 14px 12px 14px;}
-  .p6r-label{font-size:13px;opacity:0.80;margin-bottom:6px;}
-  .p6r-value{font-size:30px;font-weight:800;line-height:1.1;margin-bottom:6px;}
-  .p6r-extra{font-size:12px;opacity:0.75;line-height:1.35;}
-
-  .p6r-row{display:flex;flex-wrap:wrap;gap:10px;margin:10px 0 0 0;}
-  .p6r-pill{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;
-    font-size:12px;border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.04);}
-
-  .p6r-company{border-radius:18px;border:1px solid rgba(255,255,255,0.10);
-    background:rgba(255,255,255,0.03);padding:14px;margin:0 0 12px 0;}
-  .p6r-company-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px;}
-  .p6r-company-title{font-size:18px;font-weight:900;margin:0;}
-  .p6r-company-meta{font-size:12px;opacity:0.75;line-height:1.35;}
-  .p6r-company-body{font-size:14px;opacity:0.92;line-height:1.45;white-space:pre-wrap;}
-
-  .p6r-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;
-    font-size:12px;border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.04);}
-  .p6r-badge-strong{border-color: rgba(55, 220, 150, 0.35); background: rgba(55, 220, 150, 0.10);}
-  .p6r-badge-neutral{border-color: rgba(120, 170, 255, 0.35); background: rgba(120, 170, 255, 0.10);}
-  .p6r-badge-caution{border-color: rgba(255, 170, 60, 0.35); background: rgba(255, 170, 60, 0.10);}
-</style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def _badge_class(direcao: str) -> str:
-    d = (direcao or "").lower()
-    if "construt" in d:
-        return "p6r-badge p6r-badge-strong"
-    if "equilibr" in d or "neutr" in d:
-        return "p6r-badge p6r-badge-neutral"
-    return "p6r-badge p6r-badge-caution"
-
-
-def _try_json(v: Any) -> Any:
-    if v is None:
-        return None
-    if isinstance(v, (dict, list)):
-        return v
-    if isinstance(v, str):
-        s = v.strip()
-        if not s:
-            return None
-        try:
-            return json.loads(s)
-        except Exception:
-            return v
-    return v
-
-
-def _fetch_latest_runs(tickers: List[str], period_ref: str) -> pd.DataFrame:
-    engine = _get_engine()
-    if engine is None:
+def _load_latest_runs(tickers: List[str], period_ref: str) -> pd.DataFrame:
+    tickers = [str(t).strip().upper() for t in (tickers or []) if str(t).strip()]
+    if not tickers:
         return pd.DataFrame()
 
-    from sqlalchemy import text
+    engine = get_supabase_engine()
 
-    # Tabelas candidatas
-    tables = [
-        "patch6_runs",
-        "public.patch6_runs",
-    ]
+    q = text("""
+        with ranked as (
+            select
+                ticker,
+                period_ref,
+                created_at,
+                perspectiva_compra,
+                resumo,
+                row_number() over (partition by ticker, period_ref order by created_at desc) as rn
+            from public.patch6_runs
+            where period_ref = :pr and ticker = any(:tks)
+        )
+        select ticker, period_ref, created_at, perspectiva_compra, resumo
+        from ranked
+        where rn = 1
+        order by ticker asc
+    """)
 
-    for t in tables:
-        try:
-            q = text(
-                f"""
-                select *
-                from {t}
-                where ticker = any(:tickers)
-                  and (:period_ref is null or period_ref = :period_ref)
-                order by created_at desc nulls last, id desc nulls last
-                """
-            )
-            df = pd.read_sql(q, engine, params={"tickers": tickers, "period_ref": period_ref})
-            if not df.empty:
-                return df
-        except Exception:
-            continue
-
-    return pd.DataFrame()
+    with engine.connect() as conn:
+        df = pd.read_sql_query(q, conn, params={"pr": str(period_ref).strip(), "tks": tickers})
+    return df
 
 
-def _pick_latest_per_ticker(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return df
-    if "ticker" not in df.columns:
-        return df
-    # mantém a primeira ocorrência por ticker (já ordenado desc)
-    return df.drop_duplicates(subset=["ticker"], keep="first").reset_index(drop=True)
+def _compute_stats(df_latest: pd.DataFrame) -> PortfolioStats:
+    stats = PortfolioStats()
+    if df_latest is None or df_latest.empty:
+        return stats
+
+    for p in df_latest["perspectiva_compra"].fillna("").astype(str).str.strip().str.lower().tolist():
+        if p == "forte":
+            stats.fortes += 1
+        elif p == "moderada":
+            stats.moderadas += 1
+        elif p == "fraca":
+            stats.fracas += 1
+        else:
+            stats.desconhecidas += 1
+    return stats
 
 
-def _infer_quality(latest: pd.DataFrame, tickers_total: int) -> Tuple[str, str]:
-    """Qualidade heurística baseada em cobertura + completude do conteúdo."""
-
-    cov = len(latest)
-    cov_ratio = cov / max(1, tickers_total)
-
-    # mede completude
-    filled = 0
-    for col in ("tese", "resumo", "direcao"):
-        if col in latest.columns:
-            filled += int((latest[col].fillna("") != "").sum())
-
-    # heurística simples
-    if cov_ratio >= 0.9 and filled >= cov * 2:
-        return "Alta", "Cobertura alta e conteúdo consistente (tese/direção presentes na maioria dos ativos)."
-    if cov_ratio >= 0.6:
-        return "Média", "Cobertura razoável, porém há lacunas em alguns ativos (ex.: falta de tese/direção)."
-    return "Baixa", "Cobertura limitada: poucos ativos com análise recente ou com campos incompletos."
-
-
-def _perspectiva_distribution(latest: pd.DataFrame) -> Dict[str, int]:
-    out = {"Construtivas": 0, "Equilibradas": 0, "Cautelosas": 0}
-    if latest.empty:
-        return out
-    if "direcao" not in latest.columns:
-        return out
-    for v in latest["direcao"].fillna(""):
-        s = str(v).lower()
-        if "construt" in s:
-            out["Construtivas"] += 1
-        elif "equilibr" in s or "neutr" in s:
-            out["Equilibradas"] += 1
-        elif s:
-            out["Cautelosas"] += 1
-    return out
-
-
-def _coverage(latest: pd.DataFrame, tickers_total: int) -> str:
-    return f"{len(latest)}/{tickers_total}"
-
-
-def _fetch_docs_and_recortes(tickers: List[str]) -> Dict[str, Tuple[Optional[int], Optional[int]]]:
-    """Retorna (docs, recortes) por ticker, se as tabelas existirem."""
-
-    engine = _get_engine()
-    if engine is None:
-        return {t: (None, None) for t in tickers}
-
-    from sqlalchemy import text
-
-    # candidatos
-    docs_tables = [
-        ("patch6_docs", "public.patch6_docs"),
-        ("rag_docs", "public.rag_docs"),
-    ]
-    chunks_tables = [
-        ("patch6_chunks", "public.patch6_chunks"),
-        ("rag_chunks", "public.rag_chunks"),
-    ]
-
-    docs_map: Dict[str, Optional[int]] = {t: None for t in tickers}
-    recortes_map: Dict[str, Optional[int]] = {t: None for t in tickers}
-
-    # docs
-    for a, b in docs_tables:
-        for table in (a, b):
-            try:
-                q = text(
-                    f"""
-                    select ticker, count(*) as n
-                    from {table}
-                    where ticker = any(:tickers)
-                    group by ticker
-                    """
-                )
-                rows = engine.execute(q, {"tickers": tickers}).fetchall()
-                for r in rows:
-                    docs_map[str(r[0]).upper()] = int(r[1])
-                raise StopIteration
-            except StopIteration:
-                break
-            except Exception:
-                continue
-
-    # recortes/chunks
-    for a, b in chunks_tables:
-        for table in (a, b):
-            try:
-                q = text(
-                    f"""
-                    select ticker, count(*) as n
-                    from {table}
-                    where ticker = any(:tickers)
-                    group by ticker
-                    """
-                )
-                rows = engine.execute(q, {"tickers": tickers}).fetchall()
-                for r in rows:
-                    recortes_map[str(r[0]).upper()] = int(r[1])
-                raise StopIteration
-            except StopIteration:
-                break
-            except Exception:
-                continue
-
-    return {t: (docs_map.get(t), recortes_map.get(t)) for t in tickers}
-
-
-def render_patch6_report(*, tickers: List[str], period_ref: str, window_months: int = 12) -> None:
-    _css()
-
-    tickers = [str(t).upper() for t in tickers if t]
-    if not tickers:
-        st.info("Sem tickers no snapshot.")
-        return
-
-    df = _fetch_latest_runs(tickers, period_ref)
-    latest = _pick_latest_per_ticker(df)
-
-    quality_label, quality_expl = _infer_quality(latest, len(tickers))
-    persp = _perspectiva_distribution(latest)
-    coverage = _coverage(latest, len(tickers))
-
-    st.markdown('<div class="p6r-wrap">', unsafe_allow_html=True)
-
-    st.markdown(
-        f"""
-        <div class="p6r-grid">
-          <div class="p6r-card">
-            <div class="p6r-label">Qualidade (heurística)</div>
-            <div class="p6r-value">{quality_label}</div>
-            <div class="p6r-extra">{quality_expl}</div>
-          </div>
-          <div class="p6r-card">
-            <div class="p6r-label">Perspectiva 12m</div>
-            <div class="p6r-value">{('Neutra' if persp['Construtivas']==persp['Cautelosas'] else ('Construtiva' if persp['Construtivas']>persp['Cautelosas'] else 'Cautelosa'))}</div>
-            <div class="p6r-extra">Direcionalidade agregada do conjunto (construtivo vs cauteloso).</div>
-          </div>
-          <div class="p6r-card">
-            <div class="p6r-label">Cobertura</div>
-            <div class="p6r-value">{coverage}</div>
-            <div class="p6r-extra">Ativos com análise recente no período {period_ref}.</div>
-          </div>
-          <div class="p6r-card">
-            <div class="p6r-label">Distribuição</div>
-            <div class="p6r-value">{persp['Construtivas']} • {persp['Equilibradas']} • {persp['Cautelosas']}</div>
-            <div class="p6r-extra">Construtivas • Equilibradas • Cautelosas</div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+def _badge(texto: str, tone: str = "neutral") -> str:
+    tone_map = {
+        "good": "#0ea5e9",
+        "warn": "#f59e0b",
+        "bad": "#ef4444",
+        "neutral": "#94a3b8",
+    }
+    color = tone_map.get(tone, "#94a3b8")
+    return (
+        f"<span style='display:inline-block;padding:2px 10px;border-radius:999px;"
+        f"border:1px solid {color};color:{color};font-weight:600;font-size:12px'>{texto}</span>"
     )
 
-    # Resumo executivo
-    st.markdown("### 🧾 Resumo executivo")
-    if latest.empty:
-        st.info("Nenhuma análise encontrada ainda para o período. Rode a LLM para gerar os relatórios.")
-        st.markdown("</div>", unsafe_allow_html=True)
+
+def _tone_from_perspectiva(p: str) -> str:
+    p = (p or "").strip().lower()
+    if p == "forte":
+        return "good"
+    if p == "moderada":
+        return "warn"
+    if p == "fraca":
+        return "bad"
+    return "neutral"
+
+
+def render_patch6_report(
+    tickers: List[str],
+    period_ref: str,
+    llm_factory: Optional[Any] = None,
+    show_company_details: bool = True,
+) -> None:
+    """Renderiza relatório profissional do portfólio (Patch6) usando dados já salvos em patch6_runs."""
+
+    st.markdown("# 📘 Relatório de Análise de Portfólio (Patch6)")
+    st.caption("Consolidação qualitativa com base em evidências do RAG. Formato institucional (research).")
+
+    df_latest = _load_latest_runs(tickers=tickers, period_ref=period_ref)
+    if df_latest.empty:
+        st.warning(
+            "Não há execuções salvas em patch6_runs para este period_ref e tickers do portfólio. "
+            "Rode a LLM e salve os resultados primeiro."
+        )
         return
 
-    # resumo: concatena 1 linha por ticker
-    lines = []
-    for _, r in latest.iterrows():
-        t = str(r.get("ticker", "")).upper()
-        direcao = str(r.get("direcao", "") or "").strip() or "—"
-        tese = str(r.get("tese", "") or r.get("resumo", "") or "").strip()
-        tese = tese.replace("\n", " ")
-        if len(tese) > 180:
-            tese = tese[:177] + "…"
-        lines.append(f"- **{t}** ({direcao}): {tese if tese else '—'}")
+    stats = _compute_stats(df_latest)
 
-    st.markdown("\n".join(lines))
+    # Scorecard
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("Qualidade (heurística)", stats.label_qualidade())
+    with c2:
+        st.metric("Perspectiva 12m", stats.label_perspectiva())
+    with c3:
+        st.metric("Cobertura", f"{stats.total}/{len(tickers)}")
+    with c4:
+        st.metric("Distribuição", f"Fortes {stats.fortes} • Moderadas {stats.moderadas} • Fracas {stats.fracas}")
 
-    # Relatórios por empresa
-    st.markdown("### 🧩 Relatórios por empresa")
+    st.caption("🛈 Como a qualidade é estimada: combinação de (i) cobertura do portfólio, (ii) perspectiva 12m agregada e (iii) distribuição de sinais (forte/moderada/fraca). É uma heurística para orientar leitura — não é recomendação.")
 
-    docs_recortes = _fetch_docs_and_recortes(tickers)
+    # Contexto agregado para LLM (opcional)
+    contexto_portfolio = "\n".join(
+        [
+            f"- {row.ticker}: perspectiva={row.perspectiva_compra}; resumo={row.resumo}"
+            for row in df_latest.itertuples(index=False)
+        ]
+    )
 
-    for _, r in latest.iterrows():
-        t = str(r.get("ticker", "")).upper()
-        direcao = str(r.get("direcao", "") or "").strip() or "—"
-        badge = _badge_class(direcao)
+    st.markdown("## 🧠 Resumo Executivo")
 
-        # métricas
-        docs, recortes = docs_recortes.get(t, (None, None))
-        meta_parts = []
-        if docs is not None:
-            meta_parts.append(f"Documentos: {docs}")
-        if recortes is not None:
-            meta_parts.append(f"Recortes (RAG): {recortes}")
-        if "created_at" in latest.columns:
-            dt = r.get("created_at")
-            if pd.notna(dt):
-                meta_parts.append(f"Atualizado: {str(dt)[:19]}")
+    llm_client = None
+    if llm_factory is not None:
+        try:
+            llm_client = llm_factory.get_llm_client()
+        except Exception:
+            llm_client = None
 
-        meta = " • ".join(meta_parts) if meta_parts else "—"
+    prompt_exec = f"""
+Você é um analista sell-side (research). Escreva um resumo executivo profissional do portfólio com base SOMENTE nos bullets abaixo.
+Estruture em 4 blocos curtos:
+1) Leitura geral do portfólio
+2) Principais oportunidades (2-4 itens)
+3) Principais riscos/alertas (2-4 itens)
+4) Perspectiva base para 12 meses
 
-        body = str(r.get("tese", "") or r.get("resumo", "") or r.get("raw", "") or "").strip()
-        if not body:
-            body = "Sem tese/resumo persistidos para este ativo."
+Regras:
+- linguagem institucional, objetiva
+- não invente fatos não citados
+- evite jargão excessivo
+- não use tabelas
 
-        st.markdown(
-            f"""
-            <div class="p6r-company">
-              <div class="p6r-company-head">
-                <div>
-                  <h3 class="p6r-company-title">{t}</h3>
-                  <div class="p6r-company-meta">{meta}</div>
-                </div>
-                <div class="{badge}">{direcao}</div>
-              </div>
-              <div class="p6r-company-body">{body}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+BULLETS:
+{contexto_portfolio}
+"""
+
+    llm_text = _safe_call_llm(llm_client, prompt_exec)
+    if llm_text:
+        st.write(llm_text)
+    else:
+        st.write(
+            f"O portfólio apresenta leitura **{stats.label_perspectiva().lower()}** para 12 meses, com distribuição de perspectivas: "
+            f"**{stats.fortes}** forte, **{stats.moderadas}** moderada e **{stats.fracas}** fraca (cobertura {stats.total} ativos). "
+            "Abaixo, os destaques por empresa no formato de research."
         )
 
-    st.markdown("</div>", unsafe_allow_html=True)
+    if show_company_details:
+        st.markdown("## 🏢 Relatórios por Empresa")
+        for row in df_latest.itertuples(index=False):
+            tk = row.ticker
+            p = str(row.perspectiva_compra or "").strip().lower()
+            badge = _badge((p or "—").upper(), _tone_from_perspectiva(p))
+
+            with st.expander(f"{tk}", expanded=False):
+                st.markdown(f"### {tk}  {badge}", unsafe_allow_html=True)
+                st.caption(f"Período: {row.period_ref} • Atualizado em: {row.created_at}")
+
+                st.markdown("**Tese (síntese)**")
+                st.write(row.resumo or "—")
+
+                st.markdown("**Leitura / Direcionalidade**")
+                if p == "forte":
+                    st.write(
+                        "Viés construtivo, com sinais qualitativos favoráveis no recorte analisado. "
+                        "Mantém assimetria positiva, com monitoramento de riscos."
+                    )
+                elif p == "moderada":
+                    st.write(
+                        "Leitura equilibrada, com pontos positivos e ressalvas. "
+                        "Indica acompanhamento de gatilhos (execução, guidance, alocação de capital)."
+                    )
+                elif p == "fraca":
+                    st.write(
+                        "Leitura cautelosa, com sinais qualitativos desfavoráveis no recorte analisado. "
+                        "Recomenda postura defensiva e foco em mitigação de risco."
+                    )
+                else:
+                    st.write("Leitura inconclusiva por ausência/insuficiência de evidências no recorte analisado.")
+
+    st.markdown("## 🔎 Conclusão Estratégica")
+    prompt_conc = f"""
+Escreva uma conclusão estratégica (research) para o portfólio, em até 8 linhas, com foco em:
+- coerência do conjunto para liquidez e dividendos
+- principais alavancas para melhora/deterioração
+- recomendação de acompanhamento (o que monitorar nos próximos trimestres)
+
+Use SOMENTE os bullets abaixo (não invente dados).
+
+BULLETS:
+{contexto_portfolio}
+"""
+
+    llm_conc = _safe_call_llm(llm_client, prompt_conc)
+    if llm_conc:
+        st.write(llm_conc)
+    else:
+        st.write(
+            "A carteira deve ser acompanhada por gatilhos de execução e sinais de alocação de capital. "
+            "Reforce monitoramento de resultados trimestrais, dívida/custo financeiro, e consistência de distribuição de caixa ao acionista, "
+            "priorizando ativos com leitura construtiva e reduzindo exposição a teses com viés cauteloso quando houver deterioração recorrente."
+        )
