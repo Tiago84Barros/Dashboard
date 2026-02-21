@@ -472,8 +472,8 @@ def render() -> None:
           }
         
           .p6-chip img{
-            width:34px;
-            height:34px;
+            width:40px;
+            height:40px;
             object-fit:contain;
             border-radius:8px;
             background:#ffffff;
