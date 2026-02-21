@@ -150,6 +150,86 @@ def _safe_call(fn: Callable[..., Any], **kwargs):
         return fn(**kwargs)
 
 
+# ------------------------------------------------------------------
+# LLM helpers (compatível com OpenAIChatClient / outros clients)
+# ------------------------------------------------------------------
+def _llm_complete(client, prompt: str) -> str:
+    """Tenta múltiplos métodos para compatibilidade entre clients."""
+    for method in ("complete", "chat", "invoke", "generate"):
+        fn = getattr(client, method, None)
+        if callable(fn):
+            out = fn(prompt)
+            if isinstance(out, str):
+                return out
+            # alguns clients retornam dict/obj
+            try:
+                return json.dumps(out, ensure_ascii=False)
+            except Exception:
+                return str(out)
+    raise AttributeError(f"{type(client).__name__} não expõe método complete/chat/invoke/generate")
+
+def _render_ticker_card(ticker: str, resultado: Dict[str, Any]) -> None:
+    """Card HTML simples e estável (sem libs externas)."""
+    persp = (resultado.get("perspectiva_compra") or resultado.get("perspectiva") or "n/d").upper()
+    resumo = resultado.get("resumo", "")
+    pontos = resultado.get("pontos_chave") or []
+    riscos = resultado.get("riscos") or []
+    evids = resultado.get("evidencias") or []
+
+    def _li(items: List[str], max_n: int = 6) -> str:
+        return "".join([f"<li>{st._utils.escape_html(str(x))}</li>" for x in items[:max_n]])
+
+    # CSS (uma vez)
+    st.markdown("""
+    <style>
+      .p6-card{border:1px solid rgba(255,255,255,.10); background:rgba(20,20,20,.55);
+               border-radius:14px; padding:14px 16px; margin:10px 0;}
+      .p6-row{display:flex; gap:10px; align-items:center; justify-content:space-between;}
+      .p6-title{font-size:18px; font-weight:700;}
+      .p6-pill{padding:4px 10px; border-radius:999px; font-size:12px; font-weight:700;
+               border:1px solid rgba(255,255,255,.18);}
+      .p6-pill.forte{background:rgba(0,200,120,.18);}
+      .p6-pill.moderada{background:rgba(255,180,0,.18);}
+      .p6-pill.fraca{background:rgba(255,80,80,.18);}
+      .p6-grid{display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:10px;}
+      .p6-box{border:1px solid rgba(255,255,255,.08); border-radius:12px; padding:10px 12px;}
+      .p6-box h4{margin:0 0 6px 0; font-size:13px; opacity:.9;}
+      .p6-box ul{margin:0 0 0 18px; padding:0; font-size:13px; opacity:.95;}
+      .p6-resumo{margin-top:8px; font-size:13px; opacity:.95;}
+    </style>
+    """, unsafe_allow_html=True)
+
+    klass = "moderada"
+    if "FORTE" in persp: klass = "forte"
+    if "FRACA" in persp: klass = "fraca"
+
+    html = f"""
+    <div class="p6-card">
+      <div class="p6-row">
+        <div class="p6-title">{st._utils.escape_html(ticker)}</div>
+        <div class="p6-pill {klass}">{st._utils.escape_html(persp)}</div>
+      </div>
+      <div class="p6-resumo">{st._utils.escape_html(str(resumo))}</div>
+      <div class="p6-grid">
+        <div class="p6-box">
+          <h4>Pontos-chave</h4>
+          <ul>{_li([str(x) for x in pontos])}</ul>
+        </div>
+        <div class="p6-box">
+          <h4>Riscos</h4>
+          <ul>{_li([str(x) for x in riscos])}</ul>
+        </div>
+      </div>
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+    # evidências em expander (não lotar UI)
+    with st.expander(f"Evidências – {ticker}", expanded=False):
+        for e in evids[:10]:
+            st.write(e)
+
+
 def render() -> None:
     st.title("🧠 Análises de Portfólio (LLM + RAG)")
 
@@ -353,82 +433,119 @@ def render() -> None:
     # ------------------------------------------------------------------
     # LLM
     # ------------------------------------------------------------------
-    st.subheader("🤖 Análise qualitativa (LLM + RAG)")
+        st.subheader("🤖 Análise qualitativa (LLM + RAG)")
+
     if not tickers:
         st.info("Sem tickers no snapshot.")
         return
 
-    ticker_escolhido = st.selectbox("Ticker", tickers, index=0)
-
-    # --- Recuperação de contexto (Top-K)
-    use_topk_inteligente = st.checkbox("Usar Top-K inteligente (intenção futura)", value=True)
+    # Mantém opção de inspecionar 1 ticker (útil), mas o padrão é rodar o portfólio inteiro
+    ticker_escolhido = st.selectbox("Ticker (para inspeção)", tickers, index=0)
     top_k = st.slider("Top-K chunks (contexto)", min_value=3, max_value=12, value=6, step=1)
-
-    # parâmetros do Top-K inteligente (só aparecem se habilitado)
-    months_window = None
-    debug_topk = False
-    if use_topk_inteligente:
-        c1, c2 = st.columns([1, 1])
-        with c1:
-            months_window = st.slider("Janela (meses) p/ Top-K inteligente", min_value=3, max_value=36, value=18, step=1)
-        with c2:
-            debug_topk = st.checkbox("Debug Top-K (score detalhado)", value=False)
-
     period_ref = st.text_input("period_ref (ex.: 2024Q4)", value="2024Q4")
 
-    if st.button("Rodar LLM agora"):
-        # --- Seleção de chunks
-        chunks = []
-        topk_debug_rows = None
+    st.markdown("### Execução")
+    run_all = st.checkbox("Rodar LLM para TODAS as empresas do portfólio", value=True)
+    show_context = st.checkbox("Mostrar contexto selecionado (debug)", value=False)
 
+    # Top-K inteligente (opcional) — com fallback automático
+    use_topk_inteligente = st.checkbox("Usar Top-K inteligente (intenção futura)", value=True)
+    months_window = st.slider("Janela (meses) p/ Top-K inteligente", min_value=3, max_value=36, value=18, step=1)
+    debug_topk = st.checkbox("Debug Top-K (score detalhado)", value=False)
+
+    if st.button("Rodar LLM agora"):
+        from core.docs_corporativos_store import fetch_topk_chunks
+
+        alvo_tickers = tickers if run_all else [ticker_escolhido]
+        total = len(alvo_tickers)
+
+        # tenta importar Top-K inteligente (se falhar, usa fetch_topk_chunks)
+        _get_topk_inteligente = None
+        topk_warned = False
         if use_topk_inteligente:
-            # Import local com fallback (não quebra deploy se o módulo não existir)
             try:
                 from core.rag_retriever import get_topk_chunks_inteligente as _get_topk_inteligente
             except Exception as e:
                 st.warning(f"Top-K inteligente indisponível ({e}). Caindo para fetch_topk_chunks.")
                 _get_topk_inteligente = None
+                topk_warned = True
 
-            if _get_topk_inteligente is not None:
-                # debug=True retorna objetos (ChunkHit); debug=False retorna lista de textos
-                result = _get_topk_inteligente(
-                    ticker_escolhido,
-                    top_k=int(top_k),
-                    months_window=int(months_window or 18),
-                    debug=bool(debug_topk),
-                )
-                if debug_topk:
-                    topk_debug_rows = [{
-                        "chunk_id": h.chunk_id,
-                        "doc_id": h.doc_id,
-                        "tipo_doc": h.tipo_doc,
-                        "data_doc": h.data_doc,
-                        "score_final": round(h.score_final, 4),
-                        "intent": round(h.score_intent, 4),
-                        "recency": round(h.score_recency, 4),
-                        "peso_tipo": round(h.weight_tipo, 4),
-                    } for h in result]
-                    chunks = [h.chunk_text for h in result]
-                else:
-                    chunks = result
+        progress = st.progress(0)
+        cards_container = st.container()
 
-        # fallback padrão (mantém compatibilidade total)
-        if not chunks:
-            from core.docs_corporativos_store import fetch_topk_chunks
-            chunks = fetch_topk_chunks(ticker_escolhido, int(top_k))
+        resultados_por_ticker: Dict[str, Dict[str, Any]] = {}
+        contagem = {"FORTE": 0, "MODERADA": 0, "FRACA": 0, "ND": 0}
 
-        if not chunks:
-            st.error("Sem chunks no Supabase para este ticker. Rode o ingest+chunking primeiro.")
-            st.stop()
+        start_all = _now_ms()
 
-        if topk_debug_rows:
-            st.subheader("🔎 Debug Top-K inteligente")
-            st.dataframe(topk_debug_rows, use_container_width=True)
+        for i, tk in enumerate(alvo_tickers, 1):
+            tk = _safe_upper(tk)
+            t0 = _now_ms()
 
-        contexto = "\n\n".join(chunks)
-        client = llm_factory.get_llm_client()
+            with st.status(f"[{i}/{total}] {tk} — preparando contexto…", expanded=False) as stt:
+                chunks: List[str] = []
+                topk_debug_rows = None
 
-        prompt = f"""
+                if _get_topk_inteligente is not None:
+                    try:
+                        res = _get_topk_inteligente(
+                            tk,
+                            top_k=int(top_k),
+                            months_window=int(months_window),
+                            debug=bool(debug_topk),
+                        )
+                        if debug_topk:
+                            topk_debug_rows = [{
+                                "chunk_id": h.chunk_id,
+                                "doc_id": h.doc_id,
+                                "tipo_doc": h.tipo_doc,
+                                "data_doc": h.data_doc,
+                                "score_final": round(h.score_final, 4),
+                                "intent": round(h.score_intent, 4),
+                                "recency": round(h.score_recency, 4),
+                                "peso_tipo": round(h.weight_tipo, 4),
+                            } for h in res]
+                            chunks = [h.chunk_text for h in res]
+                        else:
+                            chunks = res
+                    except Exception as e:
+                        if not topk_warned:
+                            st.warning(f"Top-K inteligente falhou durante execução ({type(e).__name__}: {e}). Caindo para fetch_topk_chunks.")
+                            topk_warned = True
+                        chunks = []
+
+                if not chunks:
+                    chunks = fetch_topk_chunks(tk, int(top_k))
+
+                if not chunks:
+                    stt.update(label=f"[{i}/{total}] {tk} — sem chunks (pular)", state="error")
+                    resultados_por_ticker[tk] = {
+                        "perspectiva_compra": "fraca",
+                        "resumo": "Sem evidências/chunks suficientes no banco.",
+                        "pontos_chave": [],
+                        "riscos": ["Sem documentos/fragmentos recuperáveis."],
+                        "evidencias": [],
+                    }
+                    contagem["FRACA"] += 1
+                    progress.progress(i / total)
+                    continue
+
+                if debug_topk and topk_debug_rows:
+                    stt.update(label=f"[{i}/{total}] {tk} — Top-K inteligente selecionado (debug)", state="running")
+                    with st.expander(f"Debug Top-K — {tk}", expanded=False):
+                        st.dataframe(topk_debug_rows, use_container_width=True)
+
+                if show_context:
+                    with st.expander(f"Contexto (Top-K) — {tk}", expanded=False):
+                        for idx, ch in enumerate(chunks, 1):
+                            st.markdown(f"**Chunk {idx}**")
+                            st.write(ch)
+
+                contexto = "\n\n".join(chunks)
+
+                client = llm_factory.get_llm_client()
+
+                prompt = f"""
 Você é um analista fundamentalista focado em direcionalidade estratégica e criação de valor ao acionista minoritário.
 Importante: NÃO use DFP/ITR como base principal; foque em intenção futura (capex, expansão, dívida, dividendos, M&A, guidance).
 Use somente o CONTEXTO abaixo. Devolva APENAS JSON válido na estrutura:
@@ -445,26 +562,93 @@ CONTEXTO:
 {contexto}
 """
 
-        with st.status("Chamando LLM...", expanded=False) as stt:
-            raw = client.complete(prompt)
-            stt.update(label="LLM respondeu. Validando JSON...", state="running")
+                stt.update(label=f"[{i}/{total}] {tk} — chamando LLM…", state="running")
+                try:
+                    raw = _llm_complete(client, prompt)
+                except Exception as e:
+                    stt.update(label=f"[{i}/{total}] {tk} — falha LLM ({type(e).__name__})", state="error")
+                    resultados_por_ticker[tk] = {
+                        "perspectiva_compra": "fraca",
+                        "resumo": f"Falha ao chamar LLM: {type(e).__name__}: {e}",
+                        "pontos_chave": [],
+                        "riscos": ["Erro na chamada do modelo."],
+                        "evidencias": [],
+                    }
+                    contagem["FRACA"] += 1
+                    progress.progress(i / total)
+                    continue
 
-        try:
-            resultado = json.loads(raw)
-        except Exception:
-            st.error("A LLM não retornou JSON válido. Veja o texto bruto abaixo:")
-            st.code(raw)
-            st.stop()
+                stt.update(label=f"[{i}/{total}] {tk} — validando JSON…", state="running")
+                try:
+                    resultado = json.loads(raw)
+                except Exception:
+                    resultado = {
+                        "perspectiva_compra": "fraca",
+                        "resumo": "LLM não retornou JSON válido (ver bruto).",
+                        "pontos_chave": [],
+                        "riscos": ["Retorno fora do formato JSON."],
+                        "evidencias": [],
+                        "_raw": raw,
+                    }
 
-        save_patch6_run(
-            snapshot_id=str(snapshot_id),
-            ticker=ticker_escolhido,
-            period_ref=period_ref,
-            result=resultado,
+                # salva resultado
+                try:
+                    save_patch6_run(
+                        snapshot_id=str(snapshot_id),
+                        ticker=tk,
+                        period_ref=period_ref,
+                        result=resultado,
+                    )
+                except Exception:
+                    pass
+
+                resultados_por_ticker[tk] = resultado
+
+                # contagem perspectiva
+                p = str(resultado.get("perspectiva_compra") or "").strip().upper()
+                if p.startswith("FORTE"):
+                    contagem["FORTE"] += 1
+                elif p.startswith("MOD"):
+                    contagem["MODERADA"] += 1
+                elif p.startswith("FRACA"):
+                    contagem["FRACA"] += 1
+                else:
+                    contagem["ND"] += 1
+
+                stt.update(label=f"[{i}/{total}] {tk} — concluído em {_fmt_s(_now_ms()-t0)}", state="complete")
+
+            # mostra card assim que terminar o ticker
+            with cards_container:
+                _render_ticker_card(tk, resultados_por_ticker[tk])
+
+            progress.progress(i / total)
+
+        st.success(f"LLM finalizada. Tempo total: {_fmt_s(_now_ms()-start_all)}")
+
+        # Parecer resumido do portfólio (sem depender de LLM adicional)
+        st.subheader("🧾 Parecer resumido do portfólio")
+        st.write(
+            f"**FORTE:** {contagem['FORTE']} | **MODERADA:** {contagem['MODERADA']} | **FRACA:** {contagem['FRACA']} | **N/D:** {contagem['ND']}"
         )
 
-        st.success("Resultado salvo em public.patch6_runs.")
-        st.json(resultado)
+        # bullets agregados (top 10)
+        all_riscos: List[str] = []
+        all_pontos: List[str] = []
+        for tk, r in resultados_por_ticker.items():
+            all_pontos += [f"{tk}: {x}" for x in (r.get("pontos_chave") or [])]
+            all_riscos += [f"{tk}: {x}" for x in (r.get("riscos") or [])]
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**Principais sinais positivos (amostra)**")
+            for x in all_pontos[:10]:
+                st.write(f"- {x}")
+        with c2:
+            st.markdown("**Principais alertas (amostra)**")
+            for x in all_riscos[:10]:
+                st.write(f"- {x}")
+
+        st.caption("Dica: se quiser um parecer final com LLM, posso adicionar um segundo prompt resumidor usando apenas os JSONs gerados (baixo custo e sem RAG).")
 
     st.subheader("📜 Histórico (patch6_runs)")
     try:
