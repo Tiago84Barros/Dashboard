@@ -1,87 +1,114 @@
-
 # page/analises_portfolio.py
+# Compatível com loader que exige função render() e com estrutura /Modulos/*
+
+from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
+
 import streamlit as st
-from core.rag_retriever import get_topk_chunks_inteligente
-from core.patch6_runs_store import save_patch6_run, list_patch6_history
-import core.ai_models.llm_client.factory as llm_factory
 
-st.set_page_config(page_title="Análises de Portfólio", layout="wide")
 
-st.title("📊 Análises de Portfólio – Radar Estratégico (Top-K Inteligente + LLM)")
+# ---------------------------
+# Bootstrapping de PATH
+# ---------------------------
+def _ensure_project_paths() -> None:
+    """
+    Garante que imports 'core.*' e 'pickup.*' funcionem tanto quando:
+    - arquivo está em Dashboard/page/
+    - arquivo está em Dashboard/Modulos/page/
+    Sem depender de alterar o dashboard.py.
+    """
+    here = Path(__file__).resolve()
+    page_dir = here.parent  # .../page
+    base_dir = page_dir.parent  # .../(Modulos ou Dashboard)
 
-st.markdown("""
-Esta seção avalia a **intenção futura e alocação de capital** da companhia:
-- Capex / expansão
-- Dívida / desalavancagem
-- Dividendos / recompra
-- M&A / desinvestimentos
-- Guidance estratégico
+    # Se estamos em .../Modulos/page, base_dir = .../Modulos
+    # Se estamos em .../Dashboard/page, base_dir = .../Dashboard
 
-A LLM gera uma conclusão estruturada e auditável com base em evidências reais.
-""")
+    # 1) adiciona base_dir ao sys.path (para 'core', 'pickup', 'page' dentro dele)
+    if str(base_dir) not in sys.path:
+        sys.path.insert(0, str(base_dir))
 
-st.markdown("---")
+    # 2) se existir uma pasta Modulos na raiz do Dashboard, adiciona também
+    root_candidate = base_dir.parent  # possivelmente .../Dashboard
+    modulos_dir = root_candidate / "Modulos"
+    if modulos_dir.exists() and str(modulos_dir) not in sys.path:
+        sys.path.insert(0, str(modulos_dir))
 
-col1, col2, col3 = st.columns(3)
 
-with col1:
-    ticker_escolhido = st.text_input("Ticker", value="PETR3").upper()
+_ensure_project_paths()
 
-with col2:
-    top_k = st.number_input("Top-K", min_value=3, max_value=20, value=8)
 
-with col3:
-    months_window = st.number_input("Janela (meses)", min_value=3, max_value=36, value=18)
+# ---------------------------
+# Imports do projeto (com fallback)
+# ---------------------------
+def _import_or_warn(import_fn: Callable[[], Any], friendly_name: str) -> Any:
+    try:
+        return import_fn()
+    except Exception as e:
+        st.error(f"Falha ao importar {friendly_name}: {e}")
+        raise
 
-debug = st.checkbox("🔎 Debug Top-K (mostrar score detalhado)", value=False)
 
-st.markdown("---")
+# RAG retriever
+get_topk_chunks_inteligente = _import_or_warn(
+    lambda: __import__("core.rag_retriever", fromlist=["get_topk_chunks_inteligente"]).get_topk_chunks_inteligente,
+    "core.rag_retriever.get_topk_chunks_inteligente"
+)
 
-if st.button("Rodar análise estratégica completa"):
+# Patch6 runs store (opcional)
+try:
+    _runs_mod = __import__("core.patch6_runs_store", fromlist=["save_patch6_run", "list_patch6_history"])  # type: ignore
+    save_patch6_run = getattr(_runs_mod, "save_patch6_run")
+    list_patch6_history = getattr(_runs_mod, "list_patch6_history")
+except Exception:
+    # fallback: não quebra a página se o store ainda não estiver no deploy
+    def save_patch6_run(*args, **kwargs):  # type: ignore
+        return None
 
-    if not ticker_escolhido:
-        st.error("Informe um ticker.")
-        st.stop()
+    def list_patch6_history(*args, **kwargs):  # type: ignore
+        return []
 
-    with st.spinner("Buscando contexto estratégico..."):
-        resultado = get_topk_chunks_inteligente(
-            ticker=ticker_escolhido,
-            top_k=top_k,
-            months_window=months_window,
-            debug=debug
-        )
+# LLM factory (opcional)
+llm_factory = None
+try:
+    llm_factory = __import__("core.ai_models.llm_client.factory", fromlist=["get_llm_client"])  # type: ignore
+except Exception:
+    llm_factory = None
 
-    if debug:
-        st.subheader("🔎 Debug – Score detalhado")
-        st.dataframe(
-            [{
-                "chunk_id": h.chunk_id,
-                "doc_id": h.doc_id,
-                "tipo_doc": h.tipo_doc,
-                "data_doc": h.data_doc,
-                "score_final": round(h.score_final, 4),
-                "intent": round(h.score_intent, 4),
-                "recency": round(h.score_recency, 4),
-                "peso_tipo": round(h.weight_tipo, 4),
-            } for h in resultado],
-            use_container_width=True
-        )
-        chunks = [h.chunk_text for h in resultado]
-    else:
-        chunks = resultado
 
-    if not chunks:
-        st.warning("Nenhum contexto estratégico encontrado.")
-        st.stop()
+# ---------------------------
+# Helpers
+# ---------------------------
+def _safe_llm_complete(prompt: str) -> str:
+    """Tenta completar via cliente LLM do projeto. Falha com mensagem clara."""
+    if llm_factory is None or not hasattr(llm_factory, "get_llm_client"):
+        raise RuntimeError("LLM client factory não disponível (core.ai_models.llm_client.factory).")
 
-    contexto = "\n\n".join(chunks)
+    client = llm_factory.get_llm_client()  # type: ignore
 
-    prompt = f"""
+    # compat: complete(prompt) ou chat(prompt) ou generate(prompt)
+    for fn_name in ("complete", "chat", "generate", "invoke"):
+        fn = getattr(client, fn_name, None)
+        if callable(fn):
+            out = fn(prompt)
+            # normaliza retorno
+            if isinstance(out, str):
+                return out
+            if isinstance(out, dict) and "text" in out:
+                return str(out["text"])
+            return json.dumps(out, ensure_ascii=False)
+
+    raise RuntimeError("Cliente LLM não expõe métodos complete/chat/generate/invoke.")
+
+
+def _build_prompt(ticker: str, contexto: str) -> str:
+    return f"""
 Você é um analista fundamentalista focado em criação de valor para o acionista minoritário.
-
-Use exclusivamente o CONTEXTO abaixo.
+Use exclusivamente o CONTEXTO abaixo. Não invente fatos.
 
 Retorne APENAS JSON válido na seguinte estrutura:
 
@@ -89,46 +116,143 @@ Retorne APENAS JSON válido na seguinte estrutura:
   "perspectiva": "forte|moderada|fraca",
   "tese_minoritaria": ["..."],
   "alocacao_capital": {{
-    "capex_expansao": "...",
-    "divida_desalavancagem": "...",
-    "dividendos_recompra": "...",
-    "ma_desinvest": "..."
+    "capex_expansao": "alta|media|baixa|nao_mencionado",
+    "divida_desalavancagem": "melhorando|estavel|piorando|nao_mencionado",
+    "dividendos_recompra": "pro_acionista|neutro|incerto|nao_mencionado",
+    "ma_desinvest": "acretivo|neutro|arriscado|nao_mencionado"
   }},
   "sinais_positivos": ["..."],
   "sinais_alerta": ["..."],
-  "catalisadores": ["..."],
+  "catalisadores": [{{"evento":"...","horizonte":"curto|medio|longo"}}],
   "evidencias": ["trechos literais do contexto"]
 }}
 
+Ticker: {ticker}
+
 CONTEXTO:
 {contexto}
-"""
+""".strip()
 
-    with st.spinner("Chamando LLM..."):
-        client = llm_factory.get_llm_client()
-        raw = client.complete(prompt)
 
-    try:
-        resultado_json = json.loads(raw)
-    except Exception:
-        st.error("A LLM não retornou JSON válido.")
-        st.code(raw)
-        st.stop()
+# ---------------------------
+# Página (loader exige render)
+# ---------------------------
+def render() -> None:
+    st.set_page_config(page_title="Análises de Portfólio", layout="wide")
+    st.title("📊 Análises de Portfólio – Radar Estratégico (Top-K Inteligente + LLM)")
 
-    st.success("Análise gerada com sucesso.")
-    st.json(resultado_json)
-
-    save_patch6_run(
-        snapshot_id="manual_run",
-        ticker=ticker_escolhido,
-        period_ref="current",
-        result=resultado_json,
+    st.markdown(
+        """
+        Esta seção avalia **intenção futura e alocação de capital** (não é DFP/ITR):
+        - capex / expansão
+        - dívida / desalavancagem
+        - dividendos / recompra
+        - M&A / desinvestimentos
+        - guidance / prioridades do management
+        """
     )
 
     st.markdown("---")
-    st.subheader("📜 Histórico de análises")
-    try:
-        historico = list_patch6_history(ticker_escolhido, limit=5)
-        st.dataframe(historico, use_container_width=True)
-    except Exception as e:
-        st.caption(f"Erro ao carregar histórico: {e}")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        ticker = st.text_input("Ticker", value="PETR3").upper().strip()
+    with col2:
+        top_k = st.number_input("Top-K", min_value=3, max_value=20, value=8)
+    with col3:
+        months_window = st.number_input("Janela (meses)", min_value=3, max_value=36, value=18)
+
+    debug = st.checkbox("🔎 Debug Top-K (mostrar score detalhado)", value=False)
+    st.caption("Obs: para rodar LLM, é preciso que o módulo core.ai_models.llm_client.factory esteja no deploy e configurado.")
+
+    st.markdown("---")
+
+    if st.button("Rodar Top-K inteligente + LLM"):
+        if not ticker:
+            st.error("Informe um ticker.")
+            st.stop()
+
+        with st.spinner("Buscando contexto estratégico (Top-K inteligente)..."):
+            result = get_topk_chunks_inteligente(
+                ticker=ticker,
+                top_k=int(top_k),
+                months_window=int(months_window),
+                debug=bool(debug),
+            )
+
+        # result pode ser lista de hits (debug=True) ou lista de textos (debug=False)
+        if debug:
+            st.subheader("🔎 Debug – Score detalhado (Top-K)")
+            st.dataframe(
+                [
+                    {
+                        "chunk_id": h.chunk_id,
+                        "doc_id": h.doc_id,
+                        "tipo_doc": h.tipo_doc,
+                        "data_doc": h.data_doc,
+                        "score_final": round(h.score_final, 4),
+                        "intent": round(h.score_intent, 4),
+                        "recency": round(h.score_recency, 4),
+                        "peso_tipo": round(h.weight_tipo, 4),
+                    }
+                    for h in result
+                ],
+                use_container_width=True,
+            )
+            chunks = [h.chunk_text for h in result]
+        else:
+            chunks = result
+
+        if not chunks:
+            st.warning("Nenhum chunk relevante encontrado na janela selecionada.")
+            st.stop()
+
+        st.subheader("📄 Contexto selecionado (Top-K)")
+        for i, c in enumerate(chunks, 1):
+            with st.expander(f"Chunk {i}", expanded=False):
+                st.write(c)
+
+        contexto = "\n\n".join(chunks)
+        prompt = _build_prompt(ticker, contexto)
+
+        st.markdown("---")
+        st.subheader("🧠 Resultado da LLM (JSON)")
+
+        try:
+            with st.spinner("Chamando LLM..."):
+                raw = _safe_llm_complete(prompt)
+        except Exception as e:
+            st.error(f"Falha ao chamar LLM: {e}")
+            st.stop()
+
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            st.error("A LLM não retornou JSON válido. Veja abaixo o retorno bruto:")
+            st.code(raw)
+            st.stop()
+
+        st.json(parsed)
+
+        # Persistência (se store existir)
+        try:
+            save_patch6_run(
+                snapshot_id="manual_run",
+                ticker=ticker,
+                period_ref="current",
+                result=parsed,
+            )
+        except Exception as e:
+            st.caption(f"(Aviso) Não foi possível salvar patch6_run: {e}")
+
+        # Histórico (se store existir)
+        st.markdown("---")
+        st.subheader("📜 Histórico (últimos 5)")
+        try:
+            hist = list_patch6_history(ticker, limit=5)
+            if hist:
+                st.dataframe(hist, use_container_width=True)
+            else:
+                st.caption("Sem histórico (ou store não configurado).")
+        except Exception as e:
+            st.caption(f"(Aviso) Não foi possível carregar histórico: {e}")
