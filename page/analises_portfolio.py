@@ -17,7 +17,6 @@ Agora:
 from __future__ import annotations
 
 import json
-import re
 import time
 import traceback
 import importlib
@@ -352,315 +351,213 @@ def render() -> None:
     st.divider()
 
     # ------------------------------------------------------------------
-    # LLM
+    # LLM (Batch para todo o portfólio)
     # ------------------------------------------------------------------
     st.subheader("🤖 Análise qualitativa (LLM + RAG)")
-
-    # CSS para cards (auditáveis)
-    st.markdown(
-        """
-        <style>
-        .p6-card {{
-            background: rgba(255,255,255,0.04);
-            border: 1px solid rgba(255,255,255,0.10);
-            padding: 14px 16px;
-            border-radius: 12px;
-            margin: 10px 0 14px 0;
-        }}
-        .p6-head {{
-            display:flex; justify-content:space-between; align-items:center;
-            gap: 12px;
-        }}
-        .p6-ticker {{
-            font-weight: 800; font-size: 18px;
-        }}
-        .p6-badge {{
-            padding: 4px 10px;
-            border-radius: 999px;
-            font-weight: 700;
-            font-size: 12px;
-            border: 1px solid rgba(255,255,255,0.18);
-        }}
-        .p6-badge-forte {{ background: rgba(34,197,94,0.18); }}
-        .p6-badge-moderada {{ background: rgba(234,179,8,0.18); }}
-        .p6-badge-fraca {{ background: rgba(239,68,68,0.18); }}
-        .p6-small {{
-            color: rgba(255,255,255,0.75);
-            font-size: 13px;
-            line-height: 1.45;
-        }}
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
-
-    def _llm_complete(client, prompt: str) -> str:
-        """Compat: suporta diferentes clients (complete/chat/invoke/generate)."""
-        # 1) complete(prompt)
-        fn = getattr(client, "complete", None)
-        if callable(fn):
-            return fn(prompt)
-
-        # 2) chat(messages=[...]) ou chat(prompt)
-        fn = getattr(client, "chat", None)
-        if callable(fn):
-            try:
-                out = fn(prompt)
-            except TypeError:
-                out = fn([{"role": "user", "content": prompt}])
-            return out
-
-        # 3) invoke({"input": ...}) / invoke(prompt)
-        fn = getattr(client, "invoke", None)
-        if callable(fn):
-            try:
-                return fn(prompt)
-            except TypeError:
-                return fn({"input": prompt})
-
-        # 4) generate(prompt)
-        fn = getattr(client, "generate", None)
-        if callable(fn):
-            return fn(prompt)
-
-        raise AttributeError("Cliente LLM não expõe complete/chat/invoke/generate")
-
-    def _normalize_llm_output(raw) -> str:
-        """Converte retorno do client em string (ou JSON serializado)."""
-        if raw is None:
-            return ""
-        if isinstance(raw, str):
-            return raw
-        # Alguns clients retornam objetos com .content / .text
-        for attr in ("content", "text", "message"):
-            if hasattr(raw, attr):
-                val = getattr(raw, attr)
-                if isinstance(val, str):
-                    return val
-        try:
-            return json.dumps(raw, ensure_ascii=False)
-        except Exception:
-            return str(raw)
-
-    def _parse_llm_json(raw_text: str):
-        """Extrai JSON mesmo quando vem com lixo/markdown."""
-        s = (raw_text or "").strip()
-        if not s:
-            raise ValueError("Resposta vazia")
-        # remove fences
-        s = re.sub(r"^```(?:json)?\s*", "", s, flags=re.IGNORECASE)
-        s = re.sub(r"\s*```$", "", s)
-        # tenta direto
-        try:
-            return json.loads(s)
-        except Exception:
-            pass
-        # tenta extrair o primeiro objeto JSON {...}
-        m = re.search(r"\{[\s\S]*\}", s)
-        if m:
-            return json.loads(m.group(0))
-        raise ValueError("JSON não encontrado na resposta")
-
 
     if not tickers:
         st.info("Sem tickers no snapshot.")
         return
 
-    colA, colB, colC = st.columns([1.2, 1.0, 1.0])
-    with colA:
-        modo_lote = st.checkbox("Rodar LLM para todo o portfólio (recomendado)", value=True)
-    with colB:
-        use_topk_inteligente = st.checkbox("Usar Top-K inteligente (intenção futura)", value=True)
-    with colC:
-        top_k = st.slider("Top-K chunks", min_value=3, max_value=12, value=6, step=1)
+    # Preferência: rodar para todo o portfólio (com cards por ticker)
+    rodar_todo_portfolio = st.checkbox("Rodar LLM para todo o portfólio (recomendado)", value=True)
+    usar_topk_inteligente = st.checkbox("Usar Top-K inteligente (intenção futura)", value=True)
+    debug_topk = st.checkbox("Debug Top-K (score detalhado)", value=False)
 
-    extra = st.text_input("Tickers extras (opcional, separados por vírgula)", value="")
-    if extra.strip():
-        extras = [t.strip().upper() for t in extra.split(",") if t.strip()]
-        tickers = sorted(list(dict.fromkeys(tickers + extras)))
-
-    months_window = 12
-    debug_topk = False
-    if use_topk_inteligente:
-        c1, c2 = st.columns([1, 1])
-        with c1:
-            months_window = st.slider("Janela (meses) p/ Top-K inteligente", min_value=3, max_value=24, value=12, step=1)
-        with c2:
-            debug_topk = st.checkbox("Debug Top-K (score detalhado)", value=False)
-
+    top_k = st.slider("Top-K chunks", min_value=3, max_value=12, value=6, step=1)
+    janela_meses = st.slider("Janela (meses) p/ Top-K inteligente", min_value=3, max_value=24, value=12, step=1)
     period_ref = st.text_input("period_ref (ex.: 2024Q4)", value="2024Q4")
 
-    if not modo_lote:
-        ticker_escolhido = st.selectbox("Ticker (modo unitário)", tickers, index=0)
+    if not rodar_todo_portfolio:
+        ticker_escolhido = st.selectbox("Ticker", tickers, index=0)
+        tickers_alvo = [ticker_escolhido]
     else:
-        ticker_escolhido = None
+        tickers_alvo = list(tickers)
 
-    def _get_chunks_para_ticker(tkr: str):
-        chunks = []
-        topk_debug_rows = None
-        if use_topk_inteligente:
-            try:
-                from core.rag_retriever import get_topk_chunks_inteligente as _get_topk_inteligente
-            except Exception as err:
-                st.warning(f"Top-K inteligente indisponível ({err}). Caindo para fetch_topk_chunks.")
-                _get_topk_inteligente = None
-            if _get_topk_inteligente is not None:
-                result = _get_topk_inteligente(
-                    tkr,
-                    top_k=int(top_k),
-                    months_window=int(months_window),
-                    debug=bool(debug_topk),
-                )
-                if debug_topk:
-                    topk_debug_rows = [{
-                        "chunk_id": h.chunk_id,
-                        "doc_id": h.doc_id,
-                        "tipo_doc": h.tipo_doc,
-                        "data_doc": h.data_doc,
-                        "score_final": round(h.score_final, 4),
-                        "intent": round(h.score_intent, 4),
-                        "recency": round(h.score_recency, 4),
-                        "peso_tipo": round(h.weight_tipo, 4),
-                    } for h in result]
-                    chunks = [h.chunk_text for h in result]
-                else:
-                    chunks = result
-        if not chunks:
-            from core.docs_corporativos_store import fetch_topk_chunks
-            chunks = fetch_topk_chunks(tkr, int(top_k))
-        return chunks, topk_debug_rows
+    # CSS simples para cards
+    st.markdown(
+        """
+        <style>
+        .patch6-card {
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 14px;
+            padding: 14px 16px;
+            margin: 12px 0;
+            background: rgba(255,255,255,0.04);
+        }
+        .patch6-card h3 { margin: 0 0 6px 0; font-size: 18px; }
+        .patch6-pill {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            border: 1px solid rgba(255,255,255,0.18);
+            margin-left: 8px;
+        }
+        .pill-forte { background: rgba(34,197,94,0.18); }
+        .pill-moderada { background: rgba(234,179,8,0.18); }
+        .pill-fraca { background: rgba(239,68,68,0.18); }
+        .patch6-muted { opacity: 0.85; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    def _badge_class(p: str) -> str:
-        p = (p or "").lower()
+    def _pill_class(persp: str) -> str:
+        p = (persp or "").strip().lower()
         if "fort" in p:
-            return "p6-badge p6-badge-forte"
-        if "moder" in p:
-            return "p6-badge p6-badge-moderada"
-        return "p6-badge p6-badge-fraca"
+            return "pill-forte"
+        if "mod" in p:
+            return "pill-moderada"
+        return "pill-fraca"
 
-    if st.button("Rodar LLM agora"):
-        tickers_alvo = tickers if modo_lote else [ticker_escolhido]
-        progresso = st.progress(0.0)
-        resumo_portfolio = {"forte": 0, "moderada": 0, "fraca": 0, "erros": 0}
-        status_rows = []
+    def _render_card(ticker: str, result: Dict[str, Any]) -> None:
+        persp = str(result.get("perspectiva_compra", "")).strip()
+        resumo = str(result.get("resumo", "")).strip()
+        pontos = result.get("pontos_chave") or []
+        riscos = result.get("riscos") or []
+        evids = result.get("evidencias") or []
 
-        client = llm_factory.get_llm_client()
+        html = f"""
+        <div class="patch6-card">
+          <h3>{ticker}
+            <span class="patch6-pill {_pill_class(persp)}">{persp or "—"}</span>
+          </h3>
+          <div class="patch6-muted">{resumo}</div>
+        </div>
+        """
+        st.markdown(html, unsafe_allow_html=True)
 
-        for idx, tkr in enumerate(tickers_alvo, start=1):
-            with st.status(f"Processando {tkr} ({idx}/{len(tickers_alvo)})...", expanded=False):
-                chunks, topk_debug_rows = _get_chunks_para_ticker(tkr)
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**Pontos-chave**")
+            st.write(pontos if pontos else ["—"])
+        with c2:
+            st.markdown("**Riscos**")
+            st.write(riscos if riscos else ["—"])
 
-                if not chunks:
-                    resumo_portfolio["erros"] += 1
-                    st.warning(f"{tkr}: sem chunks no Supabase (rode ingest+chunking).")
-                    status_rows.append({"ticker": tkr, "status": "SEM_CHUNKS", "erro": "Sem chunks"})
-                    progresso.progress(idx / len(tickers_alvo))
-                    continue
+        if evids:
+            with st.expander("Evidências (trechos)"):
+                for ev in evids[:8]:
+                    st.markdown(f"- {ev}")
 
-                contexto = "\n\n".join(chunks)
+    def _get_chunks_para_ticker(ticker: str) -> Tuple[List[str], str]:
+        """Retorna (chunks, origem)."""
+        from core.docs_corporativos_store import fetch_topk_chunks
 
-                prompt = f"""
-Você é um analista fundamentalista focado em direcionalidade estratégica e criação de valor ao acionista minoritário.
-Importante: NÃO use DFP/ITR como base principal; foque em intenção futura (capex, expansão, dívida, dividendos, M&A, guidance).
-Use somente o CONTEXTO abaixo. Devolva APENAS JSON válido na estrutura:
+        if not usar_topk_inteligente:
+            return fetch_topk_chunks(ticker, int(top_k)), "fetch_topk_chunks"
 
-{{
+        try:
+            from core.rag_retriever import get_topk_chunks_inteligente  # type: ignore
+            chunks, _debug = get_topk_chunks_inteligente(
+                ticker=ticker,
+                top_k=int(top_k),
+                months=int(janela_meses),
+                debug=bool(debug_topk),
+            )
+            if debug_topk and _debug:
+                with st.expander(f"Debug Top-K — {ticker}"):
+                    st.json(_debug)
+            return chunks, "topk_inteligente"
+        except Exception as e:
+            st.warning(
+                f"Top-K inteligente indisponível ({type(e).__name__}: {e}). "
+                "Caindo para fetch_topk_chunks."
+            )
+            return fetch_topk_chunks(ticker, int(top_k)), "fetch_topk_chunks_fallback"
+
+    def _run_llm_for_ticker(ticker: str) -> Dict[str, Any]:
+        chunks, origem = _get_chunks_para_ticker(ticker)
+        if not chunks:
+            raise RuntimeError(f"Sem chunks para {ticker} (origem={origem}). Rode ingest+chunking.")
+
+        context_payload = [{"chunk_index": i, "text": c} for i, c in enumerate(chunks)]
+
+        system = (
+            "Você é um analista fundamentalista focado em direcionalidade estratégica. "
+            "Seu objetivo é julgar a intenção futura e alocação de capital com base nas evidências fornecidas."
+        )
+
+        user = (
+            f"Analise o ticker {ticker} e responda com foco em:\n"
+            "- capex / expansão\n"
+            "- guidance / prioridades do management\n"
+            "- desalavancagem / gestão de dívida\n"
+            "- M&A / desinvestimentos\n"
+            "- dividendos / recompra / payout\n\n"
+            "Regras:\n"
+            "1) Use SOMENTE o contexto (RAG).\n"
+            "2) Evidências devem ser trechos literais do contexto.\n"
+            "3) Seja objetivo e útil para o acionista minoritário.\n"
+        )
+
+        schema_hint = """{
   "perspectiva_compra": "forte|moderada|fraca",
   "resumo": "texto curto",
   "pontos_chave": ["..."],
   "riscos": ["..."],
   "evidencias": ["trechos literais do contexto"]
-}}
+}"""
 
-CONTEXTO:
-{contexto}
-""".strip()
+        client = llm_factory.get_llm_client()
+        return client.generate_json(
+            system=system,
+            user=user,
+            schema_hint=schema_hint,
+            context=context_payload,
+        )
 
-                try:
-                    raw_obj = _llm_complete(client, prompt)
-                    raw = _normalize_llm_output(raw_obj)
-                except Exception as err:
-                    resumo_portfolio["erros"] += 1
-                    st.error(f"{tkr}: falha ao chamar LLM: {err}")
-                    status_rows.append({"ticker": tkr, "status": "ERRO_LLM", "erro": str(err)})
-                    progresso.progress(idx / len(tickers_alvo))
-                    continue
+    if st.button("Rodar LLM agora"):
+        progress = st.progress(0, text="Iniciando...")
+        status_rows: List[Dict[str, Any]] = []
 
-                try:
-                    resultado = _parse_llm_json(raw)
-                except Exception:
-                    resumo_portfolio["erros"] += 1
-                    st.error(f"{tkr}: LLM não retornou JSON válido.")
-                    status_rows.append({"ticker": tkr, "status": "JSON_INVALIDO", "erro": "JSON inválido"})
-                    st.code(raw)
-                    progresso.progress(idx / len(tickers_alvo))
-                    continue
+        fortes = moderadas = fracas = 0
+        erros_sem_dados = 0
 
-                try:
-                    save_patch6_run(
-                        snapshot_id=str(snapshot_id),
-                        ticker=tkr,
-                        period_ref=period_ref,
-                        result=resultado,
-                    )
-                except Exception as err:
-                    st.caption(f"{tkr}: aviso ao salvar patch6_runs: {err}")
+        for i, tkr in enumerate(tickers_alvo, start=1):
+            progress.progress(int((i - 1) / max(len(tickers_alvo), 1) * 100), text=f"Processando {tkr} ({i}/{len(tickers_alvo)})...")
 
-                perspectiva = (resultado.get("perspectiva_compra") or "").lower()
-                if "fort" in perspectiva:
-                    resumo_portfolio["forte"] += 1
-                elif "moder" in perspectiva:
-                    resumo_portfolio["moderada"] += 1
+            try:
+                with st.status(f"Processando {tkr} ({i}/{len(tickers_alvo)})...", expanded=False) as stt:
+                    result = _run_llm_for_ticker(tkr)
+                    stt.update(label=f"{tkr}: LLM OK. Salvando...", state="running")
+
+                save_patch6_run(
+                    snapshot_id=str(snapshot_id),
+                    ticker=tkr,
+                    period_ref=period_ref,
+                    result=result,
+                )
+
+                _render_card(tkr, result)
+
+                persp = str(result.get("perspectiva_compra", "")).lower()
+                if "fort" in persp:
+                    fortes += 1
+                elif "mod" in persp:
+                    moderadas += 1
                 else:
-                    resumo_portfolio["fraca"] += 1
-
-                badge = _badge_class(perspectiva)
-                resumo = resultado.get("resumo", "")
+                    fracas += 1
 
                 status_rows.append({"ticker": tkr, "status": "OK", "erro": ""})
 
-                st.markdown(
-                    f"""
-<div class="p6-card">
-  <div class="p6-head">
-    <div class="p6-ticker">{tkr}</div>
-    <div class="{badge}">{perspectiva or "—"}</div>
-  </div>
-  <div class="p6-small" style="margin-top:8px;"><b>Resumo:</b> {resumo}</div>
-</div>
-""",
-                    unsafe_allow_html=True
-                )
+            except Exception as e:
+                erros_sem_dados += 1
+                status_rows.append({"ticker": tkr, "status": "ERRO_LLM", "erro": f"{type(e).__name__}: {e}"})
 
-                with st.expander(f"Detalhes – {tkr}", expanded=False):
-                    if topk_debug_rows:
-                        st.caption("Debug Top-K inteligente")
-                        st.dataframe(topk_debug_rows, use_container_width=True)
-                    st.markdown("**Pontos-chave**")
-                    for p in (resultado.get("pontos_chave") or [])[:8]:
-                        st.write(f"- {p}")
-                    st.markdown("**Riscos**")
-                    for r in (resultado.get("riscos") or [])[:8]:
-                        st.write(f"- {r}")
-                    st.markdown("**Evidências (trechos)**")
-                    for ev in (resultado.get("evidencias") or [])[:6]:
-                        st.write(f"• {ev}")
+        progress.progress(100, text="Concluído")
 
-            progresso.progress(idx / len(tickers_alvo))
-
-        st.markdown("---")
         st.subheader("📌 Parecer resumido do portfólio")
-        st.write(
-            f"Forte: {resumo_portfolio['forte']} | Moderada: {resumo_portfolio['moderada']} | "
-            f"Fraca: {resumo_portfolio['fraca']} | Erros/sem dados: {resumo_portfolio['erros']}"
-        )
-        if status_rows:
-            st.subheader("🧾 Status por ticker")
-            st.dataframe(status_rows, use_container_width=True)
+        st.write(f"Forte: **{fortes}** | Moderada: **{moderadas}** | Fraca: **{fracas}** | Erros/sem dados: **{erros_sem_dados}**")
+
+        st.subheader("🧾 Status por ticker")
+        st.dataframe(status_rows, use_container_width=True)
 
     st.subheader("📜 Histórico (patch6_runs)")
     try:
-        hist = list_patch6_history(ticker_escolhido, limit=8)
+        ticker_hist = tickers_alvo[0] if tickers_alvo else tickers[0]
+        hist = list_patch6_history(ticker_hist, limit=12)
         st.dataframe(hist, use_container_width=True)
     except Exception as e:
         st.caption(f"Não foi possível carregar histórico: {type(e).__name__}: {e}")
