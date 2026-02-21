@@ -150,6 +150,38 @@ def render_patch6_report(
 
     st.markdown("# 📘 Relatório de Análise de Portfólio (Patch6)")
     st.caption("Consolidação qualitativa com base em evidências do RAG. Formato institucional (research).")
+    st.markdown("""
+    <style>
+    .p6-cards { margin-top: 12px; }
+    
+    .p6-card{
+      border:1px solid rgba(255,255,255,0.08);
+      background:rgba(255,255,255,0.03);
+      border-radius:16px;
+      padding:16px 18px;
+      box-shadow:0 10px 24px rgba(0,0,0,0.25);
+      min-height:110px;
+    }
+    
+    .p6-card-label{
+      font-size:12px;
+      opacity:0.7;
+      margin-bottom:6px;
+      letter-spacing:0.3px;
+    }
+    
+    .p6-card-value{
+      font-size:28px;
+      font-weight:900;
+      margin-bottom:6px;
+    }
+    
+    .p6-card-extra{
+      font-size:12px;
+      opacity:0.65;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
     df_latest = _load_latest_runs(tickers=tickers, period_ref=period_ref)
     if df_latest.empty:
@@ -162,15 +194,44 @@ def render_patch6_report(
     stats = _compute_stats(df_latest)
 
     # Scorecard
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.metric("Qualidade (heurística)", stats.label_qualidade())
-    with c2:
-        st.metric("Perspectiva 12m", stats.label_perspectiva())
-    with c3:
-        st.metric("Cobertura", f"{stats.total}/{len(tickers)}")
-    with c4:
-        st.metric("Distribuição", f"Fortes {stats.fortes} • Moderadas {stats.moderadas} • Fracas {stats.fracas}")
+    qualidade = stats.label_qualidade()
+    perspectiva = stats.label_perspectiva()
+    cobertura = f"{stats.total}/{len(tickers)}"
+    distrib = f"Fortes {stats.fortes} • Moderadas {stats.moderadas} • Fracas {stats.fracas}"
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    col1.markdown(f"""
+    <div class="p6-card">
+      <div class="p6-card-label">Qualidade (heurística)</div>
+      <div class="p6-card-value">{qualidade}</div>
+      <div class="p6-card-extra">Heurística agregada a partir dos sinais do RAG.</div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    col2.markdown(f"""
+    <div class="p6-card">
+      <div class="p6-card-label">Perspectiva 12m</div>
+      <div class="p6-card-value">{perspectiva}</div>
+      <div class="p6-card-extra">Direcionalidade consolidada para os próximos 12 meses.</div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    col3.markdown(f"""
+    <div class="p6-card">
+      <div class="p6-card-label">Cobertura</div>
+      <div class="p6-card-value">{cobertura}</div>
+      <div class="p6-card-extra">Ativos com evidências suficientes no período analisado.</div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    col4.markdown(f"""
+    <div class="p6-card">
+      <div class="p6-card-label">Distribuição</div>
+      <div class="p6-card-value">{distrib}</div>
+      <div class="p6-card-extra">Distribuição de sinais qualitativos no portfólio.</div>
+    </div>
+    """, unsafe_allow_html=True)
 
     st.caption("🛈 Como a qualidade é estimada: combinação de (i) cobertura do portfólio, (ii) perspectiva 12m agregada e (iii) distribuição de sinais (forte/moderada/fraca). É uma heurística para orientar leitura — não é recomendação.")
 
