@@ -217,16 +217,6 @@ BULLETS:
             "Abaixo, os destaques por empresa no formato de research."
         )
 
-    st.markdown("## 🧾 Sumário do Portfólio")
-    view = df_latest.copy()
-    view["sinal"] = view["perspectiva_compra"].fillna("").apply(
-        lambda x: _badge(str(x).upper() if x else "—", _tone_from_perspectiva(str(x)))
-    )
-    view = view[["ticker", "period_ref", "created_at", "sinal", "resumo"]].rename(
-        columns={"created_at": "atualizado_em", "resumo": "resumo"}
-    )
-    st.markdown(view.to_html(escape=False, index=False), unsafe_allow_html=True)
-
     if show_company_details:
         st.markdown("## 🏢 Relatórios por Empresa")
         for row in df_latest.itertuples(index=False):
