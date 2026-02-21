@@ -577,16 +577,25 @@ def render() -> None:
                 for i, e in enumerate(evid[:12], start=1):
                     st.markdown(f"**{i}.** {e}")
 
-    # Controles
-    rodar_todo = st.checkbox("Rodar LLM para todo o portfólio (recomendado)", value=True)
-    usar_topk_inteligente = st.checkbox("Usar Top-K inteligente (intenção futura)", value=True)
-    debug_topk = st.checkbox("Debug Top-K (score detalhado)", value=False)
-
-    top_k = st.slider("Top-K chunks", min_value=3, max_value=12, value=6, step=1)
-    st.number_input("Janela (meses) p/ Top-K inteligente", value=12, step=1, disabled=True)
-    window_months = 12
-
-    period_ref = st.text_input("period_ref (ex.: 2024Q4)", value="2024Q4")
+    # Defaults fixos (sem UI)
+    run_llm_all = True
+    use_topk_inteligente = True
+    debug_topk = False
+    window_months = 12  # fixo internamente
+    
+    # Único controle exposto
+    top_k = st.slider(
+        "Top-K chunks",
+        min_value=3,
+        max_value=12,
+        value=6,
+        step=1
+    )
+    
+    period_ref = st.text_input(
+        "period_ref (ex.: 2024Q4)",
+        value="2024Q4"
+    )
 
     # 📘 Relatório profissional (consolidado)
     with st.expander("📘 Relatório profissional do portfólio", expanded=True):
