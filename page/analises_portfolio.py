@@ -636,16 +636,3 @@ CONTEXTO:
 
         st.subheader("🧾 Status por ticker")
         st.dataframe(status_rows, use_container_width=True)
-
-    # Histórico
-    st.subheader("📜 Histórico (patch6_runs) — por ticker")
-    for tk in tickers:
-        with st.expander(f"{tk}", expanded=False):
-            try:
-                h = list_patch6_history(tk, limit=8)
-                if h is None or getattr(h, "empty", False):
-                    st.caption("Sem histórico salvo para este ticker.")
-                else:
-                    st.dataframe(h, use_container_width=True, hide_index=True)
-            except Exception as e:
-                st.caption(f"Histórico indisponível: {type(e).__name__}: {e}")
