@@ -359,23 +359,78 @@ def render() -> None:
         return
 
     ticker_escolhido = st.selectbox("Ticker", tickers, index=0)
+
+    # --- Recuperação de contexto (Top-K)
+    use_topk_inteligente = st.checkbox("Usar Top-K inteligente (intenção futura)", value=True)
     top_k = st.slider("Top-K chunks (contexto)", min_value=3, max_value=12, value=6, step=1)
+
+    # parâmetros do Top-K inteligente (só aparecem se habilitado)
+    months_window = None
+    debug_topk = False
+    if use_topk_inteligente:
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            months_window = st.slider("Janela (meses) p/ Top-K inteligente", min_value=3, max_value=36, value=18, step=1)
+        with c2:
+            debug_topk = st.checkbox("Debug Top-K (score detalhado)", value=False)
+
     period_ref = st.text_input("period_ref (ex.: 2024Q4)", value="2024Q4")
 
     if st.button("Rodar LLM agora"):
-        # Reusa fetch_topk_chunks do store; import local evita erro se você preferir
-        from core.docs_corporativos_store import fetch_topk_chunks
+        # --- Seleção de chunks
+        chunks = []
+        topk_debug_rows = None
 
-        chunks = fetch_topk_chunks(ticker_escolhido, int(top_k))
+        if use_topk_inteligente:
+            # Import local com fallback (não quebra deploy se o módulo não existir)
+            try:
+                from core.rag_retriever import get_topk_chunks_inteligente as _get_topk_inteligente
+            except Exception as e:
+                st.warning(f"Top-K inteligente indisponível ({e}). Caindo para fetch_topk_chunks.")
+                _get_topk_inteligente = None
+
+            if _get_topk_inteligente is not None:
+                # debug=True retorna objetos (ChunkHit); debug=False retorna lista de textos
+                result = _get_topk_inteligente(
+                    ticker_escolhido,
+                    top_k=int(top_k),
+                    months_window=int(months_window or 18),
+                    debug=bool(debug_topk),
+                )
+                if debug_topk:
+                    topk_debug_rows = [{
+                        "chunk_id": h.chunk_id,
+                        "doc_id": h.doc_id,
+                        "tipo_doc": h.tipo_doc,
+                        "data_doc": h.data_doc,
+                        "score_final": round(h.score_final, 4),
+                        "intent": round(h.score_intent, 4),
+                        "recency": round(h.score_recency, 4),
+                        "peso_tipo": round(h.weight_tipo, 4),
+                    } for h in result]
+                    chunks = [h.chunk_text for h in result]
+                else:
+                    chunks = result
+
+        # fallback padrão (mantém compatibilidade total)
+        if not chunks:
+            from core.docs_corporativos_store import fetch_topk_chunks
+            chunks = fetch_topk_chunks(ticker_escolhido, int(top_k))
+
         if not chunks:
             st.error("Sem chunks no Supabase para este ticker. Rode o ingest+chunking primeiro.")
             st.stop()
+
+        if topk_debug_rows:
+            st.subheader("🔎 Debug Top-K inteligente")
+            st.dataframe(topk_debug_rows, use_container_width=True)
 
         contexto = "\n\n".join(chunks)
         client = llm_factory.get_llm_client()
 
         prompt = f"""
-Você é um analista fundamentalista focado em direcionalidade estratégica.
+Você é um analista fundamentalista focado em direcionalidade estratégica e criação de valor ao acionista minoritário.
+Importante: NÃO use DFP/ITR como base principal; foque em intenção futura (capex, expansão, dívida, dividendos, M&A, guidance).
 Use somente o CONTEXTO abaixo. Devolva APENAS JSON válido na estrutura:
 
 {{
