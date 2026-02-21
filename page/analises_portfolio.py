@@ -481,6 +481,14 @@ def render() -> None:
 
     period_ref = st.text_input("period_ref (ex.: 2024Q4)", value="2024Q4")
 
+    # 📘 Relatório profissional (consolidado)
+    with st.expander("📘 Relatório profissional do portfólio", expanded=True):
+        try:
+            render_patch6_report(tickers=tickers, period_ref=period_ref, llm_factory=llm_factory, show_company_details=True)
+        except Exception as e:
+            st.caption(f"Relatório indisponível: {type(e).__name__}: {e}")
+
+
     # Wrappers
     def _call_llm(client: Any, prompt: str) -> str:
         # tenta métodos conhecidos sem acoplar ao SDK
