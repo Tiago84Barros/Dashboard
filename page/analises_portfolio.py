@@ -238,9 +238,6 @@ def render() -> None:
     st.markdown(_render_saved_data_header_html(selic_used, len(tickers), margem_bench, n_segmentos), unsafe_allow_html=True)
     st.markdown(_render_ticker_chips_html(tickers), unsafe_allow_html=True)
 
-    with st.expander("Ver composição do portfólio"):
-        st.dataframe(items, use_container_width=True)
-
     st.divider()
 
     # ------------------------------------------------------------------
