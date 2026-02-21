@@ -17,6 +17,7 @@ Agora:
 from __future__ import annotations
 
 import json
+import re
 import time
 import traceback
 import importlib
@@ -394,18 +395,72 @@ def render() -> None:
     )
 
     def _llm_complete(client, prompt: str) -> str:
-        """Compat: tenta complete/chat/invoke/generate."""
-        for fn_name in ("complete", "chat", "invoke", "generate"):
-            fn = getattr(client, fn_name, None)
-            if callable(fn):
+        """Compat: suporta diferentes clients (complete/chat/invoke/generate)."""
+        # 1) complete(prompt)
+        fn = getattr(client, "complete", None)
+        if callable(fn):
+            return fn(prompt)
+
+        # 2) chat(messages=[...]) ou chat(prompt)
+        fn = getattr(client, "chat", None)
+        if callable(fn):
+            try:
                 out = fn(prompt)
-                if isinstance(out, str):
-                    return out
-                try:
-                    return json.dumps(out, ensure_ascii=False)
-                except Exception:
-                    return str(out)
+            except TypeError:
+                out = fn([{"role": "user", "content": prompt}])
+            return out
+
+        # 3) invoke({"input": ...}) / invoke(prompt)
+        fn = getattr(client, "invoke", None)
+        if callable(fn):
+            try:
+                return fn(prompt)
+            except TypeError:
+                return fn({"input": prompt})
+
+        # 4) generate(prompt)
+        fn = getattr(client, "generate", None)
+        if callable(fn):
+            return fn(prompt)
+
         raise AttributeError("Cliente LLM não expõe complete/chat/invoke/generate")
+
+    def _normalize_llm_output(raw) -> str:
+        """Converte retorno do client em string (ou JSON serializado)."""
+        if raw is None:
+            return ""
+        if isinstance(raw, str):
+            return raw
+        # Alguns clients retornam objetos com .content / .text
+        for attr in ("content", "text", "message"):
+            if hasattr(raw, attr):
+                val = getattr(raw, attr)
+                if isinstance(val, str):
+                    return val
+        try:
+            return json.dumps(raw, ensure_ascii=False)
+        except Exception:
+            return str(raw)
+
+    def _parse_llm_json(raw_text: str):
+        """Extrai JSON mesmo quando vem com lixo/markdown."""
+        s = (raw_text or "").strip()
+        if not s:
+            raise ValueError("Resposta vazia")
+        # remove fences
+        s = re.sub(r"^```(?:json)?\s*", "", s, flags=re.IGNORECASE)
+        s = re.sub(r"\s*```$", "", s)
+        # tenta direto
+        try:
+            return json.loads(s)
+        except Exception:
+            pass
+        # tenta extrair o primeiro objeto JSON {...}
+        m = re.search(r"\{[\s\S]*\}", s)
+        if m:
+            return json.loads(m.group(0))
+        raise ValueError("JSON não encontrado na resposta")
+
 
     if not tickers:
         st.info("Sem tickers no snapshot.")
@@ -419,12 +474,17 @@ def render() -> None:
     with colC:
         top_k = st.slider("Top-K chunks", min_value=3, max_value=12, value=6, step=1)
 
-    months_window = 18
+    extra = st.text_input("Tickers extras (opcional, separados por vírgula)", value="")
+    if extra.strip():
+        extras = [t.strip().upper() for t in extra.split(",") if t.strip()]
+        tickers = sorted(list(dict.fromkeys(tickers + extras)))
+
+    months_window = 12
     debug_topk = False
     if use_topk_inteligente:
         c1, c2 = st.columns([1, 1])
         with c1:
-            months_window = st.slider("Janela (meses) p/ Top-K inteligente", min_value=3, max_value=36, value=18, step=1)
+            months_window = st.slider("Janela (meses) p/ Top-K inteligente", min_value=3, max_value=24, value=12, step=1)
         with c2:
             debug_topk = st.checkbox("Debug Top-K (score detalhado)", value=False)
 
@@ -482,6 +542,7 @@ def render() -> None:
         tickers_alvo = tickers if modo_lote else [ticker_escolhido]
         progresso = st.progress(0.0)
         resumo_portfolio = {"forte": 0, "moderada": 0, "fraca": 0, "erros": 0}
+        status_rows = []
 
         client = llm_factory.get_llm_client()
 
@@ -492,6 +553,7 @@ def render() -> None:
                 if not chunks:
                     resumo_portfolio["erros"] += 1
                     st.warning(f"{tkr}: sem chunks no Supabase (rode ingest+chunking).")
+                    status_rows.append({"ticker": tkr, "status": "SEM_CHUNKS", "erro": "Sem chunks"})
                     progresso.progress(idx / len(tickers_alvo))
                     continue
 
@@ -515,18 +577,21 @@ CONTEXTO:
 """.strip()
 
                 try:
-                    raw = _llm_complete(client, prompt)
+                    raw_obj = _llm_complete(client, prompt)
+                    raw = _normalize_llm_output(raw_obj)
                 except Exception as err:
                     resumo_portfolio["erros"] += 1
                     st.error(f"{tkr}: falha ao chamar LLM: {err}")
+                    status_rows.append({"ticker": tkr, "status": "ERRO_LLM", "erro": str(err)})
                     progresso.progress(idx / len(tickers_alvo))
                     continue
 
                 try:
-                    resultado = json.loads(raw)
+                    resultado = _parse_llm_json(raw)
                 except Exception:
                     resumo_portfolio["erros"] += 1
                     st.error(f"{tkr}: LLM não retornou JSON válido.")
+                    status_rows.append({"ticker": tkr, "status": "JSON_INVALIDO", "erro": "JSON inválido"})
                     st.code(raw)
                     progresso.progress(idx / len(tickers_alvo))
                     continue
@@ -551,6 +616,8 @@ CONTEXTO:
 
                 badge = _badge_class(perspectiva)
                 resumo = resultado.get("resumo", "")
+
+                status_rows.append({"ticker": tkr, "status": "OK", "erro": ""})
 
                 st.markdown(
                     f"""
@@ -587,6 +654,9 @@ CONTEXTO:
             f"Forte: {resumo_portfolio['forte']} | Moderada: {resumo_portfolio['moderada']} | "
             f"Fraca: {resumo_portfolio['fraca']} | Erros/sem dados: {resumo_portfolio['erros']}"
         )
+        if status_rows:
+            st.subheader("🧾 Status por ticker")
+            st.dataframe(status_rows, use_container_width=True)
 
     st.subheader("📜 Histórico (patch6_runs)")
     try:
