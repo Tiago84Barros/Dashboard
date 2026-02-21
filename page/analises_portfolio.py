@@ -460,11 +460,31 @@ def render() -> None:
                    border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);
                    font-size:12px;line-height:1.2}
           .p6-chips{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 14px 0}
-          .p6-chip{display:inline-flex;align-items:center;justify-content:center;gap:8px;
-                   padding:7px 10px;border-radius:10px;border:1px solid rgba(255,255,255,.12);
-                   background:rgba(255,255,255,.02);font-weight:700;font-size:12px}
-          .p6-chip img{width:22px;height:22px;border-radius:6px;object-fit:contain;background:#fff;padding:3px}
-          .p6-chip .tck{font-weight:800}
+          .p6-chip{
+            display:inline-flex;
+            align-items:center;
+            gap:12px;
+            padding:10px 16px;
+            border-radius:14px;
+            border:1px solid rgba(255,255,255,0.10);
+            background: rgba(255,255,255,0.04);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+          }
+        
+          .p6-chip img{
+            width:34px;
+            height:34px;
+            object-fit:contain;
+            border-radius:8px;
+            background:#ffffff;
+            padding:4px;
+        }
+        
+        .p6-chip .tck{
+          font-weight:700;
+          font-size:14px;
+          letter-spacing:0.3px;
+        }
 </style>
         """,
         unsafe_allow_html=True,
