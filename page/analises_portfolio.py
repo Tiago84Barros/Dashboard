@@ -25,6 +25,8 @@ from typing import Any, Dict, List, Optional, Callable, Tuple
 
 import streamlit as st
 
+from core.helpers import get_logo_url
+
 from core.portfolio_snapshot_store import get_latest_snapshot
 from core.docs_corporativos_store import (
     count_docs,
@@ -85,8 +87,18 @@ def _render_saved_data_header_html(selic: Any, n_acoes: int, margem: Any, n_segm
     '''
 
 def _render_ticker_chips_html(tickers: List[str]) -> str:
-    chips = "".join([f'<span class="p6-chip">{t}</span>' for t in tickers])
-    return f'<div class="p6-chips">{chips}</div>'
+    # Chips com logo + ticker (mesmo padrão visual da seção Básica)
+    parts: List[str] = ['<div class="p6-chips">']
+    for t in tickers:
+        url = get_logo_url(t)
+        parts.append(
+            f'''<span class="p6-chip">
+                    <img src="{url}" alt="{t}" onerror="this.style.display='none';"/>
+                    <span class="tck">{t}</span>
+                </span>'''
+        )
+    parts.append("</div>")
+    return "".join(parts)
 
 def _import_first(*module_paths: str):
     errors = []
@@ -448,9 +460,11 @@ def render() -> None:
                    border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);
                    font-size:12px;line-height:1.2}
           .p6-chips{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 14px 0}
-          .p6-chip{display:inline-flex;align-items:center;justify-content:center;
+          .p6-chip{display:inline-flex;align-items:center;justify-content:center;gap:8px;
                    padding:7px 10px;border-radius:10px;border:1px solid rgba(255,255,255,.12);
                    background:rgba(255,255,255,.02);font-weight:700;font-size:12px}
+          .p6-chip img{width:22px;height:22px;border-radius:6px;object-fit:contain;background:#fff;padding:3px}
+          .p6-chip .tck{font-weight:800}
 </style>
         """,
         unsafe_allow_html=True,
