@@ -376,34 +376,84 @@ def render() -> None:
 
     # CSS simples para cards
     st.markdown(
-        """
-        <style>
-        .patch6-card {
-            border: 1px solid rgba(255,255,255,0.12);
-            border-radius: 14px;
-            padding: 14px 16px;
-            margin: 12px 0;
-            background: rgba(255,255,255,0.04);
-        }
-        .patch6-card h3 { margin: 0 0 6px 0; font-size: 18px; }
-        .patch6-pill {
-            display: inline-block;
-            padding: 2px 10px;
-            border-radius: 999px;
-            font-size: 12px;
-            border: 1px solid rgba(255,255,255,0.18);
-            margin-left: 8px;
-        }
-        .pill-forte { background: rgba(34,197,94,0.18); }
-        .pill-moderada { background: rgba(234,179,8,0.18); }
-        .pill-fraca { background: rgba(239,68,68,0.18); }
-        .patch6-muted { opacity: 0.85; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    def _pill_class(persp: str) -> str:
+    """
+    <style>
+    /* ---------- Patch6 Cards (Profissional) ---------- */
+    .p6-wrap { margin: 14px 0 18px 0; }
+    .p6-card{
+        border: 1px solid rgba(255,255,255,0.10);
+        border-radius: 16px;
+        padding: 16px 18px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.03));
+        box-shadow: 0 10px 26px rgba(0,0,0,0.22);
+    }
+    .p6-top{
+        display:flex; align-items:flex-start; justify-content:space-between;
+        gap: 12px; margin-bottom: 10px;
+    }
+    .p6-title{
+        display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+        margin:0; font-size:18px; font-weight:700;
+    }
+    .p6-sub{
+        margin: 2px 0 0 0; opacity:0.85; font-size:13px;
+    }
+    .p6-badges{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    .p6-pill{
+        display:inline-flex; align-items:center; gap:6px;
+        padding: 4px 10px; border-radius:999px;
+        font-size:12px; font-weight:600;
+        border: 1px solid rgba(255,255,255,0.14);
+        background: rgba(255,255,255,0.05);
+    }
+    .p6-pill strong{ font-weight:800; }
+    .p6-forte{ background: rgba(34,197,94,0.16); border-color: rgba(34,197,94,0.35); }
+    .p6-moderada{ background: rgba(234,179,8,0.16); border-color: rgba(234,179,8,0.35); }
+    .p6-fraca{ background: rgba(239,68,68,0.16); border-color: rgba(239,68,68,0.35); }
+    .p6-meta{ opacity:0.78; font-size:12px; }
+    .p6-grid{
+        display:grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        margin-top: 12px;
+    }
+    @media (max-width: 900px){
+        .p6-grid{ grid-template-columns: 1fr; }
+    }
+    .p6-box{
+        border: 1px solid rgba(255,255,255,0.10);
+        border-radius: 14px;
+        padding: 12px 12px;
+        background: rgba(255,255,255,0.03);
+    }
+    .p6-box h4{
+        margin: 0 0 8px 0;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        opacity: 0.85;
+    }
+    .p6-divider{
+        height: 1px;
+        background: rgba(255,255,255,0.10);
+        margin: 12px 0;
+    }
+    .p6-cons{
+        font-size: 13px;
+        opacity: 0.9;
+        line-height: 1.45;
+    }
+    .p6-evid{
+        border-left: 3px solid rgba(255,255,255,0.18);
+        padding-left: 10px;
+        margin: 8px 0;
+        opacity: 0.92;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+def _pill_class(persp: str) -> str:
         p = (persp or "").strip().lower()
         if "fort" in p:
             return "pill-forte"
@@ -412,36 +462,87 @@ def render() -> None:
         return "pill-fraca"
 
     def _render_card(ticker: str, result: Dict[str, Any]) -> None:
-        persp = str(result.get("perspectiva_compra", "")).strip()
-        resumo = str(result.get("resumo", "")).strip()
-        pontos = result.get("pontos_chave") or []
-        riscos = result.get("riscos") or []
-        evids = result.get("evidencias") or []
+    """Renderiza um card profissional por ticker com resultado da LLM."""
+    persp = str(result.get("perspectiva_compra", "")).strip()
+    resumo = str(result.get("resumo", "")).strip()
 
-        html = f"""
-        <div class="patch6-card">
-          <h3>{ticker}
-            <span class="patch6-pill {_pill_class(persp)}">{persp or "—"}</span>
-          </h3>
-          <div class="patch6-muted">{resumo}</div>
+    pontos = result.get("pontos_chave") or result.get("pontos-chave") or result.get("pontos") or []
+    riscos = result.get("riscos") or []
+    evids = result.get("evidencias") or result.get("evidências") or []
+    consideracoes = (
+        result.get("consideracoes_llm")
+        or result.get("considerações_llm")
+        or result.get("consideracoes")
+        or result.get("observacoes")
+        or ""
+    )
+    confianca = result.get("confianca") or result.get("confidence") or ""
+
+    if isinstance(pontos, str): pontos = [pontos]
+    if isinstance(riscos, str): riscos = [riscos]
+    if isinstance(evids, str): evids = [evids]
+
+    pill_cls = _pill_class(persp)
+    persp_label = persp or "—"
+
+    st.markdown('<div class="p6-wrap"><div class="p6-card">', unsafe_allow_html=True)
+
+    st.markdown(
+        f'''
+        <div class="p6-top">
+          <div>
+            <div class="p6-title">📌 {ticker}
+              <span class="p6-pill {pill_cls}"><strong>{persp_label}</strong></span>
+            </div>
+            <div class="p6-sub">Intenção futura e alocação de capital (capex, dívida, expansão, dividendos, M&A) com evidências CVM/IPE.</div>
+          </div>
+          <div class="p6-badges">
+            <span class="p6-pill"><span class="p6-meta">Top-K</span> <strong>{int(top_k)}</strong></span>
+            <span class="p6-pill"><span class="p6-meta">Janela</span> <strong>{int(janela_meses)}m</strong></span>
+            <span class="p6-pill"><span class="p6-meta">period_ref</span> <strong>{period_ref}</strong></span>
+          </div>
         </div>
-        """
-        st.markdown(html, unsafe_allow_html=True)
+        ''',
+        unsafe_allow_html=True,
+    )
 
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("**Pontos-chave**")
-            st.write(pontos if pontos else ["—"])
-        with c2:
-            st.markdown("**Riscos**")
-            st.write(riscos if riscos else ["—"])
+    if resumo:
+        st.markdown(f'<div class="p6-cons">{resumo}</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="p6-cons">—</div>', unsafe_allow_html=True)
 
-        if evids:
-            with st.expander("Evidências (trechos)"):
-                for ev in evids[:8]:
-                    st.markdown(f"- {ev}")
+    if consideracoes:
+        st.markdown('<div class="p6-divider"></div>', unsafe_allow_html=True)
+        st.markdown('<div class="p6-box"><h4>Considerações da LLM</h4>', unsafe_allow_html=True)
+        st.markdown(f'<div class="p6-cons">{consideracoes}</div></div>', unsafe_allow_html=True)
 
-    def _get_chunks_para_ticker(ticker: str) -> Tuple[List[str], str]:
+    if str(confianca).strip():
+        st.markdown(
+            f'<div class="p6-divider"></div><div class="p6-meta">Confiança (auto-relatada): <strong>{confianca}</strong></div>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown('<div class="p6-divider"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="p6-grid">', unsafe_allow_html=True)
+
+    st.markdown('<div class="p6-box"><h4>Pontos-chave</h4>', unsafe_allow_html=True)
+    st.write(pontos if pontos else ["—"])
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="p6-box"><h4>Riscos</h4>', unsafe_allow_html=True)
+    st.write(riscos if riscos else ["—"])
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    if evids:
+        with st.expander("📎 Evidências (trechos literais)"):
+            for ev in evids[:10]:
+                st.markdown(f'<div class="p6-evid">{ev}</div>', unsafe_allow_html=True)
+
+    st.markdown("</div></div>", unsafe_allow_html=True)
+
+def _get_chunks_para_ticker(ticker: str) -> Tuple[List[str], str]:
         """Retorna (chunks, origem)."""
         from core.docs_corporativos_store import fetch_topk_chunks
 
@@ -497,7 +598,9 @@ def render() -> None:
   "resumo": "texto curto",
   "pontos_chave": ["..."],
   "riscos": ["..."],
-  "evidencias": ["trechos literais do contexto"]
+  "evidencias": ["trechos literais do contexto"],
+  "consideracoes_llm": "como a LLM interpretou as evidências e limitações",
+  "confianca": "alta|média|baixa"
 }"""
 
         client = llm_factory.get_llm_client()
