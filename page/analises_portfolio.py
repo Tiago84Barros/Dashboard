@@ -484,9 +484,18 @@ def render() -> None:
     # 📘 Relatório profissional (consolidado)
     with st.expander("📘 Relatório profissional do portfólio", expanded=True):
         try:
-            render_patch6_report(tickers=tickers, period_ref=period_ref, llm_factory=llm_factory, show_company_details=True)
+            # Import local para garantir escopo e revelar erros reais
+            from core.patch6_report import render_patch6_report
+
+            render_patch6_report(
+                tickers=tickers,
+                period_ref=period_ref,
+                llm_factory=llm_factory,
+                show_company_details=True,
+            )
         except Exception as e:
-            st.caption(f"Relatório indisponível: {type(e).__name__}: {e}")
+            st.error("Relatório indisponível.")
+            st.exception(e)
 
 
     # Wrappers
