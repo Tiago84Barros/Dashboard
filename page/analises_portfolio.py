@@ -205,6 +205,7 @@ def _safe_call(fn: Callable[..., Any], **kwargs):
 
 
 import re
+import html
 
 def _clip(s: str, max_chars: int) -> str:
     s = (s or "").strip()
@@ -691,14 +692,14 @@ def render() -> None:
                 <div>
                   <span class="p6-k">Pontos-chave</span>
                   <ul class="p6-list">
-                    {''.join([f'<li>{st._utils.escape_markdown(p)}</li>' for p in pontos]) if pontos else '<li class="p6-muted">—</li>'}
+                    {''.join([f'<li>{html.escape(p)}</li>' for p in pontos]) if pontos else '<li class="p6-muted">—</li>'}
                   </ul>
                 </div>
 
                 <div>
                   <span class="p6-k">Riscos</span>
                   <ul class="p6-list">
-                    {''.join([f'<li>{st._utils.escape_markdown(r)}</li>' for r in riscos]) if riscos else '<li class="p6-muted">—</li>'}
+                    {''.join([f'<li>{html.escape(r)}</li>' for r in riscos]) if riscos else '<li class="p6-muted">—</li>'}
                   </ul>
                 </div>
               </div>
@@ -739,7 +740,8 @@ def render() -> None:
     with st.expander("📘 Relatório salvo do portfólio", expanded=True):
         try:
             # Import local para garantir escopo e revelar erros reais
-            from core.patch6_report import render_patch6_report
+            from core.patch6_report import re
+import htmlnder_patch6_report
 
             render_patch6_report(
                 tickers=tickers,
@@ -969,7 +971,8 @@ CONTEXTO:
         st.divider()
         st.markdown("## 📘 Relatório salvo atualizado")
         try:
-            from core.patch6_report import render_patch6_report
+            from core.patch6_report import re
+import htmlnder_patch6_report
             render_patch6_report(
                 tickers=tickers,
                 period_ref=period_ref,
