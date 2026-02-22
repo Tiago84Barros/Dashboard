@@ -256,66 +256,177 @@ def _parse_json_loose(text: str) -> Dict[str, Any]:
 def render() -> None:
     st.title("🧠 Análises de Portfólio")
 
-    # CSS institucional (header + cards + chips + cards LLM)
+    # ================================
+    # CSS PADRÃO CONTROLE FINANCEIRO
+    # ================================
+    st.markdown("""
+    <style>
+    .cf-header{
+        display:flex;
+        justify-content:space-between;
+        align-items:center;
+        padding:18px 22px;
+        border-radius:18px;
+        background:linear-gradient(145deg,#0f172a,#111827);
+        border:1px solid rgba(255,255,255,0.08);
+        margin-bottom:20px;
+    }
+    .cf-title{
+        font-size:26px;
+        font-weight:900;
+        margin:0;
+    }
+    .cf-subtitle{
+        font-size:14px;
+        opacity:0.75;
+        margin-top:4px;
+    }
+    .cf-pill{
+        padding:6px 12px;
+        border-radius:999px;
+        background:rgba(59,130,246,0.15);
+        border:1px solid rgba(59,130,246,0.35);
+        font-size:12px;
+    }
+    .cf-card{
+        padding:18px;
+        border-radius:18px;
+        background:linear-gradient(145deg,#111827,#0b1220);
+        border:1px solid rgba(255,255,255,0.08);
+        box-shadow:0 10px 30px rgba(0,0,0,0.35);
+    }
+    .cf-card-label{
+        font-size:13px;
+        opacity:0.75;
+        margin-bottom:8px;
+    }
+    .cf-card-value{
+        font-size:24px;
+        font-weight:900;
+        margin-bottom:6px;
+    }
+    .cf-card-extra{
+        font-size:12px;
+        opacity:0.65;
+        line-height:1.4;
+    }
+    .cf-card-benchmark{
+        border-color:rgba(34,197,94,0.35);
+    }
+    .cf-card-margin{
+        border-color:rgba(234,179,8,0.35);
+    }
+    .cf-card-segment{
+        border-color:rgba(168,85,247,0.35);
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    snapshot = get_latest_snapshot()
+    if not snapshot:
+        st.warning("Nenhum snapshot ativo encontrado.")
+        return
+
+    snapshot_id = str(snapshot.get("id") or "")
+
+    selic_used = snapshot.get("selic_ref")
+    margem_bench = snapshot.get("margem_superior")
+
+    items = snapshot.get("items") or []
+    tickers = sorted({(it.get("ticker") or "").upper() for it in items if it.get("ticker")})
+
+    # Segmentos
+    seg_values = []
+    for it in items:
+        seg = it.get("segmento") or it.get("setor")
+        if seg:
+            seg_values.append(str(seg).strip())
+
+    if not seg_values:
+        fj = snapshot.get("filters_json") or {}
+        seg_values = fj.get("segmentos") or []
+
+    n_segmentos = len(set(seg_values))
+
+    # ================================
+    # HEADER
+    # ================================
     st.markdown(
-        """
-        <style>
-          .p6-header{
-            border:1px solid rgba(255,255,255,.10);
-            border-radius:18px;
-            padding:16px 18px;
-            background:rgba(255,255,255,.03);
-            margin:10px 0 12px 0;
-            box-shadow:0 10px 24px rgba(0,0,0,.22);
-          }
-          .p6-header .p6-title{font-size:28px;font-weight:900;letter-spacing:.2px;margin:0}
-          .p6-header .p6-sub{opacity:.78;margin-top:6px;font-size:14px}
-          .p6-pill-mini{
-            display:inline-block;
-            padding:5px 10px;
-            border-radius:999px;
-            border:1px solid rgba(255,255,255,.12);
-            background:rgba(255,255,255,.04);
-            font-size:12px;
-            margin-top:10px;
-          }
+        f"""
+        <div class="cf-header">
+            <div>
+                <h1 class="cf-title">📊 Portfólio Fundamentalista</h1>
+                <p class="cf-subtitle">
+                    Snapshot ativo • parâmetros utilizados na criação
+                </p>
+            </div>
+            <div>
+                <span class="cf-pill">
+                    Snapshot ID: {snapshot_id[:8]}...
+                </span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-          .p6-mcard{
-            border:1px solid rgba(255,255,255,.10);
-            border-radius:16px;
-            padding:14px 14px 12px 14px;
-            background:rgba(255,255,255,.03);
-            box-shadow:0 10px 24px rgba(0,0,0,.18);
-            height:100%;
-          }
-          .p6-mlabel{opacity:.78;font-size:12px;margin-bottom:6px}
-          .p6-mvalue{font-size:22px;font-weight:900;letter-spacing:.2px}
-          .p6-mextra{opacity:.70;font-size:12px;margin-top:6px;line-height:1.25}
+    col1, col2, col3, col4 = st.columns(4)
 
-          .p6-chips{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 14px 0}
-          .p6-chip{
-            display:inline-flex;
-            align-items:center;
-            gap:12px;
-            padding:10px 16px;
-            border-radius:14px;
-            border:1px solid rgba(255,255,255,0.10);
-            background: rgba(255,255,255,0.04);
-            box-shadow: 0 8px 20px rgba(0,0,0,0.25);
-          }
-          .p6-chip img{
-            width:40px;
-            height:40px;
-            object-fit:contain;
-            border-radius:10px;
-            background:#ffffff;
-            padding:5px;
-          }
-          .p6-chip .tck{
-            font-weight:800;
-            font-size:14px;
-            letter-spacing:0.3px;
-          }
+    col1.markdown(
+        f"""
+        <div class="cf-card cf-card-benchmark">
+            <div class="cf-card-label">Selic utilizada</div>
+            <div class="cf-card-value">{_fmt_pct(selic_used)}</div>
+            <div class="cf-card-extra">
+                Taxa de referência salva no snapshot.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    col2.markdown(
+        f"""
+        <div class="cf-card">
+            <div class="cf-card-label">Ações selecionadas</div>
+            <div class="cf-card-value">{len(tickers)}</div>
+            <div class="cf-card-extra">
+                Total de ativos aprovados pelo modelo.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    col3.markdown(
+        f"""
+        <div class="cf-card cf-card-margin">
+            <div class="cf-card-label">Margem acima do benchmark</div>
+            <div class="cf-card-value">{_fmt_pp(margem_bench)}</div>
+            <div class="cf-card-extra">
+                Exigência mínima configurada na criação.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    col4.markdown(
+        f"""
+        <div class="cf-card cf-card-segment">
+            <div class="cf-card-label">Segmentos cobertos</div>
+            <div class="cf-card-value">{n_segmentos}</div>
+            <div class="cf-card-extra">
+                Diversificação estrutural por segmento.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.divider()
+
+    st.info("Demais funcionalidades (Ingest, Chunking e LLM) permanecem abaixo conforme sua versão atual.")
 
           /* cards por empresa (LLM) */
           .p6-card{border:1px solid rgba(255,255,255,.10);border-radius:16px;padding:16px 16px 12px 16px;
