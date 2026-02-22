@@ -672,7 +672,7 @@ CONTEXTO:
     if st.button("Rodar LLM agora"):
         client = llm_factory.get_llm_client()
 
-        tickers_run = tickers if rodar_todo else [st.selectbox("Ticker", tickers, index=0)]
+        tickers_run = tickers
         total = len(tickers_run)
 
         st.info("Iniciando leitura qualitativa… os cards aparecem à medida que cada ticker finalizar.")
