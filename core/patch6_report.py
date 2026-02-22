@@ -48,24 +48,47 @@ class PortfolioStats:
         if self.fracas > self.fortes and self.fracas >= self.moderadas:
             return "Cautelosa"
         return "Neutra"
-
-
-def _safe_call_llm(llm_client: Any, prompt: str) -> Optional[str]:
-    """Tenta chamar um cliente LLM sem acoplar ao SDK específico."""
-    try:
-        if llm_client is None:
+   
+    def _safe_call_llm(llm_client: Any, prompt: str) -> Optional[str]:
+        try:
+            if llm_client is None:
+                return None
+    
+            model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    
+            # OpenAI SDK novo
+            if hasattr(llm_client, "responses") and hasattr(llm_client.responses, "create") and callable(llm_client.responses.create):
+                resp = llm_client.responses.create(model=model, input=prompt)
+                txt = getattr(resp, "output_text", None)
+                if txt:
+                    return txt
+                try:
+                    return resp.output[0].content[0].text
+                except Exception:
+                    return str(resp)
+    
+            # OpenAI SDK legado
+            if hasattr(llm_client, "chat") and hasattr(llm_client.chat, "completions") and hasattr(llm_client.chat.completions, "create"):
+                resp = llm_client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.2,
+                )
+                return resp.choices[0].message.content
+    
+            # métodos antigos
+            if hasattr(llm_client, "complete") and callable(getattr(llm_client, "complete")):
+                return llm_client.complete(prompt)
+            if hasattr(llm_client, "chat") and callable(getattr(llm_client, "chat")):
+                return llm_client.chat(prompt)
+            if hasattr(llm_client, "invoke") and callable(getattr(llm_client, "invoke")):
+                return llm_client.invoke(prompt)
+            if callable(llm_client):
+                return llm_client(prompt)
+    
             return None
-        if hasattr(llm_client, "complete") and callable(getattr(llm_client, "complete")):
-            return llm_client.complete(prompt)
-        if hasattr(llm_client, "chat") and callable(getattr(llm_client, "chat")):
-            return llm_client.chat(prompt)
-        if hasattr(llm_client, "invoke") and callable(getattr(llm_client, "invoke")):
-            return llm_client.invoke(prompt)
-        if callable(llm_client):
-            return llm_client(prompt)
-    except Exception:
-        return None
-    return None
+        except Exception:
+            return None
 
 
 def _load_latest_runs(tickers: List[str], period_ref: str) -> pd.DataFrame:
