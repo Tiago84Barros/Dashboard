@@ -12,9 +12,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, List, Optional
 
+import os
 import pandas as pd
 import streamlit as st
 from sqlalchemy import text
+
+from typing import Optional, Any
 
 from core.db_loader import get_supabase_engine
 
@@ -161,6 +164,54 @@ def _tone_from_perspectiva(p: str) -> str:
     if p == "fraca":
         return "bad"
     return "neutral"
+
+
+def _safe_call_llm(llm_client: Any, prompt: str) -> Optional[str]:
+    """
+    Wrapper compatível com:
+    - OpenAI SDK novo: client.responses.create(...)
+    - OpenAI SDK legado: client.chat.completions.create(...)
+    - Clientes custom: .complete/.chat/.invoke ou callable
+    """
+    try:
+        if llm_client is None:
+            return None
+
+        model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+        # 1) OpenAI SDK novo (Responses API)
+        if hasattr(llm_client, "responses") and hasattr(llm_client.responses, "create") and callable(llm_client.responses.create):
+            resp = llm_client.responses.create(model=model, input=prompt)
+            txt = getattr(resp, "output_text", None)
+            if txt:
+                return txt
+            try:
+                return resp.output[0].content[0].text
+            except Exception:
+                return str(resp)
+
+        # 2) OpenAI SDK legado (Chat Completions)
+        if hasattr(llm_client, "chat") and hasattr(llm_client.chat, "completions") and hasattr(llm_client.chat.completions, "create"):
+            resp = llm_client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+            )
+            return resp.choices[0].message.content
+
+        # 3) Clientes custom
+        if hasattr(llm_client, "complete") and callable(getattr(llm_client, "complete")):
+            return llm_client.complete(prompt)
+        if hasattr(llm_client, "chat") and callable(getattr(llm_client, "chat")):
+            return llm_client.chat(prompt)
+        if hasattr(llm_client, "invoke") and callable(getattr(llm_client, "invoke")):
+            return llm_client.invoke(prompt)
+        if callable(llm_client):
+            return llm_client(prompt)
+
+        return None
+    except Exception:
+        return None
 
 
 def render_patch6_report(
