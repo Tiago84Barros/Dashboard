@@ -340,11 +340,13 @@ def render() -> None:
 
     # Dados salvos (sem expor o hash)
     selic_used = snapshot.get("selic") or snapshot.get("selic_ref") or snapshot.get("selic_aa")
+    # margem acima do benchmark (p.p.) — compatível com versões antigas e novas
     margem_bench = (
         snapshot.get("margem_sobre_benchmark")
         or snapshot.get("margem_minima")
         or snapshot.get("margem_min")
         or snapshot.get("margem")
+        or snapshot.get("margem_superior")
     )
 
     items = snapshot.get("items") or []
@@ -353,11 +355,24 @@ def render() -> None:
 
 
     # Métricas do portfólio (para o cabeçalho "Dados salvos")
-    seg_values = []
+    # Segmentos cobertos:
+    # - Preferência: info por item (quando disponível)
+    # - Fallback: lista pré-calculada salva no snapshot (filters_json["segmentos"]) — evita mudar schema
+    seg_values: list[str] = []
     for it in items:
         seg = it.get("segmento") or it.get("setor") or it.get("sector") or it.get("segment")
         if seg:
             seg_values.append(str(seg).strip())
+
+    if not seg_values:
+        fj = snapshot.get("filters_json") or {}
+        segs_saved = fj.get("segmentos") or fj.get("segments")
+        if isinstance(segs_saved, (list, tuple, set)):
+            seg_values = [str(x).strip() for x in segs_saved if str(x).strip()]
+        elif isinstance(segs_saved, str) and segs_saved.strip():
+            raw = segs_saved.replace(";", ",")
+            seg_values = [s.strip() for s in raw.split(",") if s.strip()]
+
     n_segmentos = len(set([s for s in seg_values if s]))
 
     # Header institucional + cards de resumo do snapshot

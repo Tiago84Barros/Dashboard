@@ -781,10 +781,22 @@ def render():
                     for it in items:
                         it["peso"] = float(it["peso"]) / s
 
+            # Segmentos cobertos (salvo no snapshot para uso no Patch 6)
+            # Observação: os itens salvos em portfolio_snapshot_items são apenas ticker/peso.
+            # Para não alterar o schema agora, persistimos a lista de segmentos no header (filters_json).
+            segmentos_cobertos = sorted(
+                {
+                    str(e.get("segmento")).strip()
+                    for e in empresas_lideres_finais
+                    if str(e.get("segmento") or "").strip()
+                }
+            )
+
             filters_json = {
                 "tipo_empresa": "ESTABELECIDA_10A",
                 "min_anos_dre": 10,
                 "margem_superior_percent": float(margem_superior),
+                "segmentos": segmentos_cobertos,
                 "selic_source": "macro_db_load_macro_summary",
                 "macro_last_date": str(dados_macro["Data"].max().date()) if "Data" in dados_macro.columns else None,
                 "score_mode": "v2_auto_if_available" if use_score_v2 else "v1",
