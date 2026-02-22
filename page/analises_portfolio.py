@@ -255,6 +255,78 @@ def _parse_json_loose(text: str) -> Dict[str, Any]:
 
 def render() -> None:
     st.title("🧠 Análises de Portfólio")
+    st.markdown("""
+    <style>
+    
+    .p6-card {
+        background: linear-gradient(145deg,#0f172a,#0b1220);
+        border: 1px solid #1e293b;
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 28px;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.35);
+    }
+    
+    .p6-header {
+        display:flex;
+        justify-content:space-between;
+        align-items:center;
+        margin-bottom:16px;
+    }
+    
+    .p6-title {
+        font-size:20px;
+        font-weight:700;
+        color:#f1f5f9;
+    }
+    
+    .p6-badges span {
+        font-size:12px;
+        padding:4px 10px;
+        border-radius:999px;
+        margin-left:6px;
+    }
+    
+    .badge-strong { background:#064e3b; color:#34d399; }
+    .badge-moderate { background:#78350f; color:#fbbf24; }
+    .badge-weak { background:#7f1d1d; color:#f87171; }
+    
+    .p6-section-title {
+        font-weight:600;
+        margin-top:16px;
+        margin-bottom:8px;
+        color:#94a3b8;
+        font-size:13px;
+        text-transform:uppercase;
+        letter-spacing:0.5px;
+    }
+    
+    .p6-text {
+        color:#e2e8f0;
+        font-size:14px;
+        line-height:1.6;
+    }
+    
+    .p6-grid {
+        display:grid;
+        grid-template-columns:1fr 1fr;
+        gap:16px;
+    }
+    
+    .p6-box {
+        background:#111827;
+        padding:14px;
+        border-radius:12px;
+        border:1px solid #1f2937;
+    }
+    
+    .p6-box ul {
+        padding-left:18px;
+        margin:0;
+    }
+    
+    </style>
+    """, unsafe_allow_html=True)
 
     # CSS institucional (header + cards + chips + cards LLM)
     st.markdown(
