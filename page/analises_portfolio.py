@@ -16,6 +16,7 @@ Agora:
 
 from __future__ import annotations
 
+import os
 import json
 import time
 import traceback
@@ -615,8 +616,45 @@ def render() -> None:
 
 
     # Wrappers
+ 
     def _call_llm(client: Any, prompt: str) -> str:
-        # tenta métodos conhecidos sem acoplar ao SDK
+        """
+        Wrapper compatível com:
+        - OpenAI SDK novo: client.responses.create(...)
+        - OpenAI SDK legado: client.chat.completions.create(...)
+        - Clientes custom: .complete/.chat/.invoke ou callable
+        """
+        if client is None:
+            raise AttributeError("Cliente LLM é None.")
+    
+        model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")  # ajuste se você usa outro
+    
+        # 1) OpenAI SDK novo (Responses API)
+        if hasattr(client, "responses") and hasattr(client.responses, "create") and callable(client.responses.create):
+            resp = client.responses.create(
+                model=model,
+                input=prompt,
+            )
+            # SDK costuma expor output_text
+            txt = getattr(resp, "output_text", None)
+            if txt:
+                return txt
+            # fallback defensivo
+            try:
+                return resp.output[0].content[0].text
+            except Exception:
+                return str(resp)
+    
+        # 2) OpenAI SDK legado (Chat Completions)
+        if hasattr(client, "chat") and hasattr(client.chat, "completions") and hasattr(client.chat.completions, "create"):
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+            )
+            return resp.choices[0].message.content
+    
+        # 3) Clientes custom (se existirem)
         if hasattr(client, "complete") and callable(getattr(client, "complete")):
             return client.complete(prompt)
         if hasattr(client, "chat") and callable(getattr(client, "chat")):
@@ -625,8 +663,9 @@ def render() -> None:
             return client.invoke(prompt)
         if callable(client):
             return client(prompt)
-        raise AttributeError("Cliente LLM não expõe complete/chat/invoke nem é callável.")
-
+    
+        raise AttributeError("Cliente LLM não expõe métodos suportados (responses/chat/complete/invoke).")
+  
     def _get_chunks_for_ticker(t: str) -> Tuple[List[str], str]:
         # preferir Top-K inteligente; fallback para fetch_topk_chunks
         try:
