@@ -204,7 +204,7 @@ def _safe_call(fn: Callable[..., Any], **kwargs):
 
 
 def render() -> None:
-    st.title("🧠 Análises de Portfólio (LLM + RAG)")
+    st.title("🧠 Análises de Portfólio")
 
     snapshot = get_latest_snapshot()
     if not snapshot:
