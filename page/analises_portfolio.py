@@ -1,600 +1,1034 @@
-# page/analises_portfolio.py
-# Patch6 — Análises de Portfólio
-#
-# Objetivo deste módulo: carregar (de forma robusta) o portfólio salvo pela página
-# "Criação de Portfólio" e, a partir dele, habilitar as rotinas do Patch6.
-#
-# IMPORTANTE: este arquivo foi feito para ser resiliente a mudanças de nome de
-# helper (get_engine) e de tabela/colunas no Supabase. Ele NÃO assume um schema fixo.
+# -*- coding: utf-8 -*-
+"""
+page/analises_portfolio.py
+
+Patch 6 — Página padrão com LOGS completos (Ingest + Chunking) por ticker.
+
+Por que isso existe:
+- "chunks = 0" geralmente NÃO é erro do chunking, é falta de documentos no Supabase.
+- O botão anterior estava rodando apenas chunking, então tickers com docs=0 "passavam rápido"
+  e não mostravam motivo.
+
+Agora:
+- Para cada ticker: roda Ingest (CVM/IPE) -> mostra relatório -> roda Chunking -> mostra resultado
+- Se docs continuar 0 após ingest, você verá isso explicitamente e o relatório do ingest
+"""
 
 from __future__ import annotations
 
+import os
 import json
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+import time
+import traceback
+import importlib
+import inspect
+from typing import Any, Dict, List, Optional, Callable, Tuple
 
 import streamlit as st
+import html
 
-# ---------------------------
-# CSS (leve e seguro)
-# ---------------------------
+from core.helpers import get_logo_url
 
-_CSS = """
-<style>
-.p6-header{
-  display:flex; align-items:flex-start; justify-content:space-between; gap:16px;
-  padding:18px 18px; border-radius:18px;
-  background: linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
-  border: 1px solid rgba(255,255,255,0.08);
-}
-.p6-title{ font-size:40px; font-weight:800; margin:0; letter-spacing:-0.4px; }
-.p6-sub{ margin:6px 0 0 0; opacity:0.86; font-size:14px; line-height:1.35; }
-.p6-pill{
-  display:inline-flex; align-items:center; gap:8px;
-  padding:8px 12px; border-radius:999px;
-  border:1px solid rgba(255,255,255,0.10);
-  background: rgba(255,255,255,0.04);
-  font-size:12px; opacity:0.95;
-}
-.p6-section{ margin-top: 14px; }
-.p6-card{
-  padding:14px 14px; border-radius:16px;
-  border:1px solid rgba(255,255,255,0.10);
-  background: rgba(255,255,255,0.04);
-  box-shadow: 0 10px 28px rgba(0,0,0,0.22);
-  height: 100%;
-}
-.p6-card .lbl{ font-size:12px; opacity:0.78; margin-bottom:6px; }
-.p6-card .val{ font-size:26px; font-weight:800; letter-spacing:-0.3px; }
-.p6-card .extra{ margin-top:6px; font-size:12px; opacity:0.78; line-height:1.35; }
-.p6-asset{
-  display:flex; align-items:center; gap:10px;
-  padding:10px 12px; border-radius:14px;
-  border:1px solid rgba(255,255,255,0.10);
-  background: rgba(255,255,255,0.04);
-}
-.p6-asset img{ width:28px; height:28px; border-radius:6px; object-fit:contain; background:#fff; padding:3px; }
-.p6-asset .tck{ font-weight:800; letter-spacing:0.2px; }
-.p6-muted{ opacity:0.75; font-size:12px; }
-</style>
-"""
+from core.portfolio_snapshot_store import get_latest_snapshot
+from core.docs_corporativos_store import (
+    count_docs,
+    count_chunks,
+    process_missing_chunks_for_ticker,
+)
+from core.patch6_runs_store import save_patch6_run, list_patch6_history
 
-# ---------------------------
-# DB helpers (imports flexíveis)
-# ---------------------------
+import core.ai_models.llm_client.factory as llm_factory
 
-def _get_engine():
-    """
-    Tenta resolver o engine do Supabase/Postgres, independentemente do nome do helper
-    no seu projeto.
-    """
-    # Ordem: helpers mais comuns no seu histórico de projeto
-    candidates = [
-        ("core.db_loader", "get_supabase_engine"),
-        ("core.db_loader", "get_engine"),
-        ("core.db", "get_engine"),
-        ("core.database", "get_engine"),
-        ("db_loader", "get_engine"),
-    ]
-    last_err = None
-    for mod_name, fn_name in candidates:
+
+# ------------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------------
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+def _fmt_s(ms: int) -> str:
+    return f"{ms/1000:.1f}s"
+
+def _safe_upper(x: Any) -> str:
+    return str(x or "").strip().upper()
+
+def _fmt_pct(x: Any, default: str = "—") -> str:
+    try:
+        if x is None:
+            return default
+        v = float(x)
+        # aceita 0.12 ou 12.0
+        if abs(v) <= 1.5:
+            v *= 100.0
+        return f"{v:.2f}%"
+    except Exception:
+        return default
+
+def _fmt_pp(x: Any, default: str = "—") -> str:
+    try:
+        if x is None:
+            return default
+        v = float(x)
+        if abs(v) <= 1.5:
+            v *= 100.0
+        return f"{v:.2f} p.p."
+    except Exception:
+        return default
+
+
+def _escape_html(x: Any) -> str:
+    """Escape seguro para strings vindas da LLM / banco antes de injetar em HTML."""
+    try:
+        return html.escape(str(x or "").strip())
+    except Exception:
+        return ""
+
+
+def _render_saved_data_header_html(selic: Any, n_acoes: int, margem: Any, n_segmentos: int) -> str:
+    return f'''
+    <div class="p6-saved">
+        <div class="p6-saved-title">📌 Dados salvos</div>
+        <div class="p6-saved-meta">
+            <span class="p6-pill">Selic usada: <b>{_fmt_pct(selic)}</b></span>
+            <span class="p6-pill">Ações: <b>{n_acoes}</b></span>
+            <span class="p6-pill">Acima do benchmark: <b>{_fmt_pp(margem)}</b></span>
+            <span class="p6-pill">Segmentos: <b>{n_segmentos}</b></span>
+        </div>
+    </div>
+    '''
+
+def _render_ticker_chips_html(tickers: List[str]) -> str:
+    # Chips com logo + ticker (mesmo padrão visual da seção Básica)
+    parts: List[str] = ['<div class="p6-chips">']
+    for t in tickers:
+        url = get_logo_url(t)
+        parts.append(
+            f'''<span class="p6-chip">
+                    <img src="{url}" alt="{t}" onerror="this.style.display='none';"/>
+                    <span class="tck">{t}</span>
+                </span>'''
+        )
+    parts.append("</div>")
+    return "".join(parts)
+
+def _import_first(*module_paths: str):
+    errors = []
+    for p in module_paths:
         try:
-            mod = __import__(mod_name, fromlist=[fn_name])
-            fn = getattr(mod, fn_name)
-            return fn()
+            return importlib.import_module(p)
         except Exception as e:
-            last_err = e
-            continue
-    raise ImportError(f"Não consegui obter engine do banco. Último erro: {last_err}")
+            errors.append((p, e))
+    msg = "Falha ao importar módulos. Tentativas:\n" + "\n".join([f"- {p}: {repr(e)}" for p, e in errors])
+    raise ImportError(msg)
 
-def _sql_text():
-    try:
-        from sqlalchemy import text
-        return text
-    except Exception:
-        return None
+def _import_ingest():
+    """
+    Carrega ingest diretamente do arquivo físico,
+    ignorando problemas de PYTHONPATH no Streamlit Cloud.
+    """
+    import importlib.util
+    from pathlib import Path
 
-def _query_df(sql: str, params: Optional[dict] = None):
-    text = _sql_text()
-    if text is None:
-        raise ImportError("sqlalchemy.text indisponível")
-    import pandas as pd
-    eng = _get_engine()
-    with eng.connect() as conn:
-        return pd.read_sql(text(sql), conn, params=params or {})
+    # sobe de page/ para raiz do projeto
+    base_dir = Path(__file__).resolve().parents[1]
+    ingest_path = base_dir / "pickup" / "ingest_docs_cvm_ipe.py"
 
-def _table_exists(table: str) -> bool:
-    try:
-        df = _query_df(
-            "select 1 as ok from information_schema.tables where table_schema='public' and table_name=:t limit 1",
-            {"t": table},
-        )
-        return not df.empty
-    except Exception:
-        return False
+    if not ingest_path.exists():
+        raise ImportError(f"Arquivo não encontrado: {ingest_path}")
 
-def _table_columns(table: str) -> List[str]:
-    try:
-        df = _query_df(
-            "select column_name from information_schema.columns where table_schema='public' and table_name=:t",
-            {"t": table},
-        )
-        return [str(x) for x in df["column_name"].tolist()]
-    except Exception:
-        return []
-
-# ---------------------------
-# Snapshot model
-# ---------------------------
-
-@dataclass
-class Snapshot:
-    snapshot_id: Optional[str]
-    tickers: List[str]
-    weights: Dict[str, float]
-    selic: Optional[float]
-    acima_benchmark: Optional[float]
-    benchmark: Optional[str]
-    segmentos: List[str]
-    raw: Dict[str, Any]
-
-def _parse_jsonish(v: Any) -> Any:
-    if v is None:
-        return None
-    if isinstance(v, (dict, list)):
-        return v
-    if isinstance(v, str):
-        s = v.strip()
-        # JSON puro
-        if (s.startswith("{") and s.endswith("}")) or (s.startswith("[") and s.endswith("]")):
-            try:
-                return json.loads(s)
-            except Exception:
-                return v
-        # "A,B,C"
-        if "," in s and len(s) < 120:
-            return [x.strip() for x in s.split(",") if x.strip()]
-    return v
-
-def _extract_tickers(row: Dict[str, Any]) -> List[str]:
-    keys = ["tickers", "acoes", "ativos", "empresas", "portfolio", "carteira"]
-    for k in keys:
-        if k in row and row[k] is not None:
-            val = _parse_jsonish(row[k])
-            if isinstance(val, list):
-                return [str(x).upper().strip() for x in val if str(x).strip()]
-            if isinstance(val, dict):
-                # às vezes vem {"BRAP3":0.1,...}
-                return [str(x).upper().strip() for x in val.keys()]
-            if isinstance(val, str):
-                return [val.upper().strip()]
-    # fallback: tenta inferir por colunas "ticker_1"... etc
-    t = []
-    for k, v in row.items():
-        if "ticker" in k.lower() and v:
-            t.append(str(v).upper().strip())
-    # dedup mantendo ordem
-    seen = set()
-    out = []
-    for x in t:
-        if x not in seen:
-            out.append(x)
-            seen.add(x)
-    return out
-
-def _extract_weights(row: Dict[str, Any]) -> Dict[str, float]:
-    for k in ["weights", "pesos", "alloc", "alocacao", "alocação"]:
-        if k in row and row[k] is not None:
-            val = _parse_jsonish(row[k])
-            if isinstance(val, dict):
-                out = {}
-                for kk, vv in val.items():
-                    try:
-                        out[str(kk).upper().strip()] = float(vv)
-                    except Exception:
-                        continue
-                return out
-    # fallback: weight columns per ticker?
-    return {}
-
-def _extract_numeric(row: Dict[str, Any], keys: List[str]) -> Optional[float]:
-    for k in keys:
-        if k in row and row[k] not in (None, "", "-"):
-            try:
-                return float(row[k])
-            except Exception:
-                try:
-                    return float(str(row[k]).replace(",", "."))
-                except Exception:
-                    continue
-    return None
-
-def _extract_segmentos(row: Dict[str, Any]) -> List[str]:
-    for k in ["segmentos", "setores", "sectors"]:
-        if k in row and row[k] is not None:
-            val = _parse_jsonish(row[k])
-            if isinstance(val, list):
-                return [str(x).strip() for x in val if str(x).strip()]
-            if isinstance(val, dict):
-                return [str(x).strip() for x in val.keys()]
-            if isinstance(val, str):
-                return [val.strip()]
-    return []
-
-# ---------------------------
-# Snapshot loading (session_state -> DB fallback)
-# ---------------------------
-
-def _get_user_id() -> Optional[str]:
-    # tenta chaves comuns
-    for k in ["user_id", "auth_user_id", "uid", "email", "user_email"]:
-        v = st.session_state.get(k)
-        if v:
-            return str(v)
-    return None
-
-def _pick_session_snapshot() -> Optional[Snapshot]:
-    # 1) se a página de criação gravou o dicionário completo
-    if isinstance(st.session_state.get("portfolio_salvo"), dict):
-        row = dict(st.session_state["portfolio_salvo"])
-        tickers = _extract_tickers(row)
-        return Snapshot(
-            snapshot_id=str(row.get("snapshot_id") or row.get("id") or ""),
-            tickers=tickers,
-            weights=_extract_weights(row),
-            selic=_extract_numeric(row, ["selic", "selic_usada", "taxa_selic"]),
-            acima_benchmark=_extract_numeric(row, ["acima_benchmark", "pct_acima_benchmark", "percent_acima_benchmark"]),
-            benchmark=str(row.get("benchmark") or row.get("indice_base") or row.get("index_base") or "") or None,
-            segmentos=_extract_segmentos(row),
-            raw=row,
-        )
-
-    # 2) se só gravou snapshot_id
-    for k in ["snapshot_id", "snapshot_portfolio_id", "snapshot", "snapshot_hash"]:
-        v = st.session_state.get(k)
-        if v:
-            return Snapshot(
-                snapshot_id=str(v),
-                tickers=[],
-                weights={},
-                selic=None,
-                acima_benchmark=None,
-                benchmark=None,
-                segmentos=[],
-                raw={"snapshot_id": str(v)},
-            )
-    return None
-
-def _load_snapshot_from_db() -> Optional[Snapshot]:
-    user_id = _get_user_id()
-
-    # candidatos de tabela (mantém compatibilidade com versões)
-    candidates = [
-        "snapshot_portfolio",
-        "snapshot_portfolios",
-        "snapshot_portfolio_v2",
-        "portfolio_snapshot",
-        "snapshot",
-    ]
-    table = None
-    for t in candidates:
-        if _table_exists(t):
-            table = t
-            break
-
-    if not table:
-        return None
-
-    cols = _table_columns(table)
-    # escolhe colunas possíveis
-    id_col = "snapshot_id" if "snapshot_id" in cols else ("id" if "id" in cols else None)
-    created_col = "created_at" if "created_at" in cols else ("created" if "created" in cols else None)
-    user_col = "user_id" if "user_id" in cols else ("uid" if "uid" in cols else None)
-
-    order = ""
-    if created_col:
-        order = f" order by {created_col} desc"
-    elif id_col:
-        order = f" order by {id_col} desc"
-
-    where = ""
-    params: Dict[str, Any] = {}
-    if user_id and user_col:
-        where = f" where {user_col} = :uid"
-        params["uid"] = user_id
-
-    # pega 1 linha mais recente
-    select_cols = "*"
-    try:
-        df = _query_df(f"select {select_cols} from public.{table}{where}{order} limit 1", params)
-    except Exception:
-        # fallback sem schema prefix
-        df = _query_df(f"select {select_cols} from {table}{where}{order} limit 1", params)
-
-    if df.empty:
-        # se filtrou por user_id e não achou, tenta sem filtro (para evitar bloqueio por mismatch)
-        if where:
-            try:
-                df = _query_df(f"select {select_cols} from public.{table}{order} limit 1")
-            except Exception:
-                df = _query_df(f"select {select_cols} from {table}{order} limit 1")
-        if df.empty:
-            return None
-
-    row = df.iloc[0].to_dict()
-    tickers = _extract_tickers(row)
-    snap_id = None
-    if id_col and row.get(id_col) is not None:
-        snap_id = str(row.get(id_col))
-    return Snapshot(
-        snapshot_id=snap_id,
-        tickers=tickers,
-        weights=_extract_weights(row),
-        selic=_extract_numeric(row, ["selic", "selic_usada", "taxa_selic"]),
-        acima_benchmark=_extract_numeric(row, ["acima_benchmark", "pct_acima_benchmark", "percent_acima_benchmark"]),
-        benchmark=str(row.get("benchmark") or row.get("indice_base") or row.get("index_base") or "") or None,
-        segmentos=_extract_segmentos(row),
-        raw=row,
+    spec = importlib.util.spec_from_file_location(
+        "ingest_docs_cvm_ipe",
+        str(ingest_path)
     )
 
-def _ensure_snapshot() -> Optional[Snapshot]:
-    snap = _pick_session_snapshot()
-    if snap and snap.tickers:
-        return snap
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
 
-    # se tinha snapshot_id mas sem tickers, tenta completar no DB
-    dbsnap = _load_snapshot_from_db()
-    if dbsnap:
-        # guarda em sessão para outras páginas
-        st.session_state["portfolio_salvo"] = dict(dbsnap.raw)
-        if dbsnap.snapshot_id:
-            st.session_state["snapshot_id"] = dbsnap.snapshot_id
-        return dbsnap
+    fn = getattr(module, "ingest_ipe_for_tickers", None)
 
-    return snap  # pode ser apenas id
+    if not callable(fn):
+        raise ImportError(
+            "Função ingest_ipe_for_tickers não encontrada em ingest_docs_cvm_ipe.py"
+        )
 
-# ---------------------------
-# Logos (não quebra se não existir)
-# ---------------------------
+    return fn
+    raise ImportError("Não encontrei função de ingest no módulo pickup.ingest_docs_cvm_ipe (ou fallbacks).")
 
-def _get_logo_url(ticker: str) -> Optional[str]:
-    # tenta reaproveitar o helper da página Básica (se existir)
-    candidates = [
-        ("core.tickers", "get_logo_url"),
-        ("core.utils", "get_logo_url"),
-        ("core.logos", "get_logo_url"),
-        ("page.basica", "get_logo_url"),
-        ("page.basica", "ticker_logo_url"),
-    ]
-    for mod_name, fn_name in candidates:
-        try:
-            mod = __import__(mod_name, fromlist=[fn_name])
-            fn = getattr(mod, fn_name)
-            url = fn(ticker)
-            if url:
-                return str(url)
-        except Exception:
-            continue
-    return None
+def _safe_call(fn: Callable[..., Any], **kwargs):
+    """
+    Chama função adaptando para assinaturas diferentes.
+    """
+    try:
+        sig = inspect.signature(fn)
+        accepted = {k: v for k, v in kwargs.items() if k in sig.parameters}
 
-# ---------------------------
-# Render
-# ---------------------------
+        # alias comuns
+        # ticker
+        if "ticker" in kwargs and "ticker" not in accepted:
+            for alt in ("tk", "symbol", "ticker_str"):
+                if alt in sig.parameters:
+                    accepted[alt] = kwargs["ticker"]
+                    break
 
-def render():
-    st.set_page_config(page_title="Análises de Portfólio (Patch6)", layout="wide")
 
-    st.markdown(_CSS, unsafe_allow_html=True)
 
-    # header
+        # tickers (lista)
+        if "tickers" in kwargs and "tickers" not in accepted:
+            for alt in ("symbols", "ticker_list"):
+                if alt in sig.parameters:
+                    accepted[alt] = kwargs["tickers"]
+                    break
+
+        # months window
+        if "window_months" in kwargs and "window_months" not in accepted:
+            for alt in ("months", "months_window", "janela_meses"):
+                if alt in sig.parameters:
+                    accepted[alt] = kwargs["window_months"]
+                    break
+
+        # max docs
+        if "max_docs" in kwargs and "max_docs" not in accepted:
+            for alt in ("limit_docs", "max_docs_per_ticker", "limite_docs"):
+                if alt in sig.parameters:
+                    accepted[alt] = kwargs["max_docs"]
+                    break
+
+        # max runtime
+        if "max_runtime_s" in kwargs and "max_runtime_s" not in accepted:
+            for alt in ("timeout_s", "runtime_s", "time_budget_s"):
+                if alt in sig.parameters:
+                    accepted[alt] = kwargs["max_runtime_s"]
+                    break
+
+        # max pdfs
+        if "max_pdfs" in kwargs and "max_pdfs" not in accepted:
+            for alt in ("max_pdfs_per_ticker", "limite_pdfs"):
+                if alt in sig.parameters:
+                    accepted[alt] = kwargs["max_pdfs"]
+                    break
+
+        return fn(**accepted)
+    except Exception:
+        # fallback: tenta direto
+        return fn(**kwargs)
+
+
+
+import re
+
+def _clip(s: str, max_chars: int) -> str:
+    s = (s or "").strip()
+    if len(s) <= max_chars:
+        return s
+    return s[:max_chars].rstrip() + " …"
+
+def _build_context_limited(chunks: List[str], per_chunk_chars: int = 1200, total_chars: int = 12000) -> str:
+    parts: List[str] = []
+    used = 0
+    for i, ch in enumerate(chunks or [], start=1):
+        piece = _clip(str(ch), per_chunk_chars)
+        block = f"[CHUNK {i}]\n{piece}\n"
+        if used + len(block) > total_chars:
+            break
+        parts.append(block)
+        used += len(block)
+    return "\n".join(parts)
+
+def _parse_json_loose(text: str) -> Dict[str, Any]:
+    t = (text or "").strip()
+
+    # remove fences ```json
+    t = re.sub(r"^```(?:json)?\s*", "", t, flags=re.IGNORECASE).strip()
+    t = re.sub(r"\s*```$", "", t).strip()
+
+    # direct parse
+    try:
+        return json.loads(t)
+    except Exception:
+        pass
+
+    # extract first {...}
+    m = re.search(r"\{.*\}", t, flags=re.DOTALL)
+    if not m:
+        raise ValueError("LLM não retornou JSON")
+    return json.loads(m.group(0))
+
+
+def render() -> None:
+    st.title("🧠 Análises de Portfólio")
+
+    # CSS institucional (header + cards + chips + cards LLM)
     st.markdown(
         """
-        <div class="p6-header">
-          <div>
-            <h1 class="p6-title">🧠 Análises de Portfólio (Patch6)</h1>
-            <p class="p6-sub">
-              Consolidação qualitativa baseada em evidências (RAG) + tese por empresa (LLM).
-            </p>
-          </div>
-          <div>
-            <span class="p6-pill">Janela padrão: <b>12 meses</b></span>
-          </div>
-        </div>
+        <style>
+
+          /* ===== Design System (Controle Financeiro) ===== */
+          .cf-header{
+            display:flex;
+            justify-content:space-between;
+            align-items:center;
+            padding:18px 22px;
+            border-radius:18px;
+            background:linear-gradient(145deg,#0f172a,#111827);
+            border:1px solid rgba(255,255,255,.10);
+            margin:10px 0 12px 0;
+            box-shadow:0 10px 24px rgba(0,0,0,.22);
+          }
+          .cf-title{font-size:26px;font-weight:900;letter-spacing:.2px;margin:0}
+          .cf-subtitle{opacity:.78;margin-top:6px;font-size:14px}
+          .cf-pill{
+            display:inline-block;
+            padding:6px 12px;
+            border-radius:999px;
+            background:rgba(59,130,246,0.15);
+            border:1px solid rgba(59,130,246,0.35);
+            font-size:12px;
+          }
+          .cf-card{
+            border:1px solid rgba(255,255,255,.10);
+            border-radius:18px;
+            padding:18px 18px 14px 18px;
+            background:linear-gradient(145deg,#111827,#0b1220);
+            box-shadow:0 10px 24px rgba(0,0,0,.18);
+            height:100%;
+          }
+          .cf-card-label{opacity:.78;font-size:12px;margin-bottom:6px}
+          .cf-card-value{font-size:22px;font-weight:900;letter-spacing:.2px}
+          .cf-card-extra{opacity:.70;font-size:12px;margin-top:6px;line-height:1.25}
+          .cf-card-benchmark{border-color:rgba(34,197,94,.35)}
+          .cf-card-margin{border-color:rgba(234,179,8,.35)}
+          .cf-card-segment{border-color:rgba(168,85,247,.35)}
+
+          .p6-header{
+            border:1px solid rgba(255,255,255,.10);
+            border-radius:18px;
+            padding:16px 18px;
+            background:rgba(255,255,255,.03);
+            margin:10px 0 12px 0;
+            box-shadow:0 10px 24px rgba(0,0,0,.22);
+          }
+          .p6-header .p6-title{font-size:28px;font-weight:900;letter-spacing:.2px;margin:0}
+          .p6-header .p6-sub{opacity:.78;margin-top:6px;font-size:14px}
+          .p6-pill-mini{
+            display:inline-block;
+            padding:5px 10px;
+            border-radius:999px;
+            border:1px solid rgba(255,255,255,.12);
+            background:rgba(255,255,255,.04);
+            font-size:12px;
+            margin-top:10px;
+          }
+
+          .p6-mcard{
+            border:1px solid rgba(255,255,255,.10);
+            border-radius:16px;
+            padding:14px 14px 12px 14px;
+            background:rgba(255,255,255,.03);
+            box-shadow:0 10px 24px rgba(0,0,0,.18);
+            height:100%;
+          }
+          .p6-mlabel{opacity:.78;font-size:12px;margin-bottom:6px}
+          .p6-mvalue{font-size:22px;font-weight:900;letter-spacing:.2px}
+          .p6-mextra{opacity:.70;font-size:12px;margin-top:6px;line-height:1.25}
+
+          .p6-chips{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 14px 0}
+          .p6-chip{
+            display:inline-flex;
+            align-items:center;
+            gap:12px;
+            padding:10px 16px;
+            border-radius:14px;
+            border:1px solid rgba(255,255,255,0.10);
+            background: rgba(255,255,255,0.04);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+          }
+          .p6-chip img{
+            width:40px;
+            height:40px;
+            object-fit:contain;
+            border-radius:10px;
+            background:#ffffff;
+            padding:5px;
+          }
+          .p6-chip .tck{
+            font-weight:800;
+            font-size:14px;
+            letter-spacing:0.3px;
+          }
+
+          /* cards por empresa (LLM) */
+          .p6-card{border:1px solid rgba(255,255,255,.10);border-radius:16px;padding:16px 16px 12px 16px;
+                   background:rgba(255,255,255,.03);margin:12px 0;box-shadow:0 10px 24px rgba(0,0,0,.18);}
+          .p6-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+          .p6-title-sm{font-size:18px;font-weight:900;letter-spacing:.2px}
+          .p6-badges{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+          .p6-pill{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.10);opacity:.95}
+          .p6-pill-forte{background:rgba(34,197,94,.15);border-color:rgba(34,197,94,.35)}
+          .p6-pill-moderada{background:rgba(234,179,8,.15);border-color:rgba(234,179,8,.35)}
+          .p6-pill-fraca{background:rgba(239,68,68,.15);border-color:rgba(239,68,68,.35)}
+          .p6-pill-info{background:rgba(59,130,246,.12);border-color:rgba(59,130,246,.30)}
+          .p6-grid{display:grid;grid-template-columns:1fr;gap:10px}
+          .p6-k{font-weight:800}
+          .p6-muted{opacity:.78}
+          .p6-list{margin:6px 0 0 18px}
+          .p6-hr{height:1px;background:rgba(255,255,255,.08);border:none;margin:12px 0}
+        </style>
         """,
         unsafe_allow_html=True,
     )
 
-    snap = _ensure_snapshot()
 
-    if not snap or (snap and not snap.tickers):
-        # Em vez de "morrer" aqui, mostramos diagnóstico para destravar rápido
-        st.markdown('<div class="p6-section"></div>', unsafe_allow_html=True)
+    snapshot = get_latest_snapshot()
+    if not snapshot:
+        st.warning("Nenhum snapshot ativo encontrado. Execute primeiro a Criação de Portfólio.")
+        st.stop()
+
+    
+    snapshot_id = str(snapshot.get("id") or "")
+
+    # Dados salvos (sem expor o hash)
+    selic_used = snapshot.get("selic") or snapshot.get("selic_ref") or snapshot.get("selic_aa")
+    # margem acima do benchmark (p.p.) — compatível com versões antigas e novas
+    margem_bench = (
+        snapshot.get("margem_sobre_benchmark")
+        or snapshot.get("margem_minima")
+        or snapshot.get("margem_min")
+        or snapshot.get("margem")
+        or snapshot.get("margem_superior")
+    )
+
+    items = snapshot.get("items") or []
+    tickers = [_safe_upper(it.get("ticker")) for it in items if _safe_upper(it.get("ticker"))]
+    tickers = sorted(list(dict.fromkeys(tickers)))
+
+
+    # Métricas do portfólio (para o cabeçalho "Dados salvos")
+    # Segmentos cobertos:
+    # - Preferência: info por item (quando disponível)
+    # - Fallback: lista pré-calculada salva no snapshot (filters_json["segmentos"]) — evita mudar schema
+    seg_values: list[str] = []
+    for it in items:
+        seg = it.get("segmento") or it.get("setor") or it.get("sector") or it.get("segment")
+        if seg:
+            seg_values.append(str(seg).strip())
+
+    if not seg_values:
+        fj = snapshot.get("filters_json") or {}
+        segs_saved = fj.get("segmentos") or fj.get("segments")
+        if isinstance(segs_saved, (list, tuple, set)):
+            seg_values = [str(x).strip() for x in segs_saved if str(x).strip()]
+        elif isinstance(segs_saved, str) and segs_saved.strip():
+            raw = segs_saved.replace(";", ",")
+            seg_values = [s.strip() for s in raw.split(",") if s.strip()]
+
+    n_segmentos = len(set([s for s in seg_values if s]))
+
+    # Header institucional + cards de resumo do snapshot
+    st.markdown(
+    f"""
+    <div class="cf-header">
+      <div>
+        <h1 class="cf-title">📊 Portfólio Fundamentalista</h1>
+        <p class="cf-subtitle">
+          Snapshot do portfólio • parâmetros utilizados na seleção (Criação de Portfólio).
+        </p>
+      </div>
+      <div>
+        <span class="cf-pill">Snapshot ativo</span>
+      </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.markdown(
+    f"""
+    <div class="cf-card cf-card-benchmark">
+      <div class="cf-card-label">Selic usada (benchmark)</div>
+      <div class="cf-card-value">{_fmt_pct(selic_used)}</div>
+      <div class="cf-card-extra">Taxa de referência salva no snapshot.</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+    c2.markdown(
+    f"""
+    <div class="cf-card">
+      <div class="cf-card-label">Ações selecionadas</div>
+      <div class="cf-card-value">{len(tickers)}</div>
+      <div class="cf-card-extra">Quantidade de ativos no portfólio.</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+    c3.markdown(
+    f"""
+    <div class="cf-card cf-card-margin">
+      <div class="cf-card-label">Acima do benchmark</div>
+      <div class="cf-card-value">{_fmt_pp(margem_bench)}</div>
+      <div class="cf-card-extra">Margem mínima configurada na criação.</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+    c4.markdown(
+    f"""
+    <div class="cf-card cf-card-segment">
+      <div class="cf-card-label">Segmentos cobertos</div>
+      <div class="cf-card-value">{n_segmentos}</div>
+      <div class="cf-card-extra">Diversificação por segmento/setor.</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+    st.markdown(_render_ticker_chips_html(tickers), unsafe_allow_html=True)
+
+    st.divider()
+
+    # ------------------------------------------------------------------
+    # Estado (sanidade)
+    # ------------------------------------------------------------------
+    
+
+
+    # ------------------------------------------------------------------
+    # Ingest + Chunking com logs por ticker
+    # ------------------------------------------------------------------
+    st.subheader("📦 Atualizar evidências")
+
+    col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+    with col1:
+        window_months = st.number_input("Janela (meses)", min_value=1, max_value=60, value=12, step=1)
+    with col2:
+        max_docs = st.number_input("Máx docs/ticker", min_value=5, max_value=300, value=80, step=5)
+    with col3:
+        max_pdfs = st.number_input("Máx PDFs/ticker", min_value=0, max_value=80, value=20, step=1)
+    with col4:
+        max_runtime_s = st.number_input("Tempo máx total (s)", min_value=5, max_value=180, value=60, step=5)
+
+    only_missing_docs = True
+    show_traceback = False
+
+    btn = st.button("Atualizar documentos", type="primary")
+
+    log_panel = st.empty()
+    table_panel = st.empty()
+    err_panel = st.empty()
+
+    if btn:
+        # carrega ingest uma vez
+        try:
+            ingest_fn = _import_ingest()
+        except Exception as e:
+            st.error("Não consegui importar o módulo de ingest do CVM/IPE no deploy.")
+            st.code(str(e))
+            st.stop()
+
+        t0 = _now_ms()
+        results: List[Dict[str, Any]] = []
+        errors: Dict[str, str] = {}
+
+        progress = st.progress(0, text="Iniciando...")
+
+        for i, tk in enumerate(tickers, start=1):
+            start = _now_ms()
+            before_docs = count_docs(tk)
+            before_chunks = count_chunks(tk)
+
+            progress.progress(int((i - 1) / max(1, len(tickers)) * 100), text=f"Processando {i}/{len(tickers)} — {tk}")
+
+            with log_panel.container():
+                st.info(f"🔎 {tk} — início | docs={before_docs} | chunks={before_chunks}")
+
+            ingest_report: Optional[Dict[str, Any]] = None
+            ingest_ran = False
+
+            # ---- Ingest
+            try:
+                if (not only_missing_docs) or (before_docs == 0):
+                    ingest_ran = True
+                    r = _safe_call(
+                        ingest_fn,
+                        tickers=[tk],
+                        window_months=int(window_months),
+                        max_docs_per_ticker=int(max_docs),
+                        max_runtime_s=float(max_runtime_s),
+                        max_pdfs_per_ticker=int(max_pdfs),
+                    )
+                    # normaliza relatório
+                    if isinstance(r, dict):
+                        ingest_report = r
+                    else:
+                        ingest_report = {"result": str(r)}
+                else:
+                    ingest_report = {"skipped": True, "reason": "docs já existem"}
+            except Exception as e:
+                tb = traceback.format_exc()
+                msg = f"Ingest {type(e).__name__}: {e}"
+                errors[f"{tk}::ingest"] = tb if show_traceback else msg
+                ingest_report = {"error": msg}
+                with log_panel.container():
+                    st.error(f"❌ {tk} — ingest falhou | {msg}")
+
+            mid_docs = count_docs(tk)
+            mid_chunks = count_chunks(tk)
+
+            with log_panel.container():
+                if ingest_ran:
+                    st.write(f"📥 {tk} — ingest concluído | docs agora={mid_docs} | chunks={mid_chunks}")
+                    if ingest_report:
+                        st.caption("Relatório ingest (resumo):")
+                        st.json({k: ingest_report[k] for k in ingest_report.keys() if k in {"matched","inserted","skipped","pdf_fetched","pdf_text_ok","error","result","skipped","reason"}})
+                else:
+                    st.write(f"📥 {tk} — ingest não executado (docs já existiam) | docs={mid_docs}")
+
+            # Se ainda não tem docs, explique claramente e pule chunking
+            if mid_docs == 0:
+                results.append({
+                    "ticker": tk,
+                    "status": "SEM_DOCS",
+                    "docs_before": before_docs,
+                    "chunks_before": before_chunks,
+                    "docs_after_ingest": mid_docs,
+                    "chunks_after_ingest": mid_chunks,
+                    "chunks_inseridos": 0,
+                    "chunks_after": mid_chunks,
+                    "tempo": _fmt_s(_now_ms() - start),
+                    "motivo": (ingest_report.get("reason") if isinstance(ingest_report, dict) else "") or "Sem documentos retornados para a janela/fonte atual.",
+                })
+                with log_panel.container():
+                    st.warning(
+                        f"⚠️ {tk} — sem docs após ingest. "
+                        f"Isso explica a execução rápida e ausência de chunks. "
+                        f"Verifique janela (meses), filtros do ingest e disponibilidade de documentos no CVM/IPE."
+                    )
+                table_panel.dataframe(results, use_container_width=True)
+                continue
+
+            # ---- Chunking
+            try:
+                inserted = process_missing_chunks_for_ticker(tk, limit_docs=int(max_docs), max_chars=1500)
+                after_docs = count_docs(tk)
+                after_chunks = count_chunks(tk)
+
+                results.append({
+                    "ticker": tk,
+                    "status": "OK",
+                    "docs_before": before_docs,
+                    "chunks_before": before_chunks,
+                    "docs_after_ingest": mid_docs,
+                    "chunks_after_ingest": mid_chunks,
+                    "chunks_inseridos": int(inserted),
+                    "chunks_after": after_chunks,
+                    "tempo": _fmt_s(_now_ms() - start),
+                    "motivo": "",
+                })
+
+                with log_panel.container():
+                    st.success(f"✅ {tk} — chunking ok | +{inserted} chunks | chunks={after_chunks} | {_fmt_s(_now_ms()-start)}")
+
+            except Exception as e:
+                tb = traceback.format_exc()
+                msg = f"Chunking {type(e).__name__}: {e}"
+                errors[f"{tk}::chunking"] = tb if show_traceback else msg
+
+                results.append({
+                    "ticker": tk,
+                    "status": "FALHA_CHUNK",
+                    "docs_before": before_docs,
+                    "chunks_before": before_chunks,
+                    "docs_after_ingest": mid_docs,
+                    "chunks_after_ingest": mid_chunks,
+                    "chunks_inseridos": 0,
+                    "chunks_after": None,
+                    "tempo": _fmt_s(_now_ms() - start),
+                    "motivo": msg,
+                })
+
+                with log_panel.container():
+                    st.error(f"❌ {tk} — chunking falhou | {msg} | {_fmt_s(_now_ms()-start)}")
+
+            table_panel.dataframe(results, use_container_width=True)
+
+        progress.progress(100, text="Concluído")
+        st.success(f"Fim. Tempo total: {_fmt_s(_now_ms() - t0)}")
+
+        if errors:
+            with err_panel.container():
+                st.subheader("🧾 Logs de erro (por etapa)")
+                for key, tb in errors.items():
+                    with st.expander(key):
+                        st.code(tb)
+
+    st.divider()
+
+    # ------------------------------------------------------------------
+    # LLM
+    # ------------------------------------------------------------------
+    
+    # ------------------------------------------------------------------
+    # LLM (RAG + julgamento qualitativo)
+    # ------------------------------------------------------------------
+    st.subheader("🤖 Análise qualitativa")
+    if not tickers:
+        st.info("Sem tickers no snapshot.")
+        return
+    def _pill_class(p: str) -> str:
+        p = (p or "").strip().lower()
+        if p == "forte":
+            return "p6-pill p6-pill-forte"
+        if p == "moderada":
+            return "p6-pill p6-pill-moderada"
+        return "p6-pill p6-pill-fraca"
+
+    def _as_list(x: Any) -> List[str]:
+        if x is None:
+            return []
+        if isinstance(x, list):
+            return [str(i) for i in x if str(i).strip()]
+        if isinstance(x, str):
+            s = x.strip()
+            return [s] if s else []
+        return [str(x)]
+
+    def _render_card(ticker: str, result: Dict[str, Any], top_k_used: int, period_ref: str) -> None:
+        persp = str(result.get("perspectiva_compra", "")).strip()
+        resumo = str(result.get("resumo", "")).strip()
+
+        consider = (
+            result.get("consideracoes_llm")
+            or result.get("consideracoes")
+            or result.get("observacoes")
+            or result.get("rationale")
+            or ""
+        )
+        consider = str(consider).strip()
+
+        confianca = result.get("confianca", result.get("confidence", ""))
+        confianca = "" if confianca is None else str(confianca).strip()
+
+        pontos = _as_list(result.get("pontos_chave") or result.get("pontos-chave") or result.get("pontos"))
+        riscos = _as_list(result.get("riscos"))
+        evid = _as_list(result.get("evidencias") or result.get("evidence") or result.get("citacoes"))
+
+        docs_usados = result.get("docs_usados") or result.get("docs_used") or result.get("documentos") or None
+        evid_usadas = result.get("evid_usadas") or result.get("chunks_used") or result.get("evidencias_usadas") or None
+
+
+        # Card (HTML)
         st.markdown(
-            """
+            f"""
             <div class="p6-card">
-              <div class="val" style="font-size:22px;">Nenhum portfólio encontrado</div>
-              <div class="extra">Execute <b>Criação de Portfólio</b> para gerar os dados (snapshot). Se você já executou e ainda assim não aparece, o problema costuma ser <b>user_id</b> (filtro) ou <b>nome da tabela</b>.</div>
+              <div class="p6-head">
+                <div class="p6-title-sm">{ticker}</div>
+                <div class="p6-badges">
+                  <span class="{_pill_class(persp)}">{(persp or "—").upper()}</span>
+                  <span class="p6-pill p6-pill-info">Top-K: {top_k_used}</span>
+                  <span class="p6-pill p6-pill-info">period_ref: {period_ref}</span>
+                  {f'<span class="p6-pill p6-pill-info">Docs: {docs_usados}</span>' if docs_usados is not None else ""}
+                  {f'<span class="p6-pill p6-pill-info">Evidências: {evid_usadas}</span>' if evid_usadas is not None else ""}
+                </div>
+              </div>
+
+              <div class="p6-grid">
+                <div><span class="p6-k">Resumo:</span> <span class="p6-muted">{_escape_html(resumo) or "—"}</span></div>
+                {f'<div><span class="p6-k">Considerações da LLM:</span> <span class="p6-muted">{_escape_html(consider)}</span></div>' if consider else ''}
+                {f'<div><span class="p6-k">Confiança:</span> <span class="p6-muted">{_escape_html(confianca)}</span></div>' if confianca else ''}
+              </div>
+
+              <hr class="p6-hr"/>
+
+              <div class="p6-grid">
+                <div>
+                  <span class="p6-k">Pontos-chave</span>
+                  <ul class="p6-list">
+                    {''.join([f'<li>{_escape_html(p)}</li>' for p in pontos]) if pontos else '<li class="p6-muted">—</li>'}
+                  </ul>
+                </div>
+
+                <div>
+                  <span class="p6-k">Riscos</span>
+                  <ul class="p6-list">
+                    {''.join([f'<li>{_escape_html(r)}</li>' for r in riscos]) if riscos else '<li class="p6-muted">—</li>'}
+                  </ul>
+                </div>
+              </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-        with st.expander("Diagnóstico (clique para ver)"):
-            st.write("Chaves em st.session_state:")
-            st.write(sorted(list(st.session_state.keys())))
-            try:
-                uid = _get_user_id()
-                st.write("user_id detectado:", uid)
-            except Exception as e:
-                st.write("Falha ao detectar user_id:", e)
+        if evid:
+            with st.expander(f"📌 Evidências (trechos) — {ticker}", expanded=False):
+                for i, e in enumerate(evid[:12], start=1):
+                    st.markdown(f"**{i}.** {_escape_html(e)}")
 
-            try:
-                tables = _query_df(
-                    "select table_name from information_schema.tables where table_schema='public' and table_name ilike '%snapshot%' order by table_name"
-                )
-                st.write("Tabelas com 'snapshot' no nome (public):")
-                st.dataframe(tables, use_container_width=True)
-            except Exception as e:
-                st.write("Falha ao listar tabelas:", e)
-
-        return
-
-    # -----------------------
-    # DADOS SALVOS (cards)
-    # -----------------------
-    st.markdown('<div class="p6-section"></div>', unsafe_allow_html=True)
-    col1, col2, col3, col4 = st.columns(4)
-
-    # selic e acima_benchmark podem estar no snapshot.raw, mas com nomes distintos.
-    selic = snap.selic
-    acima = snap.acima_benchmark
-    n_acoes = len(snap.tickers)
-    n_seg = len(snap.segmentos) if snap.segmentos else None
-
-    def _fmt_num(v: Optional[float], suf: str = "") -> str:
-        if v is None:
-            return "—"
-        # exibe com 2 casas e vírgula PT-BR
-        s = f"{v:.2f}".replace(".", ",")
-        return f"{s}{suf}"
-
-    col1.markdown(
-        f"""
-        <div class="p6-card">
-          <div class="lbl">Selic usada</div>
-          <div class="val">{_fmt_num(selic, "%")}</div>
-          <div class="extra">Taxa de referência do snapshot (criação de portfólio).</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    # Defaults fixos (sem UI)
+    run_llm_all = True
+    use_topk_inteligente = True
+    debug_topk = False
+    window_months = 12  # fixo internamente
+    
+    # Único controle exposto
+    top_k = st.slider(
+        "Top-K chunks",
+        min_value=3,
+        max_value=12,
+        value=6,
+        step=1
     )
-    col2.markdown(
-        f"""
-        <div class="p6-card">
-          <div class="lbl">Ações</div>
-          <div class="val">{n_acoes}</div>
-          <div class="extra">Quantidade de ativos incluídos no portfólio salvo.</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    col3.markdown(
-        f"""
-        <div class="p6-card">
-          <div class="lbl">% acima do benchmark</div>
-          <div class="val">{_fmt_num(acima, "%")}</div>
-          <div class="extra">Diferença percentual projetada vs índice base (se disponível).</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    col4.markdown(
-        f"""
-        <div class="p6-card">
-          <div class="lbl">Segmentos</div>
-          <div class="val">{n_seg if n_seg is not None else "—"}</div>
-          <div class="extra">Diversificação setorial do portfólio (se disponível no snapshot).</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    
+    period_ref = st.text_input(
+        "period_ref (ex.: 2024Q4)",
+        value="2024Q4"
     )
 
-    st.markdown("### Ativos selecionados")
-    grid_cols = st.columns(6)
-    for i, tck in enumerate(snap.tickers):
-        with grid_cols[i % 6]:
-            logo = _get_logo_url(tck)
-            if logo:
-                st.markdown(
-                    f"""
-                    <div class="p6-asset">
-                      <img src="{logo}" />
-                      <div>
-                        <div class="tck">{tck}</div>
-                        <div class="p6-muted">ativo</div>
-                      </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.markdown(
-                    f"""
-                    <div class="p6-asset">
-                      <div style="width:28px;height:28px;border-radius:6px;background:rgba(255,255,255,0.12);display:flex;align-items:center;justify-content:center;font-weight:800;">{tck[:1]}</div>
-                      <div>
-                        <div class="tck">{tck}</div>
-                        <div class="p6-muted">ativo</div>
-                      </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+    # 📘 Relatório profissional (consolidado)
+    st.markdown("## 📘 Relatório salvo do portfólio (última execução)")
+    st.caption("Este relatório é montado a partir do que já está salvo em patch6_runs. Para atualizar, use o botão abaixo.")
 
-    st.markdown("---")
-
-    # Mantém compatibilidade com o seu pipeline: se existir um módulo "patch6_report"
-    # com render_portfolio_report(...) o utilizamos. Caso contrário, mostramos aviso.
-    st.markdown("## 📘 Relatório de análise de portfólio")
-
-    used = False
-    for mod_name, fn_name in [
-        ("page.patch6_report", "render_portfolio_report"),
-        ("patch6_report", "render_portfolio_report"),
-        ("core.patch6_report", "render_portfolio_report"),
-    ]:
+    with st.expander("📘 Relatório salvo do portfólio", expanded=True):
         try:
-            mod = __import__(mod_name, fromlist=[fn_name])
-            fn = getattr(mod, fn_name)
-            fn(snapshot=snap.raw, tickers=snap.tickers)  # não quebra se a função ignorar kwargs extras
-            used = True
-            break
-        except TypeError:
-            # assinatura diferente
-            try:
-                fn()  # type: ignore
-                used = True
-                break
-            except Exception:
-                continue
-        except Exception:
-            continue
+            # Import local para garantir escopo e revelar erros reais
+            from core.patch6_report import render_patch6_report
 
-    if not used:
-        st.info(
-            "O relatório detalhado (por empresa) depende do módulo `patch6_report` do seu projeto. "
-            "Como este arquivo aqui foi enviado isolado, não consegui localizar a função `render_portfolio_report`. "
-            "Quando o seu módulo estiver no repositório, ele será renderizado aqui."
-        )
-
-    # Botão de atualização de evidências (ingest+chunks) — tenta chamar o runner do seu projeto
-    st.markdown("---")
-    st.markdown("## 📦 Atualizar evidências")
-    if st.button("Atualizar documentos", use_container_width=True):
-        ran = False
-        for mod_name, fn_name in [
-            ("core.patch6_ingest_runner", "ingest_runner"),
-            ("core.patch6_ingest", "ingest_runner"),
-            ("page.patch6_teste", "ingest_runner"),
-            ("patch6_teste", "ingest_runner"),
-        ]:
-            try:
-                mod = __import__(mod_name, fromlist=[fn_name])
-                fn = getattr(mod, fn_name)
-                fn(tickers=snap.tickers, window_months=12, max_docs_per_ticker=80, max_pdfs_per_ticker=20, time_limit_s=25)
-                ran = True
-                break
-            except TypeError:
-                try:
-                    fn(snap.tickers, 12)  # type: ignore
-                    ran = True
-                    break
-                except Exception:
-                    continue
-            except Exception:
-                continue
-        if not ran:
-            st.warning(
-                "Não encontrei o runner de ingest no ambiente atual (ex.: core.patch6_ingest_runner.ingest_runner). "
-                "Se ele existir no seu repositório, este botão executará ingest+chunks automaticamente."
+            render_patch6_report(
+                tickers=tickers,
+                period_ref=period_ref,
+                llm_factory=llm_factory,
+                show_company_details=True,
             )
+        except Exception as e:
+            st.error("Relatório indisponível.")
+            st.exception(e)
+
+
+    # Wrappers
+  
+
+    def _call_llm(client: Any, prompt: str) -> str:
+        """
+        Compatível com:
+        - OpenAI SDK novo: client.responses.create(...)
+        - OpenAI SDK legado: client.chat.completions.create(...)
+        - Clientes custom: .complete/.chat/.invoke ou callable
+        - Unwrap defensivo (dict/client/_client)
+        """
+        if client is None:
+            raise AttributeError("Cliente LLM é None.")
+    
+        # unwrap defensivo
+        if isinstance(client, dict) and "client" in client:
+            client = client["client"]
+        if hasattr(client, "client"):
+            try:
+                client = client.client
+            except Exception:
+                pass
+        if hasattr(client, "_client"):
+            try:
+                client = client._client
+            except Exception:
+                pass
+    
+        model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    
+        # 1) OpenAI SDK novo (Responses API)
+        if hasattr(client, "responses") and hasattr(client.responses, "create") and callable(client.responses.create):
+            resp = client.responses.create(model=model, input=prompt)
+            txt = getattr(resp, "output_text", None)
+            if txt:
+                return txt
+            # fallback defensivo
+            try:
+                return resp.output[0].content[0].text
+            except Exception:
+                return str(resp)
+    
+        # 2) OpenAI SDK legado (Chat Completions)
+        if hasattr(client, "chat") and hasattr(client.chat, "completions") and hasattr(client.chat.completions, "create"):
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+            )
+            return resp.choices[0].message.content
+    
+        # 3) Clientes custom / wrappers
+        if hasattr(client, "complete") and callable(getattr(client, "complete")):
+            return client.complete(prompt)
+        if hasattr(client, "chat") and callable(getattr(client, "chat")):
+            return client.chat(prompt)
+        if hasattr(client, "invoke") and callable(getattr(client, "invoke")):
+            out = client.invoke(prompt)
+            # alguns wrappers retornam objeto com .content
+            return getattr(out, "content", out)
+        if callable(client):
+            out = client(prompt)
+            return getattr(out, "content", out)
+    
+        raise AttributeError("Cliente LLM não expõe métodos suportados (responses/chat/complete/invoke).")
+      
+    def _get_chunks_for_ticker(t: str) -> Tuple[List[str], str]:
+        # preferir Top-K inteligente; fallback para fetch_topk_chunks
+        try:
+            if use_topk_inteligente:
+                from core.rag_retriever import get_topk_chunks_inteligente  # type: ignore
+                chunks, meta = get_topk_chunks_inteligente(
+                    ticker=t,
+                    top_k=int(top_k),
+                    window_months=int(window_months),
+                    debug=bool(debug_topk),
+                )
+                return chunks or [], "topk_inteligente"
+        except Exception:
+            # cai no fetch simples
+            pass
+
+        from core.docs_corporativos_store import fetch_topk_chunks
+        chunks = fetch_topk_chunks(t, int(top_k))
+        return chunks or [], "fetch_topk_chunks"
+
+    def _build_prompt(contexto: str) -> str:
+        return f"""
+Você é um analista fundamentalista focado em direcionalidade estratégica e alocação de capital.
+Use SOMENTE o CONTEXTO abaixo (RAG). Avalie o caminho futuro (capex/expansão, dívida/desalavancagem,
+guidance, M&A/desinvestimentos, dividendos/recompra) e impacto potencial no acionista minoritário.
+
+Devolva APENAS JSON válido no formato:
+
+{{
+  "perspectiva_compra": "forte|moderada|fraca",
+  "resumo": "2-4 linhas objetivas",
+  "consideracoes_llm": "1-3 linhas com ressalvas/hipóteses (ex.: falta de dados, ambiguidade, dependências)",
+  "confianca": "alta|media|baixa",
+  "pontos_chave": ["..."],
+  "riscos": ["..."],
+  "evidencias": ["trechos literais do contexto (curtos)"]
+}}
+
+CONTEXTO:
+{contexto}
+"""
+
+    if st.button("🔄 Atualizar relatório com LLM agora"):
+        client = llm_factory.get_llm_client()
+
+        tickers_run = tickers
+        total = len(tickers_run)
+
+        st.info("Iniciando leitura qualitativa… os cards aparecem à medida que cada ticker finalizar.")
+        prog = st.progress(0)
+        status_box = st.empty()
+
+        fortes = moderadas = fracas = erros = 0
+        status_rows: List[Dict[str, Any]] = []
+
+        for i, t in enumerate(tickers_run, start=1):
+            status_box.markdown(f"✅ Processando **{t}** ({i}/{total})…")
+            t0 = time.time()
+
+            try:
+                chunks, fonte_chunks = _get_chunks_for_ticker(t)
+                if not chunks:
+                    erros += 1
+                    status_rows.append({"ticker": t, "status": "SEM_CHUNKS", "erro": "Sem chunks no Supabase"})
+                    prog.progress(int(i / total * 100))
+                    continue
+
+                contexto = _build_context_limited(chunks, per_chunk_chars=1200, total_chars=12000)
+                try:
+                    raw = _call_llm(client, _build_prompt(contexto))
+                except Exception as e_call:
+                    msg = str(e_call).lower()
+                    if "context window" in msg or "exceed" in msg:
+                        contexto = _build_context_limited(chunks, per_chunk_chars=800, total_chars=8000)
+                        raw = _call_llm(client, _build_prompt(contexto))
+                    else:
+                        raise
+
+                try:
+                    result = _parse_json_loose(raw)
+                except Exception:
+                    erros += 1
+                    status_rows.append({"ticker": t, "status": "JSON_INVALIDO", "erro": "LLM não retornou JSON"})
+                    if debug_topk:
+                        with st.expander(f"⚠️ Resposta bruta (debug) — {t}", expanded=False):
+                            st.code(raw, language="json")
+                    prog.progress(int(i / total * 100))
+                    continue
+
+                # metadados de contexto
+                result.setdefault("evid_usadas", len(chunks))
+                result.setdefault("docs_usados", None)
+                result.setdefault("metodo_chunks", fonte_chunks)
+
+                # salva
+                save_patch6_run(
+                    snapshot_id=str(snapshot_id),
+                    ticker=t,
+                    period_ref=period_ref,
+                    result=result,
+                )
+
+                # conta perspectiva
+                p = str(result.get("perspectiva_compra", "")).strip().lower()
+                if p == "forte":
+                    fortes += 1
+                elif p == "moderada":
+                    moderadas += 1
+                elif p == "fraca":
+                    fracas += 1
+                else:
+                    erros += 1
+
+                # mostra card (IMEDIATO)
+                _render_card(ticker=t, result=result, top_k_used=int(top_k), period_ref=period_ref)
+
+                status_rows.append(
+                    {
+                        "ticker": t,
+                        "status": "OK",
+                        "metodo_chunks": fonte_chunks,
+                        "tempo_s": round(time.time() - t0, 1),
+                    }
+                )
+
+            except Exception as e:
+                erros += 1
+                status_rows.append({"ticker": t, "status": "ERRO_LLM", "erro": str(e)})
+                if debug_topk:
+                    with st.expander(f"❌ Erro (traceback) — {t}", expanded=False):
+                        st.code(traceback.format_exc())
+                else:
+                    st.warning(f"❌ {t} — falha ao rodar LLM: {e}")
+
+            prog.progress(int(i / total * 100))
+
+        status_box.markdown("✅ Concluído.")
+        st.subheader("📌 Parecer resumido do portfólio")
+        st.write(f"Forte: **{fortes}** | Moderada: **{moderadas}** | Fraca: **{fracas}** | Erros/sem dados: **{erros}**")
+
+        mostrar_tabela_status = debug_topk or (erros > 0)
+        if mostrar_tabela_status:
+            st.subheader("🧾 Status por ticker")
+            st.dataframe(status_rows, use_container_width=True)
+        else:
+            st.caption("Execução concluída sem erros.")
+
+        # Re-render do relatório salvo após atualizar
+        st.divider()
+        st.markdown("## 📘 Relatório salvo atualizado")
+        try:
+            from core.patch6_report import render_patch6_report
+            render_patch6_report(
+                tickers=tickers,
+                period_ref=period_ref,
+                llm_factory=llm_factory,
+                show_company_details=True,
+            )
+        except Exception as e:
+            st.error("Não foi possível renderizar o relatório atualizado.")
+            if debug_topk:
+                st.exception(e)
