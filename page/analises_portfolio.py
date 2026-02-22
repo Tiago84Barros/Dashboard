@@ -361,7 +361,7 @@ def render() -> None:
     n_segmentos = len(set([s for s in seg_values if s]))
 
     # Header institucional + cards de resumo do snapshot
-st.markdown(
+    st.markdown(
     f"""
     <div class="p6-header">
       <div class="p6-title">📌 Dados salvos</div>
@@ -374,8 +374,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-c1, c2, c3, c4 = st.columns(4)
-c1.markdown(
+    c1, c2, c3, c4 = st.columns(4)
+    c1.markdown(
     f"""
     <div class="p6-mcard">
       <div class="p6-mlabel">Selic usada (benchmark)</div>
@@ -385,7 +385,7 @@ c1.markdown(
     """,
     unsafe_allow_html=True,
 )
-c2.markdown(
+    c2.markdown(
     f"""
     <div class="p6-mcard">
       <div class="p6-mlabel">Ações selecionadas</div>
@@ -395,7 +395,7 @@ c2.markdown(
     """,
     unsafe_allow_html=True,
 )
-c3.markdown(
+    c3.markdown(
     f"""
     <div class="p6-mcard">
       <div class="p6-mlabel">Acima do benchmark</div>
@@ -405,7 +405,7 @@ c3.markdown(
     """,
     unsafe_allow_html=True,
 )
-c4.markdown(
+    c4.markdown(
     f"""
     <div class="p6-mcard">
       <div class="p6-mlabel">Segmentos cobertos</div>
