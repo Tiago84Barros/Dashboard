@@ -203,6 +203,47 @@ def _safe_call(fn: Callable[..., Any], **kwargs):
         return fn(**kwargs)
 
 
+
+import re
+
+def _clip(s: str, max_chars: int) -> str:
+    s = (s or "").strip()
+    if len(s) <= max_chars:
+        return s
+    return s[:max_chars].rstrip() + " …"
+
+def _build_context_limited(chunks: List[str], per_chunk_chars: int = 1200, total_chars: int = 12000) -> str:
+    parts: List[str] = []
+    used = 0
+    for i, ch in enumerate(chunks or [], start=1):
+        piece = _clip(str(ch), per_chunk_chars)
+        block = f"[CHUNK {i}]\n{piece}\n"
+        if used + len(block) > total_chars:
+            break
+        parts.append(block)
+        used += len(block)
+    return "\n".join(parts)
+
+def _parse_json_loose(text: str) -> Dict[str, Any]:
+    t = (text or "").strip()
+
+    # remove fences ```json
+    t = re.sub(r"^```(?:json)?\s*", "", t, flags=re.IGNORECASE).strip()
+    t = re.sub(r"\s*```$", "", t).strip()
+
+    # direct parse
+    try:
+        return json.loads(t)
+    except Exception:
+        pass
+
+    # extract first {...}
+    m = re.search(r"\{.*\}", t, flags=re.DOTALL)
+    if not m:
+        raise ValueError("LLM não retornou JSON")
+    return json.loads(m.group(0))
+
+
 def render() -> None:
     st.title("🧠 Análises de Portfólio")
 
@@ -599,7 +640,10 @@ def render() -> None:
     )
 
     # 📘 Relatório profissional (consolidado)
-    with st.expander("📘 Relatório profissional do portfólio", expanded=True):
+    st.markdown("## 📘 Relatório salvo do portfólio (última execução)")
+    st.caption("Este relatório é montado a partir do que já está salvo em patch6_runs. Para atualizar, use o botão abaixo.")
+
+    with st.expander("📘 Relatório salvo do portfólio", expanded=True):
         try:
             # Import local para garantir escopo e revelar erros reais
             from core.patch6_report import render_patch6_report
@@ -684,7 +728,7 @@ def render() -> None:
     def _get_chunks_for_ticker(t: str) -> Tuple[List[str], str]:
         # preferir Top-K inteligente; fallback para fetch_topk_chunks
         try:
-            if usar_topk_inteligente:
+            if use_topk_inteligente:
                 from core.rag_retriever import get_topk_chunks_inteligente  # type: ignore
                 chunks, meta = get_topk_chunks_inteligente(
                     ticker=t,
@@ -723,7 +767,7 @@ CONTEXTO:
 {contexto}
 """
 
-    if st.button("Rodar LLM agora"):
+    if st.button("🔄 Atualizar relatório com LLM agora"):
         client = llm_factory.get_llm_client()
 
         tickers_run = tickers
@@ -748,16 +792,25 @@ CONTEXTO:
                     prog.progress(int(i / total * 100))
                     continue
 
-                contexto = "\n\n".join(chunks)
-                raw = _call_llm(client, _build_prompt(contexto))
+                contexto = _build_context_limited(chunks, per_chunk_chars=1200, total_chars=12000)
+                try:
+                    raw = _call_llm(client, _build_prompt(contexto))
+                except Exception as e_call:
+                    msg = str(e_call).lower()
+                    if "context window" in msg or "exceed" in msg:
+                        contexto = _build_context_limited(chunks, per_chunk_chars=800, total_chars=8000)
+                        raw = _call_llm(client, _build_prompt(contexto))
+                    else:
+                        raise
 
                 try:
-                    result = json.loads(raw)
+                    result = _parse_json_loose(raw)
                 except Exception:
                     erros += 1
                     status_rows.append({"ticker": t, "status": "JSON_INVALIDO", "erro": "LLM não retornou JSON"})
-                    with st.expander(f"⚠️ Resposta bruta (debug) — {t}", expanded=False):
-                        st.code(raw)
+                    if debug_topk:
+                        with st.expander(f"⚠️ Resposta bruta (debug) — {t}", expanded=False):
+                            st.code(raw, language="json")
                     prog.progress(int(i / total * 100))
                     continue
 
@@ -800,8 +853,11 @@ CONTEXTO:
             except Exception as e:
                 erros += 1
                 status_rows.append({"ticker": t, "status": "ERRO_LLM", "erro": str(e)})
-                with st.expander(f"❌ Erro (traceback) — {t}", expanded=False):
-                    st.code(traceback.format_exc())
+                if debug_topk:
+                    with st.expander(f"❌ Erro (traceback) — {t}", expanded=False):
+                        st.code(traceback.format_exc())
+                else:
+                    st.warning(f"❌ {t} — falha ao rodar LLM: {e}")
 
             prog.progress(int(i / total * 100))
 
@@ -809,5 +865,25 @@ CONTEXTO:
         st.subheader("📌 Parecer resumido do portfólio")
         st.write(f"Forte: **{fortes}** | Moderada: **{moderadas}** | Fraca: **{fracas}** | Erros/sem dados: **{erros}**")
 
-        st.subheader("🧾 Status por ticker")
-        st.dataframe(status_rows, use_container_width=True)
+        mostrar_tabela_status = debug_topk or (erros > 0)
+        if mostrar_tabela_status:
+            st.subheader("🧾 Status por ticker")
+            st.dataframe(status_rows, use_container_width=True)
+        else:
+            st.caption("Execução concluída sem erros.")
+
+        # Re-render do relatório salvo após atualizar
+        st.divider()
+        st.markdown("## 📘 Relatório salvo atualizado")
+        try:
+            from core.patch6_report import render_patch6_report
+            render_patch6_report(
+                tickers=tickers,
+                period_ref=period_ref,
+                llm_factory=llm_factory,
+                show_company_details=True,
+            )
+        except Exception as e:
+            st.error("Não foi possível renderizar o relatório atualizado.")
+            if debug_topk:
+                st.exception(e)
