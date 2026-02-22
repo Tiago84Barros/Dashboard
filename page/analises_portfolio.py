@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import json
+import html
 import time
 import traceback
 import importlib
@@ -50,6 +51,14 @@ def _fmt_s(ms: int) -> str:
 
 def _safe_upper(x: Any) -> str:
     return str(x or "").strip().upper()
+
+
+
+def _escape_html(x: Any) -> str:
+    try:
+        return html.escape(str(x))
+    except Exception:
+        return ""
 
 def _fmt_pct(x: Any, default: str = "—") -> str:
     try:
@@ -205,7 +214,6 @@ def _safe_call(fn: Callable[..., Any], **kwargs):
 
 
 import re
-import html
 
 def _clip(s: str, max_chars: int) -> str:
     s = (s or "").strip()
@@ -692,14 +700,14 @@ def render() -> None:
                 <div>
                   <span class="p6-k">Pontos-chave</span>
                   <ul class="p6-list">
-                    {''.join([f'<li>{html.escape(p)}</li>' for p in pontos]) if pontos else '<li class="p6-muted">—</li>'}
+                    {''.join([f'<li>{_escape_html(p)}</li>' for p in pontos]) if pontos else '<li class="p6-muted">—</li>'}
                   </ul>
                 </div>
 
                 <div>
                   <span class="p6-k">Riscos</span>
                   <ul class="p6-list">
-                    {''.join([f'<li>{html.escape(r)}</li>' for r in riscos]) if riscos else '<li class="p6-muted">—</li>'}
+                    {''.join([f'<li>{_escape_html(r)}</li>' for r in riscos]) if riscos else '<li class="p6-muted">—</li>'}
                   </ul>
                 </div>
               </div>
@@ -740,8 +748,7 @@ def render() -> None:
     with st.expander("📘 Relatório salvo do portfólio", expanded=True):
         try:
             # Import local para garantir escopo e revelar erros reais
-            from core.patch6_report import re
-import htmlnder_patch6_report
+            from core.patch6_report import render_patch6_report
 
             render_patch6_report(
                 tickers=tickers,
@@ -841,26 +848,35 @@ import htmlnder_patch6_report
         return chunks or [], "fetch_topk_chunks"
 
     def _build_prompt(contexto: str) -> str:
-        return f"""
-Você é um analista fundamentalista focado em direcionalidade estratégica e alocação de capital.
-Use SOMENTE o CONTEXTO abaixo (RAG). Avalie o caminho futuro (capex/expansão, dívida/desalavancagem,
-guidance, M&A/desinvestimentos, dividendos/recompra) e impacto potencial no acionista minoritário.
+        # Defesa: limita contexto por caracteres para reduzir risco de estourar janela
+        contexto = (contexto or "").strip()
+        if len(contexto) > 12000:
+            contexto = contexto[:12000]
 
-Devolva APENAS JSON válido no formato:
+        return f"""Você é um analista fundamentalista focado em direcionalidade estratégica e alocação de capital.
+    Use SOMENTE o CONTEXTO abaixo (RAG). Avalie o caminho futuro (capex/expansão, dívida/desalavancagem,
+    guidance, M&A/desinvestimentos, dividendos/recompra) e impacto potencial no acionista minoritário.
 
-{{
-  "perspectiva_compra": "forte|moderada|fraca",
-  "resumo": "2-4 linhas objetivas",
-  "consideracoes_llm": "1-3 linhas com ressalvas/hipóteses (ex.: falta de dados, ambiguidade, dependências)",
-  "confianca": "alta|media|baixa",
-  "pontos_chave": ["..."],
-  "riscos": ["..."],
-  "evidencias": ["trechos literais do contexto (curtos)"]
-}}
+    Devolva APENAS JSON válido (sem markdown) no formato EXATO:
 
-CONTEXTO:
-{contexto}
-"""
+    {{
+      "perspectiva_compra": "forte|moderada|fraca",
+      "resumo": "2-4 linhas objetivas",
+      "consideracoes_llm": "1-3 linhas com ressalvas/hipóteses (ex.: falta de dados, ambiguidade, dependências)",
+      "confianca": "alta|media|baixa",
+      "pontos_chave": ["..."],
+      "riscos": ["..."],
+      "evidencias": ["trechos literais do contexto (curtos)"]
+    }}
+
+    Regras:
+    - Não invente fatos: use apenas o CONTEXTO
+    - Evidências devem ser trechos curtos e literais do CONTEXTO
+    - Responda SOMENTE com JSON válido (nenhum texto fora do JSON)
+
+    CONTEXTO:
+    {contexto}
+    """
 
     if st.button("🔄 Atualizar relatório com LLM agora"):
         client = llm_factory.get_llm_client()
@@ -971,8 +987,7 @@ CONTEXTO:
         st.divider()
         st.markdown("## 📘 Relatório salvo atualizado")
         try:
-            from core.patch6_report import re
-import htmlnder_patch6_report
+            from core.patch6_report import render_patch6_report
             render_patch6_report(
                 tickers=tickers,
                 period_ref=period_ref,
