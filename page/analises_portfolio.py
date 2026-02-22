@@ -616,26 +616,38 @@ def render() -> None:
 
 
     # Wrappers
- 
+  
+
     def _call_llm(client: Any, prompt: str) -> str:
         """
-        Wrapper compatível com:
+        Compatível com:
         - OpenAI SDK novo: client.responses.create(...)
         - OpenAI SDK legado: client.chat.completions.create(...)
         - Clientes custom: .complete/.chat/.invoke ou callable
+        - Unwrap defensivo (dict/client/_client)
         """
         if client is None:
             raise AttributeError("Cliente LLM é None.")
     
-        model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")  # ajuste se você usa outro
+        # unwrap defensivo
+        if isinstance(client, dict) and "client" in client:
+            client = client["client"]
+        if hasattr(client, "client"):
+            try:
+                client = client.client
+            except Exception:
+                pass
+        if hasattr(client, "_client"):
+            try:
+                client = client._client
+            except Exception:
+                pass
+    
+        model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     
         # 1) OpenAI SDK novo (Responses API)
         if hasattr(client, "responses") and hasattr(client.responses, "create") and callable(client.responses.create):
-            resp = client.responses.create(
-                model=model,
-                input=prompt,
-            )
-            # SDK costuma expor output_text
+            resp = client.responses.create(model=model, input=prompt)
             txt = getattr(resp, "output_text", None)
             if txt:
                 return txt
@@ -654,18 +666,21 @@ def render() -> None:
             )
             return resp.choices[0].message.content
     
-        # 3) Clientes custom (se existirem)
+        # 3) Clientes custom / wrappers
         if hasattr(client, "complete") and callable(getattr(client, "complete")):
             return client.complete(prompt)
         if hasattr(client, "chat") and callable(getattr(client, "chat")):
             return client.chat(prompt)
         if hasattr(client, "invoke") and callable(getattr(client, "invoke")):
-            return client.invoke(prompt)
+            out = client.invoke(prompt)
+            # alguns wrappers retornam objeto com .content
+            return getattr(out, "content", out)
         if callable(client):
-            return client(prompt)
+            out = client(prompt)
+            return getattr(out, "content", out)
     
         raise AttributeError("Cliente LLM não expõe métodos suportados (responses/chat/complete/invoke).")
-  
+      
     def _get_chunks_for_ticker(t: str) -> Tuple[List[str], str]:
         # preferir Top-K inteligente; fallback para fetch_topk_chunks
         try:
