@@ -77,9 +77,22 @@ def _fmt_pp(x: Any, default: str = "—") -> str:
 
 
 def _escape_html(x: Any) -> str:
-    """Escape seguro para strings vindas da LLM / banco antes de injetar em HTML."""
+    """Escape seguro para strings vindas da LLM/banco antes de injetar em HTML.
+
+    Além do escape, faz uma sanitização leve porque alguns outputs de LLM podem vir
+    com *code fences* (```json ...```) ou até trechos com tags HTML (<div>...</div>),
+    o que polui o layout (parece "debug").
+    """
     try:
-        return html.escape(str(x or "").strip())
+        txt = str(x or "").strip()
+        # Remove fences de código (mantém o conteúdo interno)
+        txt = re.sub(r"```[a-zA-Z0-9_\-]*\n", "", txt)
+        txt = txt.replace("```", "")
+        # Remove tags HTML que possam aparecer no payload
+        txt = re.sub(r"<[^>]+>", "", txt)
+        # Normaliza whitespace
+        txt = re.sub(r"\s+", " ", txt).strip()
+        return html.escape(txt)
     except Exception:
         return ""
 
@@ -1010,14 +1023,43 @@ CONTEXTO:
         st.subheader("📌 Parecer resumido do portfólio")
         st.write(f"Forte: **{fortes}** | Moderada: **{moderadas}** | Fraca: **{fracas}** | Erros/sem dados: **{erros}**")
 
-        mostrar_tabela_status = debug_topk or (erros > 0)
-        if mostrar_tabela_status:
-            st.subheader("🧾 Status por ticker")
-            st.dataframe(status_rows, use_container_width=True)
-        else:
-            st.caption("Execução concluída sem erros.")
+        
+# Em vez de tabela, mostramos cards (padrão institucional)
+mostrar_status = debug_topk or (erros > 0)
+if mostrar_status:
+    st.subheader("🧾 Status por ticker")
 
-        # Re-render do relatório salvo após atualizar
+    def _status_class(s: str) -> str:
+        s = (s or "").upper()
+        if s in ("OK", "SUCESSO", "DONE", "COMPLETO"):
+            return "cf-status-ok"
+        if "JSON" in s or "WARN" in s:
+            return "cf-status-warn"
+        if "ERRO" in s or "FAIL" in s:
+            return "cf-status-err"
+        return "cf-status-warn"
+
+    cols = st.columns(3)
+    for idx, row in enumerate(status_rows):
+        t = str(row.get("ticker", "")).upper()
+        stt = str(row.get("status", ""))
+        err = str(row.get("erro", "") or "").strip()
+
+        klass = _status_class(stt)
+        target = cols[idx % 3]
+        target.markdown(
+            f"""
+            <div class="cf-card {klass}">
+                <div class="cf-card-label">{t}</div>
+                <div class="cf-card-value"><span class="cf-status-pill">{stt}</span></div>
+                <div class="cf-card-extra">{(err if err else "Sem erros reportados.")}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+else:
+    st.caption("Execução concluída sem erros.")
+# Re-render do relatório salvo após atualizar
         st.divider()
         st.markdown("## 📘 Relatório salvo atualizado")
         try:
