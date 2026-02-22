@@ -247,6 +247,89 @@ def _parse_json_loose(text: str) -> Dict[str, Any]:
 def render() -> None:
     st.title("🧠 Análises de Portfólio")
 
+    # CSS institucional (header + cards + chips + cards LLM)
+    st.markdown(
+        """
+        <style>
+          .p6-header{
+            border:1px solid rgba(255,255,255,.10);
+            border-radius:18px;
+            padding:16px 18px;
+            background:rgba(255,255,255,.03);
+            margin:10px 0 12px 0;
+            box-shadow:0 10px 24px rgba(0,0,0,.22);
+          }
+          .p6-header .p6-title{font-size:28px;font-weight:900;letter-spacing:.2px;margin:0}
+          .p6-header .p6-sub{opacity:.78;margin-top:6px;font-size:14px}
+          .p6-pill-mini{
+            display:inline-block;
+            padding:5px 10px;
+            border-radius:999px;
+            border:1px solid rgba(255,255,255,.12);
+            background:rgba(255,255,255,.04);
+            font-size:12px;
+            margin-top:10px;
+          }
+
+          .p6-mcard{
+            border:1px solid rgba(255,255,255,.10);
+            border-radius:16px;
+            padding:14px 14px 12px 14px;
+            background:rgba(255,255,255,.03);
+            box-shadow:0 10px 24px rgba(0,0,0,.18);
+            height:100%;
+          }
+          .p6-mlabel{opacity:.78;font-size:12px;margin-bottom:6px}
+          .p6-mvalue{font-size:22px;font-weight:900;letter-spacing:.2px}
+          .p6-mextra{opacity:.70;font-size:12px;margin-top:6px;line-height:1.25}
+
+          .p6-chips{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 14px 0}
+          .p6-chip{
+            display:inline-flex;
+            align-items:center;
+            gap:12px;
+            padding:10px 16px;
+            border-radius:14px;
+            border:1px solid rgba(255,255,255,0.10);
+            background: rgba(255,255,255,0.04);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+          }
+          .p6-chip img{
+            width:40px;
+            height:40px;
+            object-fit:contain;
+            border-radius:10px;
+            background:#ffffff;
+            padding:5px;
+          }
+          .p6-chip .tck{
+            font-weight:800;
+            font-size:14px;
+            letter-spacing:0.3px;
+          }
+
+          /* cards por empresa (LLM) */
+          .p6-card{border:1px solid rgba(255,255,255,.10);border-radius:16px;padding:16px 16px 12px 16px;
+                   background:rgba(255,255,255,.03);margin:12px 0;box-shadow:0 10px 24px rgba(0,0,0,.18);}
+          .p6-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+          .p6-title-sm{font-size:18px;font-weight:900;letter-spacing:.2px}
+          .p6-badges{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+          .p6-pill{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.10);opacity:.95}
+          .p6-pill-forte{background:rgba(34,197,94,.15);border-color:rgba(34,197,94,.35)}
+          .p6-pill-moderada{background:rgba(234,179,8,.15);border-color:rgba(234,179,8,.35)}
+          .p6-pill-fraca{background:rgba(239,68,68,.15);border-color:rgba(239,68,68,.35)}
+          .p6-pill-info{background:rgba(59,130,246,.12);border-color:rgba(59,130,246,.30)}
+          .p6-grid{display:grid;grid-template-columns:1fr;gap:10px}
+          .p6-k{font-weight:800}
+          .p6-muted{opacity:.78}
+          .p6-list{margin:6px 0 0 18px}
+          .p6-hr{height:1px;background:rgba(255,255,255,.08);border:none;margin:12px 0}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
     snapshot = get_latest_snapshot()
     if not snapshot:
         st.warning("Nenhum snapshot ativo encontrado. Execute primeiro a Criação de Portfólio.")
@@ -277,7 +360,61 @@ def render() -> None:
             seg_values.append(str(seg).strip())
     n_segmentos = len(set([s for s in seg_values if s]))
 
-    st.markdown(_render_saved_data_header_html(selic_used, len(tickers), margem_bench, n_segmentos), unsafe_allow_html=True)
+    # Header institucional + cards de resumo do snapshot
+st.markdown(
+    f"""
+    <div class="p6-header">
+      <div class="p6-title">📌 Dados salvos</div>
+      <div class="p6-sub">
+        Snapshot do portfólio • parâmetros utilizados na seleção (Criação de Portfólio).
+      </div>
+      <span class="p6-pill-mini">Snapshot ativo</span>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+c1, c2, c3, c4 = st.columns(4)
+c1.markdown(
+    f"""
+    <div class="p6-mcard">
+      <div class="p6-mlabel">Selic usada (benchmark)</div>
+      <div class="p6-mvalue">{_fmt_pct(selic_used)}</div>
+      <div class="p6-mextra">Taxa de referência salva no snapshot.</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+c2.markdown(
+    f"""
+    <div class="p6-mcard">
+      <div class="p6-mlabel">Ações selecionadas</div>
+      <div class="p6-mvalue">{len(tickers)}</div>
+      <div class="p6-mextra">Quantidade de ativos no portfólio.</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+c3.markdown(
+    f"""
+    <div class="p6-mcard">
+      <div class="p6-mlabel">Acima do benchmark</div>
+      <div class="p6-mvalue">{_fmt_pp(margem_bench)}</div>
+      <div class="p6-mextra">Margem mínima configurada na criação.</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+c4.markdown(
+    f"""
+    <div class="p6-mcard">
+      <div class="p6-mlabel">Segmentos cobertos</div>
+      <div class="p6-mvalue">{n_segmentos}</div>
+      <div class="p6-mextra">Diversificação por segmento/setor.</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
     st.markdown(_render_ticker_chips_html(tickers), unsafe_allow_html=True)
 
     st.divider()
@@ -470,65 +607,6 @@ def render() -> None:
     if not tickers:
         st.info("Sem tickers no snapshot.")
         return
-
-    # CSS dos cards
-    st.markdown(
-        """
-        <style>
-          .p6-card{border:1px solid rgba(255,255,255,.10);border-radius:16px;padding:16px 16px 12px 16px;
-                   background:rgba(255,255,255,.03);margin:12px 0;}
-          .p6-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
-          .p6-title{font-size:18px;font-weight:700;letter-spacing:.2px}
-          .p6-badges{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
-          .p6-pill{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.10);opacity:.95}
-          .p6-pill-forte{background:rgba(34,197,94,.15);border-color:rgba(34,197,94,.35)}
-          .p6-pill-moderada{background:rgba(234,179,8,.15);border-color:rgba(234,179,8,.35)}
-          .p6-pill-fraca{background:rgba(239,68,68,.15);border-color:rgba(239,68,68,.35)}
-          .p6-pill-info{background:rgba(59,130,246,.12);border-color:rgba(59,130,246,.30)}
-          .p6-grid{display:grid;grid-template-columns:1fr;gap:10px}
-          .p6-k{font-weight:700}
-          .p6-muted{opacity:.75}
-          .p6-list{margin:6px 0 0 18px}
-          .p6-hr{height:1px;background:rgba(255,255,255,.08);border:none;margin:12px 0}
-        
-          .p6-saved{border:1px solid rgba(255,255,255,.10);border-radius:16px;padding:14px 16px;
-                   background:rgba(255,255,255,.03);margin:10px 0 6px 0;}
-          .p6-saved-title{font-size:16px;font-weight:800;margin-bottom:8px}
-          .p6-saved-meta{display:flex;flex-wrap:wrap;gap:8px}
-          .p6-pill{display:inline-block;padding:6px 10px;border-radius:999px;
-                   border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);
-                   font-size:12px;line-height:1.2}
-          .p6-chips{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 14px 0}
-          .p6-chip{
-            display:inline-flex;
-            align-items:center;
-            gap:12px;
-            padding:10px 16px;
-            border-radius:14px;
-            border:1px solid rgba(255,255,255,0.10);
-            background: rgba(255,255,255,0.04);
-            box-shadow: 0 8px 20px rgba(0,0,0,0.25);
-          }
-        
-          .p6-chip img{
-            width:40px;
-            height:40px;
-            object-fit:contain;
-            border-radius:8px;
-            background:#ffffff;
-            padding:4px;
-        }
-        
-        .p6-chip .tck{
-          font-weight:700;
-          font-size:14px;
-          letter-spacing:0.3px;
-        }
-</style>
-        """,
-        unsafe_allow_html=True,
-    )
-
     def _pill_class(p: str) -> str:
         p = (p or "").strip().lower()
         if p == "forte":
@@ -576,7 +654,7 @@ def render() -> None:
             f"""
             <div class="p6-card">
               <div class="p6-head">
-                <div class="p6-title">{ticker}</div>
+                <div class="p6-title-sm">{ticker}</div>
                 <div class="p6-badges">
                   <span class="{_pill_class(persp)}">{(persp or "—").upper()}</span>
                   <span class="p6-pill p6-pill-info">Top-K: {top_k_used}</span>
