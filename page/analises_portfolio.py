@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import json
+import html
 import time
 import traceback
 import importlib
@@ -25,7 +26,6 @@ import inspect
 from typing import Any, Dict, List, Optional, Callable, Tuple
 
 import streamlit as st
-import html
 
 from core.helpers import get_logo_url
 
@@ -74,28 +74,6 @@ def _fmt_pp(x: Any, default: str = "—") -> str:
         return f"{v:.2f} p.p."
     except Exception:
         return default
-
-
-def _escape_html(x: Any) -> str:
-    """Escape seguro para strings vindas da LLM/banco antes de injetar em HTML.
-
-    Além do escape, faz uma sanitização leve porque alguns outputs de LLM podem vir
-    com *code fences* (```json ...```) ou até trechos com tags HTML (<div>...</div>),
-    o que polui o layout (parece "debug").
-    """
-    try:
-        txt = str(x or "").strip()
-        # Remove fences de código (mantém o conteúdo interno)
-        txt = re.sub(r"```[a-zA-Z0-9_\-]*\n", "", txt)
-        txt = txt.replace("```", "")
-        # Remove tags HTML que possam aparecer no payload
-        txt = re.sub(r"<[^>]+>", "", txt)
-        # Normaliza whitespace
-        txt = re.sub(r"\s+", " ", txt).strip()
-        return html.escape(txt)
-    except Exception:
-        return ""
-
 
 def _render_saved_data_header_html(selic: Any, n_acoes: int, margem: Any, n_segmentos: int) -> str:
     return f'''
@@ -274,44 +252,6 @@ def render() -> None:
     st.markdown(
         """
         <style>
-
-          /* ===== Design System (Controle Financeiro) ===== */
-          .cf-header{
-            display:flex;
-            justify-content:space-between;
-            align-items:center;
-            padding:18px 22px;
-            border-radius:18px;
-            background:linear-gradient(145deg,#0f172a,#111827);
-            border:1px solid rgba(255,255,255,.10);
-            margin:10px 0 12px 0;
-            box-shadow:0 10px 24px rgba(0,0,0,.22);
-          }
-          .cf-title{font-size:26px;font-weight:900;letter-spacing:.2px;margin:0}
-          .cf-subtitle{opacity:.78;margin-top:6px;font-size:14px}
-          .cf-pill{
-            display:inline-block;
-            padding:6px 12px;
-            border-radius:999px;
-            background:rgba(59,130,246,0.15);
-            border:1px solid rgba(59,130,246,0.35);
-            font-size:12px;
-          }
-          .cf-card{
-            border:1px solid rgba(255,255,255,.10);
-            border-radius:18px;
-            padding:18px 18px 14px 18px;
-            background:linear-gradient(145deg,#111827,#0b1220);
-            box-shadow:0 10px 24px rgba(0,0,0,.18);
-            height:100%;
-          }
-          .cf-card-label{opacity:.78;font-size:12px;margin-bottom:6px}
-          .cf-card-value{font-size:22px;font-weight:900;letter-spacing:.2px}
-          .cf-card-extra{opacity:.70;font-size:12px;margin-top:6px;line-height:1.25}
-          .cf-card-benchmark{border-color:rgba(34,197,94,.35)}
-          .cf-card-margin{border-color:rgba(234,179,8,.35)}
-          .cf-card-segment{border-color:rgba(168,85,247,.35)}
-
           .p6-header{
             border:1px solid rgba(255,255,255,.10);
             border-radius:18px;
@@ -439,16 +379,12 @@ def render() -> None:
     # Header institucional + cards de resumo do snapshot
     st.markdown(
     f"""
-    <div class="cf-header">
-      <div>
-        <h1 class="cf-title">📊 Portfólio Fundamentalista</h1>
-        <p class="cf-subtitle">
-          Snapshot do portfólio • parâmetros utilizados na seleção (Criação de Portfólio).
-        </p>
+    <div class="p6-header">
+      <div class="p6-title">📌 Dados salvos</div>
+      <div class="p6-sub">
+        Snapshot do portfólio • parâmetros utilizados na seleção (Criação de Portfólio).
       </div>
-      <div>
-        <span class="cf-pill">Snapshot ativo</span>
-      </div>
+      <span class="p6-pill-mini">Snapshot ativo</span>
     </div>
     """,
     unsafe_allow_html=True,
@@ -457,40 +393,40 @@ def render() -> None:
     c1, c2, c3, c4 = st.columns(4)
     c1.markdown(
     f"""
-    <div class="cf-card cf-card-benchmark">
-      <div class="cf-card-label">Selic usada (benchmark)</div>
-      <div class="cf-card-value">{_fmt_pct(selic_used)}</div>
-      <div class="cf-card-extra">Taxa de referência salva no snapshot.</div>
+    <div class="p6-mcard">
+      <div class="p6-mlabel">Selic usada (benchmark)</div>
+      <div class="p6-mvalue">{_fmt_pct(selic_used)}</div>
+      <div class="p6-mextra">Taxa de referência salva no snapshot.</div>
     </div>
     """,
     unsafe_allow_html=True,
 )
     c2.markdown(
     f"""
-    <div class="cf-card">
-      <div class="cf-card-label">Ações selecionadas</div>
-      <div class="cf-card-value">{len(tickers)}</div>
-      <div class="cf-card-extra">Quantidade de ativos no portfólio.</div>
+    <div class="p6-mcard">
+      <div class="p6-mlabel">Ações selecionadas</div>
+      <div class="p6-mvalue">{len(tickers)}</div>
+      <div class="p6-mextra">Quantidade de ativos no portfólio.</div>
     </div>
     """,
     unsafe_allow_html=True,
 )
     c3.markdown(
     f"""
-    <div class="cf-card cf-card-margin">
-      <div class="cf-card-label">Acima do benchmark</div>
-      <div class="cf-card-value">{_fmt_pp(margem_bench)}</div>
-      <div class="cf-card-extra">Margem mínima configurada na criação.</div>
+    <div class="p6-mcard">
+      <div class="p6-mlabel">Acima do benchmark</div>
+      <div class="p6-mvalue">{_fmt_pp(margem_bench)}</div>
+      <div class="p6-mextra">Margem mínima configurada na criação.</div>
     </div>
     """,
     unsafe_allow_html=True,
 )
     c4.markdown(
     f"""
-    <div class="cf-card cf-card-segment">
-      <div class="cf-card-label">Segmentos cobertos</div>
-      <div class="cf-card-value">{n_segmentos}</div>
-      <div class="cf-card-extra">Diversificação por segmento/setor.</div>
+    <div class="p6-mcard">
+      <div class="p6-mlabel">Segmentos cobertos</div>
+      <div class="p6-mvalue">{n_segmentos}</div>
+      <div class="p6-mextra">Diversificação por segmento/setor.</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -738,16 +674,16 @@ def render() -> None:
                 <div class="p6-badges">
                   <span class="{_pill_class(persp)}">{(persp or "—").upper()}</span>
                   <span class="p6-pill p6-pill-info">Top-K: {top_k_used}</span>
-                  <span class="p6-pill p6-pill-info">period_ref: {period_ref}</span>
+                  <span class="p6-pill p6-pill-info">period_ref: {_h(period_ref)}</span>
                   {f'<span class="p6-pill p6-pill-info">Docs: {docs_usados}</span>' if docs_usados is not None else ""}
                   {f'<span class="p6-pill p6-pill-info">Evidências: {evid_usadas}</span>' if evid_usadas is not None else ""}
                 </div>
               </div>
 
               <div class="p6-grid">
-                <div><span class="p6-k">Resumo:</span> <span class="p6-muted">{_escape_html(resumo) or "—"}</span></div>
-                {f'<div><span class="p6-k">Considerações da LLM:</span> <span class="p6-muted">{_escape_html(consider)}</span></div>' if consider else ''}
-                {f'<div><span class="p6-k">Confiança:</span> <span class="p6-muted">{_escape_html(confianca)}</span></div>' if confianca else ''}
+                <div><span class="p6-k">Resumo:</span> <span class="p6-muted">{resumo or "—"}</span></div>
+                {f'<div><span class="p6-k">Considerações da LLM:</span> <span class="p6-muted">{consider}</span></div>' if consider else ''}
+                {f'<div><span class="p6-k">Confiança:</span> <span class="p6-muted">{confianca}</span></div>' if confianca else ''}
               </div>
 
               <hr class="p6-hr"/>
@@ -756,14 +692,14 @@ def render() -> None:
                 <div>
                   <span class="p6-k">Pontos-chave</span>
                   <ul class="p6-list">
-                    {''.join([f'<li>{_escape_html(p)}</li>' for p in pontos]) if pontos else '<li class="p6-muted">—</li>'}
+                    {''.join([f'<li>{html.escape(p)}</li>' for p in pontos]) if pontos else '<li class="p6-muted">—</li>'}
                   </ul>
                 </div>
 
                 <div>
                   <span class="p6-k">Riscos</span>
                   <ul class="p6-list">
-                    {''.join([f'<li>{_escape_html(r)}</li>' for r in riscos]) if riscos else '<li class="p6-muted">—</li>'}
+                    {''.join([f'<li>{html.escape(r)}</li>' for r in riscos]) if riscos else '<li class="p6-muted">—</li>'}
                   </ul>
                 </div>
               </div>
@@ -775,7 +711,7 @@ def render() -> None:
         if evid:
             with st.expander(f"📌 Evidências (trechos) — {ticker}", expanded=False):
                 for i, e in enumerate(evid[:12], start=1):
-                    st.markdown(f"**{i}.** {_escape_html(e)}")
+                    st.markdown(f"**{i}.** {e}")
 
     # Defaults fixos (sem UI)
     run_llm_all = True
@@ -1023,42 +959,13 @@ CONTEXTO:
         st.subheader("📌 Parecer resumido do portfólio")
         st.write(f"Forte: **{fortes}** | Moderada: **{moderadas}** | Fraca: **{fracas}** | Erros/sem dados: **{erros}**")
 
-        
-        # Em vez de tabela, mostramos cards (padrão institucional)
-        mostrar_status = debug_topk or (erros > 0)
-        if mostrar_status:
+        mostrar_tabela_status = debug_topk or (erros > 0)
+        if mostrar_tabela_status:
             st.subheader("🧾 Status por ticker")
-
-            def _status_class(s: str) -> str:
-                s = (s or "").upper()
-                if s in ("OK", "SUCESSO", "DONE", "COMPLETO"):
-                    return "cf-status-ok"
-                if "JSON" in s or "WARN" in s:
-                    return "cf-status-warn"
-                if "ERRO" in s or "FAIL" in s:
-                    return "cf-status-err"
-                return "cf-status-warn"
-
-            cols = st.columns(3)
-            for idx, row in enumerate(status_rows):
-                t = str(row.get("ticker", "")).upper()
-                stt = str(row.get("status", ""))
-                err = str(row.get("erro", "") or "").strip()
-
-                klass = _status_class(stt)
-                target = cols[idx % 3]
-                target.markdown(
-                    f"""
-                    <div class="cf-card {klass}">
-                        <div class="cf-card-label">{t}</div>
-                        <div class="cf-card-value"><span class="cf-status-pill">{stt}</span></div>
-                        <div class="cf-card-extra">{(err if err else "Sem erros reportados.")}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+            st.dataframe(status_rows, use_container_width=True)
         else:
             st.caption("Execução concluída sem erros.")
+
         # Re-render do relatório salvo após atualizar
         st.divider()
         st.markdown("## 📘 Relatório salvo atualizado")
