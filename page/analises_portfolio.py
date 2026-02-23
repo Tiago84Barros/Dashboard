@@ -1024,42 +1024,42 @@ CONTEXTO:
         st.write(f"Forte: **{fortes}** | Moderada: **{moderadas}** | Fraca: **{fracas}** | Erros/sem dados: **{erros}**")
 
         
-# Em vez de tabela, mostramos cards (padrão institucional)
-mostrar_status = debug_topk or (erros > 0)
-if mostrar_status:
-    st.subheader("🧾 Status por ticker")
+        # Em vez de tabela, mostramos cards (padrão institucional)
+        mostrar_status = debug_topk or (erros > 0)
+        if mostrar_status:
+            st.subheader("🧾 Status por ticker")
 
-    def _status_class(s: str) -> str:
-        s = (s or "").upper()
-        if s in ("OK", "SUCESSO", "DONE", "COMPLETO"):
-            return "cf-status-ok"
-        if "JSON" in s or "WARN" in s:
-            return "cf-status-warn"
-        if "ERRO" in s or "FAIL" in s:
-            return "cf-status-err"
-        return "cf-status-warn"
+            def _status_class(s: str) -> str:
+                s = (s or "").upper()
+                if s in ("OK", "SUCESSO", "DONE", "COMPLETO"):
+                    return "cf-status-ok"
+                if "JSON" in s or "WARN" in s:
+                    return "cf-status-warn"
+                if "ERRO" in s or "FAIL" in s:
+                    return "cf-status-err"
+                return "cf-status-warn"
 
-    cols = st.columns(3)
-    for idx, row in enumerate(status_rows):
-        t = str(row.get("ticker", "")).upper()
-        stt = str(row.get("status", ""))
-        err = str(row.get("erro", "") or "").strip()
+            cols = st.columns(3)
+            for idx, row in enumerate(status_rows):
+                t = str(row.get("ticker", "")).upper()
+                stt = str(row.get("status", ""))
+                err = str(row.get("erro", "") or "").strip()
 
-        klass = _status_class(stt)
-        target = cols[idx % 3]
-        target.markdown(
-            f"""
-            <div class="cf-card {klass}">
-                <div class="cf-card-label">{t}</div>
-                <div class="cf-card-value"><span class="cf-status-pill">{stt}</span></div>
-                <div class="cf-card-extra">{(err if err else "Sem erros reportados.")}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-else:
-    st.caption("Execução concluída sem erros.")
-# Re-render do relatório salvo após atualizar
+                klass = _status_class(stt)
+                target = cols[idx % 3]
+                target.markdown(
+                    f"""
+                    <div class="cf-card {klass}">
+                        <div class="cf-card-label">{t}</div>
+                        <div class="cf-card-value"><span class="cf-status-pill">{stt}</span></div>
+                        <div class="cf-card-extra">{(err if err else "Sem erros reportados.")}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.caption("Execução concluída sem erros.")
+        # Re-render do relatório salvo após atualizar
         st.divider()
         st.markdown("## 📘 Relatório salvo atualizado")
         try:
