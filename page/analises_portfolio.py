@@ -20,6 +20,7 @@ import os
 import json
 import html
 import time
+import html
 import traceback
 import importlib
 import inspect
@@ -674,7 +675,7 @@ def render() -> None:
                 <div class="p6-badges">
                   <span class="{_pill_class(persp)}">{(persp or "—").upper()}</span>
                   <span class="p6-pill p6-pill-info">Top-K: {top_k_used}</span>
-                  <span class="p6-pill p6-pill-info">period_ref: {_h(period_ref)}</span>
+                  <span class="p6-pill p6-pill-info">period_ref: {html.escape(str(period_ref))}</span>
                   {f'<span class="p6-pill p6-pill-info">Docs: {docs_usados}</span>' if docs_usados is not None else ""}
                   {f'<span class="p6-pill p6-pill-info">Evidências: {evid_usadas}</span>' if evid_usadas is not None else ""}
                 </div>
