@@ -643,77 +643,85 @@ def render() -> None:
         return [str(x)]
 
     def _render_card(ticker: str, result: Dict[str, Any], top_k_used: int, period_ref: str) -> None:
-        persp = str(result.get("perspectiva_compra", "")).strip()
-        resumo = str(result.get("resumo", "")).strip()
+      # Sanitização defensiva: impede que HTML vindo da LLM quebre o layout
+      def esc(x: Any) -> str:
+          return html.escape("" if x is None else str(x).strip())
 
-        consider = (
-            result.get("consideracoes_llm")
-            or result.get("consideracoes")
-            or result.get("observacoes")
-            or result.get("rationale")
-            or ""
-        )
-        consider = str(consider).strip()
-
-        confianca = result.get("confianca", result.get("confidence", ""))
-        confianca = "" if confianca is None else str(confianca).strip()
-
-        pontos = _as_list(result.get("pontos_chave") or result.get("pontos-chave") or result.get("pontos"))
-        riscos = _as_list(result.get("riscos"))
-        evid = _as_list(result.get("evidencias") or result.get("evidence") or result.get("citacoes"))
-
-        docs_usados = result.get("docs_usados") or result.get("docs_used") or result.get("documentos") or None
-        evid_usadas = result.get("evid_usadas") or result.get("chunks_used") or result.get("evidencias_usadas") or None
-
-
-        # Card (HTML)
-        st.markdown(
-            f"""
-            <div class="p6-card">
-              <div class="p6-head">
-                <div class="p6-title-sm">{ticker}</div>
-                <div class="p6-badges">
-                  <span class="{_pill_class(persp)}">{(persp or "—").upper()}</span>
-                  <span class="p6-pill p6-pill-info">Top-K: {top_k_used}</span>
-                  <span class="p6-pill p6-pill-info">period_ref: {html.escape(str(period_ref))}</span>
-                  {f'<span class="p6-pill p6-pill-info">Docs: {docs_usados}</span>' if docs_usados is not None else ""}
-                  {f'<span class="p6-pill p6-pill-info">Evidências: {evid_usadas}</span>' if evid_usadas is not None else ""}
-                </div>
-              </div>
-
-              <div class="p6-grid">
-                <div><span class="p6-k">Resumo:</span> <span class="p6-muted">{resumo or "—"}</span></div>
-                {f'<div><span class="p6-k">Considerações da LLM:</span> <span class="p6-muted">{consider}</span></div>' if consider else ''}
-                {f'<div><span class="p6-k">Confiança:</span> <span class="p6-muted">{confianca}</span></div>' if confianca else ''}
-              </div>
-
-              <hr class="p6-hr"/>
-
-              <div class="p6-grid">
-                <div>
-                  <span class="p6-k">Pontos-chave</span>
-                  <ul class="p6-list">
-                    {''.join([f'<li>{html.escape(p)}</li>' for p in pontos]) if pontos else '<li class="p6-muted">—</li>'}
-                  </ul>
-                </div>
-
-                <div>
-                  <span class="p6-k">Riscos</span>
-                  <ul class="p6-list">
-                    {''.join([f'<li>{html.escape(r)}</li>' for r in riscos]) if riscos else '<li class="p6-muted">—</li>'}
-                  </ul>
-                </div>
+      persp_raw = (result.get("perspectiva_compra", "") or "").strip()
+      resumo_raw = (result.get("resumo", "") or "").strip()
+  
+      consider_raw = (
+          result.get("consideracoes_llm")
+          or result.get("consideracoes")
+          or result.get("observacoes")
+          or result.get("rationale")
+          or ""
+      )
+      confianca_raw = result.get("confianca", result.get("confidence", ""))
+  
+      pontos = _as_list(result.get("pontos_chave") or result.get("pontos-chave") or result.get("pontos"))
+      riscos = _as_list(result.get("riscos"))
+      evid = _as_list(result.get("evidencias") or result.get("evidence") or result.get("citacoes"))
+  
+      docs_usados = result.get("docs_usados") or result.get("docs_used") or result.get("documentos") or None
+      evid_usadas = result.get("evid_usadas") or result.get("chunks_used") or result.get("evidencias_usadas") or None
+  
+      # Escapa campos críticos (texto vindo da LLM)
+      ticker_e = esc(ticker)
+      persp_e = esc(persp_raw)
+      resumo_e = esc(resumo_raw)
+      consider_e = esc(consider_raw)
+      confianca_e = esc(confianca_raw)
+      period_ref_e = esc(period_ref)
+  
+      st.markdown(
+          f"""
+          <div class="p6-card">
+            <div class="p6-head">
+              <div class="p6-title-sm">{ticker_e}</div>
+              <div class="p6-badges">
+                <span class="{_pill_class(persp_raw)}">{(persp_e or "—").upper()}</span>
+                <span class="p6-pill p6-pill-info">Top-K: {int(top_k_used)}</span>
+                <span class="p6-pill p6-pill-info">period_ref: {period_ref_e}</span>
+                {f'<span class="p6-pill p6-pill-info">Docs: {int(docs_usados)}</span>' if docs_usados is not None else ""}
+                {f'<span class="p6-pill p6-pill-info">Evidências: {int(evid_usadas)}</span>' if evid_usadas is not None else ""}
               </div>
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        if evid:
-            with st.expander(f"📌 Evidências (trechos) — {ticker}", expanded=False):
-                for i, e in enumerate(evid[:12], start=1):
-                    st.markdown(f"**{i}.** {e}")
-
+  
+            <div class="p6-grid">
+              <div><span class="p6-k">Resumo:</span> <span class="p6-muted">{resumo_e or "—"}</span></div>
+              {f'<div><span class="p6-k">Considerações da LLM:</span> <span class="p6-muted">{consider_e}</span></div>' if (consider_raw and str(consider_raw).strip()) else ''}
+              {f'<div><span class="p6-k">Confiança:</span> <span class="p6-muted">{confianca_e}</span></div>' if (confianca_raw and str(confianca_raw).strip()) else ''}
+            </div>
+  
+            <hr class="p6-hr"/>
+  
+            <div class="p6-grid">
+              <div>
+                <span class="p6-k">Pontos-chave</span>
+                <ul class="p6-list">
+                  {''.join([f'<li>{html.escape(str(p))}</li>' for p in pontos]) if pontos else '<li class="p6-muted">—</li>'}
+                </ul>
+              </div>
+  
+              <div>
+                <span class="p6-k">Riscos</span>
+                <ul class="p6-list">
+                  {''.join([f'<li>{html.escape(str(r))}</li>' for r in riscos]) if riscos else '<li class="p6-muted">—</li>'}
+                </ul>
+              </div>
+            </div>
+          </div>
+          """,
+          unsafe_allow_html=True,
+      )
+  
+      # Evidências: render em texto puro (sem HTML)
+      if evid:
+          with st.expander(f"📌 Evidências (trechos) — {ticker}", expanded=False):
+              for i, e in enumerate(evid[:12], start=1):
+                  st.markdown(f"**{i}.** {html.escape(str(e))}")
+      
     # Defaults fixos (sem UI)
     run_llm_all = True
     use_topk_inteligente = True
