@@ -642,11 +642,11 @@ def render() -> None:
             return [s] if s else []
         return [str(x)]
 
-
     def _render_card(ticker: str, result: Dict[str, Any], top_k_used: int, period_ref: str) -> None:
-        # ---------------------------------------------------------
-        # Sanitização defensiva: evita HTML da LLM quebrar o layout
-        # ---------------------------------------------------------
+        # ------------------------------------------------------------------
+        # Sanitização defensiva: impede HTML vindo da LLM de quebrar o layout
+        # (ex.: <span ...>, </div>, etc.)
+        # ------------------------------------------------------------------
         def esc(x: Any) -> str:
             return html.escape("" if x is None else str(x).strip())
 
@@ -670,7 +670,6 @@ def render() -> None:
         docs_usados = result.get("docs_usados") or result.get("docs_used") or result.get("documentos") or None
         evid_usadas = result.get("evid_usadas") or result.get("chunks_used") or result.get("evidencias_usadas") or None
 
-        # Escapa campos de texto (críticos)
         ticker_e = esc(ticker)
         persp_e = esc(persp_raw)
         resumo_e = esc(resumo_raw)
@@ -678,7 +677,6 @@ def render() -> None:
         confianca_e = esc(confianca_raw)
         period_ref_e = esc(period_ref)
 
-        # Card (HTML)
         st.markdown(
             f"""
             <div class="p6-card">
@@ -695,8 +693,8 @@ def render() -> None:
 
               <div class="p6-grid">
                 <div><span class="p6-k">Resumo:</span> <span class="p6-muted">{resumo_e or "—"}</span></div>
-                {f'<div><span class="p6-k">Considerações da LLM:</span> <span class="p6-muted">{consider_e}</span></div>' if str(consider_raw).strip() else ''}
-                {f'<div><span class="p6-k">Confiança:</span> <span class="p6-muted">{confianca_e}</span></div>' if str(confianca_raw).strip() else ''}
+                {f'<div><span class="p6-k">Considerações da LLM:</span> <span class="p6-muted">{consider_e}</span></div>' if consider_raw else ''}
+                {f'<div><span class="p6-k">Confiança:</span> <span class="p6-muted">{confianca_e}</span></div>' if confianca_raw else ''}
               </div>
 
               <hr class="p6-hr"/>
@@ -723,49 +721,10 @@ def render() -> None:
 
         if evid:
             with st.expander(f"📌 Evidências (trechos) — {ticker}", expanded=False):
+                # Aqui é texto puro: NÃO usar unsafe_allow_html=True
                 for i, e in enumerate(evid[:12], start=1):
-                    # Texto puro: sem unsafe_allow_html aqui
                     st.markdown(f"**{i}.** {e}")
 
-
-    # Defaults fixos (sem UI)
-    run_llm_all = True
-    use_topk_inteligente = True
-    debug_topk = False
-    window_months = 12  # fixo internamente
-    
-    # Único controle exposto
-    top_k = st.slider(
-        "Top-K chunks",
-        min_value=3,
-        max_value=12,
-        value=6,
-        step=1
-    )
-    
-    period_ref = st.text_input(
-        "period_ref (ex.: 2024Q4)",
-        value="2024Q4"
-    )
-
-    # 📘 Relatório profissional (consolidado)
-    st.markdown("## 📘 Relatório salvo do portfólio (última execução)")
-    st.caption("Este relatório é montado a partir do que já está salvo em patch6_runs. Para atualizar, use o botão abaixo.")
-
-    with st.expander("📘 Relatório salvo do portfólio", expanded=True):
-        try:
-            # Import local para garantir escopo e revelar erros reais
-            from core.patch6_report import render_patch6_report
-
-            render_patch6_report(
-                tickers=tickers,
-                period_ref=period_ref,
-                llm_factory=llm_factory,
-                show_company_details=True,
-            )
-        except Exception as e:
-            st.error("Relatório indisponível.")
-            st.exception(e)
 
 
     # Wrappers
