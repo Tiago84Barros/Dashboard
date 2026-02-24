@@ -742,24 +742,26 @@ def render() -> None:
         value="2024Q4"
     )
 
-    # 📘 Relatório profissional (consolidado)
-    st.markdown("## 📘 Relatório salvo do portfólio (última execução)")
-    st.caption("Este relatório é montado a partir do que já está salvo em patch6_runs. Para atualizar, use o botão abaixo.")
-
-    with st.expander("📘 Relatório salvo do portfólio", expanded=True):
-        try:
-            # Import local para garantir escopo e revelar erros reais
-            from core.patch6_report import render_patch6_report
-
-            render_patch6_report(
-                tickers=tickers,
-                period_ref=period_ref,
-                llm_factory=llm_factory,
-                show_company_details=True,
-            )
-        except Exception as e:
-            st.error("Relatório indisponível.")
-            st.exception(e)
+    st.markdown("## 📘 Relatório consolidado do portfólio")
+    st.caption("Montado a partir do que está salvo em patch6_runs. Ao rodar a LLM, este relatório é atualizado automaticamente.")
+    
+    report_box = st.empty()
+    
+    def _render_saved_report():
+        with report_box.container():
+            try:
+                from core.patch6_report import render_patch6_report
+                render_patch6_report(
+                    tickers=tickers,
+                    period_ref=period_ref,
+                    llm_factory=llm_factory,
+                    show_company_details=True,
+                )
+            except Exception as e:
+                st.error("Relatório indisponível.")
+                st.exception(e)
+    
+    _render_saved_report()
 
 
     # Wrappers
@@ -942,7 +944,7 @@ CONTEXTO:
                     erros += 1
 
                 # mostra card (IMEDIATO)
-                _render_card(ticker=t, result=result, top_k_used=int(top_k), period_ref=period_ref)
+                #_render_card(ticker=t, result=result, top_k_used=int(top_k), period_ref=period_ref)
 
                 status_rows.append(
                     {
@@ -975,18 +977,6 @@ CONTEXTO:
         else:
             st.caption("Execução concluída sem erros.")
 
-        # Re-render do relatório salvo após atualizar
-        st.divider()
-        st.markdown("## 📘 Relatório salvo atualizado")
-        try:
-            from core.patch6_report import render_patch6_report
-            render_patch6_report(
-                tickers=tickers,
-                period_ref=period_ref,
-                llm_factory=llm_factory,
-                show_company_details=True,
-            )
-        except Exception as e:
-            st.error("Não foi possível renderizar o relatório atualizado.")
-            if debug_topk:
-                st.exception(e)
+      # Atualiza o relatório no MESMO lugar (sem duplicar seção)
+      report_box.empty()
+      _render_saved_report()
