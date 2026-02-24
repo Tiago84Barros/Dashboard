@@ -977,6 +977,6 @@ CONTEXTO:
         else:
             st.caption("Execução concluída sem erros.")
 
-      # Atualiza o relatório no MESMO lugar (sem duplicar seção)
-      report_box.empty()
-      _render_saved_report()
+        # Atualiza o relatório no MESMO lugar (sem duplicar seção)
+        report_box.empty()
+        _render_saved_report()
