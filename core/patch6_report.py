@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from typing import Any, List, Optional
 
 import os
+import re
+import html
 import pandas as pd
 import streamlit as st
 from sqlalchemy import text
@@ -212,7 +214,22 @@ def _safe_call_llm(llm_client: Any, prompt: str) -> Optional[str]:
         return None
     except Exception:
         return None
+_TAG_RE = re.compile(r"<[^>]+>")
 
+def _strip_html(s: Any) -> str:
+    """Remove tags HTML e normaliza espaços (protege layout contra HTML salvo no banco)."""
+    if s is None:
+        return ""
+    txt = str(s)
+    txt = _TAG_RE.sub("", txt)          # remove <div>, <span>, etc.
+    txt = txt.replace("&nbsp;", " ")
+    txt = re.sub(r"\s+\n", "\n", txt)
+    txt = re.sub(r"\n{3,}", "\n\n", txt)
+    return txt.strip()
+
+def _esc(s: Any) -> str:
+    """Escapa HTML para usar dentro de st.markdown(..., unsafe_allow_html=True)."""
+    return html.escape(_strip_html(s))
 
 def render_patch6_report(
     tickers: List[str],
@@ -366,7 +383,24 @@ BULLETS:
                 st.caption(f"Período: {row.period_ref} • Atualizado em: {row.created_at}")
 
                 st.markdown("**Tese (síntese)**")
-                st.write(row.resumo or "—")
+                tese = _strip_html(row.resumo) or "—"
+                
+                st.markdown(
+                    f"""
+                    <div style="
+                        border:1px solid rgba(255,255,255,0.08);
+                        background:rgba(255,255,255,0.03);
+                        border-radius:14px;
+                        padding:14px 16px;
+                        box-shadow:0 10px 24px rgba(0,0,0,0.18);
+                        margin-top:8px;
+                        line-height:1.45;
+                        ">
+                        {_esc(tese).replace("\\n", "<br/>")}
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
                 st.markdown("**Leitura / Direcionalidade**")
                 if p == "forte":
