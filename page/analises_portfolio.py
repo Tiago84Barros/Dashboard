@@ -892,59 +892,43 @@ CONTEXTO:
             t0 = time.time()
 
             try:
-                chunks, fonte_chunks = _get_chunks_for_ticker(t)
-                if not chunks:
+                # RAG multi-tópico (recall alto + diversidade)
+                p6_hits, rag_stats = retrieve_multitopic_chunks(
+                    ticker=t,
+                    llm_client=client,
+                    period_ref=period_ref,
+                    top_k_total=max(24, int(top_k) * 4),
+                    per_topic_k=8,
+                    topics=DEFAULT_TOPICS,
+                )
+
+                if not p6_hits:
                     erros += 1
-                    status_rows.append({"ticker": t, "status": "SEM_CHUNKS", "erro": "Sem chunks no Supabase"})
+                    status_rows.append({"ticker": t, "status": "SEM_EVIDENCIAS", "erro": "Retriever não retornou evidências"})
                     prog.progress(int(i / total * 100))
                     continue
 
-           # 1) RAG multi-tópico com recall alto e diversidade
-            p6_hits, rag_stats = retrieve_multitopic_chunks(
-                ticker=t,
-                llm_client=client,
-                period_ref=period_ref,
-                top_k_total=max(24, int(top_k) * 4),   # ex: top_k=6 => 24 evidências no total
-                per_topic_k=8,
-                topics=DEFAULT_TOPICS,
-            )
-            
-            # 2) Organiza chunks por tópico (Map)
-            chunks_by_topic = {}
-            for h in p6_hits:
-                chunks_by_topic.setdefault(h.tag, []).append(h.chunk_text)
-            
-            # 3) Map→Reduce (relatório rico sem estourar contexto)
-            result = build_rich_report_json(
-                ticker=t,
-                llm_client=client,
-                chunks_by_topic=chunks_by_topic,
-                per_topic_chars=3500,  # ajuste fino
-            )
-            
-            # 4) metadados de auditoria (mantém compatibilidade com patch6_report)
-            result.setdefault("evid_usadas", len(p6_hits))
-            result.setdefault("metodo_chunks", "rag_multitopic_mmr_mapreduce")
-            result.setdefault("rag_stats", rag_stats)
-            result.setdefault("period_ref", period_ref)    
+                # Organiza por tópico (MAP)
+                chunks_by_topic: Dict[str, List[str]] = {}
+                for h in p6_hits:
+                    chunks_by_topic.setdefault(h.tag, []).append(h.chunk_text)
 
+                # MAP→REDUCE (relatório rico)
+                result = build_rich_report_json(
+                    ticker=t,
+                    llm_client=client,
+                    chunks_by_topic=chunks_by_topic,
+                    per_topic_chars=3500,
+                )
 
-                
-                except Exception:
-                    erros += 1
-                    status_rows.append({"ticker": t, "status": "JSON_INVALIDO", "erro": "LLM não retornou JSON"})
-                    if debug_topk:
-                        with st.expander(f"⚠️ Resposta bruta (debug) — {t}", expanded=False):
-                            st.code(raw, language="json")
-                    prog.progress(int(i / total * 100))
-                    continue
+                # Metadados de auditoria/compatibilidade
+                result.setdefault("period_ref", period_ref)
+                result.setdefault("metodo_chunks", "rag_multitopic_mmr_mapreduce")
+                result["evid_usadas"] = len(p6_hits)
+                result["docs_usados"] = len({h.doc_id for h in p6_hits})
+                result["rag_stats"] = rag_stats
 
-                # metadados de contexto
-                result.setdefault("evid_usadas", len(chunks))
-                result.setdefault("docs_usados", None)
-                result.setdefault("metodo_chunks", fonte_chunks)
-
-                # salva
+                # Salva no banco
                 save_patch6_run(
                     snapshot_id=str(snapshot_id),
                     ticker=t,
@@ -952,7 +936,7 @@ CONTEXTO:
                     result=result,
                 )
 
-                # conta perspectiva
+                # Conta perspectiva
                 p = str(result.get("perspectiva_compra", "")).strip().lower()
                 if p == "forte":
                     fortes += 1
@@ -963,14 +947,13 @@ CONTEXTO:
                 else:
                     erros += 1
 
-                # mostra card (IMEDIATO)
-                #_render_card(ticker=t, result=result, top_k_used=int(top_k), period_ref=period_ref)
-
                 status_rows.append(
                     {
                         "ticker": t,
                         "status": "OK",
-                        "metodo_chunks": fonte_chunks,
+                        "metodo_chunks": "rag_multitopic_mmr_mapreduce",
+                        "evid_usadas": len(p6_hits),
+                        "docs_usados": len({h.doc_id for h in p6_hits}),
                         "tempo_s": round(time.time() - t0, 1),
                     }
                 )
@@ -985,7 +968,6 @@ CONTEXTO:
                     st.warning(f"❌ {t} — falha ao rodar LLM: {e}")
 
             prog.progress(int(i / total * 100))
-
         status_box.markdown("✅ Concluído.")
         st.subheader("📌 Parecer resumido do portfólio")
         st.write(f"Forte: **{fortes}** | Moderada: **{moderadas}** | Fraca: **{fracas}** | Erros/sem dados: **{erros}**")
