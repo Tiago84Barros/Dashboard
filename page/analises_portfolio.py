@@ -39,6 +39,8 @@ from core.docs_corporativos_store import (
 from core.patch6_runs_store import save_patch6_run, list_patch6_history
 
 import core.ai_models.llm_client.factory as llm_factory
+from core.rag_multitopic import retrieve_multitopic_chunks, DEFAULT_TOPICS
+from core.patch6_writer import build_rich_report_json
 
 
 # ------------------------------------------------------------------
