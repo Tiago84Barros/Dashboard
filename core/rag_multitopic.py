@@ -28,6 +28,12 @@ DEFAULT_TOPICS: Dict[str, str] = {
     "eventos": "fatos relevantes, aquisições, desinvestimentos, reestruturação, M&A",
 }
 
+
+def _emb_to_pgvector_str(emb: list) -> str:
+    """Converte lista de floats em literal compatível com pgvector, ex: [0.1,0.2,...]."""
+    return "[" + ",".join(f"{float(x):.10f}" for x in emb) + "]"
+
+
 def _norm_ticker(t: str) -> str:
     return (t or "").strip().upper().replace(".SA", "").strip()
 
@@ -53,7 +59,7 @@ def _search_chunks_sql(
             c.doc_id,
             c.ticker,
             c.chunk_text,
-            (c.embedding <-> :emb) as dist
+            (c.embedding <-> (:emb)::vector) as dist
         from public.docs_corporativos_chunks c
         where c.ticker = :ticker
     """
@@ -73,7 +79,7 @@ def _search_chunks_sql(
         """
 
     base += """
-        order by c.embedding <-> :emb asc
+        order by c.embedding <-> (:emb)::vector asc
         limit :lim
     """
     return base
@@ -135,7 +141,9 @@ def retrieve_multitopic_chunks(
             query_text = f"{tk}: {q} no contexto de relatórios e fatos corporativos."
             emb = llm_client.embed([query_text])[0]
 
-            sql = _search_chunks_sql(
+            
+            emb_str = _emb_to_pgvector_str(emb)
+sql = _search_chunks_sql(
                 ticker=tk,
                 query_emb=emb,
                 limit=int(per_topic_k),
@@ -144,7 +152,7 @@ def retrieve_multitopic_chunks(
 
             rows = conn.execute(
                 text(sql),
-                {"ticker": tk, "emb": emb, "lim": int(per_topic_k)},
+                {"ticker": tk, "emb": emb_str, "lim": int(per_topic_k)},
             ).fetchall()
 
             for r in rows:
