@@ -899,19 +899,37 @@ CONTEXTO:
                     prog.progress(int(i / total * 100))
                     continue
 
-                contexto = _build_context_limited(chunks, per_chunk_chars=1200, total_chars=12000)
-                try:
-                    raw = _call_llm(client, _build_prompt(contexto))
-                except Exception as e_call:
-                    msg = str(e_call).lower()
-                    if "context window" in msg or "exceed" in msg:
-                        contexto = _build_context_limited(chunks, per_chunk_chars=800, total_chars=8000)
-                        raw = _call_llm(client, _build_prompt(contexto))
-                    else:
-                        raise
+           # 1) RAG multi-tópico com recall alto e diversidade
+            p6_hits, rag_stats = retrieve_multitopic_chunks(
+                ticker=t,
+                llm_client=client,
+                period_ref=period_ref,
+                top_k_total=max(24, int(top_k) * 4),   # ex: top_k=6 => 24 evidências no total
+                per_topic_k=8,
+                topics=DEFAULT_TOPICS,
+            )
+            
+            # 2) Organiza chunks por tópico (Map)
+            chunks_by_topic = {}
+            for h in p6_hits:
+                chunks_by_topic.setdefault(h.tag, []).append(h.chunk_text)
+            
+            # 3) Map→Reduce (relatório rico sem estourar contexto)
+            result = build_rich_report_json(
+                ticker=t,
+                llm_client=client,
+                chunks_by_topic=chunks_by_topic,
+                per_topic_chars=3500,  # ajuste fino
+            )
+            
+            # 4) metadados de auditoria (mantém compatibilidade com patch6_report)
+            result.setdefault("evid_usadas", len(p6_hits))
+            result.setdefault("metodo_chunks", "rag_multitopic_mmr_mapreduce")
+            result.setdefault("rag_stats", rag_stats)
+            result.setdefault("period_ref", period_ref)    
 
-                try:
-                    result = _parse_json_loose(raw)
+
+                
                 except Exception:
                     erros += 1
                     status_rows.append({"ticker": t, "status": "JSON_INVALIDO", "erro": "LLM não retornou JSON"})
