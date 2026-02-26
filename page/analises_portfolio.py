@@ -39,8 +39,6 @@ from core.docs_corporativos_store import (
 from core.patch6_runs_store import save_patch6_run, list_patch6_history
 
 import core.ai_models.llm_client.factory as llm_factory
-from core.rag_multitopic import retrieve_multitopic_chunks, DEFAULT_TOPICS
-from core.patch6_writer import build_rich_report_json
 
 
 # ------------------------------------------------------------------
@@ -644,205 +642,233 @@ def render() -> None:
             return [s] if s else []
         return [str(x)]
 
+
     def _render_card(ticker: str, result: Dict[str, Any], top_k_used: int, period_ref: str) -> None:
-      # Sanitização defensiva: impede que HTML vindo da LLM quebre o layout
-      def esc(x: Any) -> str:
-          return html.escape("" if x is None else str(x).strip())
+        # ---------------------------------------------------------
+        # Sanitização defensiva: evita HTML da LLM quebrar o layout
+        # ---------------------------------------------------------
+        def esc(x: Any) -> str:
+            return html.escape("" if x is None else str(x).strip())
 
-      persp_raw = (result.get("perspectiva_compra", "") or "").strip()
-      resumo_raw = (result.get("resumo", "") or "").strip()
-  
-      consider_raw = (
-          result.get("consideracoes_llm")
-          or result.get("consideracoes")
-          or result.get("observacoes")
-          or result.get("rationale")
-          or ""
-      )
-      confianca_raw = result.get("confianca", result.get("confidence", ""))
-  
-      pontos = _as_list(result.get("pontos_chave") or result.get("pontos-chave") or result.get("pontos"))
-      riscos = _as_list(result.get("riscos"))
-      evid = _as_list(result.get("evidencias") or result.get("evidence") or result.get("citacoes"))
-  
-      docs_usados = result.get("docs_usados") or result.get("docs_used") or result.get("documentos") or None
-      evid_usadas = result.get("evid_usadas") or result.get("chunks_used") or result.get("evidencias_usadas") or None
-  
-      # Escapa campos críticos (texto vindo da LLM)
-      ticker_e = esc(ticker)
-      persp_e = esc(persp_raw)
-      resumo_e = esc(resumo_raw)
-      consider_e = esc(consider_raw)
-      confianca_e = esc(confianca_raw)
-      period_ref_e = esc(period_ref)
-  
-      st.markdown(
-          f"""
-          <div class="p6-card">
-            <div class="p6-head">
-              <div class="p6-title-sm">{ticker_e}</div>
-              <div class="p6-badges">
-                <span class="{_pill_class(persp_raw)}">{(persp_e or "—").upper()}</span>
-                <span class="p6-pill p6-pill-info">Top-K: {int(top_k_used)}</span>
-                <span class="p6-pill p6-pill-info">period_ref: {period_ref_e}</span>
-                {f'<span class="p6-pill p6-pill-info">Docs: {int(docs_usados)}</span>' if docs_usados is not None else ""}
-                {f'<span class="p6-pill p6-pill-info">Evidências: {int(evid_usadas)}</span>' if evid_usadas is not None else ""}
-              </div>
-            </div>
-  
-            <div class="p6-grid">
-              <div><span class="p6-k">Resumo:</span> <span class="p6-muted">{resumo_e or "—"}</span></div>
-              {f'<div><span class="p6-k">Considerações da LLM:</span> <span class="p6-muted">{consider_e}</span></div>' if (consider_raw and str(consider_raw).strip()) else ''}
-              {f'<div><span class="p6-k">Confiança:</span> <span class="p6-muted">{confianca_e}</span></div>' if (confianca_raw and str(confianca_raw).strip()) else ''}
-            </div>
-  
-            <hr class="p6-hr"/>
-  
-            <div class="p6-grid">
-              <div>
-                <span class="p6-k">Pontos-chave</span>
-                <ul class="p6-list">
-                  {''.join([f'<li>{html.escape(str(p))}</li>' for p in pontos]) if pontos else '<li class="p6-muted">—</li>'}
-                </ul>
-              </div>
-  
-              <div>
-                <span class="p6-k">Riscos</span>
-                <ul class="p6-list">
-                  {''.join([f'<li>{html.escape(str(r))}</li>' for r in riscos]) if riscos else '<li class="p6-muted">—</li>'}
-                </ul>
-              </div>
-            </div>
-          </div>
-          """,
-          unsafe_allow_html=True,
-      )
-  
-      # Evidências: render em texto puro (sem HTML)
-      if evid:
-          with st.expander(f"📌 Evidências (trechos) — {ticker}", expanded=False):
-              for i, e in enumerate(evid[:12], start=1):
-                  st.markdown(f"**{i}.** {html.escape(str(e))}")
-      
-    # Defaults fixos (sem UI)
-    run_llm_all = True
-    use_topk_inteligente = True
-    debug_topk = False
-    window_months = 12  # fixo internamente
-    
-   # --- CONTROLES (sem travar em 1 trimestre) ---
-    c1, c2, c3 = st.columns([2, 1, 1])
-    
-    with c1:
-        top_k = st.slider(
-            "Top-K (chunks recuperados por ticker)",
-            min_value=8,
-            max_value=80,
-            value=32,
-            step=2,
-            help="Aumente para dar mais contexto à LLM. 24–48 costuma melhorar bastante a riqueza do relatório."
-        )
-    
-    with c2:
-            "Janela de documentos (meses)",
-        janela_meses = st.selectbox(
-            options=[6, 12, 24, 36, 60],
-            index=2,  # 24 meses
-            help="Define quantos meses para trás entram na busca (independe do trimestre)."
-        )
-    
-    with c3:
-        period_ref_raw = st.text_input(
-            "Filtro opcional de trimestre (ex: 2024Q4)",
-            value="",
-            help="Deixe VAZIO para não limitar por trimestre. Use só se quiser restringir."
-        )
-    
-    period_ref = period_ref_raw.strip().upper() or None
+        persp_raw = (result.get("perspectiva_compra", "") or "").strip()
+        resumo_raw = (result.get("resumo", "") or "").strip()
 
-    st.markdown("## 📘 Relatório consolidado do portfólio")
-    st.caption("Montado a partir do que está salvo em patch6_runs. Ao rodar a LLM, este relatório é atualizado automaticamente.")
-    
-    report_box = st.empty()
-    
-    def _render_saved_report():
-        with report_box.container():
-            try:
-                from core.patch6_report import render_patch6_report
-                render_patch6_report(
-                    tickers=tickers,
-                    period_ref=period_ref,
-                    llm_factory=llm_factory,
-                    show_company_details=True,
-                )
-            except Exception as e:
-                st.error("Relatório indisponível.")
-                st.exception(e)
-    
-    _render_saved_report()
+        consider_raw = (
+            result.get("consideracoes_llm")
+            or result.get("consideracoes")
+            or result.get("observacoes")
+            or result.get("rationale")
+            or ""
+        )
+
+        confianca_raw = result.get("confianca", result.get("confidence", ""))
+
+        pontos = _as_list(result.get("pontos_chave") or result.get("pontos-chave") or result.get("pontos"))
+        riscos = _as_list(result.get("riscos"))
+        evid = _as_list(result.get("evidencias") or result.get("evidence") or result.get("citacoes"))
+
+        docs_usados = result.get("docs_usados") or result.get("docs_used") or result.get("documentos") or None
+        evid_usadas = result.get("evid_usadas") or result.get("chunks_used") or result.get("evidencias_usadas") or None
+
+        # Escapa campos de texto (críticos)
+        ticker_e = esc(ticker)
+        persp_e = esc(persp_raw)
+        resumo_e = esc(resumo_raw)
+        consider_e = esc(consider_raw)
+        confianca_e = esc(confianca_raw)
+        period_ref_e = esc(period_ref)
+
+        # Card (HTML)
+        st.markdown(
+            f"""
+            <div class="p6-card">
+              <div class="p6-head">
+                <div class="p6-title-sm">{ticker_e}</div>
+                <div class="p6-badges">
+                  <span class="{_pill_class(persp_raw)}">{(persp_e or "—").upper()}</span>
+                  <span class="p6-pill p6-pill-info">Top-K: {int(top_k_used)}</span>
+                  <span class="p6-pill p6-pill-info">period_ref: {period_ref_e}</span>
+                  {f'<span class="p6-pill p6-pill-info">Docs: {int(docs_usados)}</span>' if docs_usados is not None else ""}
+                  {f'<span class="p6-pill p6-pill-info">Evidências: {int(evid_usadas)}</span>' if evid_usadas is not None else ""}
+                </div>
+              </div>
+
+              <div class="p6-grid">
+                <div><span class="p6-k">Resumo:</span> <span class="p6-muted">{resumo_e or "—"}</span></div>
+                {f'<div><span class="p6-k">Considerações da LLM:</span> <span class="p6-muted">{consider_e}</span></div>' if str(consider_raw).strip() else ''}
+                {f'<div><span class="p6-k">Confiança:</span> <span class="p6-muted">{confianca_e}</span></div>' if str(confianca_raw).strip() else ''}
+              </div>
+
+              <hr class="p6-hr"/>
+
+              <div class="p6-grid">
+                <div>
+                  <span class="p6-k">Pontos-chave</span>
+                  <ul class="p6-list">
+                    {''.join([f'<li>{html.escape(p)}</li>' for p in pontos]) if pontos else '<li class="p6-muted">—</li>'}
+                  </ul>
+                </div>
+
+                <div>
+                  <span class="p6-k">Riscos</span>
+                  <ul class="p6-list">
+                    {''.join([f'<li>{html.escape(r)}</li>' for r in riscos]) if riscos else '<li class="p6-muted">—</li>'}
+                  </ul>
+                </div>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        if evid:
+            with st.expander(f"📌 Evidências (trechos) — {ticker}", expanded=False):
+                for i, e in enumerate(evid[:12], start=1):
+                    # Texto puro: sem unsafe_allow_html aqui
+                    st.markdown(f"**{i}.** {e}")
+
+    # --- Configuração da análise (RAG) ---
+    # Objetivo: NÃO limitar a análise a um único trimestre e permitir mais evidências (Top-K maior).
+    # Observação: aumentar Top-K aumenta custo/tempo; o sistema ainda deve "comprimir" evidências para caber no contexto do modelo.
+
+    with st.expander("⚙️ Configurações da Análise Qualitativa (RAG)", expanded=True):
+        c1, c2, c3 = st.columns([1, 1, 1])
+
+        with c1:
+            top_k = st.slider(
+                "Top-K (evidências por tópico)",
+                min_value=8,
+                max_value=60,
+                value=24,
+                step=2,
+                help="Quantidade de trechos recuperados por tópico. Aumente para obter relatórios mais ricos (custo/tempo maiores).",
+            )
+
+        with c2:
+            janela_meses = st.selectbox(
+                "Janela histórica (meses)",
+                options=[3, 6, 12, 24, 36, 60],
+                index=2,  # 12 meses
+                help="Define o recorte temporal preferencial para a recuperação de evidências. Ex.: 24 meses tende a enriquecer o contexto.",
+            )
+
+        with c3:
+            # Mantemos como opcional (vazio = sem filtro), para evitar travar em um único trimestre.
+            period_ref = st.text_input(
+                "period_ref (opcional, ex.: 2024Q4)",
+                value="",
+                help="Deixe vazio para NÃO filtrar por trimestre. Preencha apenas se quiser focar em um período específico.",
+            ).strip() or None
+
+    window_months = int(janela_meses)
+
+    # 📘 Relatório profissional (consolidado)
+
+    st.markdown("## 📘 Relatório salvo do portfólio (última execução)")
+    st.caption("Este relatório é montado a partir do que já está salvo em patch6_runs. Para atualizar, use o botão abaixo.")
+
+    with st.expander("📘 Relatório salvo do portfólio", expanded=True):
+        try:
+            # Import local para garantir escopo e revelar erros reais
+            from core.patch6_report import render_patch6_report
+
+            render_patch6_report(
+                tickers=tickers,
+                period_ref=period_ref,
+                llm_factory=llm_factory,
+                show_company_details=True,
+            )
+        except Exception as e:
+            st.error("Relatório indisponível.")
+            st.exception(e)
 
 
     # Wrappers
   
-    def _call_llm(client, prompt: str) -> str:
-      import os
-      if client is None:
-          raise AttributeError('Cliente LLM é None.')
-  
-      if isinstance(client, dict) and 'client' in client:
-          client = client['client']
-  
-      for attr in ('client', '_client'):
-          inner = getattr(client, attr, None)
-          if inner is not None:
-              client = inner
-  
-      model = os.getenv('OPENAI_MODEL', 'gpt-4o-mini')
-      last_err = None
-  
-      try:
-          responses = getattr(client, 'responses', None)
-          create = getattr(responses, 'create', None) if responses else None
-          if callable(create):
-              resp = create(model=model, input=prompt)
-              txt = getattr(resp, 'output_text', None)
-              if txt:
-                  return txt
-              try:
-                  return resp.output[0].content[0].text
-              except Exception:
-                  return str(resp)
-      except Exception as e:
-          last_err = e
-  
-      try:
-          chat = getattr(client, 'chat', None)
-          completions = getattr(chat, 'completions', None) if chat else None
-          create = getattr(completions, 'create', None) if completions else None
-          if callable(create):
-              resp = create(
-                  model=model,
-                  messages=[{'role': 'user', 'content': prompt}],
-                  temperature=0.2,
-              )
-              return resp.choices[0].message.content
-      except Exception as e:
-          last_err = e
-  
-      for fn_name in ('complete', 'invoke'):
-          try:
-              fn = getattr(client, fn_name, None)
-              if callable(fn):
-                  out = fn(prompt)
-                  return getattr(out, 'content', out)
-          except Exception as e:
-              last_err = e
-  
-      if last_err:
-          raise last_err
-      raise AttributeError('Cliente LLM não expõe métodos suportados.')
 
-   
+    def _call_llm(client: Any, prompt: str) -> str:
+        """
+        Compatível com:
+        - OpenAI SDK novo: client.responses.create(...)
+        - OpenAI SDK legado: client.chat.completions.create(...)
+        - Clientes custom: .complete/.chat/.invoke ou callable
+        - Unwrap defensivo (dict/client/_client)
+        """
+        if client is None:
+            raise AttributeError("Cliente LLM é None.")
+    
+        # unwrap defensivo
+        if isinstance(client, dict) and "client" in client:
+            client = client["client"]
+        if hasattr(client, "client"):
+            try:
+                client = client.client
+            except Exception:
+                pass
+        if hasattr(client, "_client"):
+            try:
+                client = client._client
+            except Exception:
+                pass
+    
+        model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    
+        # 1) OpenAI SDK novo (Responses API)
+        if hasattr(client, "responses") and hasattr(client.responses, "create") and callable(client.responses.create):
+            resp = client.responses.create(model=model, input=prompt)
+            txt = getattr(resp, "output_text", None)
+            if txt:
+                return txt
+            # fallback defensivo
+            try:
+                return resp.output[0].content[0].text
+            except Exception:
+                return str(resp)
+    
+        # 2) OpenAI SDK legado (Chat Completions)
+        if hasattr(client, "chat") and hasattr(client.chat, "completions") and hasattr(client.chat.completions, "create"):
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+            )
+            return resp.choices[0].message.content
+    
+        # 3) Clientes custom / wrappers
+        if hasattr(client, "complete") and callable(getattr(client, "complete")):
+            return client.complete(prompt)
+        if hasattr(client, "chat") and callable(getattr(client, "chat")):
+            return client.chat(prompt)
+        if hasattr(client, "invoke") and callable(getattr(client, "invoke")):
+            out = client.invoke(prompt)
+            # alguns wrappers retornam objeto com .content
+            return getattr(out, "content", out)
+        if callable(client):
+            out = client(prompt)
+            return getattr(out, "content", out)
+    
+        raise AttributeError("Cliente LLM não expõe métodos suportados (responses/chat/complete/invoke).")
+      
+    def _get_chunks_for_ticker(t: str) -> Tuple[List[str], str]:
+        # preferir Top-K inteligente; fallback para fetch_topk_chunks
+        try:
+            if use_topk_inteligente:
+                from core.rag_retriever import get_topk_chunks_inteligente  # type: ignore
+                chunks, meta = get_topk_chunks_inteligente(
+                    ticker=t,
+                    top_k=int(top_k),
+                    window_months=int(window_months),
+                    debug=bool(debug_topk),
+                )
+                return chunks or [], "topk_inteligente"
+        except Exception:
+            # cai no fetch simples
+            pass
+
+        from core.docs_corporativos_store import fetch_topk_chunks
+        chunks = fetch_topk_chunks(t, int(top_k))
+        return chunks or [], "fetch_topk_chunks"
+
     def _build_prompt(contexto: str) -> str:
         return f"""
 Você é um analista fundamentalista focado em direcionalidade estratégica e alocação de capital.
@@ -883,46 +909,41 @@ CONTEXTO:
             t0 = time.time()
 
             try:
-                # per_topic_k cresce junto com top_k (mas sem explodir)
-                _per_topic_k = max(6, min(14, int(top_k) // 4))
-                
-                p6_hits, rag_stats = retrieve_multitopic_chunks(
-                    conn=conn,
-                    llm_client=llm_client,
-                    ticker=ticker,
-                    period_ref=period_ref,                 # None => NÃO filtra por trimestre
-                    months_back=int(janela_meses),         # janela móvel (ex.: 24 meses)
-                    top_k_total=int(top_k),
-                    per_topic_k=_per_topic_k,
-                )
-
-                if not p6_hits:
+                chunks, fonte_chunks = _get_chunks_for_ticker(t)
+                if not chunks:
                     erros += 1
-                    status_rows.append({"ticker": t, "status": "SEM_EVIDENCIAS", "erro": "Retriever não retornou evidências"})
+                    status_rows.append({"ticker": t, "status": "SEM_CHUNKS", "erro": "Sem chunks no Supabase"})
                     prog.progress(int(i / total * 100))
                     continue
 
-                # Organiza por tópico (MAP)
-                chunks_by_topic: Dict[str, List[str]] = {}
-                for h in p6_hits:
-                    chunks_by_topic.setdefault(h.tag, []).append(h.chunk_text)
+                contexto = _build_context_limited(chunks, per_chunk_chars=1200, total_chars=12000)
+                try:
+                    raw = _call_llm(client, _build_prompt(contexto))
+                except Exception as e_call:
+                    msg = str(e_call).lower()
+                    if "context window" in msg or "exceed" in msg:
+                        contexto = _build_context_limited(chunks, per_chunk_chars=800, total_chars=8000)
+                        raw = _call_llm(client, _build_prompt(contexto))
+                    else:
+                        raise
 
-                # MAP→REDUCE (relatório rico)
-                result = build_rich_report_json(
-                    ticker=t,
-                    llm_client=client,
-                    chunks_by_topic=chunks_by_topic,
-                    per_topic_chars=3500,
-                )
+                try:
+                    result = _parse_json_loose(raw)
+                except Exception:
+                    erros += 1
+                    status_rows.append({"ticker": t, "status": "JSON_INVALIDO", "erro": "LLM não retornou JSON"})
+                    if debug_topk:
+                        with st.expander(f"⚠️ Resposta bruta (debug) — {t}", expanded=False):
+                            st.code(raw, language="json")
+                    prog.progress(int(i / total * 100))
+                    continue
 
-                # Metadados de auditoria/compatibilidade
-                result.setdefault("period_ref", period_ref)
-                result.setdefault("metodo_chunks", "rag_multitopic_mmr_mapreduce")
-                result["evid_usadas"] = len(p6_hits)
-                result["docs_usados"] = len({h.doc_id for h in p6_hits})
-                result["rag_stats"] = rag_stats
+                # metadados de contexto
+                result.setdefault("evid_usadas", len(chunks))
+                result.setdefault("docs_usados", None)
+                result.setdefault("metodo_chunks", fonte_chunks)
 
-                # Salva no banco
+                # salva
                 save_patch6_run(
                     snapshot_id=str(snapshot_id),
                     ticker=t,
@@ -930,7 +951,7 @@ CONTEXTO:
                     result=result,
                 )
 
-                # Conta perspectiva
+                # conta perspectiva
                 p = str(result.get("perspectiva_compra", "")).strip().lower()
                 if p == "forte":
                     fortes += 1
@@ -941,13 +962,14 @@ CONTEXTO:
                 else:
                     erros += 1
 
+                # mostra card (IMEDIATO)
+                _render_card(ticker=t, result=result, top_k_used=int(top_k), period_ref=period_ref)
+
                 status_rows.append(
                     {
                         "ticker": t,
                         "status": "OK",
-                        "metodo_chunks": "rag_multitopic_mmr_mapreduce",
-                        "evid_usadas": len(p6_hits),
-                        "docs_usados": len({h.doc_id for h in p6_hits}),
+                        "metodo_chunks": fonte_chunks,
                         "tempo_s": round(time.time() - t0, 1),
                     }
                 )
@@ -962,6 +984,7 @@ CONTEXTO:
                     st.warning(f"❌ {t} — falha ao rodar LLM: {e}")
 
             prog.progress(int(i / total * 100))
+
         status_box.markdown("✅ Concluído.")
         st.subheader("📌 Parecer resumido do portfólio")
         st.write(f"Forte: **{fortes}** | Moderada: **{moderadas}** | Fraca: **{fracas}** | Erros/sem dados: **{erros}**")
@@ -973,6 +996,18 @@ CONTEXTO:
         else:
             st.caption("Execução concluída sem erros.")
 
-        # Atualiza o relatório no MESMO lugar (sem duplicar seção)
-        report_box.empty()
-        _render_saved_report()
+        # Re-render do relatório salvo após atualizar
+        st.divider()
+        st.markdown("## 📘 Relatório salvo atualizado")
+        try:
+            from core.patch6_report import render_patch6_report
+            render_patch6_report(
+                tickers=tickers,
+                period_ref=period_ref,
+                llm_factory=llm_factory,
+                show_company_details=True,
+            )
+        except Exception as e:
+            st.error("Não foi possível renderizar o relatório atualizado.")
+            if debug_topk:
+                st.exception(e)
