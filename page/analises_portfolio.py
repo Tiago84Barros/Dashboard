@@ -932,7 +932,7 @@ CONTEXTO:
                 except Exception:
                     erros += 1
                     status_rows.append({"ticker": t, "status": "JSON_INVALIDO", "erro": "LLM não retornou JSON"})
-                    if debug_topk:
+                    if False:
                         with st.expander(f"⚠️ Resposta bruta (debug) — {t}", expanded=False):
                             st.code(raw, language="json")
                     prog.progress(int(i / total * 100))
@@ -977,7 +977,7 @@ CONTEXTO:
             except Exception as e:
                 erros += 1
                 status_rows.append({"ticker": t, "status": "ERRO_LLM", "erro": str(e)})
-                if debug_topk:
+                if False:
                     with st.expander(f"❌ Erro (traceback) — {t}", expanded=False):
                         st.code(traceback.format_exc())
                 else:
@@ -1009,5 +1009,5 @@ CONTEXTO:
             )
         except Exception as e:
             st.error("Não foi possível renderizar o relatório atualizado.")
-            if debug_topk:
+            if False:
                 st.exception(e)
