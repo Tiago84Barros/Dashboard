@@ -730,19 +730,35 @@ def render() -> None:
     debug_topk = False
     window_months = 12  # fixo internamente
     
-    # Único controle exposto
-    top_k = st.slider(
-        "Top-K chunks",
-        min_value=3,
-        max_value=12,
-        value=6,
-        step=1
-    )
+   # --- CONTROLES (sem travar em 1 trimestre) ---
+    c1, c2, c3 = st.columns([2, 1, 1])
     
-    period_ref = st.text_input(
-        "period_ref (ex.: 2024Q4)",
-        value="2024Q4"
-    )
+    with c1:
+        top_k = st.slider(
+            "Top-K (chunks recuperados por ticker)",
+            min_value=8,
+            max_value=80,
+            value=32,
+            step=2,
+            help="Aumente para dar mais contexto à LLM. 24–48 costuma melhorar bastante a riqueza do relatório."
+        )
+    
+    with c2:
+            "Janela de documentos (meses)",
+        janela_meses = st.selectbox(
+            options=[6, 12, 24, 36, 60],
+            index=2,  # 24 meses
+            help="Define quantos meses para trás entram na busca (independe do trimestre)."
+        )
+    
+    with c3:
+        period_ref_raw = st.text_input(
+            "Filtro opcional de trimestre (ex: 2024Q4)",
+            value="",
+            help="Deixe VAZIO para não limitar por trimestre. Use só se quiser restringir."
+        )
+    
+    period_ref = period_ref_raw.strip().upper() or None
 
     st.markdown("## 📘 Relatório consolidado do portfólio")
     st.caption("Montado a partir do que está salvo em patch6_runs. Ao rodar a LLM, este relatório é atualizado automaticamente.")
@@ -867,14 +883,17 @@ CONTEXTO:
             t0 = time.time()
 
             try:
-                # RAG multi-tópico (recall alto + diversidade)
+                # per_topic_k cresce junto com top_k (mas sem explodir)
+                _per_topic_k = max(6, min(14, int(top_k) // 4))
+                
                 p6_hits, rag_stats = retrieve_multitopic_chunks(
-                    ticker=t,
-                    llm_client=client,
-                    period_ref=period_ref,
-                    top_k_total=max(24, int(top_k) * 4),
-                    per_topic_k=8,
-                    topics=DEFAULT_TOPICS,
+                    conn=conn,
+                    llm_client=llm_client,
+                    ticker=ticker,
+                    period_ref=period_ref,                 # None => NÃO filtra por trimestre
+                    months_back=int(janela_meses),         # janela móvel (ex.: 24 meses)
+                    top_k_total=int(top_k),
+                    per_topic_k=_per_topic_k,
                 )
 
                 if not p6_hits:
