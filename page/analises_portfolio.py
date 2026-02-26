@@ -736,7 +736,7 @@ def render() -> None:
 
         with c1:
             top_k = st.slider(
-                "Top-K (evidências por tópico)",
+                "Top-K chunks (total para a LLM)",
                 min_value=8,
                 max_value=60,
                 value=24,
@@ -759,6 +759,12 @@ def render() -> None:
                 value="",
                 help="Deixe vazio para NÃO filtrar por trimestre. Preencha apenas se quiser focar em um período específico.",
             ).strip() or None
+    debug_topk = st.checkbox(
+        "Mostrar detalhes de diagnóstico (retriever/LLM)",
+        value=False,
+        help="Exibe métricas e tabelas auxiliares para validar se o retriever trouxe evidências suficientes.",
+    )
+
 
     window_months = int(janela_meses)
 
@@ -786,88 +792,120 @@ def render() -> None:
     # Wrappers
   
 
-    def _call_llm(client: Any, prompt: str) -> str:
-        """
-        Compatível com:
-        - OpenAI SDK novo: client.responses.create(...)
-        - OpenAI SDK legado: client.chat.completions.create(...)
-        - Clientes custom: .complete/.chat/.invoke ou callable
-        - Unwrap defensivo (dict/client/_client)
-        """
-        if client is None:
-            raise AttributeError("Cliente LLM é None.")
-    
-        # unwrap defensivo
-        if isinstance(client, dict) and "client" in client:
-            client = client["client"]
-        if hasattr(client, "client"):
+    def _call_llm(client, prompt: str, temperature: float = 0.2, max_tokens: int = 1100) -> str:
+        """Chamada robusta para diferentes clients/wrappers (OpenAI-like ou custom)."""
+        # 1) Wrapper com método 'complete' ou 'generate'
+        for meth_name in ("complete", "generate", "chat_complete"):
             try:
-                client = client.client
+                meth = getattr(client, meth_name, None)
+                if callable(meth):
+                    out = meth(prompt=prompt, temperature=temperature, max_tokens=max_tokens)
+                    if isinstance(out, str):
+                        return out
+                    if isinstance(out, dict) and out.get("text"):
+                        return str(out["text"])
             except Exception:
                 pass
-        if hasattr(client, "_client"):
-            try:
-                client = client._client
-            except Exception:
-                pass
-    
-        model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-    
-        # 1) OpenAI SDK novo (Responses API)
-        if hasattr(client, "responses") and hasattr(client.responses, "create") and callable(client.responses.create):
-            resp = client.responses.create(model=model, input=prompt)
-            txt = getattr(resp, "output_text", None)
-            if txt:
-                return txt
-            # fallback defensivo
-            try:
-                return resp.output[0].content[0].text
-            except Exception:
-                return str(resp)
-    
-        # 2) OpenAI SDK legado (Chat Completions)
-        if hasattr(client, "chat") and hasattr(client.chat, "completions") and hasattr(client.chat.completions, "create"):
-            resp = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
-            )
-            return resp.choices[0].message.content
-    
-        # 3) Clientes custom / wrappers
-        if hasattr(client, "complete") and callable(getattr(client, "complete")):
-            return client.complete(prompt)
-        if hasattr(client, "chat") and callable(getattr(client, "chat")):
-            return client.chat(prompt)
-        if hasattr(client, "invoke") and callable(getattr(client, "invoke")):
-            out = client.invoke(prompt)
-            # alguns wrappers retornam objeto com .content
-            return getattr(out, "content", out)
-        if callable(client):
-            out = client(prompt)
-            return getattr(out, "content", out)
-    
-        raise AttributeError("Cliente LLM não expõe métodos suportados (responses/chat/complete/invoke).")
-      
-    def _get_chunks_for_ticker(t: str) -> Tuple[List[str], str]:
-        # preferir Top-K inteligente; fallback para fetch_topk_chunks
+
+        # 2) OpenAI Python SDK (novo): client.responses.create(...)
         try:
-            if use_topk_inteligente:
-                from core.rag_retriever import get_topk_chunks_inteligente  # type: ignore
-                chunks, meta = get_topk_chunks_inteligente(
-                    ticker=t,
-                    top_k=int(top_k),
-                    window_months=int(window_months),
-                    debug=bool(debug_topk),
+            responses = getattr(client, "responses", None)
+            if responses is not None and callable(getattr(responses, "create", None)):
+                r = responses.create(
+                    model=LLM_MODEL,
+                    input=prompt,
+                    temperature=temperature,
+                    max_output_tokens=max_tokens,
                 )
-                return chunks or [], "topk_inteligente"
+                # Compat: r.output_text
+                txt = getattr(r, "output_text", None)
+                if txt:
+                    return txt
         except Exception:
-            # cai no fetch simples
             pass
 
-        from core.docs_corporativos_store import fetch_topk_chunks
-        chunks = fetch_topk_chunks(t, int(top_k))
-        return chunks or [], "fetch_topk_chunks"
+        # 3) OpenAI-like chat.completions.create(...)
+        try:
+            chat = None
+            try:
+                chat = getattr(client, "chat", None)
+            except Exception:
+                chat = None
+            if chat is not None:
+                completions = getattr(chat, "completions", None)
+                create = getattr(completions, "create", None) if completions is not None else None
+                if callable(create):
+                    r = create(
+                        model=LLM_MODEL,
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+                    # OpenAI-like: r.choices[0].message.content
+                    try:
+                        return r.choices[0].message.content
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # 4) Último fallback: tentar 'invoke' (LangChain-like)
+        try:
+            inv = getattr(client, "invoke", None)
+            if callable(inv):
+                r = inv(prompt)
+                return str(r)
+        except Exception:
+            pass
+
+        raise RuntimeError("Cliente de LLM incompatível: não encontrei um método suportado para gerar texto.")
+
+
+      
+    def _get_chunks_for_ticker(ticker: str, top_k_total: int, janela_meses: int, period_ref: str | None):
+        """Recupera evidências (chunks) para um ticker usando RAG multi-tópico.
+
+        - Não limita a um único trimestre por padrão (period_ref opcional).
+        - Usa janela_meses para puxar histórico recente (ex.: 12 meses).
+        - top_k_total controla quantos chunks no total entram no prompt (recomendado 24-60).
+        """
+        try:
+            from core.rag_multitopic import retrieve_multitopic_chunks
+
+            # Tópicos “padrão institucional” (cobrem macro, operação, capex, dívida, guidance etc.)
+            topics = [
+                "estratégia e direcionadores",
+                "resultados e margem",
+                "capex e investimentos",
+                "dívida, caixa e alavancagem",
+                "dividendos e política de capital",
+                "riscos, contingências e governança",
+                "guidance, outlook e perspectivas",
+                "eventos relevantes e M&A",
+            ]
+
+            hits, stats = retrieve_multitopic_chunks(
+                ticker=ticker,
+                topics=topics,
+                top_k_total=top_k_total,
+                months_back=janela_meses,
+                period_ref=period_ref,  # None => não filtra por trimestre
+                per_topic_min=2,
+                per_topic_max=10,
+            )
+
+            chunks = [h.get("chunk_text", "") for h in hits if (h.get("chunk_text") or "").strip()]
+            # Métricas úteis para UI
+            rag_stats = {
+                "qtd_evidencias": len(chunks),
+                "qtd_docs": int(stats.get("n_docs", 0) or 0),
+                "qtd_chunks_brutos": int(stats.get("n_chunks", 0) or 0),
+                "topicos": stats.get("topics", []),
+            }
+            return chunks, rag_stats
+
+        except Exception as e:
+            return [], {"erro": str(e), "qtd_evidencias": 0, "qtd_docs": 0, "qtd_chunks_brutos": 0, "topicos": []}
 
     def _build_prompt(contexto: str) -> str:
         return f"""
