@@ -119,7 +119,7 @@ def _sql_search_chunks(
     for r in rows:
         dist = r["dist"] if isinstance(r, dict) else getattr(r, "dist", None)
         try:
-            dist_f = float(dist) if dist is not None else None
+            dist_f = float(dist) if dist is not None else 1e9
         except Exception:
             dist_f = None
 
