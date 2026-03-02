@@ -205,9 +205,26 @@ def _score_doc(tipo: str, titulo: str, assunto: str, categoria: str) -> int:
 # PDF text extraction (sem OCR)
 # ──────────────────────────────────────────────────────────────
 
-def _extract_pdf_text(pdf_bytes: bytes, max_pages: int = 25) -> str:
+def _extract_pdf_text(pdf_bytes: bytes, max_pages: int = 120) -> str:
     if not pdf_bytes:
         return ""
+    # pdfplumber (melhor qualidade; depende de pdfminer + pillow)
+    try:
+        import pdfplumber  # type: ignore
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            texts: List[str] = []
+            for i, page in enumerate(pdf.pages):
+                if i >= max_pages:
+                    break
+                t = page.extract_text() or ""
+                if t.strip():
+                    texts.append(t)
+        out = "\n".join(texts).strip()
+        if len(out) >= 800:
+            return out
+    except Exception:
+        pass
+
     # PyPDF2 (rápido)
     try:
         import PyPDF2  # type: ignore
@@ -217,15 +234,16 @@ def _extract_pdf_text(pdf_bytes: bytes, max_pages: int = 25) -> str:
             if i >= max_pages:
                 break
             t = page.extract_text() or ""
-            if t:
+            if t.strip():
                 texts.append(t)
         out = "\n".join(texts).strip()
-        if out:
+        if len(out) >= 800:
             return out
     except Exception:
         pass
 
     # pdfminer.six (fallback)
+# pdfminer.six (fallback)
     try:
         from pdfminer.high_level import extract_text  # type: ignore
         out = extract_text(io.BytesIO(pdf_bytes), maxpages=max_pages) or ""
@@ -375,15 +393,15 @@ def _load_ipe_csv(year: int, timeout: int = 30) -> pd.DataFrame:
 def ingest_ipe_for_tickers(
     tickers: Sequence[str],
     *,
-    window_months: int = 12,
-    max_docs_per_ticker: int = 60,
+    window_months: int = 60,
+    max_docs_per_ticker: int = 300,
     strategic_only: bool = True,
     download_pdfs: bool = True,
-    max_pdfs_per_ticker: int = 12,
-    pdf_max_pages: int = 25,
-    request_timeout: int = 25,
-    max_runtime_s: float = 90.0,
-    sleep_s: float = 0.0,
+    max_pdfs_per_ticker: int = 120,
+    pdf_max_pages: int = 120,
+    request_timeout: int = 60,
+    max_runtime_s: float = 900.0,
+    sleep_s: float = 0.05,
     verbose: bool = False,
 ) -> Dict[str, Any]:
     """
@@ -454,8 +472,8 @@ def ingest_ipe_for_tickers(
     out_stats: Dict[str, Any] = {}
     out_errors: Dict[str, str] = {}
 
-    MIN_COVERAGE = 8   # C) cobertura mínima
-    MIN_SCORE_STRATEGIC = 3  # threshold leve, evita ficar vazio
+    MIN_COVERAGE = 25   # C) cobertura mínima
+    MIN_SCORE_STRATEGIC = 2  # threshold leve, evita ficar vazio
 
     with _engine().begin() as conn:
         # garante cache de coluna de texto inicializado (e falha cedo se schema inválido)
