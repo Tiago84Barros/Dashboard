@@ -96,33 +96,44 @@ class PortfolioStats:
             return None
 
 
-def _load_latest_runs(tickers: List[str], period_ref: str) -> pd.DataFrame:
+def _load_latest_runs(tickers: List[str], period_ref: Optional[str]) -> pd.DataFrame:
     tickers = [str(t).strip().upper() for t in (tickers or []) if str(t).strip()]
     if not tickers:
         return pd.DataFrame()
 
     engine = get_supabase_engine()
 
-    q = text("""
-        with ranked as (
-            select
-                ticker,
-                period_ref,
-                created_at,
-                perspectiva_compra,
-                resumo,
-                row_number() over (partition by ticker, period_ref order by created_at desc) as rn
-            from public.patch6_runs
-            where period_ref = :pr and ticker = any(:tks)
-        )
-        select ticker, period_ref, created_at, perspectiva_compra, resumo
-        from ranked
-        where rn = 1
-        order by ticker asc
-    """)
+    pr = (str(period_ref).strip() if period_ref is not None else "")
+use_period = bool(pr)
+
+partition_period = ", period_ref" if use_period else ""
+where_period = "and period_ref = :pr" if use_period else ""
+
+q = text(f"""
+    with ranked as (
+        select
+            ticker,
+            period_ref,
+            created_at,
+            perspectiva_compra,
+            resumo,
+            row_number() over (
+                partition by ticker{partition_period}
+                order by created_at desc
+            ) as rn
+        from public.patch6_runs
+        where ticker = any(:tks)
+        {where_period}
+    )
+    select ticker, period_ref, created_at, perspectiva_compra, resumo
+    from ranked
+    where rn = 1
+    order by ticker asc
+""")
+
 
     with engine.connect() as conn:
-        df = pd.read_sql_query(q, conn, params={"pr": str(period_ref).strip(), "tks": tickers})
+        df = pd.read_sql_query(q, conn, params=({"tks": tickers, **({"pr": pr} if use_period else {})}))
     return df
 
 
