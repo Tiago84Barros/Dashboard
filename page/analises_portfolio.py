@@ -27,7 +27,6 @@ import inspect
 from typing import Any, Dict, List, Optional, Callable, Tuple
 
 import streamlit as st
-from core.rag_multitopic import retrieve_multitopic_chunks
 
 from core.helpers import get_logo_url
 
@@ -331,9 +330,11 @@ def render() -> None:
         """,
         unsafe_allow_html=True,
     )
+    try:
+        snapshot = get_latest_snapshot(engine)
+    except TypeError:
+        snapshot = get_latest_snapshot()
 
-
-    snapshot = get_latest_snapshot()
     if not snapshot:
         st.warning("Nenhum snapshot ativo encontrado. Execute primeiro a Criação de Portfólio.")
         st.stop()
@@ -760,7 +761,6 @@ def render() -> None:
                 value="",
                 help="Deixe vazio para NÃO filtrar por trimestre. Preencha apenas se quiser focar em um período específico.",
             ).strip() or None
-            debug_topk = st.checkbox("Debug Top-K", value=False, help="Mostra evidências e detalhes do ranqueamento.")
 
     window_months = int(janela_meses)
 
@@ -911,7 +911,7 @@ CONTEXTO:
             t0 = time.time()
 
             try:
-                chunks, fonte_chunks = _get_chunks_for_ticker(t, top_k=int(top_k), window_months=window_months, debug=debug_topk)
+                chunks, fonte_chunks = _get_chunks_for_ticker(t)
                 if not chunks:
                     erros += 1
                     status_rows.append({"ticker": t, "status": "SEM_CHUNKS", "erro": "Sem chunks no Supabase"})
