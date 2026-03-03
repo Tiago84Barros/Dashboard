@@ -1,144 +1,167 @@
-
 # core/rag_multitopic.py
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
-from datetime import datetime, timedelta, date
-
+from typing import Dict, List, Tuple, Optional
 from sqlalchemy import text
-from sqlalchemy.engine import Engine
+
+# Você já tem isso no projeto
+from core.db_loader import get_supabase_engine
 
 
 @dataclass
-class ChunkEvidence:
-    chunk_id: str
-    doc_id: str
+class ChunkHit:
+    doc_id: int
     ticker: str
-    created_at: Optional[datetime]
-    doc_date: Optional[date]
-    title: Optional[str]
-    source: Optional[str]
-    url: Optional[str]
     chunk_text: str
+    score: float
+    tag: str  # qual query/tópico trouxe
 
 
-def _months_ago(ref: Optional[date], months: int) -> date:
-    # Simple month window: months*31 days (good enough for filtering)
-    ref_date = ref or date.today()
-    return ref_date - timedelta(days=int(months) * 31)
+DEFAULT_TOPICS: Dict[str, str] = {
+    "resultado": "resultado trimestral, receita, ebitda, margem, lucro, principais variações",
+    "divida": "dívida, alavancagem, caixa, liquidez, covenant, rolagem",
+    "capex": "capex, investimentos, projetos, expansão, manutenção",
+    "dividendos": "dividendos, payout, juros sobre capital, política, recompras",
+    "guidance": "guidance, projeções, outlook, metas, expectativas",
+    "riscos": "riscos, contingências, processos, regulação, câmbio, juros, commodities",
+    "eventos": "fatos relevantes, aquisições, desinvestimentos, reestruturação, M&A",
+}
 
+def _norm_ticker(t: str) -> str:
+    return (t or "").strip().upper().replace(".SA", "").strip()
 
-def fetch_chunks_for_ticker(
-    engine: Engine,
+def _period_to_key(period_ref: str) -> str:
+    # seu period_ref é algo como "2024Q4"; usamos só para filtrar por "data" (quando existir)
+    return (period_ref or "").strip().upper()
+
+def _search_chunks_sql(
+    *,
     ticker: str,
-    janela_meses: int = 12,
+    query_emb: list,
+    limit: int,
     period_ref: Optional[str] = None,
-    max_docs: Optional[int] = None,
-    max_pdfs: Optional[int] = None,
-    max_chunks_total: Optional[int] = None,
-) -> List[ChunkEvidence]:
-    """Fetch chunk evidences for a ticker.
-
-    Philosophy (DEEP):
-      - No hard Top-K by default (caller may pass max_chunks_total=None for 'unbounded').
-      - No forced single-quarter filtering. period_ref is optional and not required.
-
-    Notes:
-      - This function relies only on SQL ordering by recency. If you later add vector search,
-        keep this as a robust fallback.
+    quarters_back: int = 0,
+) -> str:
     """
-
-    since = _months_ago(None, max(1, int(janela_meses)))
-
-    # We try to join docs + chunks; tolerate different column names using COALESCE.
-    # Expected tables:
-    #   public.docs_corporativos (id, ticker, data_ref/date_ref, titulo/title, fonte/source, url/link, created_at)
-    #   public.docs_corporativos_chunks (id, doc_id, ticker, chunk_text/text, created_at, chunk_index)
-    #
-    # If your column names differ, adjust the COALESCE list.
-    sql = f"""
-    with docs as (
+    Observação: sua tabela docs_corporativos_chunks tem embedding e chunk_text (confirmado no chunking).:contentReference[oaicite:2]{index=2}
+    Aqui fazemos um similarity search padrão em pgvector: (embedding <-> :emb).
+    Se você não tiver pgvector no Supabase, adapte para o método que já usa hoje.
+    """
+    base = """
         select
-            d.id as doc_id,
-            d.ticker as ticker,
-            coalesce(d.data_ref, d.date_ref, d.dt_ref) as doc_date,
-            coalesce(d.titulo, d.title, d.nome, d.document_title) as title,
-            coalesce(d.fonte, d.source, d.origem) as source,
-            coalesce(d.url, d.link, d.document_url) as url,
-            d.created_at as doc_created_at
-        from public.docs_corporativos d
-        where upper(d.ticker) = upper(:ticker)
-          and coalesce(d.data_ref, d.date_ref, d.dt_ref, d.created_at::date) >= :since
-        order by coalesce(d.data_ref, d.date_ref, d.dt_ref, d.created_at::date) desc,
-                 d.created_at desc
-        {"limit " + str(int(max_docs)) if max_docs else ""}
-    )
-    select
-        c.id::text as chunk_id,
-        c.doc_id::text as doc_id,
-        upper(c.ticker) as ticker,
-        c.created_at as created_at,
-        docs.doc_date as doc_date,
-        docs.title as title,
-        docs.source as source,
-        docs.url as url,
-        coalesce(c.chunk_text, c.text, c.conteudo, c.content) as chunk_text
-    from public.docs_corporativos_chunks c
-    join docs on docs.doc_id = c.doc_id
-    where upper(c.ticker) = upper(:ticker)
-    order by
-        docs.doc_date desc nulls last,
-        c.created_at desc nulls last,
-        c.id
-    {"limit " + str(int(max_chunks_total)) if max_chunks_total else ""}
+            c.doc_id,
+            c.ticker,
+            c.chunk_text,
+            (c.embedding <-> :emb) as dist
+        from public.docs_corporativos_chunks c
+        where c.ticker = :ticker
     """
 
-    evidences: List[ChunkEvidence] = []
-    with engine.connect() as conn:
-        rows = conn.execute(
-            text(sql),
-            {
-                "ticker": ticker,
-                "since": since,
-            },
-        ).mappings().all()
+    # Se sua tabela docs_corporativos (docs) tem coluna "data" preenchida,
+    # dá pra filtrar por janela. Se não tiver, remova esse join.
+    # No ENET você salva "data" no docs_corporativos. :contentReference[oaicite:3]{index=3}
+    if period_ref:
+        # janela por "quarters_back" é heurística; você pode evoluir para datas reais.
+        base += """
+          and exists (
+            select 1
+            from public.docs_corporativos d
+            where d.id = c.doc_id
+              and coalesce(d.data,'') <> ''
+          )
+        """
 
-    for r in rows:
-        txt = (r.get("chunk_text") or "").strip()
-        if not txt:
+    base += """
+        order by c.embedding <-> :emb asc
+        limit :lim
+    """
+    return base
+
+def _mmr_select(hits: List[ChunkHit], k: int) -> List[ChunkHit]:
+    """
+    MMR simples sem depender de embeddings dos chunks.
+    Heurística: garante diversidade por doc_id e por tag.
+    """
+    out: List[ChunkHit] = []
+    used_docs = set()
+    used_tags = set()
+
+    # primeiro passa: garante variedade
+    for h in sorted(hits, key=lambda x: x.score, reverse=True):
+        if len(out) >= k:
+            break
+        if h.doc_id in used_docs and h.tag in used_tags:
             continue
-        evidences.append(
-            ChunkEvidence(
-                chunk_id=r.get("chunk_id"),
-                doc_id=r.get("doc_id"),
-                ticker=r.get("ticker") or ticker,
-                created_at=r.get("created_at"),
-                doc_date=r.get("doc_date"),
-                title=r.get("title"),
-                source=r.get("source"),
-                url=r.get("url"),
-                chunk_text=txt,
-            )
-        )
-    return evidences
+        out.append(h)
+        used_docs.add(h.doc_id)
+        used_tags.add(h.tag)
 
+    # completa se faltar
+    if len(out) < k:
+        for h in sorted(hits, key=lambda x: x.score, reverse=True):
+            if len(out) >= k:
+                break
+            if h in out:
+                continue
+            out.append(h)
 
-def build_topic_batches(
-    evidences: Sequence[ChunkEvidence],
-    topics: Sequence[str],
-    top_k_por_topico: Optional[int] = None,
-) -> Dict[str, List[ChunkEvidence]]:
-    """Distribute evidences into topics.
+    return out[:k]
 
-    Without embeddings we cannot truly classify; we provide a deterministic split:
-      - If top_k_por_topico is None -> use all evidences for every topic (max depth).
-      - Else -> take the first K evidences (recency-ordered by fetch) for every topic.
+def retrieve_multitopic_chunks(
+    *,
+    ticker: str,
+    llm_client,
+    period_ref: str,
+    top_k_total: int = 24,
+    per_topic_k: int = 8,
+    topics: Optional[Dict[str, str]] = None,
+) -> Tuple[List[ChunkHit], Dict[str, int]]:
     """
-    out: Dict[str, List[ChunkEvidence]] = {}
-    for t in topics:
-        if top_k_por_topico is None:
-            out[t] = list(evidences)
-        else:
-            out[t] = list(evidences)[: int(top_k_por_topico)]
-    return out
+    Estratégia:
+    - gera N queries por tópico
+    - puxa per_topic_k por tópico (recall)
+    - combina tudo e aplica MMR para fechar top_k_total
+    """
+    tk = _norm_ticker(ticker)
+    topics = topics or DEFAULT_TOPICS
+
+    engine = get_supabase_engine()
+    all_hits: List[ChunkHit] = []
+    stats = {"topics": len(topics), "raw_hits": 0, "selected": 0}
+
+    with engine.begin() as conn:
+        for tag, q in topics.items():
+            query_text = f"{tk}: {q} no contexto de relatórios e fatos corporativos."
+            emb = llm_client.embed([query_text])[0]
+
+            sql = _search_chunks_sql(
+                ticker=tk,
+                query_emb=emb,
+                limit=int(per_topic_k),
+                period_ref=_period_to_key(period_ref),
+            )
+
+            rows = conn.execute(
+                text(sql),
+                {"ticker": tk, "emb": emb, "lim": int(per_topic_k)},
+            ).fetchall()
+
+            for r in rows:
+                doc_id, tkr, chunk_text, dist = r
+                # score invertido (dist menor = melhor)
+                score = 1.0 / (1.0 + float(dist))
+                all_hits.append(
+                    ChunkHit(
+                        doc_id=int(doc_id),
+                        ticker=str(tkr),
+                        chunk_text=str(chunk_text),
+                        score=score,
+                        tag=tag,
+                    )
+                )
+
+    stats["raw_hits"] = len(all_hits)
+    selected = _mmr_select(all_hits, int(top_k_total))
+    stats["selected"] = len(selected)
+    return selected, stats
