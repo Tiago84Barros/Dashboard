@@ -1,211 +1,144 @@
+
 # core/rag_multitopic.py
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+from datetime import datetime, timedelta, date
 
-import math
-
-
-DEFAULT_TOPICS = [
-    "resultados e guidance",
-    "capex e investimentos",
-    "endividamento e custo financeiro",
-    "dividendos e payout",
-    "riscos e contingências",
-    "governança e eventos corporativos",
-]
+from sqlalchemy import text
+from sqlalchemy.engine import Engine
 
 
 @dataclass
-class RagStats:
+class ChunkEvidence:
+    chunk_id: str
+    doc_id: str
     ticker: str
-    period_ref: Optional[str]
-    months_back: Optional[int]
-    top_k_total: int
-    per_topic_k: int
-    topics: List[str]
-    total_hits: int
+    created_at: Optional[datetime]
+    doc_date: Optional[date]
+    title: Optional[str]
+    source: Optional[str]
+    url: Optional[str]
+    chunk_text: str
 
 
-def _to_pgvector_literal(emb: List[float]) -> str:
-    """
-    pgvector aceita literal no formato: '[0.1,0.2,...]'
-    """
-    # garante float e formato compacto
-    vals = []
-    for x in emb:
-        try:
-            vals.append(f"{float(x):.10f}")
-        except Exception:
-            vals.append("0.0")
-    return "[" + ",".join(vals) + "]"
+def _months_ago(ref: Optional[date], months: int) -> date:
+    # Simple month window: months*31 days (good enough for filtering)
+    ref_date = ref or date.today()
+    return ref_date - timedelta(days=int(months) * 31)
 
 
-def embed_text(llm_client: Any, text: str) -> List[float]:
-    """
-    Espera llm_client.embed(text) -> List[float]
-    """
-    emb = llm_client.embed(text)
-    if not isinstance(emb, list) or not emb:
-        raise ValueError("Embedding inválido retornado por llm_client.embed()")
-    return emb
-
-
-def _sql_search_chunks(
-    conn: Any,
+def fetch_chunks_for_ticker(
+    engine: Engine,
     ticker: str,
-    emb_vec_literal: str,
-    lim: int,
-    period_ref: Optional[str],
-    months_back: Optional[int],
-) -> List[Dict[str, Any]]:
-    """
-    Busca chunks por similaridade vetorial com filtros opcionais.
-    Requer:
-      - public.docs_corporativos_chunks (doc_id, ticker, chunk_text, embedding)
-      - public.docs_corporativos (id, data, period_ref)
-    """
-
-    # Monta WHERE condicional
-    where_period = ""
-    if period_ref:
-        where_period = " AND d.period_ref = %(period_ref)s "
-
-    where_months = ""
-    if months_back and months_back > 0:
-        # d.data costuma estar como string YYYY-MM-DD em muitos setups
-        # Filtra só quando o formato está ok
-        where_months = """
-        AND (
-            d.data ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
-            AND to_date(d.data,'YYYY-MM-DD') >= (CURRENT_DATE - (%(months_back)s || ' months')::interval)
-        )
-        """
-
-    sql = f"""
-        SELECT
-            c.doc_id,
-            c.ticker,
-            c.chunk_text,
-            (c.embedding <-> (%(emb)s)::vector) AS dist
-        FROM public.docs_corporativos_chunks c
-        WHERE c.ticker = %(ticker)s
-          AND EXISTS (
-              SELECT 1
-              FROM public.docs_corporativos d
-              WHERE d.id = c.doc_id
-                AND COALESCE(d.data,'') <> ''
-                {where_period}
-                {where_months}
-          )
-        ORDER BY (c.embedding <-> (%(emb)s)::vector) ASC
-        LIMIT %(lim)s
-    """
-
-    params = {
-        "emb": emb_vec_literal,
-        "ticker": ticker,
-        "lim": int(lim),
-    }
-    if period_ref:
-        params["period_ref"] = period_ref
-    if months_back and months_back > 0:
-        params["months_back"] = int(months_back)
-
-    rows = conn.execute(sql, params).fetchall()
-
-    out: List[Dict[str, Any]] = []
-    for r in rows:
-        dist = r["dist"] if isinstance(r, dict) else getattr(r, "dist", None)
-        try:
-            dist_f = float(dist) if dist is not None else None
-        except Exception:
-            dist_f = None
-
-        out.append(
-            {
-                "doc_id": r["doc_id"] if isinstance(r, dict) else getattr(r, "doc_id", None),
-                "ticker": r["ticker"] if isinstance(r, dict) else getattr(r, "ticker", None),
-                "chunk_text": r["chunk_text"] if isinstance(r, dict) else getattr(r, "chunk_text", ""),
-                "dist": dist_f,
-            }
-        )
-    return out
-
-
-def retrieve_multitopic_chunks(
-    conn: Any,
-    llm_client: Any,
-    ticker: str,
+    janela_meses: int = 12,
     period_ref: Optional[str] = None,
-    months_back: Optional[int] = 24,
-    top_k_total: int = 32,
-    per_topic_k: int = 8,
-    topics: Optional[List[str]] = None,
-) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    max_docs: Optional[int] = None,
+    max_pdfs: Optional[int] = None,
+    max_chunks_total: Optional[int] = None,
+) -> List[ChunkEvidence]:
+    """Fetch chunk evidences for a ticker.
+
+    Philosophy (DEEP):
+      - No hard Top-K by default (caller may pass max_chunks_total=None for 'unbounded').
+      - No forced single-quarter filtering. period_ref is optional and not required.
+
+    Notes:
+      - This function relies only on SQL ordering by recency. If you later add vector search,
+        keep this as a robust fallback.
     """
-    Retorna lista única de hits (dedup por doc_id+chunk_text) e stats.
 
-    - period_ref: se None, NÃO filtra trimestre.
-    - months_back: janela móvel (ex.: 24 meses).
-    - top_k_total: limite final para contexto.
-    - per_topic_k: recupera por tema e depois consolida.
-    """
+    since = _months_ago(None, max(1, int(janela_meses)))
 
-    topics = topics or DEFAULT_TOPICS
-    top_k_total = int(max(8, top_k_total))
-    per_topic_k = int(max(4, per_topic_k))
-
-    hits_all: List[Dict[str, Any]] = []
-
-    for t in topics:
-        query = f"{ticker} — {t}"
-        emb = embed_text(llm_client, query)
-        emb_lit = _to_pgvector_literal(emb)
-
-        rows = _sql_search_chunks(
-            conn=conn,
-            ticker=ticker,
-            emb_vec_literal=emb_lit,
-            lim=per_topic_k,
-            period_ref=period_ref,
-            months_back=months_back,
-        )
-        for row in rows:
-            row["topic"] = t
-        hits_all.extend(rows)
-
-    # Dedup por (doc_id, chunk_text)
-    seen = set()
-    dedup: List[Dict[str, Any]] = []
-    for h in hits_all:
-        key = (h.get("doc_id"), h.get("chunk_text"))
-        if key in seen:
-            continue
-        seen.add(key)
-        dedup.append(h)
-
-    # Ordena por dist (menor = melhor); None vai pro fim
-    def _dist_key(x: Dict[str, Any]) -> float:
-        d = x.get("dist")
-        if d is None or (isinstance(d, float) and math.isnan(d)):
-            return 1e9
-        return float(d)
-
-    dedup.sort(key=_dist_key)
-
-    # corta no total
-    final_hits = dedup[:top_k_total]
-
-    stats = RagStats(
-        ticker=ticker,
-        period_ref=period_ref,
-        months_back=months_back,
-        top_k_total=top_k_total,
-        per_topic_k=per_topic_k,
-        topics=list(topics),
-        total_hits=len(final_hits),
+    # We try to join docs + chunks; tolerate different column names using COALESCE.
+    # Expected tables:
+    #   public.docs_corporativos (id, ticker, data_ref/date_ref, titulo/title, fonte/source, url/link, created_at)
+    #   public.docs_corporativos_chunks (id, doc_id, ticker, chunk_text/text, created_at, chunk_index)
+    #
+    # If your column names differ, adjust the COALESCE list.
+    sql = f"""
+    with docs as (
+        select
+            d.id as doc_id,
+            d.ticker as ticker,
+            coalesce(d.data_ref, d.date_ref, d.dt_ref) as doc_date,
+            coalesce(d.titulo, d.title, d.nome, d.document_title) as title,
+            coalesce(d.fonte, d.source, d.origem) as source,
+            coalesce(d.url, d.link, d.document_url) as url,
+            d.created_at as doc_created_at
+        from public.docs_corporativos d
+        where upper(d.ticker) = upper(:ticker)
+          and coalesce(d.data_ref, d.date_ref, d.dt_ref, d.created_at::date) >= :since
+        order by coalesce(d.data_ref, d.date_ref, d.dt_ref, d.created_at::date) desc,
+                 d.created_at desc
+        {"limit " + str(int(max_docs)) if max_docs else ""}
     )
+    select
+        c.id::text as chunk_id,
+        c.doc_id::text as doc_id,
+        upper(c.ticker) as ticker,
+        c.created_at as created_at,
+        docs.doc_date as doc_date,
+        docs.title as title,
+        docs.source as source,
+        docs.url as url,
+        coalesce(c.chunk_text, c.text, c.conteudo, c.content) as chunk_text
+    from public.docs_corporativos_chunks c
+    join docs on docs.doc_id = c.doc_id
+    where upper(c.ticker) = upper(:ticker)
+    order by
+        docs.doc_date desc nulls last,
+        c.created_at desc nulls last,
+        c.id
+    {"limit " + str(int(max_chunks_total)) if max_chunks_total else ""}
+    """
 
-    return final_hits, stats.__dict__
+    evidences: List[ChunkEvidence] = []
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(sql),
+            {
+                "ticker": ticker,
+                "since": since,
+            },
+        ).mappings().all()
+
+    for r in rows:
+        txt = (r.get("chunk_text") or "").strip()
+        if not txt:
+            continue
+        evidences.append(
+            ChunkEvidence(
+                chunk_id=r.get("chunk_id"),
+                doc_id=r.get("doc_id"),
+                ticker=r.get("ticker") or ticker,
+                created_at=r.get("created_at"),
+                doc_date=r.get("doc_date"),
+                title=r.get("title"),
+                source=r.get("source"),
+                url=r.get("url"),
+                chunk_text=txt,
+            )
+        )
+    return evidences
+
+
+def build_topic_batches(
+    evidences: Sequence[ChunkEvidence],
+    topics: Sequence[str],
+    top_k_por_topico: Optional[int] = None,
+) -> Dict[str, List[ChunkEvidence]]:
+    """Distribute evidences into topics.
+
+    Without embeddings we cannot truly classify; we provide a deterministic split:
+      - If top_k_por_topico is None -> use all evidences for every topic (max depth).
+      - Else -> take the first K evidences (recency-ordered by fetch) for every topic.
+    """
+    out: Dict[str, List[ChunkEvidence]] = {}
+    for t in topics:
+        if top_k_por_topico is None:
+            out[t] = list(evidences)
+        else:
+            out[t] = list(evidences)[: int(top_k_por_topico)]
+    return out
