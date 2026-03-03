@@ -69,7 +69,12 @@ def render() -> None:
         return
 
     snapshot_id = str(snapshot.get("snapshot_id") or snapshot.get("id") or "").strip()
-    tickers = [_safe_upper(t.get("ticker")) for t in (snapshot.get("tickers") or []) if _safe_upper(t.get("ticker"))]
+
+    # Compatibilidade: snapshots antigos podem trazer "tickers",
+    # mas o store atual traz "items"
+    raw_list = snapshot.get("tickers") or snapshot.get("items") or []
+
+    tickers = [_safe_upper(t.get("ticker")) for t in raw_list if _safe_upper(t.get("ticker"))]
     tickers = sorted(list(dict.fromkeys(tickers)))
 
     if not tickers:
