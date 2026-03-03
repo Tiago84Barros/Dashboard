@@ -31,6 +31,7 @@ import streamlit as st
 from core.helpers import get_logo_url
 
 from core.portfolio_snapshot_store import get_latest_snapshot
+from core.db_loader import get_supabase_engine
 from core.docs_corporativos_store import (
     count_docs,
     count_chunks,
@@ -330,6 +331,11 @@ def render() -> None:
         """,
         unsafe_allow_html=True,
     )
+
+    # Engine (Supabase/Postgres) — usado por alguns stores que esperam engine explícito
+    engine = get_supabase_engine()
+
+    # Compat: algumas versões do store exigem engine, outras não.
     try:
         snapshot = get_latest_snapshot(engine)
     except TypeError:
@@ -644,145 +650,126 @@ def render() -> None:
             return [s] if s else []
         return [str(x)]
 
-
     def _render_card(ticker: str, result: Dict[str, Any], top_k_used: int, period_ref: str) -> None:
-        # ---------------------------------------------------------
-        # Sanitização defensiva: evita HTML da LLM quebrar o layout
-        # ---------------------------------------------------------
-        def esc(x: Any) -> str:
-            return html.escape("" if x is None else str(x).strip())
+      # Sanitização defensiva: impede que HTML vindo da LLM quebre o layout
+      def esc(x: Any) -> str:
+          return html.escape("" if x is None else str(x).strip())
 
-        persp_raw = (result.get("perspectiva_compra", "") or "").strip()
-        resumo_raw = (result.get("resumo", "") or "").strip()
-
-        consider_raw = (
-            result.get("consideracoes_llm")
-            or result.get("consideracoes")
-            or result.get("observacoes")
-            or result.get("rationale")
-            or ""
-        )
-
-        confianca_raw = result.get("confianca", result.get("confidence", ""))
-
-        pontos = _as_list(result.get("pontos_chave") or result.get("pontos-chave") or result.get("pontos"))
-        riscos = _as_list(result.get("riscos"))
-        evid = _as_list(result.get("evidencias") or result.get("evidence") or result.get("citacoes"))
-
-        docs_usados = result.get("docs_usados") or result.get("docs_used") or result.get("documentos") or None
-        evid_usadas = result.get("evid_usadas") or result.get("chunks_used") or result.get("evidencias_usadas") or None
-
-        # Escapa campos de texto (críticos)
-        ticker_e = esc(ticker)
-        persp_e = esc(persp_raw)
-        resumo_e = esc(resumo_raw)
-        consider_e = esc(consider_raw)
-        confianca_e = esc(confianca_raw)
-        period_ref_e = esc(period_ref)
-
-        # Card (HTML)
-        st.markdown(
-            f"""
-            <div class="p6-card">
-              <div class="p6-head">
-                <div class="p6-title-sm">{ticker_e}</div>
-                <div class="p6-badges">
-                  <span class="{_pill_class(persp_raw)}">{(persp_e or "—").upper()}</span>
-                  <span class="p6-pill p6-pill-info">Top-K: {int(top_k_used)}</span>
-                  <span class="p6-pill p6-pill-info">period_ref: {period_ref_e}</span>
-                  {f'<span class="p6-pill p6-pill-info">Docs: {int(docs_usados)}</span>' if docs_usados is not None else ""}
-                  {f'<span class="p6-pill p6-pill-info">Evidências: {int(evid_usadas)}</span>' if evid_usadas is not None else ""}
-                </div>
-              </div>
-
-              <div class="p6-grid">
-                <div><span class="p6-k">Resumo:</span> <span class="p6-muted">{resumo_e or "—"}</span></div>
-                {f'<div><span class="p6-k">Considerações da LLM:</span> <span class="p6-muted">{consider_e}</span></div>' if str(consider_raw).strip() else ''}
-                {f'<div><span class="p6-k">Confiança:</span> <span class="p6-muted">{confianca_e}</span></div>' if str(confianca_raw).strip() else ''}
-              </div>
-
-              <hr class="p6-hr"/>
-
-              <div class="p6-grid">
-                <div>
-                  <span class="p6-k">Pontos-chave</span>
-                  <ul class="p6-list">
-                    {''.join([f'<li>{html.escape(p)}</li>' for p in pontos]) if pontos else '<li class="p6-muted">—</li>'}
-                  </ul>
-                </div>
-
-                <div>
-                  <span class="p6-k">Riscos</span>
-                  <ul class="p6-list">
-                    {''.join([f'<li>{html.escape(r)}</li>' for r in riscos]) if riscos else '<li class="p6-muted">—</li>'}
-                  </ul>
-                </div>
+      persp_raw = (result.get("perspectiva_compra", "") or "").strip()
+      resumo_raw = (result.get("resumo", "") or "").strip()
+  
+      consider_raw = (
+          result.get("consideracoes_llm")
+          or result.get("consideracoes")
+          or result.get("observacoes")
+          or result.get("rationale")
+          or ""
+      )
+      confianca_raw = result.get("confianca", result.get("confidence", ""))
+  
+      pontos = _as_list(result.get("pontos_chave") or result.get("pontos-chave") or result.get("pontos"))
+      riscos = _as_list(result.get("riscos"))
+      evid = _as_list(result.get("evidencias") or result.get("evidence") or result.get("citacoes"))
+  
+      docs_usados = result.get("docs_usados") or result.get("docs_used") or result.get("documentos") or None
+      evid_usadas = result.get("evid_usadas") or result.get("chunks_used") or result.get("evidencias_usadas") or None
+  
+      # Escapa campos críticos (texto vindo da LLM)
+      ticker_e = esc(ticker)
+      persp_e = esc(persp_raw)
+      resumo_e = esc(resumo_raw)
+      consider_e = esc(consider_raw)
+      confianca_e = esc(confianca_raw)
+      period_ref_e = esc(period_ref)
+  
+      st.markdown(
+          f"""
+          <div class="p6-card">
+            <div class="p6-head">
+              <div class="p6-title-sm">{ticker_e}</div>
+              <div class="p6-badges">
+                <span class="{_pill_class(persp_raw)}">{(persp_e or "—").upper()}</span>
+                <span class="p6-pill p6-pill-info">Top-K: {int(top_k_used)}</span>
+                <span class="p6-pill p6-pill-info">period_ref: {period_ref_e}</span>
+                {f'<span class="p6-pill p6-pill-info">Docs: {int(docs_usados)}</span>' if docs_usados is not None else ""}
+                {f'<span class="p6-pill p6-pill-info">Evidências: {int(evid_usadas)}</span>' if evid_usadas is not None else ""}
               </div>
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
+  
+            <div class="p6-grid">
+              <div><span class="p6-k">Resumo:</span> <span class="p6-muted">{resumo_e or "—"}</span></div>
+              {f'<div><span class="p6-k">Considerações da LLM:</span> <span class="p6-muted">{consider_e}</span></div>' if (consider_raw and str(consider_raw).strip()) else ''}
+              {f'<div><span class="p6-k">Confiança:</span> <span class="p6-muted">{confianca_e}</span></div>' if (confianca_raw and str(confianca_raw).strip()) else ''}
+            </div>
+  
+            <hr class="p6-hr"/>
+  
+            <div class="p6-grid">
+              <div>
+                <span class="p6-k">Pontos-chave</span>
+                <ul class="p6-list">
+                  {''.join([f'<li>{html.escape(str(p))}</li>' for p in pontos]) if pontos else '<li class="p6-muted">—</li>'}
+                </ul>
+              </div>
+  
+              <div>
+                <span class="p6-k">Riscos</span>
+                <ul class="p6-list">
+                  {''.join([f'<li>{html.escape(str(r))}</li>' for r in riscos]) if riscos else '<li class="p6-muted">—</li>'}
+                </ul>
+              </div>
+            </div>
+          </div>
+          """,
+          unsafe_allow_html=True,
+      )
+  
+      # Evidências: render em texto puro (sem HTML)
+      if evid:
+          with st.expander(f"📌 Evidências (trechos) — {ticker}", expanded=False):
+              for i, e in enumerate(evid[:12], start=1):
+                  st.markdown(f"**{i}.** {html.escape(str(e))}")
+      
+    # Defaults fixos (sem UI)
+    run_llm_all = True
+    use_topk_inteligente = True
+    debug_topk = False
+    window_months = 12  # fixo internamente
+    
+    # Único controle exposto
+    top_k = st.slider(
+        "Top-K chunks",
+        min_value=3,
+        max_value=12,
+        value=6,
+        step=1
+    )
+    
+    period_ref = st.text_input(
+        "period_ref (ex.: 2024Q4)",
+        value="2024Q4"
+    )
 
-        if evid:
-            with st.expander(f"📌 Evidências (trechos) — {ticker}", expanded=False):
-                for i, e in enumerate(evid[:12], start=1):
-                    # Texto puro: sem unsafe_allow_html aqui
-                    st.markdown(f"**{i}.** {e}")
-
-    # --- Configuração da análise (RAG) ---
-    # Objetivo: NÃO limitar a análise a um único trimestre e permitir mais evidências (Top-K maior).
-    # Observação: aumentar Top-K aumenta custo/tempo; o sistema ainda deve "comprimir" evidências para caber no contexto do modelo.
-
-    with st.expander("⚙️ Configurações da Análise Qualitativa (RAG)", expanded=True):
-        c1, c2, c3 = st.columns([1, 1, 1])
-
-        with c1:
-            top_k = st.slider(
-                "Top-K (evidências por tópico)",
-                min_value=8,
-                max_value=60,
-                value=24,
-                step=2,
-                help="Quantidade de trechos recuperados por tópico. Aumente para obter relatórios mais ricos (custo/tempo maiores).",
-            )
-
-        with c2:
-            janela_meses = st.selectbox(
-                "Janela histórica (meses)",
-                options=[3, 6, 12, 24, 36, 60],
-                index=2,  # 12 meses
-                help="Define o recorte temporal preferencial para a recuperação de evidências. Ex.: 24 meses tende a enriquecer o contexto.",
-            )
-
-        with c3:
-            # Mantemos como opcional (vazio = sem filtro), para evitar travar em um único trimestre.
-            period_ref = st.text_input(
-                "period_ref (opcional, ex.: 2024Q4)",
-                value="",
-                help="Deixe vazio para NÃO filtrar por trimestre. Preencha apenas se quiser focar em um período específico.",
-            ).strip() or None
-
-    window_months = int(janela_meses)
-
-    # 📘 Relatório profissional (consolidado)
-
-    st.markdown("## 📘 Relatório salvo do portfólio (última execução)")
-    st.caption("Este relatório é montado a partir do que já está salvo em patch6_runs. Para atualizar, use o botão abaixo.")
-
-    with st.expander("📘 Relatório salvo do portfólio", expanded=True):
-        try:
-            # Import local para garantir escopo e revelar erros reais
-            from core.patch6_report import render_patch6_report
-
-            render_patch6_report(
-                tickers=tickers,
-                period_ref=period_ref,
-                llm_factory=llm_factory,
-                show_company_details=True,
-            )
-        except Exception as e:
-            st.error("Relatório indisponível.")
-            st.exception(e)
+    st.markdown("## 📘 Relatório consolidado do portfólio")
+    st.caption("Montado a partir do que está salvo em patch6_runs. Ao rodar a LLM, este relatório é atualizado automaticamente.")
+    
+    report_box = st.empty()
+    
+    def _render_saved_report():
+        with report_box.container():
+            try:
+                from core.patch6_report import render_patch6_report
+                render_patch6_report(
+                    tickers=tickers,
+                    period_ref=period_ref,
+                    llm_factory=llm_factory,
+                    show_company_details=True,
+                )
+            except Exception as e:
+                st.error("Relatório indisponível.")
+                st.exception(e)
+    
+    _render_saved_report()
 
 
     # Wrappers
@@ -934,7 +921,7 @@ CONTEXTO:
                 except Exception:
                     erros += 1
                     status_rows.append({"ticker": t, "status": "JSON_INVALIDO", "erro": "LLM não retornou JSON"})
-                    if False:
+                    if debug_topk:
                         with st.expander(f"⚠️ Resposta bruta (debug) — {t}", expanded=False):
                             st.code(raw, language="json")
                     prog.progress(int(i / total * 100))
@@ -965,7 +952,7 @@ CONTEXTO:
                     erros += 1
 
                 # mostra card (IMEDIATO)
-                _render_card(ticker=t, result=result, top_k_used=int(top_k), period_ref=period_ref)
+                #_render_card(ticker=t, result=result, top_k_used=int(top_k), period_ref=period_ref)
 
                 status_rows.append(
                     {
@@ -979,7 +966,7 @@ CONTEXTO:
             except Exception as e:
                 erros += 1
                 status_rows.append({"ticker": t, "status": "ERRO_LLM", "erro": str(e)})
-                if False:
+                if debug_topk:
                     with st.expander(f"❌ Erro (traceback) — {t}", expanded=False):
                         st.code(traceback.format_exc())
                 else:
@@ -998,18 +985,6 @@ CONTEXTO:
         else:
             st.caption("Execução concluída sem erros.")
 
-        # Re-render do relatório salvo após atualizar
-        st.divider()
-        st.markdown("## 📘 Relatório salvo atualizado")
-        try:
-            from core.patch6_report import render_patch6_report
-            render_patch6_report(
-                tickers=tickers,
-                period_ref=period_ref,
-                llm_factory=llm_factory,
-                show_company_details=True,
-            )
-        except Exception as e:
-            st.error("Não foi possível renderizar o relatório atualizado.")
-            if False:
-                st.exception(e)
+        # Atualiza o relatório no MESMO lugar (sem duplicar seção)
+        report_box.empty()
+        _render_saved_report()
