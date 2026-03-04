@@ -468,6 +468,47 @@ def render() -> None:
     only_missing_docs = True
     show_traceback = False
 
+    # Diagnóstico sob demanda (não altera pipeline; apenas inspeciona presença de docs/chunks)
+    diag_btn = st.button("🩺 Diagnóstico (docs/chunks)", help="Mostra rapidamente se cada ticker tem docs e chunks no Supabase.")
+
+    if diag_btn:
+        diag_rows: List[Dict[str, Any]] = []
+        total_docs = 0
+        total_chunks = 0
+        missing_docs = 0
+        missing_chunks = 0
+
+        for tk in tickers:
+            d = count_docs(tk)
+            c = count_chunks(tk)
+            total_docs += int(d or 0)
+            total_chunks += int(c or 0)
+            if (d or 0) == 0:
+                missing_docs += 1
+            if (c or 0) == 0:
+                missing_chunks += 1
+
+            diag_rows.append({
+                "ticker": tk,
+                "docs": d,
+                "chunks": c,
+                "status": ("OK" if (d or 0) > 0 and (c or 0) > 0 else
+                           "SEM_DOCS" if (d or 0) == 0 else
+                           "SEM_CHUNKS"),
+            })
+
+        st.markdown(
+            f"**Resumo diagnóstico:** docs={total_docs} | chunks={total_chunks} | tickers sem docs={missing_docs} | tickers sem chunks={missing_chunks}"
+        )
+        st.dataframe(diag_rows, use_container_width=True)
+
+        if missing_docs > 0:
+            st.warning("Há tickers sem documentos. Use **Atualizar documentos** para tentar ingerir CVM/IPE.")
+        elif missing_chunks > 0:
+            st.warning("Há tickers com docs mas sem chunks. Use **Atualizar documentos** (ele também processa chunks faltantes).")
+        else:
+            st.success("Todos os tickers têm docs e chunks. Pode rodar o LLM com evidências completas.")
+
     btn = st.button("Atualizar documentos", type="primary")
 
     log_panel = st.empty()
