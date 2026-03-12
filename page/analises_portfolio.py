@@ -605,7 +605,7 @@ def render() -> None:
                     r = _safe_call(
                         ingest_fn,
                         tickers=[tk],
-                        window_months=int(window_months),
+                        window_months=int(analysis_window_months),
                         max_docs_per_ticker=int(max_docs),
                         max_runtime_s=float(max_runtime_s),
                         max_pdfs_per_ticker=int(max_pdfs),
@@ -830,9 +830,8 @@ def render() -> None:
     run_llm_all = True
     use_topk_inteligente = True
     debug_topk = False
-    window_months = 12  # fixo internamente
-    
-    # Único controle exposto
+
+    # Controles da análise qualitativa
     top_k = st.slider(
         "Máx evidências por ticker (cap)",
         min_value=20,
@@ -842,11 +841,17 @@ def render() -> None:
         help="O budget adaptativo define quantas evidências usar por ticker. Este controle atua apenas como limite máximo para evitar excesso de contexto."
     )
     st.caption("O sistema usa budget adaptativo por ticker. Este valor é apenas o teto máximo de evidências permitidas por empresa.")
-    
-    period_ref = st.text_input(
-        "period_ref (ex.: 2024Q4)",
-        value="2024Q4"
+
+    analysis_mode = st.radio(
+        "Modo de análise",
+        options=["Padrão (24 meses)", "Aprofundada (36 meses)"],
+        index=0,
+        horizontal=True,
+        help="A análise padrão observa os últimos 24 meses. A aprofundada amplia a leitura para 36 meses, favorecendo avaliação de trajetória, consistência do discurso e execução ao longo do tempo."
     )
+    analysis_window_months = 24 if analysis_mode == "Padrão (24 meses)" else 36
+    analysis_period_ref = "24M" if analysis_window_months == 24 else "36M"
+    st.caption(f"Janela temporal ativa da análise qualitativa: {analysis_window_months} meses.")
 
     st.markdown("## 📘 Relatório consolidado do portfólio")
     st.caption("Montado a partir do que está salvo em patch6_runs. Ao rodar a LLM, este relatório é atualizado automaticamente.")
@@ -859,7 +864,7 @@ def render() -> None:
                 from core.patch6_report import render_patch6_report
                 render_patch6_report(
                     tickers=tickers,
-                    period_ref=period_ref,
+                    period_ref=analysis_period_ref,
                     llm_factory=llm_factory,
                     show_company_details=True,
                 )
@@ -944,7 +949,7 @@ def render() -> None:
                 chunks, meta = get_topk_chunks_inteligente(
                     ticker=t,
                     top_k=int(top_k_used),
-                    window_months=int(window_months),
+                    window_months=int(analysis_window_months),
                     debug=bool(debug_topk),
                 )
                 return chunks or [], "topk_inteligente"
@@ -1059,14 +1064,15 @@ CONTEXTO:
                     "top_k_used": int(topk_run),
                     "top_k_retry_used": (int(topk_retry_used) if topk_retry_used is not None else None),
                     "top_k_cap_ui": int(top_k),
-                    "window_months": int(window_months),
+                    "window_months": int(analysis_window_months),
+                    "analysis_mode": analysis_mode,
                 })
 
                 # salva
                 save_patch6_run(
                     snapshot_id=str(snapshot_id),
                     ticker=t,
-                    period_ref=period_ref,
+                    period_ref=analysis_period_ref,
                     result=result,
                 )
 
