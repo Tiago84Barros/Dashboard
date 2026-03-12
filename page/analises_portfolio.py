@@ -502,8 +502,13 @@ def render() -> None:
     # ------------------------------------------------------------------
     # Estado (sanidade)
     # ------------------------------------------------------------------
-    
 
+    # Fonte única de verdade para profundidade temporal.
+    # Lemos do session_state para que a janela de evidências fique sempre
+    # sincronizada com o modo de análise selecionado na seção qualitativa.
+    analysis_mode = st.session_state.get("analysis_mode", "Padrão (24 meses)")
+    analysis_window_months = 24 if analysis_mode == "Padrão (24 meses)" else 36
+    analysis_period_ref = "24M" if analysis_window_months == 24 else "36M"
 
     # ------------------------------------------------------------------
     # Ingest + Chunking com logs por ticker
@@ -512,13 +517,24 @@ def render() -> None:
 
     col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
     with col1:
-        window_months = st.number_input("Janela (meses)", min_value=1, max_value=60, value=12, step=1)
+        st.markdown(
+            f"""
+            <div class="p6-mcard">
+              <div class="p6-mlabel">Janela de evidências</div>
+              <div class="p6-mvalue">{analysis_window_months} meses</div>
+              <div class="p6-mextra">Sincronizada automaticamente com o modo de análise qualitativa.</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
     with col2:
         max_docs = st.number_input("Máx docs/ticker", min_value=5, max_value=300, value=80, step=5)
     with col3:
         max_pdfs = st.number_input("Máx PDFs/ticker", min_value=0, max_value=80, value=20, step=1)
     with col4:
         max_runtime_s = st.number_input("Tempo máx total (s)", min_value=5, max_value=180, value=60, step=5)
+
+    st.caption(f"Atualizar documentos usará automaticamente {analysis_window_months} meses de histórico, conforme o modo selecionado abaixo.")
 
     only_missing_docs = True
     show_traceback = False
@@ -845,13 +861,14 @@ def render() -> None:
     analysis_mode = st.radio(
         "Modo de análise",
         options=["Padrão (24 meses)", "Aprofundada (36 meses)"],
-        index=0,
+        index=(0 if analysis_mode == "Padrão (24 meses)" else 1),
         horizontal=True,
+        key="analysis_mode",
         help="A análise padrão observa os últimos 24 meses. A aprofundada amplia a leitura para 36 meses, favorecendo avaliação de trajetória, consistência do discurso e execução ao longo do tempo."
     )
     analysis_window_months = 24 if analysis_mode == "Padrão (24 meses)" else 36
     analysis_period_ref = "24M" if analysis_window_months == 24 else "36M"
-    st.caption(f"Janela temporal ativa da análise qualitativa: {analysis_window_months} meses.")
+    st.caption(f"Janela temporal ativa da análise qualitativa: {analysis_window_months} meses. Esta mesma janela é usada na atualização de evidências.")
 
     st.markdown("## 📘 Relatório consolidado do portfólio")
     st.caption("Montado a partir do que está salvo em patch6_runs. Ao rodar a LLM, este relatório é atualizado automaticamente.")
