@@ -834,12 +834,14 @@ def render() -> None:
     
     # Único controle exposto
     top_k = st.slider(
-        "Top-K chunks",
-        min_value=3,
-        max_value=12,
-        value=6,
-        step=1
+        "Máx evidências por ticker (cap)",
+        min_value=20,
+        max_value=120,
+        value=80,
+        step=5,
+        help="O budget adaptativo define quantas evidências usar por ticker. Este controle atua apenas como limite máximo para evitar excesso de contexto."
     )
+    st.caption("O sistema usa budget adaptativo por ticker. Este valor é apenas o teto máximo de evidências permitidas por empresa.")
     
     period_ref = st.text_input(
         "period_ref (ex.: 2024Q4)",
