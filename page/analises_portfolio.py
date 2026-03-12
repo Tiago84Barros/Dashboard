@@ -28,6 +28,7 @@ import inspect
 from typing import Any, Dict, List, Optional, Callable, Tuple
 
 import streamlit as st
+import pandas as pd
 
 from core.helpers import get_logo_url
 
@@ -117,6 +118,155 @@ def _calc_budget_topk(num_chunks: int, peso: float, cap_max: int) -> dict:
     budget_raw = int(math.ceil(base * peso_mult))
     budget_used = int(max(3, min(int(cap_max or budget_raw), budget_raw)))
     return {"base": base, "peso_mult": peso_mult, "budget_raw": budget_raw, "budget_used": budget_used}
+
+
+
+
+def _classify_corpus_health(num_docs: int, num_chunks: int) -> Dict[str, Any]:
+    """Score simples de saúde do corpus usando métricas já disponíveis sem alterar o core."""
+    try:
+        docs = int(num_docs or 0)
+    except Exception:
+        docs = 0
+    try:
+        chunks = int(num_chunks or 0)
+    except Exception:
+        chunks = 0
+
+    ratio = (chunks / docs) if docs > 0 else 0.0
+
+    # score por volume
+    score_docs = min(docs / 20.0, 1.0) * 30.0
+    score_chunks = min(chunks / 500.0, 1.0) * 50.0
+
+    # score por granularidade do chunking
+    if docs == 0:
+        score_ratio = 0.0
+    elif ratio < 1.2:
+        score_ratio = 0.0
+    elif ratio < 3:
+        score_ratio = 8.0
+    elif ratio < 8:
+        score_ratio = 14.0
+    else:
+        score_ratio = 20.0
+
+    score = round(score_docs + score_chunks + score_ratio, 1)
+
+    if docs == 0:
+        diag = "Sem documentos"
+    elif chunks == 0:
+        diag = "Sem chunks"
+    elif ratio <= 1.2:
+        diag = "Anomalia de chunking"
+    elif score < 40:
+        diag = "Corpus fraco"
+    elif score < 70:
+        diag = "Corpus razoável"
+    else:
+        diag = "Corpus robusto"
+
+    observacao = ""
+    if docs == 0:
+        observacao = "Ticker sem base documental no banco."
+    elif chunks == 0:
+        observacao = "Há documentos, mas ainda não foram fragmentados em chunks."
+    elif ratio <= 1.2:
+        observacao = "Quantidade de chunks muito próxima da quantidade de documentos. Isso sugere 1 chunk por documento ou extração curta demais."
+    elif ratio < 3:
+        observacao = "Granularidade ainda baixa. Vale revisar chunk_size/chunk_overlap em documentos extensos."
+    elif chunks > 3000:
+        observacao = "Corpus muito volumoso. Convém monitorar redundância e diversidade do retrieval."
+    else:
+        observacao = "Cobertura operacional aceitável para o estágio atual."
+
+    return {
+        "score": score,
+        "diag": diag,
+        "ratio": round(ratio, 2),
+        "observacao": observacao,
+    }
+
+
+def _make_ingest_results_df(rows: List[Dict[str, Any]]) -> pd.DataFrame:
+    df = pd.DataFrame(rows or [])
+    if df.empty:
+        return df
+
+    rename_map = {
+        "ticker": "Ticker",
+        "status": "Status",
+        "docs_before": "Docs antes",
+        "chunks_before": "Chunks antes",
+        "docs_after_ingest": "Docs após ingestão",
+        "chunks_after_ingest": "Chunks após ingestão",
+        "chunks_inseridos": "Novos chunks",
+        "chunks_after": "Total de chunks",
+        "tempo": "Tempo",
+        "motivo": "Observação",
+    }
+    df = df.rename(columns=rename_map)
+
+    order = [
+        "Ticker",
+        "Status",
+        "Docs antes",
+        "Chunks antes",
+        "Docs após ingestão",
+        "Chunks após ingestão",
+        "Novos chunks",
+        "Total de chunks",
+        "Tempo",
+        "Observação",
+    ]
+    df = df[[c for c in order if c in df.columns]]
+
+    if "Status" in df.columns:
+        df["Status"] = df["Status"].replace({
+            "OK": "OK",
+            "SEM_DOCS": "Sem documentos",
+            "SEM_CHUNKS": "Sem chunks",
+            "FALHA_CHUNK": "Falha no chunking",
+        })
+
+    return df
+
+
+def _make_corpus_health_df(tickers: List[str], weight_map: Dict[str, float]) -> pd.DataFrame:
+    rows: List[Dict[str, Any]] = []
+    for tk in tickers:
+        docs = count_docs(tk)
+        chunks = count_chunks(tk)
+        health = _classify_corpus_health(docs, chunks)
+        rows.append({
+            "Ticker": tk,
+            "Peso no portfólio": round(float(weight_map.get(tk, 0.0) or 0.0) * 100.0, 2),
+            "Documentos": int(docs or 0),
+            "Chunks": int(chunks or 0),
+            "Chunks por documento": health["ratio"],
+            "Score do corpus": health["score"],
+            "Diagnóstico": health["diag"],
+            "Leitura operacional": health["observacao"],
+        })
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df["Peso no portfólio"] = df["Peso no portfólio"].map(lambda x: f"{x:.2f}%")
+        df = df.sort_values(by=["Score do corpus", "Chunks"], ascending=[False, False]).reset_index(drop=True)
+    return df
+
+
+def _summarize_health_df(df: pd.DataFrame) -> Dict[str, Any]:
+    if df is None or df.empty:
+        return {"forte": 0, "razoavel": 0, "fraco": 0, "anomalia": 0}
+
+    diags = df["Diagnóstico"].astype(str).tolist()
+    return {
+        "forte": sum(1 for x in diags if x == "Corpus robusto"),
+        "razoavel": sum(1 for x in diags if x == "Corpus razoável"),
+        "fraco": sum(1 for x in diags if x in {"Corpus fraco", "Sem documentos", "Sem chunks"}),
+        "anomalia": sum(1 for x in diags if x == "Anomalia de chunking"),
+    }
 
 
 def _render_saved_data_header_html(selic: Any, n_acoes: int, margem: Any, n_segmentos: int) -> str:
@@ -541,6 +691,7 @@ def render() -> None:
 
     # Diagnóstico sob demanda (não altera pipeline; apenas inspeciona presença de docs/chunks)
     diag_btn = st.button("🩺 Diagnóstico (docs/chunks)", help="Mostra rapidamente se cada ticker tem docs e chunks no Supabase.")
+    health_btn = st.button("🧬 Saúde do corpus", help="Avalia a qualidade operacional do corpus por ticker e destaca possíveis gargalos de chunking.")
 
     if diag_btn:
         diag_rows: List[Dict[str, Any]] = []
@@ -571,7 +722,7 @@ def render() -> None:
         st.markdown(
             f"**Resumo diagnóstico:** docs={total_docs} | chunks={total_chunks} | tickers sem docs={missing_docs} | tickers sem chunks={missing_chunks}"
         )
-        st.dataframe(diag_rows, use_container_width=True)
+        st.dataframe(pd.DataFrame(diag_rows).rename(columns={"ticker":"Ticker","docs":"Documentos","chunks":"Chunks","status":"Status"}), use_container_width=True)
 
         if missing_docs > 0:
             st.warning("Há tickers sem documentos. Use **Atualizar documentos** para tentar ingerir CVM/IPE.")
@@ -579,6 +730,36 @@ def render() -> None:
             st.warning("Há tickers com docs mas sem chunks. Use **Atualizar documentos** (ele também processa chunks faltantes).")
         else:
             st.success("Todos os tickers têm docs e chunks. Pode rodar o LLM com evidências completas.")
+
+
+    if health_btn:
+        health_df = _make_corpus_health_df(tickers, weight_map)
+        summary = _summarize_health_df(health_df)
+
+        st.markdown(
+            f"**Resumo saúde do corpus:** robusto={summary['forte']} | razoável={summary['razoavel']} | fraco={summary['fraco']} | anomalias de chunking={summary['anomalia']}"
+        )
+
+        if not health_df.empty:
+            st.dataframe(health_df, use_container_width=True)
+
+            anom_df = health_df[health_df["Diagnóstico"] == "Anomalia de chunking"]
+            if not anom_df.empty:
+                st.warning(
+                    "Foram detectados tickers com possível anomalia de chunking. "
+                    "Quando a razão chunks/documento fica muito próxima de 1, o sistema pode estar gerando apenas 1 chunk por documento "
+                    "ou extraindo texto curto demais do PDF."
+                )
+
+                if "PETR3" in anom_df["Ticker"].tolist():
+                    petr_row = anom_df[anom_df["Ticker"] == "PETR3"].iloc[0].to_dict()
+                    st.error(
+                        f"PETR3 exige revisão. Hoje ele aparece com {petr_row['Documentos']} documentos e {petr_row['Chunks']} chunks "
+                        f"(razão {petr_row['Chunks por documento']}). Isso não é normal para um emissor desse porte e sugere gargalo de chunking ou extração textual."
+                    )
+                    st.caption(
+                        "Hipóteses mais prováveis: chunk_size alto demais, chunk_overlap baixo ou extração de texto muito curta/ruim em PDFs da Petrobras."
+                    )
 
     btn = st.button("Atualizar documentos", type="primary")
 
@@ -673,7 +854,7 @@ def render() -> None:
                         f"Isso explica a execução rápida e ausência de chunks. "
                         f"Verifique janela (meses), filtros do ingest e disponibilidade de documentos no CVM/IPE."
                     )
-                table_panel.dataframe(results, use_container_width=True)
+                table_panel.dataframe(_make_ingest_results_df(results), use_container_width=True)
                 continue
 
             # ---- Chunking
@@ -719,7 +900,7 @@ def render() -> None:
                 with log_panel.container():
                     st.error(f"❌ {tk} — chunking falhou | {msg} | {_fmt_s(_now_ms()-start)}")
 
-            table_panel.dataframe(results, use_container_width=True)
+            table_panel.dataframe(_make_ingest_results_df(results), use_container_width=True)
 
         progress.progress(100, text="Concluído")
         st.success(f"Fim. Tempo total: {_fmt_s(_now_ms() - t0)}")
