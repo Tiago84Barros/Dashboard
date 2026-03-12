@@ -746,7 +746,7 @@ def render() -> None:
             return [s] if s else []
         return [str(x)]
 
-    def _render_card(ticker: str, result: Dict[str, Any], top_k_used: int, period_ref: str) -> None:
+    def _render_card(ticker: str, result: Dict[str, Any], top_k_used: int, analysis_label: str) -> None:
       # Sanitização defensiva: impede que HTML vindo da LLM quebre o layout
       def esc(x: Any) -> str:
           return html.escape("" if x is None else str(x).strip())
@@ -776,7 +776,7 @@ def render() -> None:
       resumo_e = esc(resumo_raw)
       consider_e = esc(consider_raw)
       confianca_e = esc(confianca_raw)
-      period_ref_e = esc(period_ref)
+      analysis_label_e = esc(analysis_label)
   
       st.markdown(
           f"""
@@ -786,7 +786,7 @@ def render() -> None:
               <div class="p6-badges">
                 <span class="{_pill_class(persp_raw)}">{(persp_e or "—").upper()}</span>
                 <span class="p6-pill p6-pill-info">Top-K: {int(top_k_used)}</span>
-                <span class="p6-pill p6-pill-info">period_ref: {period_ref_e}</span>
+                <span class="p6-pill p6-pill-info">Modo: {analysis_label_e}</span>
                 {f'<span class="p6-pill p6-pill-info">Docs: {int(docs_usados)}</span>' if docs_usados is not None else ""}
                 {f'<span class="p6-pill p6-pill-info">Evidências: {int(evid_usadas)}</span>' if evid_usadas is not None else ""}
               </div>
@@ -834,14 +834,12 @@ def render() -> None:
     
     # Único controle exposto
     top_k = st.slider(
-        "Máx evidências por ticker (cap)",
-        min_value=20,
-        max_value=120,
-        value=80,
-        step=5,
-        help="O budget adaptativo define quantas evidências usar por ticker. Este controle atua apenas como limite máximo para evitar excesso de contexto."
+        "Top-K chunks",
+        min_value=3,
+        max_value=12,
+        value=6,
+        step=1
     )
-    st.caption("O sistema usa budget adaptativo por ticker. Este valor é apenas o teto máximo de evidências permitidas por empresa.")
     
     period_ref = st.text_input(
         "period_ref (ex.: 2024Q4)",
@@ -859,7 +857,7 @@ def render() -> None:
                 from core.patch6_report import render_patch6_report
                 render_patch6_report(
                     tickers=tickers,
-                    period_ref=period_ref,
+                    period_ref=storage_ref,
                     llm_factory=llm_factory,
                     show_company_details=True,
                 )
@@ -1060,13 +1058,14 @@ CONTEXTO:
                     "top_k_retry_used": (int(topk_retry_used) if topk_retry_used is not None else None),
                     "top_k_cap_ui": int(top_k),
                     "window_months": int(window_months),
+                    "analysis_mode": analysis_label,
                 })
 
                 # salva
                 save_patch6_run(
                     snapshot_id=str(snapshot_id),
                     ticker=t,
-                    period_ref=period_ref,
+                    period_ref=storage_ref,
                     result=result,
                 )
 
@@ -1082,7 +1081,7 @@ CONTEXTO:
                     erros += 1
 
                 # mostra card (IMEDIATO)
-                #_render_card(ticker=t, result=result, top_k_used=int(top_k), period_ref=period_ref)
+                #_render_card(ticker=t, result=result, top_k_used=int(top_k), analysis_label=analysis_label)
 
                 status_rows.append(
                     {
