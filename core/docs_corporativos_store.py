@@ -10,12 +10,13 @@ Melhorias desta versão:
 - Chunk overlap para preservar contexto entre blocos
 - Rebuild automático de documentos com chunking anômalo
   (ex.: 1 chunk para documento longo)
-- Mantém compatibilidade com o restante do sistema
+- Fallback de retrieval com diversificação automática por documento
 """
 
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 from typing import List
 
@@ -299,33 +300,120 @@ def process_missing_chunks_for_ticker(
 
 
 # ============================================================
-# Top-K para RAG (fallback simples)
+# Top-K para RAG (fallback simples com diversificação)
 # ============================================================
 
 def fetch_topk_chunks(ticker: str, k: int = 12) -> List[str]:
     """
-    Retorna lista de textos de chunks recentes.
-    Fallback simples, usado quando o retriever mais sofisticado não é chamado.
+    Retorna lista de chunks recentes com diversificação automática por documento.
 
-    Ajustes desta versão:
-    - default maior (12) para reduzir superficialidade do fallback
-    - mantém ordenação estável por doc recente + chunk_index
+    O objetivo é evitar que o fallback pegue vários chunks quase iguais
+    do mesmo PDF recente.
+
+    Estratégia:
+    - busca candidatos dos docs mais recentes
+    - limita a quantidade por documento
+    - ordena priorizando documentos recentes e primeiros chunks relevantes
     """
     tk = (ticker or "").strip().upper()
     if not tk:
         return []
 
+    # para k pequeno, no máximo 2 por documento; para k maior, até 3
+    per_doc_cap = 2 if int(k) <= 12 else 3
+    candidate_limit = max(int(k) * 6, 60)
+
     engine = get_supabase_engine()
     with engine.connect() as conn:
         df = pd.read_sql_query(
             text("""
-                select c.chunk_text
-                from public.docs_corporativos_chunks c
-                where c.ticker = :tk
-                order by c.doc_id desc, c.chunk_index asc
+                with ranked as (
+                    select
+                        c.doc_id,
+                        c.chunk_index,
+                        c.chunk_text,
+                        row_number() over (
+                            partition by c.doc_id
+                            order by c.chunk_index asc
+                        ) as rn_doc
+                    from public.docs_corporativos_chunks c
+                    where c.ticker = :tk
+                    order by c.doc_id desc, c.chunk_index asc
+                    limit :candidate_limit
+                )
+                select
+                    doc_id,
+                    chunk_index,
+                    chunk_text
+                from ranked
+                where rn_doc <= :per_doc_cap
+                order by doc_id desc, chunk_index asc
                 limit :k
             """),
             conn,
-            params={"tk": tk, "k": int(k)},
+            params={
+                "tk": tk,
+                "k": int(k),
+                "candidate_limit": int(candidate_limit),
+                "per_doc_cap": int(per_doc_cap),
+            },
         )
+
+    return df["chunk_text"].tolist() if not df.empty else []
+
+
+def fetch_topk_chunks_diversified(
+    ticker: str,
+    k: int = 20,
+    per_doc_cap: int = 3,
+    candidate_multiplier: int = 8,
+) -> List[str]:
+    """
+    Versão explícita de retrieval diversificado para uso futuro.
+
+    Útil quando se quiser aprofundar o fallback sem depender dos módulos
+    de retrieval semântico mais avançados.
+    """
+    tk = (ticker or "").strip().upper()
+    if not tk:
+        return []
+
+    candidate_limit = max(int(k) * int(candidate_multiplier), 80)
+
+    engine = get_supabase_engine()
+    with engine.connect() as conn:
+        df = pd.read_sql_query(
+            text("""
+                with ranked as (
+                    select
+                        c.doc_id,
+                        c.chunk_index,
+                        c.chunk_text,
+                        row_number() over (
+                            partition by c.doc_id
+                            order by c.chunk_index asc
+                        ) as rn_doc
+                    from public.docs_corporativos_chunks c
+                    where c.ticker = :tk
+                    order by c.doc_id desc, c.chunk_index asc
+                    limit :candidate_limit
+                )
+                select
+                    doc_id,
+                    chunk_index,
+                    chunk_text
+                from ranked
+                where rn_doc <= :per_doc_cap
+                order by doc_id desc, chunk_index asc
+                limit :k
+            """),
+            conn,
+            params={
+                "tk": tk,
+                "k": int(k),
+                "candidate_limit": int(candidate_limit),
+                "per_doc_cap": int(per_doc_cap),
+            },
+        )
+
     return df["chunk_text"].tolist() if not df.empty else []
