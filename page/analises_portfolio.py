@@ -28,6 +28,7 @@ import inspect
 from typing import Any, Dict, List, Optional, Callable, Tuple
 
 import streamlit as st
+import pandas as pd
 
 from core.helpers import get_logo_url
 
@@ -117,6 +118,155 @@ def _calc_budget_topk(num_chunks: int, peso: float, cap_max: int) -> dict:
     budget_raw = int(math.ceil(base * peso_mult))
     budget_used = int(max(3, min(int(cap_max or budget_raw), budget_raw)))
     return {"base": base, "peso_mult": peso_mult, "budget_raw": budget_raw, "budget_used": budget_used}
+
+
+
+
+def _classify_corpus_health(num_docs: int, num_chunks: int) -> Dict[str, Any]:
+    """Score simples de saúde do corpus usando métricas já disponíveis sem alterar o core."""
+    try:
+        docs = int(num_docs or 0)
+    except Exception:
+        docs = 0
+    try:
+        chunks = int(num_chunks or 0)
+    except Exception:
+        chunks = 0
+
+    ratio = (chunks / docs) if docs > 0 else 0.0
+
+    # score por volume
+    score_docs = min(docs / 20.0, 1.0) * 30.0
+    score_chunks = min(chunks / 500.0, 1.0) * 50.0
+
+    # score por granularidade do chunking
+    if docs == 0:
+        score_ratio = 0.0
+    elif ratio < 1.2:
+        score_ratio = 0.0
+    elif ratio < 3:
+        score_ratio = 8.0
+    elif ratio < 8:
+        score_ratio = 14.0
+    else:
+        score_ratio = 20.0
+
+    score = round(score_docs + score_chunks + score_ratio, 1)
+
+    if docs == 0:
+        diag = "Sem documentos"
+    elif chunks == 0:
+        diag = "Sem chunks"
+    elif ratio <= 1.2:
+        diag = "Anomalia de chunking"
+    elif score < 40:
+        diag = "Corpus fraco"
+    elif score < 70:
+        diag = "Corpus razoável"
+    else:
+        diag = "Corpus robusto"
+
+    observacao = ""
+    if docs == 0:
+        observacao = "Ticker sem base documental no banco."
+    elif chunks == 0:
+        observacao = "Há documentos, mas ainda não foram fragmentados em chunks."
+    elif ratio <= 1.2:
+        observacao = "Quantidade de chunks muito próxima da quantidade de documentos. Isso sugere 1 chunk por documento ou extração curta demais."
+    elif ratio < 3:
+        observacao = "Granularidade ainda baixa. Vale revisar chunk_size/chunk_overlap em documentos extensos."
+    elif chunks > 3000:
+        observacao = "Corpus muito volumoso. Convém monitorar redundância e diversidade do retrieval."
+    else:
+        observacao = "Cobertura operacional aceitável para o estágio atual."
+
+    return {
+        "score": score,
+        "diag": diag,
+        "ratio": round(ratio, 2),
+        "observacao": observacao,
+    }
+
+
+def _make_ingest_results_df(rows: List[Dict[str, Any]]) -> pd.DataFrame:
+    df = pd.DataFrame(rows or [])
+    if df.empty:
+        return df
+
+    rename_map = {
+        "ticker": "Ticker",
+        "status": "Status",
+        "docs_before": "Docs antes",
+        "chunks_before": "Chunks antes",
+        "docs_after_ingest": "Docs após ingestão",
+        "chunks_after_ingest": "Chunks após ingestão",
+        "chunks_inseridos": "Novos chunks",
+        "chunks_after": "Total de chunks",
+        "tempo": "Tempo",
+        "motivo": "Observação",
+    }
+    df = df.rename(columns=rename_map)
+
+    order = [
+        "Ticker",
+        "Status",
+        "Docs antes",
+        "Chunks antes",
+        "Docs após ingestão",
+        "Chunks após ingestão",
+        "Novos chunks",
+        "Total de chunks",
+        "Tempo",
+        "Observação",
+    ]
+    df = df[[c for c in order if c in df.columns]]
+
+    if "Status" in df.columns:
+        df["Status"] = df["Status"].replace({
+            "OK": "OK",
+            "SEM_DOCS": "Sem documentos",
+            "SEM_CHUNKS": "Sem chunks",
+            "FALHA_CHUNK": "Falha no chunking",
+        })
+
+    return df
+
+
+def _make_corpus_health_df(tickers: List[str], weight_map: Dict[str, float]) -> pd.DataFrame:
+    rows: List[Dict[str, Any]] = []
+    for tk in tickers:
+        docs = count_docs(tk)
+        chunks = count_chunks(tk)
+        health = _classify_corpus_health(docs, chunks)
+        rows.append({
+            "Ticker": tk,
+            "Peso no portfólio": round(float(weight_map.get(tk, 0.0) or 0.0) * 100.0, 2),
+            "Documentos": int(docs or 0),
+            "Chunks": int(chunks or 0),
+            "Chunks por documento": health["ratio"],
+            "Score do corpus": health["score"],
+            "Diagnóstico": health["diag"],
+            "Leitura operacional": health["observacao"],
+        })
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df["Peso no portfólio"] = df["Peso no portfólio"].map(lambda x: f"{x:.2f}%")
+        df = df.sort_values(by=["Score do corpus", "Chunks"], ascending=[False, False]).reset_index(drop=True)
+    return df
+
+
+def _summarize_health_df(df: pd.DataFrame) -> Dict[str, Any]:
+    if df is None or df.empty:
+        return {"forte": 0, "razoavel": 0, "fraco": 0, "anomalia": 0}
+
+    diags = df["Diagnóstico"].astype(str).tolist()
+    return {
+        "forte": sum(1 for x in diags if x == "Corpus robusto"),
+        "razoavel": sum(1 for x in diags if x == "Corpus razoável"),
+        "fraco": sum(1 for x in diags if x in {"Corpus fraco", "Sem documentos", "Sem chunks"}),
+        "anomalia": sum(1 for x in diags if x == "Anomalia de chunking"),
+    }
 
 
 def _render_saved_data_header_html(selic: Any, n_acoes: int, margem: Any, n_segmentos: int) -> str:
@@ -268,6 +418,59 @@ def _build_context_limited(chunks: List[str], per_chunk_chars: int = 1200, total
         parts.append(block)
         used += len(block)
     return "\n".join(parts)
+
+def _dedupe_keep_order(texts: List[str]) -> List[str]:
+    out: List[str] = []
+    seen = set()
+    for t in texts or []:
+        key = (t or "").strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+    return out
+
+def _subtract_chunks(base: List[str], already_seen: List[str]) -> List[str]:
+    seen = {(x or "").strip() for x in already_seen or [] if (x or "").strip()}
+    out: List[str] = []
+    for t in base or []:
+        key = (t or "").strip()
+        if not key or key in seen:
+            continue
+        out.append(key)
+    return out
+
+def _build_temporal_context(sections: Dict[str, List[str]], per_chunk_chars: int = 1100, total_chars: int = 20000) -> str:
+    labels = [
+        ("janela_0_12m", "JANELA RECENTE (0-12 meses)"),
+        ("janela_12_24m", "JANELA INTERMEDIÁRIA (12-24 meses)"),
+        ("janela_24_36m", "JANELA ANTIGA (24-36 meses)"),
+    ]
+    parts: List[str] = []
+    used = 0
+    idx_global = 1
+
+    for key, title in labels:
+        chunks = sections.get(key) or []
+        if not chunks:
+            continue
+
+        header = f"\n### {title}\n"
+        if used + len(header) > total_chars:
+            break
+        parts.append(header)
+        used += len(header)
+
+        for ch in chunks:
+            piece = _clip(str(ch), per_chunk_chars)
+            block = f"[CHUNK {idx_global}]\n{piece}\n"
+            if used + len(block) > total_chars:
+                break
+            parts.append(block)
+            used += len(block)
+            idx_global += 1
+
+    return "\n".join(parts).strip()
 
 def _parse_json_loose(text: str) -> Dict[str, Any]:
     t = (text or "").strip()
@@ -502,8 +705,13 @@ def render() -> None:
     # ------------------------------------------------------------------
     # Estado (sanidade)
     # ------------------------------------------------------------------
-    
 
+    # Fonte única de verdade para profundidade temporal.
+    # Lemos do session_state para que a janela de evidências fique sempre
+    # sincronizada com o modo de análise selecionado na seção qualitativa.
+    analysis_mode = st.session_state.get("analysis_mode", "Padrão (24 meses)")
+    analysis_window_months = 24 if analysis_mode == "Padrão (24 meses)" else 36
+    analysis_period_ref = "24M" if analysis_window_months == 24 else "36M"
 
     # ------------------------------------------------------------------
     # Ingest + Chunking com logs por ticker
@@ -512,7 +720,16 @@ def render() -> None:
 
     col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
     with col1:
-        window_months = st.number_input("Janela (meses)", min_value=1, max_value=60, value=12, step=1)
+        st.markdown(
+            f"""
+            <div class="p6-mcard">
+              <div class="p6-mlabel">Janela de evidências</div>
+              <div class="p6-mvalue">{analysis_window_months} meses</div>
+              <div class="p6-mextra">Sincronizada automaticamente com o modo de análise qualitativa.</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
     with col2:
         max_docs = st.number_input("Máx docs/ticker", min_value=5, max_value=300, value=80, step=5)
     with col3:
@@ -520,11 +737,14 @@ def render() -> None:
     with col4:
         max_runtime_s = st.number_input("Tempo máx total (s)", min_value=5, max_value=180, value=60, step=5)
 
+    st.caption(f"Atualizar documentos usará automaticamente {analysis_window_months} meses de histórico, conforme o modo selecionado abaixo.")
+
     only_missing_docs = True
     show_traceback = False
 
     # Diagnóstico sob demanda (não altera pipeline; apenas inspeciona presença de docs/chunks)
     diag_btn = st.button("🩺 Diagnóstico (docs/chunks)", help="Mostra rapidamente se cada ticker tem docs e chunks no Supabase.")
+    health_btn = st.button("🧬 Saúde do corpus", help="Avalia a qualidade operacional do corpus por ticker e destaca possíveis gargalos de chunking.")
 
     if diag_btn:
         diag_rows: List[Dict[str, Any]] = []
@@ -555,7 +775,7 @@ def render() -> None:
         st.markdown(
             f"**Resumo diagnóstico:** docs={total_docs} | chunks={total_chunks} | tickers sem docs={missing_docs} | tickers sem chunks={missing_chunks}"
         )
-        st.dataframe(diag_rows, use_container_width=True)
+        st.dataframe(pd.DataFrame(diag_rows).rename(columns={"ticker":"Ticker","docs":"Documentos","chunks":"Chunks","status":"Status"}), use_container_width=True)
 
         if missing_docs > 0:
             st.warning("Há tickers sem documentos. Use **Atualizar documentos** para tentar ingerir CVM/IPE.")
@@ -563,6 +783,36 @@ def render() -> None:
             st.warning("Há tickers com docs mas sem chunks. Use **Atualizar documentos** (ele também processa chunks faltantes).")
         else:
             st.success("Todos os tickers têm docs e chunks. Pode rodar o LLM com evidências completas.")
+
+
+    if health_btn:
+        health_df = _make_corpus_health_df(tickers, weight_map)
+        summary = _summarize_health_df(health_df)
+
+        st.markdown(
+            f"**Resumo saúde do corpus:** robusto={summary['forte']} | razoável={summary['razoavel']} | fraco={summary['fraco']} | anomalias de chunking={summary['anomalia']}"
+        )
+
+        if not health_df.empty:
+            st.dataframe(health_df, use_container_width=True)
+
+            anom_df = health_df[health_df["Diagnóstico"] == "Anomalia de chunking"]
+            if not anom_df.empty:
+                st.warning(
+                    "Foram detectados tickers com possível anomalia de chunking. "
+                    "Quando a razão chunks/documento fica muito próxima de 1, o sistema pode estar gerando apenas 1 chunk por documento "
+                    "ou extraindo texto curto demais do PDF."
+                )
+
+                if "PETR3" in anom_df["Ticker"].tolist():
+                    petr_row = anom_df[anom_df["Ticker"] == "PETR3"].iloc[0].to_dict()
+                    st.error(
+                        f"PETR3 exige revisão. Hoje ele aparece com {petr_row['Documentos']} documentos e {petr_row['Chunks']} chunks "
+                        f"(razão {petr_row['Chunks por documento']}). Isso não é normal para um emissor desse porte e sugere gargalo de chunking ou extração textual."
+                    )
+                    st.caption(
+                        "Hipóteses mais prováveis: chunk_size alto demais, chunk_overlap baixo ou extração de texto muito curta/ruim em PDFs da Petrobras."
+                    )
 
     btn = st.button("Atualizar documentos", type="primary")
 
@@ -657,7 +907,7 @@ def render() -> None:
                         f"Isso explica a execução rápida e ausência de chunks. "
                         f"Verifique janela (meses), filtros do ingest e disponibilidade de documentos no CVM/IPE."
                     )
-                table_panel.dataframe(results, use_container_width=True)
+                table_panel.dataframe(_make_ingest_results_df(results), use_container_width=True)
                 continue
 
             # ---- Chunking
@@ -703,7 +953,7 @@ def render() -> None:
                 with log_panel.container():
                     st.error(f"❌ {tk} — chunking falhou | {msg} | {_fmt_s(_now_ms()-start)}")
 
-            table_panel.dataframe(results, use_container_width=True)
+            table_panel.dataframe(_make_ingest_results_df(results), use_container_width=True)
 
         progress.progress(100, text="Concluído")
         st.success(f"Fim. Tempo total: {_fmt_s(_now_ms() - t0)}")
@@ -747,13 +997,11 @@ def render() -> None:
         return [str(x)]
 
     def _render_card(ticker: str, result: Dict[str, Any], top_k_used: int, period_ref: str) -> None:
-      # Sanitização defensiva: impede que HTML vindo da LLM quebre o layout
       def esc(x: Any) -> str:
           return html.escape("" if x is None else str(x).strip())
 
       persp_raw = (result.get("perspectiva_compra", "") or "").strip()
       resumo_raw = (result.get("resumo", "") or "").strip()
-  
       consider_raw = (
           result.get("consideracoes_llm")
           or result.get("consideracoes")
@@ -762,22 +1010,33 @@ def render() -> None:
           or ""
       )
       confianca_raw = result.get("confianca", result.get("confidence", ""))
-  
+
+      evolucao_raw = result.get("evolucao_estrategica", "") or ""
+      consistencia_raw = result.get("consistencia_do_discurso", "") or result.get("consistencia_entre_periodos", "") or ""
+      execucao_raw = result.get("execucao_vs_promessa", "") or ""
+      mudancas_raw = result.get("mudancas_estrategicas", "") or result.get("mudancas_capex_divida_dividendos_ma", "") or ""
+      tese_final_raw = result.get("tese_final", "") or ""
+
       pontos = _as_list(result.get("pontos_chave") or result.get("pontos-chave") or result.get("pontos"))
       riscos = _as_list(result.get("riscos"))
+      sinais = _as_list(result.get("sinais_recorrentes"))
       evid = _as_list(result.get("evidencias") or result.get("evidence") or result.get("citacoes"))
-  
+
       docs_usados = result.get("docs_usados") or result.get("docs_used") or result.get("documentos") or None
       evid_usadas = result.get("evid_usadas") or result.get("chunks_used") or result.get("evidencias_usadas") or None
-  
-      # Escapa campos críticos (texto vindo da LLM)
+
       ticker_e = esc(ticker)
       persp_e = esc(persp_raw)
       resumo_e = esc(resumo_raw)
       consider_e = esc(consider_raw)
       confianca_e = esc(confianca_raw)
       period_ref_e = esc(period_ref)
-  
+      evolucao_e = esc(evolucao_raw)
+      consistencia_e = esc(consistencia_raw)
+      execucao_e = esc(execucao_raw)
+      mudancas_e = esc(mudancas_raw)
+      tese_final_e = esc(tese_final_raw)
+
       st.markdown(
           f"""
           <div class="p6-card">
@@ -786,20 +1045,25 @@ def render() -> None:
               <div class="p6-badges">
                 <span class="{_pill_class(persp_raw)}">{(persp_e or "—").upper()}</span>
                 <span class="p6-pill p6-pill-info">Top-K: {int(top_k_used)}</span>
-                <span class="p6-pill p6-pill-info">period_ref: {period_ref_e}</span>
+                <span class="p6-pill p6-pill-info">Janela: {period_ref_e}</span>
                 {f'<span class="p6-pill p6-pill-info">Docs: {int(docs_usados)}</span>' if docs_usados is not None else ""}
                 {f'<span class="p6-pill p6-pill-info">Evidências: {int(evid_usadas)}</span>' if evid_usadas is not None else ""}
               </div>
             </div>
-  
+
             <div class="p6-grid">
               <div><span class="p6-k">Resumo:</span> <span class="p6-muted">{resumo_e or "—"}</span></div>
-              {f'<div><span class="p6-k">Considerações da LLM:</span> <span class="p6-muted">{consider_e}</span></div>' if (consider_raw and str(consider_raw).strip()) else ''}
-              {f'<div><span class="p6-k">Confiança:</span> <span class="p6-muted">{confianca_e}</span></div>' if (confianca_raw and str(confianca_raw).strip()) else ''}
+              {f'<div><span class="p6-k">Evolução estratégica:</span> <span class="p6-muted">{evolucao_e}</span></div>' if evolucao_raw else ''}
+              {f'<div><span class="p6-k">Consistência do discurso:</span> <span class="p6-muted">{consistencia_e}</span></div>' if consistencia_raw else ''}
+              {f'<div><span class="p6-k">Execução vs promessa:</span> <span class="p6-muted">{execucao_e}</span></div>' if execucao_raw else ''}
+              {f'<div><span class="p6-k">Mudanças estratégicas:</span> <span class="p6-muted">{mudancas_e}</span></div>' if mudancas_raw else ''}
+              {f'<div><span class="p6-k">Tese final:</span> <span class="p6-muted">{tese_final_e}</span></div>' if tese_final_raw else ''}
+              {f'<div><span class="p6-k">Considerações da LLM:</span> <span class="p6-muted">{consider_e}</span></div>' if consider_raw else ''}
+              {f'<div><span class="p6-k">Confiança:</span> <span class="p6-muted">{confianca_e}</span></div>' if confianca_raw else ''}
             </div>
-  
+
             <hr class="p6-hr"/>
-  
+
             <div class="p6-grid">
               <div>
                 <span class="p6-k">Pontos-chave</span>
@@ -807,11 +1071,18 @@ def render() -> None:
                   {''.join([f'<li>{html.escape(str(p))}</li>' for p in pontos]) if pontos else '<li class="p6-muted">—</li>'}
                 </ul>
               </div>
-  
+
               <div>
                 <span class="p6-k">Riscos</span>
                 <ul class="p6-list">
                   {''.join([f'<li>{html.escape(str(r))}</li>' for r in riscos]) if riscos else '<li class="p6-muted">—</li>'}
+                </ul>
+              </div>
+
+              <div>
+                <span class="p6-k">Sinais recorrentes</span>
+                <ul class="p6-list">
+                  {''.join([f'<li>{html.escape(str(s))}</li>' for s in sinais]) if sinais else '<li class="p6-muted">—</li>'}
                 </ul>
               </div>
             </div>
@@ -819,13 +1090,12 @@ def render() -> None:
           """,
           unsafe_allow_html=True,
       )
-  
-      # Evidências: render em texto puro (sem HTML)
+
       if evid:
           with st.expander(f"📌 Evidências (trechos) — {ticker}", expanded=False):
-              for i, e in enumerate(evid[:12], start=1):
+              for i, e in enumerate(evid[:15], start=1):
                   st.markdown(f"**{i}.** {html.escape(str(e))}")
-      
+
     # Defaults fixos (sem UI)
     run_llm_all = True
     use_topk_inteligente = True
@@ -845,13 +1115,14 @@ def render() -> None:
     analysis_mode = st.radio(
         "Modo de análise",
         options=["Padrão (24 meses)", "Aprofundada (36 meses)"],
-        index=0,
+        index=(0 if analysis_mode == "Padrão (24 meses)" else 1),
         horizontal=True,
+        key="analysis_mode",
         help="A análise padrão observa os últimos 24 meses. A aprofundada amplia a leitura para 36 meses, favorecendo avaliação de trajetória, consistência do discurso e execução ao longo do tempo."
     )
     analysis_window_months = 24 if analysis_mode == "Padrão (24 meses)" else 36
     analysis_period_ref = "24M" if analysis_window_months == 24 else "36M"
-    st.caption(f"Janela temporal ativa da análise qualitativa: {analysis_window_months} meses.")
+    st.caption(f"Janela temporal ativa da análise qualitativa: {analysis_window_months} meses. Esta mesma janela é usada na atualização de evidências.")
 
     st.markdown("## 📘 Relatório consolidado do portfólio")
     st.caption("Montado a partir do que está salvo em patch6_runs. Ao rodar a LLM, este relatório é atualizado automaticamente.")
@@ -941,55 +1212,94 @@ def render() -> None:
     
         raise AttributeError("Cliente LLM não expõe métodos suportados (responses/chat/complete/invoke).")
       
-    def _get_chunks_for_ticker(t: str, top_k_used: int) -> Tuple[List[str], str]:
-        # preferir Top-K inteligente; fallback para fetch_topk_chunks
+    def _get_chunks_for_ticker(t: str, top_k_used: int, months_window: int) -> Tuple[List[str], str]:
         try:
             if use_topk_inteligente:
                 from core.rag_retriever import get_topk_chunks_inteligente  # type: ignore
                 chunks, meta = get_topk_chunks_inteligente(
                     ticker=t,
                     top_k=int(top_k_used),
-                    window_months=int(analysis_window_months),
+                    window_months=int(months_window),
                     debug=bool(debug_topk),
                 )
                 return chunks or [], "topk_inteligente"
         except Exception:
-            # cai no fetch simples
             pass
 
         from core.docs_corporativos_store import fetch_topk_chunks
         chunks = fetch_topk_chunks(t, int(top_k_used))
         return chunks or [], "fetch_topk_chunks"
 
+    def _get_temporal_chunks_for_ticker(t: str, top_k_used: int) -> Tuple[Dict[str, List[str]], str]:
+        recent, fonte_recent = _get_chunks_for_ticker(t, top_k_used=max(6, min(top_k_used, 18)), months_window=12)
+
+        if int(analysis_window_months) <= 24:
+            cumulative_24, fonte_24 = _get_chunks_for_ticker(t, top_k_used=max(10, min(top_k_used, 28)), months_window=24)
+            previous = _subtract_chunks(cumulative_24, recent)
+            sections = {
+                "janela_0_12m": _dedupe_keep_order(recent)[:18],
+                "janela_12_24m": _dedupe_keep_order(previous)[:18],
+                "janela_24_36m": [],
+            }
+            return sections, fonte_24 or fonte_recent
+
+        cumulative_24, fonte_24 = _get_chunks_for_ticker(t, top_k_used=max(10, min(top_k_used, 24)), months_window=24)
+        cumulative_36, fonte_36 = _get_chunks_for_ticker(t, top_k_used=max(12, min(top_k_used, 36)), months_window=36)
+
+        middle = _subtract_chunks(cumulative_24, recent)
+        older = _subtract_chunks(cumulative_36, cumulative_24)
+
+        sections = {
+            "janela_0_12m": _dedupe_keep_order(recent)[:18],
+            "janela_12_24m": _dedupe_keep_order(middle)[:18],
+            "janela_24_36m": _dedupe_keep_order(older)[:18],
+        }
+        return sections, fonte_36 or fonte_24 or fonte_recent
+
     def _build_prompt(contexto: str) -> str:
         return f"""
-Você é um analista fundamentalista focado em direcionalidade estratégica e alocação de capital.
-Use SOMENTE o CONTEXTO abaixo (RAG). Avalie o caminho futuro (capex/expansão, dívida/desalavancagem,
-guidance, M&A/desinvestimentos, dividendos/recompra) e impacto potencial no acionista minoritário.
+Você é um analista fundamentalista institucional especializado em trajetória estratégica, alocação de capital e consistência de discurso corporativo.
 
-Devolva APENAS JSON válido no formato:
+Use SOMENTE o CONTEXTO abaixo, organizado por janelas temporais.
+
+Sua tarefa é comparar os períodos e identificar:
+1. evolução do discurso da empresa ao longo do tempo;
+2. consistência ou mudança de narrativa entre janelas;
+3. execução vs promessa;
+4. mudanças em capex, dívida, dividendos, recompra, M&A e expansão;
+5. sinais estratégicos recorrentes;
+6. riscos e implicações para o acionista minoritário.
+
+NÃO faça apenas um resumo. Faça uma leitura comparativa e histórica.
+
+Responda APENAS em JSON válido no formato:
 
 {{
   "perspectiva_compra": "forte|moderada|fraca",
-  "resumo": "2-4 linhas objetivas",
-  "consideracoes_llm": "1-3 linhas com ressalvas/hipóteses (ex.: falta de dados, ambiguidade, dependências)",
+  "resumo": "3-5 linhas com a síntese histórica da tese",
+  "evolucao_estrategica": "como a estratégia evoluiu entre as janelas",
+  "consistencia_do_discurso": "onde houve consistência ou mudança de narrativa",
+  "execucao_vs_promessa": "o que foi prometido e o que parece ter sido executado",
+  "mudancas_estrategicas": "mudanças em capex, dívida, dividendos, M&A, expansão ou foco operacional",
+  "consideracoes_llm": "ressalvas, ambiguidade, limitações do contexto",
   "confianca": "alta|media|baixa",
   "pontos_chave": ["..."],
+  "sinais_recorrentes": ["..."],
   "riscos": ["..."],
-  "evidencias": ["trechos literais do contexto (curtos)"]
+  "evidencias": ["trechos literais curtos do contexto"],
+  "tese_final": "conclusão final integrada"
 }}
 
-CONTEXTO:
+CONTEXTO TEMPORAL:
 {contexto}
 """
-
     if st.button("🔄 Atualizar relatório com LLM agora"):
         client = llm_factory.get_llm_client()
 
         tickers_run = tickers
         total = len(tickers_run)
 
-        st.info("Iniciando leitura qualitativa… os cards aparecem à medida que cada ticker finalizar.")
+        st.info("Iniciando leitura qualitativa… ao final, o relatório principal acima será recarregado com os resultados atualizados.")
         prog = st.progress(0)
         status_box = st.empty()
 
@@ -1006,8 +1316,9 @@ CONTEXTO:
                 budget_info = _calc_budget_topk(num_chunks=num_chunks, peso=peso, cap_max=int(top_k))
                 topk_run = int(budget_info['budget_used'])
 
-                chunks, fonte_chunks = _get_chunks_for_ticker(t, topk_run)
-                if not chunks:
+                temporal_sections, fonte_chunks = _get_temporal_chunks_for_ticker(t, topk_run)
+                total_temporal_evidence = sum(len(v or []) for v in temporal_sections.values())
+                if total_temporal_evidence == 0:
                     erros += 1
                     status_rows.append({"ticker": t, "status": "SEM_CHUNKS", "erro": "Sem chunks no Supabase"})
                     prog.progress(int(i / total * 100))
@@ -1016,24 +1327,29 @@ CONTEXTO:
                 topk_retry_used = None
 
                 # Quality Gate: se evidência muito baixa, tenta ampliar budget (respeitando o cap da UI)
-                if len(chunks) < 8 and int(top_k) > int(topk_run):
-                    topk_retry = min(int(top_k), int(topk_run) + 2)
+                if total_temporal_evidence < 10 and int(top_k) > int(topk_run):
+                    topk_retry = min(int(top_k), int(topk_run) + 6)
                     try:
-                        chunks2, fonte2 = _get_chunks_for_ticker(t, topk_retry)
-                        if chunks2 and len(chunks2) > len(chunks):
-                            chunks, fonte_chunks = chunks2, fonte2
+                        temporal_sections2, fonte2 = _get_temporal_chunks_for_ticker(t, topk_retry)
+                        total2 = sum(len(v or []) for v in temporal_sections2.values())
+                        if total2 > total_temporal_evidence:
+                            temporal_sections, fonte_chunks = temporal_sections2, fonte2
+                            total_temporal_evidence = total2
                             topk_run = int(topk_retry)
                             topk_retry_used = int(topk_run)
                     except Exception:
                         pass
 
-                contexto = _build_context_limited(chunks, per_chunk_chars=1200, total_chars=12000)
+                contexto = _build_temporal_context(temporal_sections, per_chunk_chars=1100, total_chars=20000)
                 try:
                     raw = _call_llm(client, _build_prompt(contexto))
                 except Exception as e_call:
                     msg = str(e_call).lower()
                     if "context window" in msg or "exceed" in msg:
-                        contexto = _build_context_limited(chunks, per_chunk_chars=800, total_chars=8000)
+                        flat_chunks = []
+                        for _bucket in temporal_sections.values():
+                            flat_chunks.extend(_bucket or [])
+                        contexto = _build_context_limited(flat_chunks, per_chunk_chars=800, total_chars=8000)
                         raw = _call_llm(client, _build_prompt(contexto))
                     else:
                         raise
@@ -1050,7 +1366,7 @@ CONTEXTO:
                     continue
 
                 # metadados de contexto
-                result.setdefault("evid_usadas", len(chunks))
+                result.setdefault("evid_usadas", int(total_temporal_evidence))
                 result.setdefault("docs_usados", None)
                 result.setdefault("metodo_chunks", fonte_chunks)
                 # metadados institucionais (auditoria)
@@ -1066,6 +1382,11 @@ CONTEXTO:
                     "top_k_cap_ui": int(top_k),
                     "window_months": int(analysis_window_months),
                     "analysis_mode": analysis_mode,
+                    "temporal_buckets": {
+                        "0_12m": int(len(temporal_sections.get("janela_0_12m") or [])),
+                        "12_24m": int(len(temporal_sections.get("janela_12_24m") or [])),
+                        "24_36m": int(len(temporal_sections.get("janela_24_36m") or [])),
+                    },
                 })
 
                 # salva
@@ -1087,8 +1408,8 @@ CONTEXTO:
                 else:
                     erros += 1
 
-                # mostra card (IMEDIATO)
-                #_render_card(ticker=t, result=result, top_k_used=int(top_k), period_ref=period_ref)
+                # Não renderiza cards intermediários abaixo do botão.
+                # O relatório principal acima será refeito ao final com os cards enriquecidos do patch6_report.
 
                 status_rows.append(
                     {
@@ -1096,7 +1417,8 @@ CONTEXTO:
                         "status": "OK",
                         "metodo_chunks": fonte_chunks,
                         "top_k_used": int(topk_run),
-                    "top_k_retry_used": (int(topk_retry_used) if topk_retry_used is not None else None),
+                        "top_k_retry_used": (int(topk_retry_used) if topk_retry_used is not None else None),
+                        "evidencias_totais": int(total_temporal_evidence),
                         "tempo_s": round(time.time() - t0, 1),
                     }
                 )
