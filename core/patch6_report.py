@@ -111,11 +111,12 @@ def _load_latest_runs(tickers: List[str], period_ref: str) -> pd.DataFrame:
                 created_at,
                 perspectiva_compra,
                 resumo,
+                result_json,
                 row_number() over (partition by ticker, period_ref order by created_at desc) as rn
             from public.patch6_runs
             where period_ref = :pr and ticker = any(:tks)
         )
-        select ticker, period_ref, created_at, perspectiva_compra, resumo
+        select ticker, period_ref, created_at, perspectiva_compra, resumo, result_json
         from ranked
         where rn = 1
         order by ticker asc
@@ -231,6 +232,37 @@ def _esc(s: Any) -> str:
     """Escapa HTML para usar dentro de st.markdown(..., unsafe_allow_html=True)."""
     return html.escape(_strip_html(s))
 
+
+
+def _as_result_obj(x: Any) -> dict:
+    import json
+    if x is None:
+        return {}
+    if isinstance(x, dict):
+        return x
+    try:
+        if isinstance(x, str) and x.strip():
+            return json.loads(x)
+    except Exception:
+        return {}
+    return {}
+
+def _pick_text(obj: dict, *keys: str) -> str:
+    for k in keys:
+        v = obj.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return ""
+
+def _pick_list(obj: dict, *keys: str) -> list[str]:
+    for k in keys:
+        v = obj.get(k)
+        if isinstance(v, list):
+            return [str(i).strip() for i in v if str(i).strip()]
+        if isinstance(v, str) and v.strip():
+            return [v.strip()]
+    return []
+
 def render_patch6_report(
     tickers: List[str],
     period_ref: str,
@@ -327,12 +359,17 @@ def render_patch6_report(
     st.caption("🛈 Como a qualidade é estimada: combinação de (i) cobertura do portfólio, (ii) perspectiva 12m agregada e (iii) distribuição de sinais (forte/moderada/fraca). É uma heurística para orientar leitura — não é recomendação.")
 
     # Contexto agregado para LLM (opcional)
-    contexto_portfolio = "\n".join(
-        [
-            f"- {row.ticker}: perspectiva={row.perspectiva_compra}; resumo={row.resumo}"
-            for row in df_latest.itertuples(index=False)
-        ]
-    )
+    contexto_lines = []
+    for row in df_latest.itertuples(index=False):
+        result_obj = _as_result_obj(getattr(row, "result_json", None))
+        tese = _pick_text(result_obj, "tese_final", "resumo") or str(row.resumo or "")
+        evol = _pick_text(result_obj, "evolucao_estrategica")
+        execucao = _pick_text(result_obj, "execucao_vs_promessa")
+        riscos = "; ".join(_pick_list(result_obj, "riscos")[:2])
+        contexto_lines.append(
+            f"- {row.ticker}: perspectiva={row.perspectiva_compra}; tese={tese}; evolucao={evol}; execucao={execucao}; riscos={riscos}"
+        )
+    contexto_portfolio = "\n".join(contexto_lines)
 
     st.markdown("## 🧠 Resumo Executivo")
 
