@@ -544,8 +544,8 @@ def render() -> None:
             box-shadow: 0 8px 20px rgba(0,0,0,0.25);
           }
           .p6-chip img{
-            width:40px;
-            height:40px;
+            width:75px;
+            height:75px;
             object-fit:contain;
             border-radius:10px;
             background:#ffffff;
