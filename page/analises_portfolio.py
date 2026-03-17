@@ -441,7 +441,7 @@ def _subtract_chunks(base: List[str], already_seen: List[str]) -> List[str]:
         out.append(key)
     return out
 
-def _build_temporal_context(sections: Dict[str, List[str]], per_chunk_chars: int = 1100, total_chars: int = 20000) -> str:
+def _build_temporal_context(sections: Dict[str, List[Any]], per_chunk_chars: int = 1100, total_chars: int = 20000) -> str:
     labels = [
         ("janela_0_12m", "JANELA RECENTE (0-12 meses)"),
         ("janela_12_24m", "JANELA INTERMEDIÁRIA (12-24 meses)"),
@@ -463,8 +463,19 @@ def _build_temporal_context(sections: Dict[str, List[str]], per_chunk_chars: int
         used += len(header)
 
         for ch in chunks:
-            piece = _clip(str(ch), per_chunk_chars)
-            block = f"[CHUNK {idx_global}]\n{piece}\n"
+            if isinstance(ch, dict):
+                text_value = str(ch.get("text") or "").strip()
+                data_doc = str(ch.get("data_doc") or "").strip()
+                tipo_doc = str(ch.get("tipo_doc") or "").strip()
+                theme = str(ch.get("theme") or "").strip()
+                meta = " | ".join([x for x in [data_doc, tipo_doc, theme] if x])
+                meta_line = f"[META] {meta}\n" if meta else ""
+            else:
+                text_value = str(ch or "").strip()
+                meta_line = ""
+
+            piece = _clip(text_value, per_chunk_chars)
+            block = f"[CHUNK {idx_global}]\n{meta_line}{piece}\n"
             if used + len(block) > total_chars:
                 break
             parts.append(block)
@@ -1212,61 +1223,53 @@ def render() -> None:
             return getattr(out, "content", out)
     
         raise AttributeError("Cliente LLM não expõe métodos suportados (responses/chat/complete/invoke).")
-      
-    def _get_chunks_for_ticker(t: str, top_k_used: int, months_window: int) -> Tuple[List[str], str]:
+        
+    def _get_chunks_for_ticker(t: str, top_k_used: int, months_window: int, return_debug: bool = False):
         try:
             if use_topk_inteligente:
-                from core.rag_retriever import get_topk_chunks_inteligente  # type: ignore
-
-                try:
-                    rag_out = get_topk_chunks_inteligente(
-                        ticker=t,
-                        top_k=int(top_k_used),
-                        months_window=int(months_window),
-                        debug=bool(debug_topk),
-                    )
-                except TypeError:
-                    try:
-                        rag_out = get_topk_chunks_inteligente(
-                            ticker=t,
-                            top_k=int(top_k_used),
-                            window_months=int(months_window),
-                            debug=bool(debug_topk),
-                        )
-                    except TypeError:
-                        rag_out = get_topk_chunks_inteligente(
-                            ticker=t,
-                            top_k=int(top_k_used),
-                            debug=bool(debug_topk),
-                        )
-
-                # Compatibilidade:
-                # - versão antiga podia retornar (chunks, meta)
-                # - versão nova retorna apenas List[str]
-                # - em debug, pode retornar lista de objetos ChunkHit
-                if isinstance(rag_out, tuple) and len(rag_out) >= 1:
-                    chunks = rag_out[0] or []
-                else:
-                    chunks = rag_out or []
-
-                normalized_chunks: List[str] = []
-                for item in chunks:
+                from core.rag_retriever import get_topk_chunks_inteligente, summarize_retrieval_mix  # type: ignore
+    
+                rag_out = get_topk_chunks_inteligente(
+                    ticker=t,
+                    top_k=int(top_k_used),
+                    months_window=int(months_window),
+                    debug=True,
+                )
+    
+                hits = rag_out or []
+                normalized_hits: List[Dict[str, Any]] = []
+                for item in hits:
                     if isinstance(item, str):
                         txt = item.strip()
                         if txt:
-                            normalized_chunks.append(txt)
+                            normalized_hits.append({"text": txt, "data_doc": "", "tipo_doc": "", "theme": "", "doc_id": ""})
                     else:
                         txt = getattr(item, "chunk_text", None)
                         if txt:
-                            normalized_chunks.append(str(txt).strip())
-
-                if normalized_chunks:
-                    return normalized_chunks, "topk_inteligente"
+                            dt = getattr(item, "data_doc", None)
+                            normalized_hits.append(
+                                {
+                                    "text": str(txt).strip(),
+                                    "data_doc": (dt.date().isoformat() if hasattr(dt, "date") else str(dt or "")),
+                                    "tipo_doc": str(getattr(item, "tipo_doc", "") or ""),
+                                    "theme": str(getattr(item, "strategic_theme", "") or ""),
+                                    "doc_id": str(getattr(item, "doc_id", "") or ""),
+                                }
+                            )
+    
+                mix = summarize_retrieval_mix(rag_out) if hits and not isinstance(hits[0], str) else {}
+                if return_debug:
+                    return normalized_hits, "topk_inteligente", mix
+    
+                return [h["text"] for h in normalized_hits if h.get("text")], "topk_inteligente"
+    
         except Exception:
             pass
-
+    
         from core.docs_corporativos_store import fetch_topk_chunks
         chunks = fetch_topk_chunks(t, int(top_k_used))
+        if return_debug:
+            return [{"text": str(c).strip(), "data_doc": "", "tipo_doc": "", "theme": "", "doc_id": ""} for c in (chunks or [])], "fetch_topk_chunks", {}
         return chunks or [], "fetch_topk_chunks"
 
     def _get_temporal_chunks_for_ticker(t: str, top_k_used: int) -> Tuple[Dict[str, List[str]], str]:
@@ -1297,35 +1300,61 @@ def render() -> None:
 
     def _build_prompt(contexto: str) -> str:
         return f"""
-Você é um analista fundamentalista institucional especializado em trajetória estratégica, alocação de capital e consistência de discurso corporativo.
+Você é um analista fundamentalista institucional especializado em trajetória estratégica, execução, alocação de capital e consistência de discurso corporativo.
 
-Use SOMENTE o CONTEXTO abaixo, organizado por janelas temporais.
+Use SOMENTE o CONTEXTO abaixo, organizado por janelas temporais e com metadados de data/tipo documental/tema.
 
-Sua tarefa é comparar os períodos e identificar:
-1. evolução do discurso da empresa ao longo do tempo;
-2. consistência ou mudança de narrativa entre janelas;
-3. execução vs promessa;
-4. mudanças em capex, dívida, dividendos, recompra, M&A e expansão;
-5. sinais estratégicos recorrentes;
-6. riscos e implicações para o acionista minoritário.
+Objetivo:
+1. comparar as janelas temporais;
+2. identificar mudanças reais de estratégia;
+3. classificar a execução como forte, moderada, fraca ou inconsistente;
+4. separar riscos estruturais de ruídos pontuais;
+5. listar evidências documentais concretas;
+6. produzir um JSON rico, auditável e específico.
 
-NÃO faça apenas um resumo. Faça uma leitura comparativa e histórica.
+Regras:
+- não faça resumo genérico;
+- não invente fatos;
+- quando houver pouca base, diga isso explicitamente;
+- use no mínimo 5 evidências se o contexto trouxer material suficiente;
+- sempre que possível, atribua ano ou janela temporal às evidências;
+- prefira evidências sobre dívida, capex, dividendos, recompra, guidance, execução, governança e M&A.
 
-Responda APENAS em JSON válido no formato:
+Responda APENAS em JSON válido neste formato:
 
 {{
   "perspectiva_compra": "forte|moderada|fraca",
-  "resumo": "3-5 linhas com a síntese histórica da tese",
-  "evolucao_estrategica": "como a estratégia evoluiu entre as janelas",
-  "consistencia_do_discurso": "onde houve consistência ou mudança de narrativa",
-  "execucao_vs_promessa": "o que foi prometido e o que parece ter sido executado",
-  "mudancas_estrategicas": "mudanças em capex, dívida, dividendos, M&A, expansão ou foco operacional",
-  "consideracoes_llm": "ressalvas, ambiguidade, limitações do contexto",
-  "confianca": "alta|media|baixa",
+  "leitura_direcionalidade": "construtiva|equilibrada|cautelosa|negativa",
+  "resumo": "síntese em 4 a 6 linhas",
+  "evolucao_estrategica": {{
+    "historico": "...",
+    "fase_atual": "...",
+    "tendencia": "..."
+  }},
+  "consistencia_discurso": {{
+    "analise": "...",
+    "grau_consistencia": "alto|medio|baixo",
+    "contradicoes": ["..."]
+  }},
+  "execucao_vs_promessa": {{
+    "analise": "...",
+    "avaliacao_execucao": "forte|moderada|fraca|inconsistente",
+    "entregas_confirmadas": ["..."],
+    "entregas_pendentes_ou_incertas": ["..."]
+  }},
+  "mudancas_estrategicas": ["..."],
   "pontos_chave": ["..."],
-  "sinais_recorrentes": ["..."],
+  "catalisadores": ["..."],
   "riscos": ["..."],
-  "evidencias": ["trechos literais curtos do contexto"],
+  "o_que_monitorar": ["..."],
+  "consideracoes_llm": "limitações do contexto, qualidade dos documentos e lacunas",
+  "evidencias": [
+    {{
+      "topico": "2024 ou janela",
+      "trecho": "trecho literal curto",
+      "interpretacao": "por que isso importa"
+    }}
+  ],
   "tese_final": "conclusão final integrada"
 }}
 
@@ -1380,6 +1409,7 @@ CONTEXTO TEMPORAL:
                         pass
 
                 contexto = _build_temporal_context(temporal_sections, per_chunk_chars=1100, total_chars=20000)
+                context_preview = contexto[:4000]
                 try:
                     raw = _call_llm(client, _build_prompt(contexto))
                 except Exception as e_call:
@@ -1407,6 +1437,8 @@ CONTEXTO TEMPORAL:
                 # metadados de contexto
                 result.setdefault("evid_usadas", int(total_temporal_evidence))
                 result.setdefault("docs_usados", None)
+                result.setdefault("_meta", {})
+                result["_meta"]["context_preview"] = context_preview
                 result.setdefault("metodo_chunks", fonte_chunks)
                 # metadados institucionais (auditoria)
                 result.setdefault("_meta", {})
@@ -1421,6 +1453,10 @@ CONTEXTO TEMPORAL:
                     "top_k_cap_ui": int(top_k),
                     "window_months": int(analysis_window_months),
                     "analysis_mode": analysis_mode,
+                    "docs_retrieved": int((retrieval_audit or {}).get("docs_retrieved", 0)),
+                    "context_years": list((retrieval_audit or {}).get("years", []) or []),
+                    "retrieval_mix": (retrieval_audit or {}).get("mix_total", {}),
+                    "context_preview": context_preview,
                     "temporal_buckets": {
                         "0_12m": int(len(temporal_sections.get("janela_0_12m") or [])),
                         "12_24m": int(len(temporal_sections.get("janela_12_24m") or [])),
