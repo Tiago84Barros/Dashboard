@@ -287,18 +287,31 @@ def _box_html(text: str) -> str:
     """
 
 
-def _metric_chip(label: str, value: str) -> str:
-    return f"""
-    <div style="
-        border:1px solid rgba(255,255,255,0.08);
-        background:rgba(255,255,255,0.025);
-        border-radius:12px;
-        padding:10px 12px;
-        min-width:140px;">
-        <div style="font-size:11px;opacity:.70;margin-bottom:4px;">{_esc(label)}</div>
-        <div style="font-size:20px;font-weight:800;">{_esc(value)}</div>
-    </div>
-    """
+
+def _render_metric_cards(items: List[tuple[str, str]], columns_per_row: int = 3) -> None:
+    clean_items = [(str(label), str(value)) for label, value in items if str(label).strip()]
+    if not clean_items:
+        return
+
+    for i in range(0, len(clean_items), columns_per_row):
+        row_items = clean_items[i:i + columns_per_row]
+        cols = st.columns(len(row_items))
+        for col, (label, value) in zip(cols, row_items):
+            col.markdown(
+                f"""
+                <div style="
+                    border:1px solid rgba(255,255,255,0.08);
+                    background:rgba(255,255,255,0.025);
+                    border-radius:12px;
+                    padding:10px 12px;
+                    min-height:78px;
+                    margin-bottom:8px;">
+                    <div style="font-size:11px;opacity:.70;margin-bottom:4px;">{_esc(label)}</div>
+                    <div style="font-size:20px;font-weight:800;">{_esc(value)}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
 
 def _render_section_text(title: str, text_value: str) -> None:
@@ -397,14 +410,12 @@ def _render_strategy_detector(detector: Dict[str, Any]) -> None:
         return
 
     st.markdown("**Detector de Mudança Estratégica**")
-    chip_row = []
-    chip_row.append(_metric_chip("Cobertura temporal", ", ".join([str(y) for y in years]) if years else "—"))
-    chip_row.append(_metric_chip("Eventos detectados", str(n_events) if n_events > 0 else "—"))
-    st.markdown(
-        "<div style='display:flex;gap:10px;flex-wrap:wrap;margin:8px 0 10px 0;'>"
-        + "".join(chip_row)
-        + "</div>",
-        unsafe_allow_html=True,
+    _render_metric_cards(
+        [
+            ("Cobertura temporal", ", ".join([str(y) for y in years]) if years else "—"),
+            ("Eventos detectados", str(n_events) if n_events > 0 else "—"),
+        ],
+        columns_per_row=2,
     )
 
     if summary:
@@ -701,22 +712,17 @@ BULLETS:
                     + (f" • Score: {_fmt_score(company['score_qualitativo'])}" if company["score_qualitativo"] > 0 else "")
                 )
 
-                chips = [
-                    _metric_chip("Score qualitativo", _fmt_score(company["score_qualitativo"])),
-                    _metric_chip("Confiança", _fmt_confidence(company["confianca"])),
+                metric_items = [
+                    ("Score qualitativo", _fmt_score(company["score_qualitativo"])),
+                    ("Confiança", _fmt_confidence(company["confianca"])),
                 ]
 
                 detector = company.get("strategy_detector") or {}
                 years = detector.get("coverage_years") if isinstance(detector.get("coverage_years"), list) else []
                 if years:
-                    chips.append(_metric_chip("Cobertura temporal", ", ".join([str(y) for y in years[:4]])))
+                    metric_items.append(("Cobertura temporal", ", ".join([str(y) for y in years[:4]])))
 
-                st.markdown(
-                    "<div style='display:flex;gap:10px;flex-wrap:wrap;margin:8px 0 10px 0;'>"
-                    + "".join(chips)
-                    + "</div>",
-                    unsafe_allow_html=True,
-                )
+                _render_metric_cards(metric_items, columns_per_row=3)
 
                 _render_section_text("Tese (síntese)", company["tese"] or "—")
 
