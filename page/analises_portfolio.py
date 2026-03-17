@@ -862,7 +862,7 @@ def render() -> None:
 
             # ---- Ingest
             try:
-                if (not only_missing_docs) or (before_docs == 0):
+                if force_reingest or (not only_missing_docs) or (before_docs == 0):
                     ingest_ran = True
                     r = _safe_call(
                         ingest_fn,
@@ -924,7 +924,12 @@ def render() -> None:
 
             # ---- Chunking
             try:
-                inserted = process_missing_chunks_for_ticker(tk, limit_docs=int(max_docs), max_chars=1500)
+                chunk_report = process_missing_chunks_for_ticker(
+                    tk,
+                    limit_docs=int(max_docs),
+                    chunk_size=1500,
+                )
+                inserted = int(chunk_report.get("chunks_inserted", 0))
                 after_docs = count_docs(tk)
                 after_chunks = count_chunks(tk)
 
