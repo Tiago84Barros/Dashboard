@@ -39,6 +39,7 @@ from core.docs_corporativos_store import (
     process_missing_chunks_for_ticker,
 )
 from core.patch6_runs_store import save_patch6_run, list_patch6_history
+from core.patch6_writer import build_result_json
 
 import core.ai_models.llm_client.factory as llm_factory
 
@@ -543,8 +544,8 @@ def render() -> None:
             box-shadow: 0 8px 20px rgba(0,0,0,0.25);
           }
           .p6-chip img{
-            width:75px;
-            height:75px;
+            width:40px;
+            height:40px;
             object-fit:contain;
             border-radius:10px;
             background:#ffffff;
@@ -1427,6 +1428,9 @@ CONTEXTO TEMPORAL:
                     },
                 })
 
+                # normaliza/enriquece o JSON antes de salvar
+                result = build_result_json(result)
+
                 # salva
                 save_patch6_run(
                     snapshot_id=str(snapshot_id),
@@ -1457,6 +1461,8 @@ CONTEXTO TEMPORAL:
                         "top_k_used": int(topk_run),
                         "top_k_retry_used": (int(topk_retry_used) if topk_retry_used is not None else None),
                         "evidencias_totais": int(total_temporal_evidence),
+                        "score_qualitativo": result.get("score_qualitativo"),
+                        "confianca_analise": result.get("confianca_analise"),
                         "tempo_s": round(time.time() - t0, 1),
                     }
                 )
