@@ -1272,31 +1272,79 @@ def render() -> None:
             return [{"text": str(c).strip(), "data_doc": "", "tipo_doc": "", "theme": "", "doc_id": ""} for c in (chunks or [])], "fetch_topk_chunks", {}
         return chunks or [], "fetch_topk_chunks"
 
-    def _get_temporal_chunks_for_ticker(t: str, top_k_used: int) -> Tuple[Dict[str, List[str]], str]:
-        recent, fonte_recent = _get_chunks_for_ticker(t, top_k_used=max(6, min(top_k_used, 18)), months_window=12)
+    def _get_temporal_chunks_for_ticker(t: str, top_k_used: int):
+    recent, fonte_recent, mix_recent = _get_chunks_for_ticker(
+        t,
+        top_k_used=max(6, min(top_k_used, 18)),
+        months_window=12,
+        return_debug=True,
+    )
 
-        if int(analysis_window_months) <= 24:
-            cumulative_24, fonte_24 = _get_chunks_for_ticker(t, top_k_used=max(10, min(top_k_used, 28)), months_window=24)
-            previous = _subtract_chunks(cumulative_24, recent)
-            sections = {
-                "janela_0_12m": _dedupe_keep_order(recent)[:18],
-                "janela_12_24m": _dedupe_keep_order(previous)[:18],
-                "janela_24_36m": [],
-            }
-            return sections, fonte_24 or fonte_recent
+    if int(analysis_window_months) <= 24:
+        cumulative_24, fonte_24, mix_24 = _get_chunks_for_ticker(
+            t,
+            top_k_used=max(10, min(top_k_used, 28)),
+            months_window=24,
+            return_debug=True,
+        )
 
-        cumulative_24, fonte_24 = _get_chunks_for_ticker(t, top_k_used=max(10, min(top_k_used, 24)), months_window=24)
-        cumulative_36, fonte_36 = _get_chunks_for_ticker(t, top_k_used=max(12, min(top_k_used, 36)), months_window=36)
-
-        middle = _subtract_chunks(cumulative_24, recent)
-        older = _subtract_chunks(cumulative_36, cumulative_24)
+        recent_texts = [x.get("text", "") for x in recent]
+        previous = [x for x in cumulative_24 if x.get("text", "") not in set(recent_texts)]
 
         sections = {
-            "janela_0_12m": _dedupe_keep_order(recent)[:18],
-            "janela_12_24m": _dedupe_keep_order(middle)[:18],
-            "janela_24_36m": _dedupe_keep_order(older)[:18],
+            "janela_0_12m": recent[:18],
+            "janela_12_24m": previous[:18],
+            "janela_24_36m": [],
         }
-        return sections, fonte_36 or fonte_24 or fonte_recent
+
+        audit = {
+            "mix_recent": mix_recent,
+            "mix_total": mix_24,
+            "docs_retrieved": len({x.get("doc_id") for x in cumulative_24 if x.get("doc_id")}),
+            "years": sorted({
+                str(x.get("data_doc", ""))[:4]
+                for x in cumulative_24
+                if str(x.get("data_doc", ""))[:4].isdigit()
+            }),
+        }
+        return sections, fonte_24 or fonte_recent, audit
+
+    cumulative_24, fonte_24, mix_24 = _get_chunks_for_ticker(
+        t,
+        top_k_used=max(10, min(top_k_used, 24)),
+        months_window=24,
+        return_debug=True,
+    )
+    cumulative_36, fonte_36, mix_36 = _get_chunks_for_ticker(
+        t,
+        top_k_used=max(12, min(top_k_used, 36)),
+        months_window=36,
+        return_debug=True,
+    )
+
+    recent_texts = {x.get("text", "") for x in recent}
+    cumulative_24_texts = {x.get("text", "") for x in cumulative_24}
+
+    middle = [x for x in cumulative_24 if x.get("text", "") not in recent_texts]
+    older = [x for x in cumulative_36 if x.get("text", "") not in cumulative_24_texts]
+
+    sections = {
+        "janela_0_12m": recent[:18],
+        "janela_12_24m": middle[:18],
+        "janela_24_36m": older[:18],
+    }
+
+    audit = {
+        "mix_recent": mix_recent,
+        "mix_total": mix_36 or mix_24,
+        "docs_retrieved": len({x.get("doc_id") for x in cumulative_36 if x.get("doc_id")}),
+        "years": sorted({
+            str(x.get("data_doc", ""))[:4]
+            for x in cumulative_36
+            if str(x.get("data_doc", ""))[:4].isdigit()
+        }),
+    }
+    return sections, fonte_36 or fonte_24 or fonte_recent, audit
 
     def _build_prompt(contexto: str) -> str:
         return f"""
@@ -1384,7 +1432,7 @@ CONTEXTO TEMPORAL:
                 budget_info = _calc_budget_topk(num_chunks=num_chunks, peso=peso, cap_max=int(top_k))
                 topk_run = int(budget_info['budget_used'])
 
-                temporal_sections, fonte_chunks = _get_temporal_chunks_for_ticker(t, topk_run)
+                temporal_sections, fonte_chunks, retrieval_audit = _get_temporal_chunks_for_ticker(t, topk_run)
                 total_temporal_evidence = sum(len(v or []) for v in temporal_sections.values())
                 if total_temporal_evidence == 0:
                     erros += 1
@@ -1398,10 +1446,10 @@ CONTEXTO TEMPORAL:
                 if total_temporal_evidence < 10 and int(top_k) > int(topk_run):
                     topk_retry = min(int(top_k), int(topk_run) + 6)
                     try:
-                        temporal_sections2, fonte2 = _get_temporal_chunks_for_ticker(t, topk_retry)
+                        temporal_sections2, fonte2, retrieval_audit2 = _get_temporal_chunks_for_ticker(t, topk_retry)
                         total2 = sum(len(v or []) for v in temporal_sections2.values())
                         if total2 > total_temporal_evidence:
-                            temporal_sections, fonte_chunks = temporal_sections2, fonte2
+                            temporal_sections, fonte_chunks, retrieval_audit = temporal_sections2, fonte2, retrieval_audit2
                             total_temporal_evidence = total2
                             topk_run = int(topk_retry)
                             topk_retry_used = int(topk_run)
