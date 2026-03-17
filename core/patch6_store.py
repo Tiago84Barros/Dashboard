@@ -69,7 +69,9 @@ def process_document_chunks(
                 select
                     id,
                     ticker,
-                    coalesce(raw_text, texto, '') as doc_text
+                    coalesce(raw_text, texto, '') as doc_text,
+                    data as document_date,
+                    tipo as categoria
                 from public.docs_corporativos
                 where id = :id
                 """
@@ -80,9 +82,10 @@ def process_document_chunks(
         if not row:
             return 0
 
-        _, ticker, doc_text = row
+        _, ticker, doc_text, document_date, categoria = row
         ticker = _norm_ticker(str(ticker))
         doc_text = (doc_text or "").strip()
+        categoria = (categoria or "").strip() if categoria is not None else 
 
         if len(doc_text) < int(min_text_chars):
             return 0
@@ -122,9 +125,27 @@ def process_document_chunks(
                 text(
                     """
                     insert into public.docs_corporativos_chunks
-                        (doc_id, ticker, chunk_index, chunk_text, embedding, chunk_hash)
+                        (
+                            doc_id,
+                            ticker,
+                            chunk_index,
+                            chunk_text,
+                            embedding,
+                            chunk_hash,
+                            document_date,
+                            categoria
+                        )
                     values
-                        (:doc_id, :ticker, :chunk_index, :chunk_text, :embedding, :chunk_hash)
+                        (
+                            :doc_id,
+                            :ticker,
+                            :chunk_index,
+                            :chunk_text,
+                            :embedding,
+                            :chunk_hash,
+                            :document_date,
+                            :categoria
+                        )
                     on conflict (chunk_hash) do nothing
                     """
                 ),
@@ -135,6 +156,8 @@ def process_document_chunks(
                     "chunk_text": chunk_text,
                     "embedding": emb,
                     "chunk_hash": chunk_hash,
+                    "document_date": document_date,
+                    "categoria": categoria,
                 },
             )
             inserted += 1
@@ -145,7 +168,7 @@ def process_document_chunks(
 def process_missing_chunks_for_ticker(
     ticker: str,
     *,
-    limit_docs: int = 50,
+    limit_docs: int = 500,
     only_with_text: bool = True,
     chunk_size: int = CHUNK_SIZE,
     overlap: int = CHUNK_OVERLAP,
