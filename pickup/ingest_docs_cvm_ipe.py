@@ -394,10 +394,10 @@ def ingest_ipe_for_tickers(
     tickers: Sequence[str],
     *,
     window_months: int = 60,
-    max_docs_per_ticker: int = 300,
+    max_docs_per_ticker: int = 800,
     strategic_only: bool = True,
     download_pdfs: bool = True,
-    max_pdfs_per_ticker: int = 120,
+    max_pdfs_per_ticker: int = 240,
     pdf_max_pages: int = 120,
     request_timeout: int = 60,
     max_runtime_s: float = 900.0,
@@ -420,7 +420,8 @@ def ingest_ipe_for_tickers(
     now = _utcnow()
     min_dt = _now_minus_months(int(window_months))
 
-    years = sorted({now.year, min_dt.year})
+    # Carrega todos os anos no intervalo, não apenas extremos.
+    years = list(range(min_dt.year, now.year + 1))
     dfs: List[pd.DataFrame] = []
     for y in years:
         try:
