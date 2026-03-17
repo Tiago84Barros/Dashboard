@@ -314,6 +314,101 @@ def _render_metric_cards(items: List[tuple[str, str]], columns_per_row: int = 3)
             )
 
 
+
+def _explicar_score(company: Dict[str, Any]) -> str:
+    score = _safe_int(company.get("score_qualitativo"), 0)
+    riscos = len(company.get("riscos") or [])
+    evidencias = len(company.get("evidencias") or [])
+    execucao = ""
+    if isinstance(company.get("execucao"), dict):
+        execucao = _strip_html(company["execucao"].get("avaliacao_execucao", "")) or "não classificada"
+    else:
+        execucao = "não classificada"
+
+    if score >= 75:
+        faixa = "🟢 Forte"
+    elif score >= 55:
+        faixa = "🟡 Moderada"
+    elif score >= 40:
+        faixa = "🟠 Atenção"
+    else:
+        faixa = "🔴 Fraca"
+
+    return f"{_fmt_score(score)} • {faixa} | Execução: {execucao} | {riscos} riscos | {evidencias} evidências"
+
+
+def _explicar_confianca(company: Dict[str, Any]) -> str:
+    conf = _safe_float(company.get("confianca"), 0.0)
+    pct = _fmt_confidence(conf)
+    evidencias = len(company.get("evidencias") or [])
+    detector = company.get("strategy_detector") or {}
+    anos = len(detector.get("coverage_years", [])) if isinstance(detector, dict) else 0
+
+    if conf >= 0.75:
+        faixa = "🟢 Alta"
+    elif conf >= 0.55:
+        faixa = "🟡 Média"
+    else:
+        faixa = "🔴 Baixa"
+
+    return f"{pct} • {faixa} | {evidencias} evidências | {anos} ano(s) analisado(s)"
+
+
+def _render_score_explanations(company: Dict[str, Any]) -> None:
+    score = _safe_int(company.get("score_qualitativo"), 0)
+    conf = _safe_float(company.get("confianca"), 0.0)
+
+    if isinstance(company.get("execucao"), dict):
+        execucao = _strip_html(company["execucao"].get("avaliacao_execucao", "")) or "não classificada"
+    else:
+        execucao = "não classificada"
+
+    riscos = company.get("riscos") or []
+    evidencias = company.get("evidencias") or []
+    detector = company.get("strategy_detector") or {}
+    anos = detector.get("coverage_years", []) if isinstance(detector, dict) else []
+
+    if score >= 75:
+        score_txt = (
+            f"Qualidade alta: a leitura qualitativa está mais favorável. A execução foi classificada como '{execucao}', "
+            f"com {len(evidencias)} evidência(s) documentais e {len(riscos)} risco(s) explícito(s) no recorte."
+        )
+    elif score >= 55:
+        score_txt = (
+            f"Qualidade moderada: há sinais positivos, mas com pontos de atenção. A execução foi classificada como '{execucao}', "
+            f"com {len(riscos)} risco(s) e {len(evidencias)} evidência(s) sustentando a análise."
+        )
+    elif score >= 40:
+        score_txt = (
+            f"Qualidade de atenção: a tese ainda mostra fragilidades. A execução aparece como '{execucao}', "
+            f"com {len(riscos)} risco(s) relevantes frente a {len(evidencias)} evidência(s) disponíveis."
+        )
+    else:
+        score_txt = (
+            f"Qualidade fraca: a leitura qualitativa está pressionada por riscos e/ou baixa consistência. "
+            f"A execução foi classificada como '{execucao}'."
+        )
+
+    if conf >= 0.75:
+        conf_txt = (
+            f"Confiança alta: a leitura se apoia em base documental mais robusta, com {len(evidencias)} evidência(s) "
+            f"e cobertura temporal de {len(anos)} ano(s)."
+        )
+    elif conf >= 0.55:
+        conf_txt = (
+            f"Confiança média: há base documental útil, mas ainda incompleta. O resultado usa {len(evidencias)} evidência(s) "
+            f"e cobertura temporal de {len(anos)} ano(s)."
+        )
+    else:
+        conf_txt = (
+            f"Confiança baixa: a leitura depende de base documental mais limitada. Neste caso, há {len(evidencias)} evidência(s) "
+            f"e cobertura temporal de {len(anos)} ano(s), o que recomenda cautela adicional."
+        )
+
+    st.caption("Como interpretar os scores")
+    st.markdown(_box_html(score_txt + "\n\n" + conf_txt), unsafe_allow_html=True)
+
+
 def _render_section_text(title: str, text_value: str) -> None:
     if not _strip_html(text_value):
         return
@@ -713,8 +808,8 @@ BULLETS:
                 )
 
                 metric_items = [
-                    ("Score qualitativo", _fmt_score(company["score_qualitativo"])),
-                    ("Confiança", _fmt_confidence(company["confianca"])),
+                    ("Score qualitativo", _explicar_score(company)),
+                    ("Confiança", _explicar_confianca(company)),
                 ]
 
                 detector = company.get("strategy_detector") or {}
@@ -722,7 +817,8 @@ BULLETS:
                 if years:
                     metric_items.append(("Cobertura temporal", ", ".join([str(y) for y in years[:4]])))
 
-                _render_metric_cards(metric_items, columns_per_row=3)
+                _render_metric_cards(metric_items, columns_per_row=2)
+                _render_score_explanations(company)
 
                 _render_section_text("Tese (síntese)", company["tese"] or "—")
 
