@@ -1,12 +1,16 @@
 # core/patch6_writer.py
+# PATCH6 WRITER ENRIQUECIDO (COM PATCH7 + SCORE HEURÍSTICO + COBERTURA TEMPORAL)
+
 from __future__ import annotations
 
-import json
 import re
 from datetime import datetime
 from typing import Dict, Any, List
 
-from core.patch7_strategy_detector import enrich_patch6_result
+try:
+    from core.patch7_strategy_detector import enrich_patch6_result
+except Exception:
+    enrich_patch6_result = None
 
 
 _YEAR_RE = re.compile(r"\b(20\d{2})\b")
@@ -101,6 +105,25 @@ def _extract_years_from_result(result: Dict[str, Any]) -> List[str]:
             for yy in _YEAR_RE.findall(_as_str(ev)):
                 years.add(yy)
 
+    topicos = result.get("topicos")
+    if isinstance(topicos, dict):
+        for topic_name, payload in topicos.items():
+            for yy in _YEAR_RE.findall(_as_str(topic_name)):
+                years.add(yy)
+            if isinstance(payload, dict):
+                for value in payload.values():
+                    if isinstance(value, dict):
+                        for vv in value.values():
+                            for yy in _YEAR_RE.findall(_as_str(vv)):
+                                years.add(yy)
+                    elif isinstance(value, list):
+                        for item in value:
+                            for yy in _YEAR_RE.findall(_as_str(item)):
+                                years.add(yy)
+                    else:
+                        for yy in _YEAR_RE.findall(_as_str(value)):
+                            years.add(yy)
+
     return sorted(years)
 
 
@@ -162,6 +185,7 @@ def estimate_confidence(result: Dict[str, Any]) -> float:
     coverage_years = []
     if isinstance(detector, dict):
         coverage_years = detector.get("coverage_years") if isinstance(detector.get("coverage_years"), list) else []
+
     if not coverage_years:
         coverage_years = _extract_years_from_result(result)
 
@@ -194,7 +218,13 @@ def normalize_result(result: Dict[str, Any]) -> Dict[str, Any]:
     score = result.get("score_qualitativo")
     confianca = result.get("confianca_analise")
 
-    result = enrich_patch6_result(result or {})
+    if enrich_patch6_result is not None:
+        try:
+            result = enrich_patch6_result(result or {})
+        except Exception:
+            result = result or {}
+    else:
+        result = result or {}
 
     if score is None or _safe_int(score, 0) <= 0:
         score = estimate_score(result)
