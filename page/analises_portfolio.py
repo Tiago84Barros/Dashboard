@@ -1273,78 +1273,78 @@ def render() -> None:
         return chunks or [], "fetch_topk_chunks"
 
     def _get_temporal_chunks_for_ticker(t: str, top_k_used: int):
-    recent, fonte_recent, mix_recent = _get_chunks_for_ticker(
-        t,
-        top_k_used=max(6, min(top_k_used, 18)),
-        months_window=12,
-        return_debug=True,
-    )
-
-    if int(analysis_window_months) <= 24:
-        cumulative_24, fonte_24, mix_24 = _get_chunks_for_ticker(
+        recent, fonte_recent, mix_recent = _get_chunks_for_ticker(
             t,
-            top_k_used=max(10, min(top_k_used, 28)),
-            months_window=24,
+            top_k_used=max(6, min(top_k_used, 18)),
+            months_window=12,
             return_debug=True,
         )
 
-        recent_texts = [x.get("text", "") for x in recent]
-        previous = [x for x in cumulative_24 if x.get("text", "") not in set(recent_texts)]
+        if int(analysis_window_months) <= 24:
+            cumulative_24, fonte_24, mix_24 = _get_chunks_for_ticker(
+                t,
+                top_k_used=max(10, min(top_k_used, 28)),
+                months_window=24,
+                return_debug=True,
+            )
+
+            recent_texts = [x.get("text", "") for x in recent]
+            previous = [x for x in cumulative_24 if x.get("text", "") not in set(recent_texts)]
+
+            sections = {
+                "janela_0_12m": recent[:18],
+                "janela_12_24m": previous[:18],
+                "janela_24_36m": [],
+            }
+
+            audit = {
+                "mix_recent": mix_recent,
+                "mix_total": mix_24,
+                "docs_retrieved": len({x.get("doc_id") for x in cumulative_24 if x.get("doc_id")}),
+                "years": sorted({
+                    str(x.get("data_doc", ""))[:4]
+                    for x in cumulative_24
+                    if str(x.get("data_doc", ""))[:4].isdigit()
+                }),
+            }
+            return sections, fonte_24 or fonte_recent, audit
+
+        cumulative_24, fonte_24, mix_24 = _get_chunks_for_ticker(
+            t,
+            top_k_used=max(10, min(top_k_used, 24)),
+            months_window=24,
+            return_debug=True,
+        )
+        cumulative_36, fonte_36, mix_36 = _get_chunks_for_ticker(
+            t,
+            top_k_used=max(12, min(top_k_used, 36)),
+            months_window=36,
+            return_debug=True,
+        )
+
+        recent_texts = {x.get("text", "") for x in recent}
+        cumulative_24_texts = {x.get("text", "") for x in cumulative_24}
+
+        middle = [x for x in cumulative_24 if x.get("text", "") not in recent_texts]
+        older = [x for x in cumulative_36 if x.get("text", "") not in cumulative_24_texts]
 
         sections = {
             "janela_0_12m": recent[:18],
-            "janela_12_24m": previous[:18],
-            "janela_24_36m": [],
+            "janela_12_24m": middle[:18],
+            "janela_24_36m": older[:18],
         }
 
         audit = {
             "mix_recent": mix_recent,
-            "mix_total": mix_24,
-            "docs_retrieved": len({x.get("doc_id") for x in cumulative_24 if x.get("doc_id")}),
+            "mix_total": mix_36 or mix_24,
+            "docs_retrieved": len({x.get("doc_id") for x in cumulative_36 if x.get("doc_id")}),
             "years": sorted({
                 str(x.get("data_doc", ""))[:4]
-                for x in cumulative_24
+                for x in cumulative_36
                 if str(x.get("data_doc", ""))[:4].isdigit()
             }),
         }
-        return sections, fonte_24 or fonte_recent, audit
-
-    cumulative_24, fonte_24, mix_24 = _get_chunks_for_ticker(
-        t,
-        top_k_used=max(10, min(top_k_used, 24)),
-        months_window=24,
-        return_debug=True,
-    )
-    cumulative_36, fonte_36, mix_36 = _get_chunks_for_ticker(
-        t,
-        top_k_used=max(12, min(top_k_used, 36)),
-        months_window=36,
-        return_debug=True,
-    )
-
-    recent_texts = {x.get("text", "") for x in recent}
-    cumulative_24_texts = {x.get("text", "") for x in cumulative_24}
-
-    middle = [x for x in cumulative_24 if x.get("text", "") not in recent_texts]
-    older = [x for x in cumulative_36 if x.get("text", "") not in cumulative_24_texts]
-
-    sections = {
-        "janela_0_12m": recent[:18],
-        "janela_12_24m": middle[:18],
-        "janela_24_36m": older[:18],
-    }
-
-    audit = {
-        "mix_recent": mix_recent,
-        "mix_total": mix_36 or mix_24,
-        "docs_retrieved": len({x.get("doc_id") for x in cumulative_36 if x.get("doc_id")}),
-        "years": sorted({
-            str(x.get("data_doc", ""))[:4]
-            for x in cumulative_36
-            if str(x.get("data_doc", ""))[:4].isdigit()
-        }),
-    }
-    return sections, fonte_36 or fonte_24 or fonte_recent, audit
+        return sections, fonte_36 or fonte_24 or fonte_recent, audit
 
     def _build_prompt(contexto: str) -> str:
         return f"""
