@@ -1216,13 +1216,51 @@ def render() -> None:
         try:
             if use_topk_inteligente:
                 from core.rag_retriever import get_topk_chunks_inteligente  # type: ignore
-                chunks, meta = get_topk_chunks_inteligente(
-                    ticker=t,
-                    top_k=int(top_k_used),
-                    window_months=int(months_window),
-                    debug=bool(debug_topk),
-                )
-                return chunks or [], "topk_inteligente"
+
+                try:
+                    rag_out = get_topk_chunks_inteligente(
+                        ticker=t,
+                        top_k=int(top_k_used),
+                        months_window=int(months_window),
+                        debug=bool(debug_topk),
+                    )
+                except TypeError:
+                    try:
+                        rag_out = get_topk_chunks_inteligente(
+                            ticker=t,
+                            top_k=int(top_k_used),
+                            window_months=int(months_window),
+                            debug=bool(debug_topk),
+                        )
+                    except TypeError:
+                        rag_out = get_topk_chunks_inteligente(
+                            ticker=t,
+                            top_k=int(top_k_used),
+                            debug=bool(debug_topk),
+                        )
+
+                # Compatibilidade:
+                # - versão antiga podia retornar (chunks, meta)
+                # - versão nova retorna apenas List[str]
+                # - em debug, pode retornar lista de objetos ChunkHit
+                if isinstance(rag_out, tuple) and len(rag_out) >= 1:
+                    chunks = rag_out[0] or []
+                else:
+                    chunks = rag_out or []
+
+                normalized_chunks: List[str] = []
+                for item in chunks:
+                    if isinstance(item, str):
+                        txt = item.strip()
+                        if txt:
+                            normalized_chunks.append(txt)
+                    else:
+                        txt = getattr(item, "chunk_text", None)
+                        if txt:
+                            normalized_chunks.append(str(txt).strip())
+
+                if normalized_chunks:
+                    return normalized_chunks, "topk_inteligente"
         except Exception:
             pass
 
