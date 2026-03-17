@@ -1,3 +1,4 @@
+
 """core/patch6_report.py
 
 Renderização profissional do Patch6 (relatório estilo casa de análise) usando dados persistidos em public.patch6_runs.
@@ -6,6 +7,7 @@ Renderização profissional do Patch6 (relatório estilo casa de análise) usand
 - Funciona mesmo sem LLM: usa templates + agregações.
 - Se um cliente LLM estiver disponível (via llm_factory.get_llm_client()), cria Resumo Executivo e Conclusão com linguagem institucional.
 - Compatível com result_json legado e com o schema rico do patch6_writer.
+- Compatível com strategy_detector do patch7.
 """
 
 from __future__ import annotations
@@ -74,12 +76,6 @@ def _esc(value: Any) -> str:
 
 
 def _safe_call_llm(llm_client: Any, prompt: str) -> Optional[str]:
-    """
-    Wrapper compatível com:
-    - OpenAI SDK novo: client.responses.create(...)
-    - OpenAI SDK legado: client.chat.completions.create(...)
-    - Clientes custom: .complete/.chat/.invoke ou callable
-    """
     try:
         if llm_client is None:
             return None
@@ -256,11 +252,24 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
 def _fmt_confidence(value: float) -> str:
     if value <= 0:
         return "—"
     pct = round(max(0.0, min(1.0, value)) * 100)
     return f"{pct}%"
+
+
+def _fmt_score(value: int) -> str:
+    if value <= 0:
+        return "—"
+    return f"{max(0, min(100, value))}/100"
 
 
 def _box_html(text: str) -> str:
@@ -275,6 +284,20 @@ def _box_html(text: str) -> str:
             line-height:1.5;">
             {_esc(text).replace(chr(10), '<br/>')}
         </div>
+    """
+
+
+def _metric_chip(label: str, value: str) -> str:
+    return f"""
+    <div style="
+        border:1px solid rgba(255,255,255,0.08);
+        background:rgba(255,255,255,0.025);
+        border-radius:12px;
+        padding:10px 12px;
+        min-width:140px;">
+        <div style="font-size:11px;opacity:.70;margin-bottom:4px;">{_esc(label)}</div>
+        <div style="font-size:20px;font-weight:800;">{_esc(value)}</div>
+    </div>
     """
 
 
@@ -360,6 +383,60 @@ def _render_evidence_section(evidences: List[Any], limit: int = 6) -> None:
         )
 
 
+def _render_strategy_detector(detector: Dict[str, Any]) -> None:
+    if not detector:
+        return
+
+    summary = _strip_html(detector.get("summary"))
+    years = detector.get("coverage_years") if isinstance(detector.get("coverage_years"), list) else []
+    changes = detector.get("detected_changes") if isinstance(detector.get("detected_changes"), list) else []
+    timeline = detector.get("yearly_timeline") if isinstance(detector.get("yearly_timeline"), list) else []
+    n_events = _safe_int(detector.get("n_events"), 0)
+
+    if not (summary or years or changes or timeline or n_events):
+        return
+
+    st.markdown("**Detector de Mudança Estratégica**")
+    chip_row = []
+    chip_row.append(_metric_chip("Cobertura temporal", ", ".join([str(y) for y in years]) if years else "—"))
+    chip_row.append(_metric_chip("Eventos detectados", str(n_events) if n_events > 0 else "—"))
+    st.markdown(
+        "<div style='display:flex;gap:10px;flex-wrap:wrap;margin:8px 0 10px 0;'>"
+        + "".join(chip_row)
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    if summary:
+        st.markdown(_box_html(summary), unsafe_allow_html=True)
+
+    if changes:
+        _render_section_list("Mudanças detectadas", [_strip_html(v) for v in changes], limit=6)
+
+    if timeline:
+        st.markdown("**Linha do Tempo Estratégica**")
+        for item in timeline[:6]:
+            if not isinstance(item, dict):
+                continue
+            year = _strip_html(item.get("year") or "—")
+            summary_line = _strip_html(item.get("summary") or "")
+            evidences = item.get("evidences") if isinstance(item.get("evidences"), list) else []
+            extra = ""
+            if evidences:
+                extra = "<br/><span style='opacity:.75;font-size:12px;'>" + _esc(" | ".join([_strip_html(x) for x in evidences[:2] if _strip_html(x)])) + "</span>"
+            st.markdown(
+                f"""
+                <div style="border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.025);
+                            border-radius:12px;padding:12px 14px;margin:8px 0;line-height:1.45;">
+                    <div style="font-size:12px;opacity:0.75;margin-bottom:6px;">{_esc(year)}</div>
+                    <div><strong>{_esc(summary_line or "Sem resumo temporal consolidado.")}</strong></div>
+                    {extra}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+
 def _resolve_company_view(row: Any) -> Dict[str, Any]:
     result_obj = _as_result_obj(getattr(row, "result_json", None))
 
@@ -375,6 +452,7 @@ def _resolve_company_view(row: Any) -> Dict[str, Any]:
     consistencia = _pick_dict(result_obj, "consistencia_discurso", "consistencia_narrativa")
     execucao = _pick_dict(result_obj, "execucao_vs_promessa")
     qualidade_narrativa = _pick_dict(result_obj, "qualidade_narrativa")
+    strategy_detector = _pick_dict(result_obj, "strategy_detector")
 
     leitura = _pick_text(result_obj, "leitura_direcionalidade", "direcionalidade")
     if not leitura:
@@ -390,6 +468,7 @@ def _resolve_company_view(row: Any) -> Dict[str, Any]:
     evidencias = result_obj.get("evidencias") if isinstance(result_obj.get("evidencias"), list) else []
     consideracoes = _pick_text(result_obj, "consideracoes_llm")
     confianca = _safe_float(result_obj.get("confianca_analise"), 0.0)
+    score_qualitativo = _safe_int(result_obj.get("score_qualitativo"), 0)
 
     return {
         "raw": result_obj,
@@ -399,6 +478,7 @@ def _resolve_company_view(row: Any) -> Dict[str, Any]:
         "consistencia": consistencia,
         "execucao": execucao,
         "qualidade_narrativa": qualidade_narrativa,
+        "strategy_detector": strategy_detector,
         "riscos": riscos,
         "catalisadores": catalisadores,
         "monitorar": monitorar,
@@ -409,6 +489,7 @@ def _resolve_company_view(row: Any) -> Dict[str, Any]:
         "evidencias": evidencias,
         "consideracoes": consideracoes,
         "confianca": confianca,
+        "score_qualitativo": score_qualitativo,
     }
 
 
@@ -419,10 +500,14 @@ def _portfolio_context_line(row: Any, company: Dict[str, Any]) -> str:
     execucao = _pick_text(company["execucao"], "analise")
     riscos = "; ".join(company["riscos"][:3])
     catalisadores = "; ".join(company["catalisadores"][:3])
+    score = _fmt_score(company.get("score_qualitativo", 0))
+    detector = company.get("strategy_detector") or {}
+    years = detector.get("coverage_years") if isinstance(detector.get("coverage_years"), list) else []
+    years_txt = ",".join([str(y) for y in years[:4]]) if years else ""
     return (
-        f"- {row.ticker}: perspectiva={row.perspectiva_compra}; tese={tese}; "
+        f"- {row.ticker}: perspectiva={row.perspectiva_compra}; score={score}; tese={tese}; "
         f"historico={historico}; fase_atual={atual}; execucao={execucao}; "
-        f"riscos={riscos}; catalisadores={catalisadores}"
+        f"riscos={riscos}; catalisadores={catalisadores}; cobertura_temporal={years_txt}"
     )
 
 
@@ -432,8 +517,6 @@ def render_patch6_report(
     llm_factory: Optional[Any] = None,
     show_company_details: bool = True,
 ) -> None:
-    """Renderiza relatório profissional do portfólio (Patch6) usando dados já salvos em patch6_runs."""
-
     st.markdown("# 📘 Relatório de Análise de Portfólio (Patch6)")
     st.caption("Consolidação qualitativa com base em evidências do RAG. Formato institucional (research).")
     st.markdown(
@@ -480,18 +563,27 @@ def render_patch6_report(
     qualidade = stats.label_qualidade()
     perspectiva = stats.label_perspectiva()
     cobertura = f"{stats.total}/{coverage_total}"
-    distrib = f"Fortes {stats.fortes} • Moderadas {stats.moderadas} • Fracas {stats.fracas}"
 
     company_views: Dict[str, Dict[str, Any]] = {}
     confidence_values: List[float] = []
+    score_values: List[int] = []
+    temporal_covered = 0
+
     for row in df_latest.itertuples(index=False):
         view = _resolve_company_view(row)
         company_views[row.ticker] = view
         if view["confianca"] > 0:
             confidence_values.append(view["confianca"])
-    confianca_media = sum(confidence_values) / len(confidence_values) if confidence_values else 0.0
+        if view["score_qualitativo"] > 0:
+            score_values.append(view["score_qualitativo"])
+        detector = view.get("strategy_detector") or {}
+        if isinstance(detector.get("coverage_years"), list) and detector.get("coverage_years"):
+            temporal_covered += 1
 
-    col1, col2, col3, col4 = st.columns(4)
+    confianca_media = sum(confidence_values) / len(confidence_values) if confidence_values else 0.0
+    score_medio = round(sum(score_values) / len(score_values)) if score_values else 0
+
+    col1, col2, col3, col4, col5 = st.columns(5)
     col1.markdown(
         f"""
         <div class="p6-card">
@@ -532,10 +624,21 @@ def render_patch6_report(
         """,
         unsafe_allow_html=True,
     )
+    col5.markdown(
+        f"""
+        <div class="p6-card">
+          <div class="p6-card-label">Score qualitativo médio</div>
+          <div class="p6-card-value">{_fmt_score(score_medio)}</div>
+          <div class="p6-card-extra">Média do score_qualitativo salvo pela LLM.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     st.caption(
         "🛈 Como a qualidade é estimada: combinação de cobertura do portfólio, perspectiva 12m agregada e distribuição de sinais. "
-        "A confiança média depende do campo confianca_analise salvo pela LLM."
+        "A confiança média depende do campo confianca_analise salvo pela LLM. "
+        f"A cobertura temporal do detector estratégico está presente em {temporal_covered} ativo(s)."
     )
 
     contexto_lines = []
@@ -577,8 +680,9 @@ BULLETS:
         st.write(
             f"O portfólio apresenta leitura **{stats.label_perspectiva().lower()}** para 12 meses, com distribuição de perspectivas: "
             f"**{stats.fortes}** forte, **{stats.moderadas}** moderada e **{stats.fracas}** fraca. "
-            f"A cobertura atual é de **{stats.total}** ativos, com confiança média de **{_fmt_confidence(confianca_media)}**. "
-            "Abaixo, os relatórios por empresa mostram evolução estratégica, execução, riscos e evidências documentais."
+            f"A cobertura atual é de **{stats.total}** ativos, com confiança média de **{_fmt_confidence(confianca_media)}** "
+            f"e score qualitativo médio de **{_fmt_score(score_medio)}**. "
+            "Abaixo, os relatórios por empresa mostram evolução estratégica, execução, riscos, mudança estratégica e evidências documentais."
         )
 
     if show_company_details:
@@ -592,8 +696,26 @@ BULLETS:
             with st.expander(f"{tk}", expanded=False):
                 st.markdown(f"### {tk}  {badge}", unsafe_allow_html=True)
                 st.caption(
-                    f"Período: {row.period_ref} • Atualizado em: {row.created_at}"
+                    f"Período analisado: {row.period_ref} • Atualizado em: {row.created_at}"
                     + (f" • Confiança: {_fmt_confidence(company['confianca'])}" if company["confianca"] > 0 else "")
+                    + (f" • Score: {_fmt_score(company['score_qualitativo'])}" if company["score_qualitativo"] > 0 else "")
+                )
+
+                chips = [
+                    _metric_chip("Score qualitativo", _fmt_score(company["score_qualitativo"])),
+                    _metric_chip("Confiança", _fmt_confidence(company["confianca"])),
+                ]
+
+                detector = company.get("strategy_detector") or {}
+                years = detector.get("coverage_years") if isinstance(detector.get("coverage_years"), list) else []
+                if years:
+                    chips.append(_metric_chip("Cobertura temporal", ", ".join([str(y) for y in years[:4]])))
+
+                st.markdown(
+                    "<div style='display:flex;gap:10px;flex-wrap:wrap;margin:8px 0 10px 0;'>"
+                    + "".join(chips)
+                    + "</div>",
+                    unsafe_allow_html=True,
                 )
 
                 _render_section_text("Tese (síntese)", company["tese"] or "—")
@@ -625,6 +747,8 @@ BULLETS:
                         ("tendencia", "Tendência"),
                     ],
                 )
+
+                _render_strategy_detector(company["strategy_detector"])
 
                 _render_key_value_section(
                     "Consistência do Discurso",
@@ -689,6 +813,7 @@ BULLETS:
         st.write(llm_conc)
     else:
         st.write(
-            "A carteira deve ser acompanhada por gatilhos de execução, evolução da narrativa corporativa e sinais de alocação de capital. "
-            "Reforce o monitoramento de resultados trimestrais, consistência entre discurso e entrega, dívida/custo financeiro e manutenção dos catalisadores já visíveis nas evidências do RAG."
+            "A carteira deve ser acompanhada por gatilhos de execução, evolução da narrativa corporativa, score qualitativo, "
+            "mudanças estratégicas detectadas e sinais de alocação de capital. Reforce o monitoramento de resultados trimestrais, "
+            "consistência entre discurso e entrega, dívida/custo financeiro e manutenção dos catalisadores já visíveis nas evidências do RAG."
         )
