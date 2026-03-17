@@ -1,8 +1,15 @@
-# PATCH6 WRITER FINAL (COM PATCH7 + SCORE HEURÍSTICO)
+# core/patch6_writer.py
+from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from typing import Dict, Any, List
+
+from core.patch7_strategy_detector import enrich_patch6_result
+
+
+_YEAR_RE = re.compile(r"\b(20\d{2})\b")
 
 
 def _as_str(v: Any) -> str:
@@ -75,8 +82,26 @@ def _bounded_int(value: int, low: int = 20, high: int = 95) -> int:
     return max(low, min(high, int(round(value))))
 
 
-def _bounded_float(value: float, low: float = 0.25, high: float = 0.95) -> float:
-    return max(low, min(high, float(value)))
+def _extract_years_from_result(result: Dict[str, Any]) -> List[str]:
+    years = set()
+
+    meta = result.get("_meta")
+    if isinstance(meta, dict):
+        for y in meta.get("context_years", []) or []:
+            ys = _as_str(y)
+            if ys:
+                years.add(ys)
+
+    for ev in _as_list(result.get("evidencias")):
+        if isinstance(ev, dict):
+            for k in ("topico", "ano", "year", "trecho", "interpretacao", "leitura"):
+                for yy in _YEAR_RE.findall(_as_str(ev.get(k))):
+                    years.add(yy)
+        else:
+            for yy in _YEAR_RE.findall(_as_str(ev)):
+                years.add(yy)
+
+    return sorted(years)
 
 
 def estimate_score(result: Dict[str, Any]) -> int:
@@ -88,7 +113,9 @@ def estimate_score(result: Dict[str, Any]) -> int:
     exec_label = _as_str(execucao.get("avaliacao_execucao")).lower()
     if exec_label == "forte":
         base += 8
-    elif exec_label == "fraca":
+    elif exec_label == "moderada":
+        base += 2
+    elif exec_label in {"fraca", "inconsistente"}:
         base -= 8
 
     cons_label = _as_str(consistencia.get("grau_consistencia") or consistencia.get("grau")).lower()
@@ -103,14 +130,20 @@ def estimate_score(result: Dict[str, Any]) -> int:
     pontos = _count_nonempty(_pick_list(result, "pontos_chave"))
     mudancas = _count_nonempty(_pick_list(result, "mudancas_estrategicas"))
 
-    base += min(catalisadores, 4) * 2
-    base += min(evidencias, 6) * 1
-    base += min(pontos, 5) * 1
-    base += min(mudancas, 4) * 1
-    base -= min(riscos, 5) * 2
+    base += min(catalisadores, 6) * 2
+    base += min(evidencias, 8) * 1
+    base += min(pontos, 6) * 1
+    base += min(mudancas, 5) * 1
+    base -= min(riscos, 6) * 2
 
     contradicoes = _count_nonempty(_pick_list(consistencia, "contradicoes", "contradicoes_ou_ruidos"))
-    base -= min(contradicoes, 4) * 2
+    base -= min(contradicoes, 5) * 2
+
+    years = _extract_years_from_result(result)
+    if len(years) >= 2:
+        base += 3
+    elif len(years) == 0:
+        base -= 2
 
     return _bounded_int(base)
 
@@ -129,18 +162,24 @@ def estimate_confidence(result: Dict[str, Any]) -> float:
     coverage_years = []
     if isinstance(detector, dict):
         coverage_years = detector.get("coverage_years") if isinstance(detector.get("coverage_years"), list) else []
+    if not coverage_years:
+        coverage_years = _extract_years_from_result(result)
+
     n_years = len(coverage_years)
 
     conf = 0.35
-    conf += min(evidencias, 6) * 0.05
-    conf += min(n_topicos, 5) * 0.03
-    conf += min(n_years, 4) * 0.03
-    conf += min(pontos, 5) * 0.015
-    conf += min(monitorar, 4) * 0.01
-    conf += min(catalisadores, 4) * 0.01
+    conf += min(evidencias, 8) * 0.05
+    conf += min(n_topicos, 6) * 0.03
+    conf += min(n_years, 5) * 0.04
+    conf += min(pontos, 6) * 0.015
+    conf += min(monitorar, 5) * 0.01
+    conf += min(catalisadores, 5) * 0.01
 
     if evidencias == 0:
-        conf -= 0.08
+        conf -= 0.10
+    elif evidencias <= 2:
+        conf -= 0.04
+
     if riscos > evidencias and evidencias > 0:
         conf -= 0.03
 
@@ -148,12 +187,14 @@ def estimate_confidence(result: Dict[str, Any]) -> float:
     if len(tese) >= 120:
         conf += 0.03
 
-    return round(_bounded_float(conf), 2)
+    return round(max(0.25, min(0.95, conf)), 2)
 
 
 def normalize_result(result: Dict[str, Any]) -> Dict[str, Any]:
     score = result.get("score_qualitativo")
     confianca = result.get("confianca_analise")
+
+    result = enrich_patch6_result(result or {})
 
     if score is None or _safe_int(score, 0) <= 0:
         score = estimate_score(result)
@@ -162,13 +203,20 @@ def normalize_result(result: Dict[str, Any]) -> Dict[str, Any]:
         confianca = estimate_confidence(result)
 
     result["score_qualitativo"] = _bounded_int(_safe_int(score, 50))
-    result["confianca_analise"] = round(_bounded_float(_safe_float(confianca, 0.5)), 2)
+    result["confianca_analise"] = round(max(0.25, min(0.95, _safe_float(confianca, 0.5))), 2)
 
-    if "strategy_detector" not in result:
-        result["strategy_detector"] = {
-            "events_detected": 0,
-            "coverage_years": []
-        }
+    strategy_detector = result.get("strategy_detector")
+    if not isinstance(strategy_detector, dict):
+        strategy_detector = {}
+        result["strategy_detector"] = strategy_detector
+
+    if not strategy_detector.get("coverage_years"):
+        strategy_detector["coverage_years"] = _extract_years_from_result(result)
+
+    strategy_detector.setdefault("events_detected", 0)
+    strategy_detector.setdefault("yearly_timeline", [])
+    strategy_detector.setdefault("detected_changes", [])
+    strategy_detector.setdefault("summary", "")
 
     return result
 
@@ -177,12 +225,3 @@ def build_result_json(llm_output: Dict[str, Any]) -> Dict[str, Any]:
     result = normalize_result(llm_output)
     result["generated_at"] = datetime.utcnow().isoformat()
     return result
-
-
-def save_patch6_run(db, ticker: str, result_json: Dict[str, Any]):
-    query = """
-    INSERT INTO patch6_runs (ticker, result_json)
-    VALUES (%s, %s)
-    """
-    db.execute(query, (ticker, json.dumps(result_json)))
-    db.commit()
