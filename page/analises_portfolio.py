@@ -748,8 +748,9 @@ def render() -> None:
     with col4:
         max_runtime_s = st.number_input("Tempo máx total (s)", min_value=5, max_value=180, value=60, step=5)
 
-    st.caption(f"Atualizar documentos sempre tentará expandir o corpus até o limite configurado, usando automaticamente {analysis_window_months} meses de histórico.")
+    st.caption(f"Atualizar documentos usará automaticamente {analysis_window_months} meses de histórico, conforme o modo selecionado abaixo.")
 
+    force_reingest = False
     show_traceback = False
 
     # Diagnóstico sob demanda (não altera pipeline; apenas inspeciona presença de docs/chunks)
@@ -830,16 +831,6 @@ def render() -> None:
     table_panel = st.empty()
     err_panel = st.empty()
 
-    def _extract_ingest_summary(report: Optional[Dict[str, Any]], ticker: str) -> Dict[str, Any]:
-        if not isinstance(report, dict):
-            return {}
-        stats = report.get("stats") if isinstance(report.get("stats"), dict) else {}
-        per_ticker = stats.get(ticker) if isinstance(stats.get(ticker), dict) else {}
-        merged: Dict[str, Any] = {}
-        merged.update({k: v for k, v in report.items() if k != "stats"})
-        merged.update(per_ticker)
-        return merged
-
     if btn:
         # carrega ingest uma vez
         try:
@@ -868,7 +859,7 @@ def render() -> None:
             ingest_report: Optional[Dict[str, Any]] = None
             ingest_ran = False
 
-            # ---- Ingest (sempre tenta expandir o corpus até o limite configurado)
+            # ---- Ingest (sempre tenta expandir/complementar o corpus até o limite solicitado)
             try:
                 ingest_ran = True
                 r = _safe_call(
@@ -895,35 +886,40 @@ def render() -> None:
             mid_docs = count_docs(tk)
             mid_chunks = count_chunks(tk)
 
-            ingest_summary = _extract_ingest_summary(ingest_report, tk)
-
             with log_panel.container():
                 st.write(f"📥 {tk} — ingest concluído | docs agora={mid_docs} | chunks={mid_chunks}")
-                if ingest_summary:
+                if ingest_report:
                     st.caption("Relatório ingest (resumo):")
-                    st.json({
-                        k: ingest_summary.get(k)
-                        for k in [
-                            "existing_before",
-                            "matched",
-                            "dataset_candidates",
-                            "considered",
-                            "inserted",
-                            "skipped",
-                            "updated_text",
-                            "pdf_fetched",
-                            "pdf_text_ok",
-                            "requested_max_docs",
-                            "requested_max_pdfs",
-                            "selection_truncated",
-                            "pdf_limit_hit",
-                            "stopped_reason",
-                            "error",
-                            "reason",
-                            "result",
-                        ]
-                        if ingest_summary.get(k) is not None
-                    })
+                    stats_tk = {}
+                    if isinstance(ingest_report, dict):
+                        raw_stats = ingest_report.get("stats") or {}
+                        if isinstance(raw_stats, dict):
+                            stats_tk = raw_stats.get(tk) or raw_stats.get(str(tk).upper()) or {}
+                    summary_keys = {
+                        "existing_before",
+                        "matched",
+                        "dataset_candidates",
+                        "considered",
+                        "inserted",
+                        "skipped",
+                        "updated_text",
+                        "pdf_fetched",
+                        "pdf_text_ok",
+                        "requested_max_docs",
+                        "requested_max_pdfs",
+                        "selection_truncated",
+                        "pdf_limit_hit",
+                        "stopped_reason",
+                        "error",
+                        "result",
+                        "reason",
+                    }
+                    summary_payload = {}
+                    if isinstance(ingest_report, dict):
+                        summary_payload.update({k: ingest_report[k] for k in ingest_report.keys() if k in summary_keys})
+                    if isinstance(stats_tk, dict):
+                        summary_payload.update({k: stats_tk[k] for k in stats_tk.keys() if k in summary_keys})
+                    st.json(summary_payload or ingest_report)
 
             # Se ainda não tem docs, explique claramente e pule chunking
             if mid_docs == 0:
@@ -959,6 +955,31 @@ def render() -> None:
                 after_docs = count_docs(tk)
                 after_chunks = count_chunks(tk)
 
+                stats_tk = {}
+                if isinstance(ingest_report, dict):
+                    raw_stats = ingest_report.get("stats") or {}
+                    if isinstance(raw_stats, dict):
+                        stats_tk = raw_stats.get(tk) or raw_stats.get(str(tk).upper()) or {}
+
+                audit_parts: List[str] = []
+                for label, key in [
+                    ("existing_before", "existing_before"),
+                    ("matched", "matched"),
+                    ("dataset_candidates", "dataset_candidates"),
+                    ("considered", "considered"),
+                    ("inserted", "inserted"),
+                    ("requested_max_docs", "requested_max_docs"),
+                ]:
+                    if isinstance(stats_tk, dict) and key in stats_tk and stats_tk.get(key) is not None:
+                        audit_parts.append(f"{label}={stats_tk.get(key)}")
+                for label, key in [
+                    ("selection_truncated", "selection_truncated"),
+                    ("pdf_limit_hit", "pdf_limit_hit"),
+                    ("stopped_reason", "stopped_reason"),
+                ]:
+                    if isinstance(stats_tk, dict) and key in stats_tk and stats_tk.get(key) not in (None, "", False):
+                        audit_parts.append(f"{label}={stats_tk.get(key)}")
+
                 results.append({
                     "ticker": tk,
                     "status": "OK",
@@ -969,7 +990,7 @@ def render() -> None:
                     "chunks_inseridos": int(inserted),
                     "chunks_after": after_chunks,
                     "tempo": _fmt_s(_now_ms() - start),
-                    "motivo": "",
+                    "motivo": " | ".join(audit_parts),
                 })
 
                 with log_panel.container():
