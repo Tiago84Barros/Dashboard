@@ -718,11 +718,10 @@ def render() -> None:
     # ------------------------------------------------------------------
 
     # Fonte única de verdade para profundidade temporal.
-    # Lemos do session_state para que a janela de evidências fique sempre
-    # sincronizada com o modo de análise selecionado na seção qualitativa.
-    analysis_mode = st.session_state.get("analysis_mode", "Padrão (24 meses)")
-    analysis_window_months = 24 if analysis_mode == "Padrão (24 meses)" else 36
-    analysis_period_ref = "24M" if analysis_window_months == 24 else "36M"
+    # A atualização documental e a análise qualitativa operam sempre com o
+    # maior histórico-alvo disponível no fluxo padrão: 36 meses.
+    analysis_window_months = 36
+    analysis_period_ref = "36M"
 
     # ------------------------------------------------------------------
     # Ingest + Chunking com logs por ticker
@@ -748,8 +747,9 @@ def render() -> None:
     with col4:
         max_runtime_s = st.number_input("Tempo máx total (s)", min_value=5, max_value=180, value=60, step=5)
 
-    st.caption(f"Atualizar documentos usará automaticamente {analysis_window_months} meses de histórico, conforme o modo selecionado abaixo.")
+    st.caption(f"Atualizar documentos usará automaticamente 36 meses de histórico, que também serão usados na análise qualitativa.")
 
+    only_missing_docs = True
     force_reingest = False
     show_traceback = False
 
@@ -859,22 +859,25 @@ def render() -> None:
             ingest_report: Optional[Dict[str, Any]] = None
             ingest_ran = False
 
-            # ---- Ingest (sempre tenta expandir/complementar o corpus até o limite solicitado)
+            # ---- Ingest
             try:
-                ingest_ran = True
-                r = _safe_call(
-                    ingest_fn,
-                    tickers=[tk],
-                    window_months=int(analysis_window_months),
-                    max_docs_per_ticker=int(max_docs),
-                    max_runtime_s=float(max_runtime_s),
-                    max_pdfs_per_ticker=int(max_pdfs),
-                )
-                # normaliza relatório
-                if isinstance(r, dict):
-                    ingest_report = r
+                if force_reingest or (not only_missing_docs) or (before_docs == 0):
+                    ingest_ran = True
+                    r = _safe_call(
+                        ingest_fn,
+                        tickers=[tk],
+                        window_months=int(analysis_window_months),
+                        max_docs_per_ticker=int(max_docs),
+                        max_runtime_s=float(max_runtime_s),
+                        max_pdfs_per_ticker=int(max_pdfs),
+                    )
+                    # normaliza relatório
+                    if isinstance(r, dict):
+                        ingest_report = r
+                    else:
+                        ingest_report = {"result": str(r)}
                 else:
-                    ingest_report = {"result": str(r)}
+                    ingest_report = {"skipped": True, "reason": "docs já existem"}
             except Exception as e:
                 tb = traceback.format_exc()
                 msg = f"Ingest {type(e).__name__}: {e}"
@@ -887,39 +890,13 @@ def render() -> None:
             mid_chunks = count_chunks(tk)
 
             with log_panel.container():
-                st.write(f"📥 {tk} — ingest concluído | docs agora={mid_docs} | chunks={mid_chunks}")
-                if ingest_report:
-                    st.caption("Relatório ingest (resumo):")
-                    stats_tk = {}
-                    if isinstance(ingest_report, dict):
-                        raw_stats = ingest_report.get("stats") or {}
-                        if isinstance(raw_stats, dict):
-                            stats_tk = raw_stats.get(tk) or raw_stats.get(str(tk).upper()) or {}
-                    summary_keys = {
-                        "existing_before",
-                        "matched",
-                        "dataset_candidates",
-                        "considered",
-                        "inserted",
-                        "skipped",
-                        "updated_text",
-                        "pdf_fetched",
-                        "pdf_text_ok",
-                        "requested_max_docs",
-                        "requested_max_pdfs",
-                        "selection_truncated",
-                        "pdf_limit_hit",
-                        "stopped_reason",
-                        "error",
-                        "result",
-                        "reason",
-                    }
-                    summary_payload = {}
-                    if isinstance(ingest_report, dict):
-                        summary_payload.update({k: ingest_report[k] for k in ingest_report.keys() if k in summary_keys})
-                    if isinstance(stats_tk, dict):
-                        summary_payload.update({k: stats_tk[k] for k in stats_tk.keys() if k in summary_keys})
-                    st.json(summary_payload or ingest_report)
+                if ingest_ran:
+                    st.write(f"📥 {tk} — ingest concluído | docs agora={mid_docs} | chunks={mid_chunks}")
+                    if ingest_report:
+                        st.caption("Relatório ingest (resumo):")
+                        st.json({k: ingest_report[k] for k in ingest_report.keys() if k in {"matched","inserted","skipped","pdf_fetched","pdf_text_ok","error","result","skipped","reason"}})
+                else:
+                    st.write(f"📥 {tk} — ingest não executado (docs já existiam) | docs={mid_docs}")
 
             # Se ainda não tem docs, explique claramente e pule chunking
             if mid_docs == 0:
@@ -955,31 +932,6 @@ def render() -> None:
                 after_docs = count_docs(tk)
                 after_chunks = count_chunks(tk)
 
-                stats_tk = {}
-                if isinstance(ingest_report, dict):
-                    raw_stats = ingest_report.get("stats") or {}
-                    if isinstance(raw_stats, dict):
-                        stats_tk = raw_stats.get(tk) or raw_stats.get(str(tk).upper()) or {}
-
-                audit_parts: List[str] = []
-                for label, key in [
-                    ("existing_before", "existing_before"),
-                    ("matched", "matched"),
-                    ("dataset_candidates", "dataset_candidates"),
-                    ("considered", "considered"),
-                    ("inserted", "inserted"),
-                    ("requested_max_docs", "requested_max_docs"),
-                ]:
-                    if isinstance(stats_tk, dict) and key in stats_tk and stats_tk.get(key) is not None:
-                        audit_parts.append(f"{label}={stats_tk.get(key)}")
-                for label, key in [
-                    ("selection_truncated", "selection_truncated"),
-                    ("pdf_limit_hit", "pdf_limit_hit"),
-                    ("stopped_reason", "stopped_reason"),
-                ]:
-                    if isinstance(stats_tk, dict) and key in stats_tk and stats_tk.get(key) not in (None, "", False):
-                        audit_parts.append(f"{label}={stats_tk.get(key)}")
-
                 results.append({
                     "ticker": tk,
                     "status": "OK",
@@ -990,7 +942,7 @@ def render() -> None:
                     "chunks_inseridos": int(inserted),
                     "chunks_after": after_chunks,
                     "tempo": _fmt_s(_now_ms() - start),
-                    "motivo": " | ".join(audit_parts),
+                    "motivo": "",
                 })
 
                 with log_panel.container():
@@ -1165,28 +1117,10 @@ def render() -> None:
     use_topk_inteligente = True
     debug_topk = False
 
-    # Controles da análise qualitativa
-    top_k = st.slider(
-        "Máx evidências por ticker (cap)",
-        min_value=20,
-        max_value=120,
-        value=80,
-        step=5,
-        help="O budget adaptativo define quantas evidências usar por ticker. Este controle atua apenas como limite máximo para evitar excesso de contexto."
-    )
-    st.caption("O sistema usa budget adaptativo por ticker. Este valor é apenas o teto máximo de evidências permitidas por empresa.")
-
-    analysis_mode = st.radio(
-        "Modo de análise",
-        options=["Padrão (24 meses)", "Aprofundada (36 meses)"],
-        index=(0 if analysis_mode == "Padrão (24 meses)" else 1),
-        horizontal=True,
-        key="analysis_mode",
-        help="A análise padrão observa os últimos 24 meses. A aprofundada amplia a leitura para 36 meses, favorecendo avaliação de trajetória, consistência do discurso e execução ao longo do tempo."
-    )
-    analysis_window_months = 24 if analysis_mode == "Padrão (24 meses)" else 36
-    analysis_period_ref = "24M" if analysis_window_months == 24 else "36M"
-    st.caption(f"Janela temporal ativa da análise qualitativa: {analysis_window_months} meses. Esta mesma janela é usada na atualização de evidências.")
+    # A análise qualitativa usa sempre a máxima cobertura possível por ticker.
+    # O budget adaptativo continua ativo, limitado apenas pelo cap técnico abaixo.
+    TOP_K_CAP = 120
+    st.caption("A análise qualitativa usa automaticamente a máxima quantidade possível de evidências por ticker, respeitando os limites técnicos do retrieval e a janela fixa de 36 meses.")
 
     st.markdown("## 📘 Relatório consolidado do portfólio")
     st.caption("Montado a partir do que está salvo em patch6_runs. Ao rodar a LLM, este relatório é atualizado automaticamente.")
@@ -1481,7 +1415,7 @@ CONTEXTO TEMPORAL:
             try:
                 num_chunks = count_chunks(t)
                 peso = weight_map.get(t, 0.0)
-                budget_info = _calc_budget_topk(num_chunks=num_chunks, peso=peso, cap_max=int(top_k))
+                budget_info = _calc_budget_topk(num_chunks=num_chunks, peso=peso, cap_max=int(TOP_K_CAP))
                 topk_run = int(budget_info['budget_used'])
 
                 temporal_sections, fonte_chunks, retrieval_audit = _get_temporal_chunks_for_ticker(t, topk_run)
@@ -1495,8 +1429,8 @@ CONTEXTO TEMPORAL:
                 topk_retry_used = None
 
                 # Quality Gate: se evidência muito baixa, tenta ampliar budget (respeitando o cap da UI)
-                if total_temporal_evidence < 10 and int(top_k) > int(topk_run):
-                    topk_retry = min(int(top_k), int(topk_run) + 6)
+                if total_temporal_evidence < 10 and int(TOP_K_CAP) > int(topk_run):
+                    topk_retry = min(int(TOP_K_CAP), int(topk_run) + 6)
                     try:
                         temporal_sections2, fonte2, retrieval_audit2 = _get_temporal_chunks_for_ticker(t, topk_retry)
                         total2 = sum(len(v or []) for v in temporal_sections2.values())
@@ -1550,9 +1484,9 @@ CONTEXTO TEMPORAL:
                     "budget_raw": int(budget_info.get("budget_raw", topk_run)),
                     "top_k_used": int(topk_run),
                     "top_k_retry_used": (int(topk_retry_used) if topk_retry_used is not None else None),
-                    "top_k_cap_ui": int(top_k),
+                    "top_k_cap_ui": int(TOP_K_CAP),
                     "window_months": int(analysis_window_months),
-                    "analysis_mode": analysis_mode,
+                    "analysis_mode": "36M fixo",
                     "docs_retrieved": int((retrieval_audit or {}).get("docs_retrieved", 0)),
                     "context_years": list((retrieval_audit or {}).get("years", []) or []),
                     "retrieval_mix": (retrieval_audit or {}).get("mix_total", {}),
