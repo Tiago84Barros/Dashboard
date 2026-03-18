@@ -623,8 +623,8 @@ def render_patch6_report(
     llm_factory: Optional[Any] = None,
     show_company_details: bool = True,
 ) -> None:
-    st.markdown("# 📘 Relatório de Análise de Portfólio (Patch6)")
-    st.caption("Consolidação qualitativa com base em evidências do RAG. Formato institucional (research).")
+    #st.markdown("# 📘 Relatório de Análise de Portfólio (Patch6)")
+    #st.caption("Consolidação qualitativa com base em evidências do RAG. Formato institucional (research).")
     st.markdown(
         """
         <style>
