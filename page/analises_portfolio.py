@@ -749,7 +749,7 @@ def render() -> None:
 
     st.caption(f"Atualizar documentos usará automaticamente 36 meses de histórico, que também serão usados na análise qualitativa.")
 
-    only_missing_docs = True
+    only_missing_docs = False
     force_reingest = False
     show_traceback = False
 
@@ -860,24 +860,21 @@ def render() -> None:
             ingest_ran = False
 
             # ---- Ingest
+            # ---- Ingest
             try:
-                if force_reingest or (not only_missing_docs) or (before_docs == 0):
-                    ingest_ran = True
-                    r = _safe_call(
-                        ingest_fn,
-                        tickers=[tk],
-                        window_months=int(analysis_window_months),
-                        max_docs_per_ticker=int(max_docs),
-                        max_runtime_s=float(max_runtime_s),
-                        max_pdfs_per_ticker=int(max_pdfs),
-                    )
-                    # normaliza relatório
-                    if isinstance(r, dict):
-                        ingest_report = r
-                    else:
-                        ingest_report = {"result": str(r)}
+                ingest_ran = True
+                r = _safe_call(
+                    ingest_fn,
+                    tickers=[tk],
+                    window_months=int(analysis_window_months),
+                    max_docs_per_ticker=int(max_docs),
+                    max_runtime_s=float(max_runtime_s),
+                    max_pdfs_per_ticker=int(max_pdfs),
+                )
+                if isinstance(r, dict):
+                    ingest_report = r
                 else:
-                    ingest_report = {"skipped": True, "reason": "docs já existem"}
+                    ingest_report = {"result": str(r)}
             except Exception as e:
                 tb = traceback.format_exc()
                 msg = f"Ingest {type(e).__name__}: {e}"
@@ -890,13 +887,25 @@ def render() -> None:
             mid_chunks = count_chunks(tk)
 
             with log_panel.container():
-                if ingest_ran:
-                    st.write(f"📥 {tk} — ingest concluído | docs agora={mid_docs} | chunks={mid_chunks}")
-                    if ingest_report:
-                        st.caption("Relatório ingest (resumo):")
-                        st.json({k: ingest_report[k] for k in ingest_report.keys() if k in {"matched","inserted","skipped","pdf_fetched","pdf_text_ok","error","result","skipped","reason"}})
-                else:
-                    st.write(f"📥 {tk} — ingest não executado (docs já existiam) | docs={mid_docs}")
+                st.write(f"📥 {tk} — ingest concluído | docs agora={mid_docs} | chunks={mid_chunks}")
+                if ingest_report:
+                    st.caption("Relatório ingest (resumo):")
+                    st.json({
+                        k: ingest_report[k]
+                        for k in ingest_report.keys()
+                        if k in {
+                            "matched",
+                            "inserted",
+                            "skipped",
+                            "pdf_fetched",
+                            "pdf_text_ok",
+                            "error",
+                            "result",
+                            "reason",
+                            "stats",
+                            "errors"
+                        }
+                    })
 
             # Se ainda não tem docs, explique claramente e pule chunking
             if mid_docs == 0:
