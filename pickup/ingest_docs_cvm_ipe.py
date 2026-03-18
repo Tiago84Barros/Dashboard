@@ -288,6 +288,21 @@ def get_cvm_codes_for_tickers(tickers: Sequence[str]) -> Dict[str, int]:
         out[str(r["ticker"]).upper()] = int(r["cvm"])
     return out
 
+def _count_existing_docs(conn, ticker: str, source: str = "CVM/IPE") -> int:
+    row = conn.execute(
+        text("""
+            select count(*)
+            from public.docs_corporativos
+            where ticker = :ticker
+              and fonte = :fonte
+        """),
+        {"ticker": ticker, "fonte": source},
+    ).fetchone()
+    try:
+        return int(row[0]) if row else 0
+    except Exception:
+        return 0
+
 def _get_doc_status(conn, doc_hash: str) -> Dict[str, Any]:
     """
     Retorna:
@@ -468,7 +483,7 @@ def ingest_ipe_for_tickers(
 
     out_stats: Dict[str, Any] = {}
     out_errors: Dict[str, str] = {}
-    effective_runtime_s = max(float(max_runtime_s), 180.0)
+    effective_runtime_s = max(float(max_runtime_s), 5.0)
     started = time.time()
 
     MIN_COVERAGE = 8   # C) cobertura mínima
@@ -502,6 +517,7 @@ def ingest_ipe_for_tickers(
 
             fallback_used = False
             selected_strategic = 0
+            existing_before = _count_existing_docs(conn, tk)
 
             if strategic_only:
                 dft_ranked = dft_all.sort_values(["_score", "_dt_naive"], ascending=[False, False]).copy()
@@ -525,6 +541,10 @@ def ingest_ipe_for_tickers(
                 selected = dft_all.head(int(max_docs_per_ticker)).copy()
 
             considered = int(len(selected))
+            requested_max_docs = int(max_docs_per_ticker)
+            requested_max_pdfs = int(max_pdfs_per_ticker)
+            dataset_candidates = int(len(dft_all))
+            selection_truncated = bool(dataset_candidates > considered)
 
             # D) Auditoria top 10 selecionados
             audit_top: List[Dict[str, Any]] = []
