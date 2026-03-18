@@ -1117,18 +1117,10 @@ def render() -> None:
     use_topk_inteligente = True
     debug_topk = False
 
-    # Controles da análise qualitativa
-    top_k = st.slider(
-        "Máx evidências por ticker (cap)",
-        min_value=20,
-        max_value=120,
-        value=80,
-        step=5,
-        help="O budget adaptativo define quantas evidências usar por ticker. Este controle atua apenas como limite máximo para evitar excesso de contexto."
-    )
-    st.caption("O sistema usa budget adaptativo por ticker. Este valor é apenas o teto máximo de evidências permitidas por empresa.")
-
-    st.caption("A análise qualitativa utiliza automaticamente a mesma janela da ingestão documental: 36 meses.")
+    # A análise qualitativa usa sempre a máxima cobertura possível por ticker.
+    # O budget adaptativo continua ativo, limitado apenas pelo cap técnico abaixo.
+    TOP_K_CAP = 120
+    st.caption("A análise qualitativa usa automaticamente a máxima quantidade possível de evidências por ticker, respeitando os limites técnicos do retrieval e a janela fixa de 36 meses.")
 
     st.markdown("## 📘 Relatório consolidado do portfólio")
     st.caption("Montado a partir do que está salvo em patch6_runs. Ao rodar a LLM, este relatório é atualizado automaticamente.")
@@ -1423,7 +1415,7 @@ CONTEXTO TEMPORAL:
             try:
                 num_chunks = count_chunks(t)
                 peso = weight_map.get(t, 0.0)
-                budget_info = _calc_budget_topk(num_chunks=num_chunks, peso=peso, cap_max=int(top_k))
+                budget_info = _calc_budget_topk(num_chunks=num_chunks, peso=peso, cap_max=int(TOP_K_CAP))
                 topk_run = int(budget_info['budget_used'])
 
                 temporal_sections, fonte_chunks, retrieval_audit = _get_temporal_chunks_for_ticker(t, topk_run)
@@ -1437,8 +1429,8 @@ CONTEXTO TEMPORAL:
                 topk_retry_used = None
 
                 # Quality Gate: se evidência muito baixa, tenta ampliar budget (respeitando o cap da UI)
-                if total_temporal_evidence < 10 and int(top_k) > int(topk_run):
-                    topk_retry = min(int(top_k), int(topk_run) + 6)
+                if total_temporal_evidence < 10 and int(TOP_K_CAP) > int(topk_run):
+                    topk_retry = min(int(TOP_K_CAP), int(topk_run) + 6)
                     try:
                         temporal_sections2, fonte2, retrieval_audit2 = _get_temporal_chunks_for_ticker(t, topk_retry)
                         total2 = sum(len(v or []) for v in temporal_sections2.values())
@@ -1492,7 +1484,7 @@ CONTEXTO TEMPORAL:
                     "budget_raw": int(budget_info.get("budget_raw", topk_run)),
                     "top_k_used": int(topk_run),
                     "top_k_retry_used": (int(topk_retry_used) if topk_retry_used is not None else None),
-                    "top_k_cap_ui": int(top_k),
+                    "top_k_cap_ui": int(TOP_K_CAP),
                     "window_months": int(analysis_window_months),
                     "analysis_mode": "36M fixo",
                     "docs_retrieved": int((retrieval_audit or {}).get("docs_retrieved", 0)),
