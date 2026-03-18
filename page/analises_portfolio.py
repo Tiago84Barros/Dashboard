@@ -308,36 +308,40 @@ def _import_first(*module_paths: str):
 
 def _import_ingest():
     """
-    Carrega ingest diretamente do arquivo físico,
-    ignorando problemas de PYTHONPATH no Streamlit Cloud.
+    Import robusto do ingest, com fallback para deploy.
+    Evita erro em ambientes onde o loader do spec vem nulo.
     """
-    import importlib.util
-    from pathlib import Path
+    try:
+        from pickup.ingest_docs_cvm_ipe import ingest_ipe_for_tickers
+        if callable(ingest_ipe_for_tickers):
+            return ingest_ipe_for_tickers
+        raise ImportError("ingest_ipe_for_tickers não é chamável no import direto.")
+    except Exception as e1:
+        try:
+            import importlib.util
+            import pathlib
+            import sys
 
-    # sobe de page/ para raiz do projeto
-    base_dir = Path(__file__).resolve().parents[1]
-    ingest_path = base_dir / "pickup" / "ingest_docs_cvm_ipe.py"
+            base_dir = pathlib.Path(__file__).resolve().parents[1]
+            ingest_path = base_dir / "pickup" / "ingest_docs_cvm_ipe.py"
 
-    if not ingest_path.exists():
-        raise ImportError(f"Arquivo não encontrado: {ingest_path}")
+            if not ingest_path.exists():
+                raise ImportError(f"Arquivo não encontrado: {ingest_path}")
 
-    spec = importlib.util.spec_from_file_location(
-        "ingest_docs_cvm_ipe",
-        str(ingest_path)
-    )
+            spec = importlib.util.spec_from_file_location("ingest_docs_cvm_ipe_fallback", str(ingest_path))
+            if spec is None or spec.loader is None:
+                raise ImportError("spec.loader inválido (None)")
 
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = module
+            spec.loader.exec_module(module)
 
-    fn = getattr(module, "ingest_ipe_for_tickers", None)
-
-    if not callable(fn):
-        raise ImportError(
-            "Função ingest_ipe_for_tickers não encontrada em ingest_docs_cvm_ipe.py"
-        )
-
-    return fn
-    raise ImportError("Não encontrei função de ingest no módulo pickup.ingest_docs_cvm_ipe (ou fallbacks).")
+            fn = getattr(module, "ingest_ipe_for_tickers", None)
+            if not callable(fn):
+                raise ImportError("Função ingest_ipe_for_tickers não encontrada em ingest_docs_cvm_ipe.py")
+            return fn
+        except Exception as e2:
+            raise ImportError(f"Falha total ao importar ingest. Direto= {e1!r} | Fallback= {e2!r}")
 
 def _safe_call(fn: Callable[..., Any], **kwargs):
     """
@@ -836,10 +840,12 @@ def render() -> None:
         # carrega ingest uma vez
         try:
             ingest_fn = _import_ingest()
+            if ingest_fn is None or not callable(ingest_fn):
+                raise ValueError("ingest_fn retornou valor inválido")
         except Exception as e:
             st.error("Não consegui importar o módulo de ingest do CVM/IPE no deploy.")
-            st.code(str(e))
-            st.stop()
+            st.exception(e)
+            return
 
         t0 = _now_ms()
         results: List[Dict[str, Any]] = []
@@ -871,7 +877,6 @@ def render() -> None:
                         max_docs_per_ticker=int(max_docs),
                         max_runtime_s=float(max_runtime_s),
                         max_pdfs_per_ticker=int(max_pdfs),
-                        download_pdfs=bool(int(max_pdfs) > 0),
                     )
                     # normaliza relatório
                     if isinstance(r, dict):
@@ -896,12 +901,7 @@ def render() -> None:
                     st.write(f"📥 {tk} — ingest concluído | docs agora={mid_docs} | chunks={mid_chunks}")
                     if ingest_report:
                         st.caption("Relatório ingest (resumo):")
-                        summary_keys = {
-                            "matched", "considered", "requested_max_docs", "requested_max_pdfs",
-                            "selection_truncated", "inserted", "skipped", "pdf_fetched",
-                            "pdf_text_ok", "pdf_limit_hit", "error", "result", "reason", "config"
-                        }
-                        st.json({k: ingest_report[k] for k in ingest_report.keys() if k in summary_keys})
+                        st.json({k: ingest_report[k] for k in ingest_report.keys() if k in {"matched","inserted","skipped","pdf_fetched","pdf_text_ok","error","result","skipped","reason"}})
                 else:
                     st.write(f"📥 {tk} — ingest não executado (docs já existiam) | docs={mid_docs}")
 
