@@ -288,21 +288,6 @@ def get_cvm_codes_for_tickers(tickers: Sequence[str]) -> Dict[str, int]:
         out[str(r["ticker"]).upper()] = int(r["cvm"])
     return out
 
-
-def _count_existing_docs_for_ticker(conn, ticker: str) -> int:
-    row = conn.execute(
-        text("""
-            select count(*)
-            from public.docs_corporativos
-            where upper(ticker) = upper(:ticker)
-        """),
-        {"ticker": _norm_ticker(ticker)},
-    ).fetchone()
-    try:
-        return int(row[0] or 0) if row else 0
-    except Exception:
-        return 0
-
 def _get_doc_status(conn, doc_hash: str) -> Dict[str, Any]:
     """
     Retorna:
@@ -401,7 +386,7 @@ def _load_ipe_csv_cached(year: int, timeout: int = 30) -> pd.DataFrame:
 def ingest_ipe_for_tickers(
     tickers: Sequence[str],
     *,
-    window_months: int = 12,
+    window_months: int = 36,
     max_docs_per_ticker: int = 60,
     strategic_only: bool = True,
     download_pdfs: bool = True,
@@ -439,7 +424,7 @@ def ingest_ipe_for_tickers(
     if verbose:
         print(f"[IPE] anos carregados={years} | arquivos={len(dfs)}")
     if not dfs:
-        return {"ok": False, "errors": {"__all__": "Nenhum CSV IPE disponível."}, "stats": {}, "matched": 0, "considered": 0, "inserted": 0, "skipped": 0, "updated_text": 0, "pdf_fetched": 0, "pdf_text_ok": 0, "requested_max_docs": int(max_docs_per_ticker), "requested_max_pdfs": int(max_pdfs_per_ticker), "window_months": int(window_months), "max_runtime_s": float(effective_runtime_s)}
+        return {"ok": False, "errors": {"__all__": "Nenhum CSV IPE disponível."}, "stats": {}}
 
     df = pd.concat(dfs, ignore_index=True)
     cols = list(df.columns)
@@ -453,7 +438,7 @@ def ingest_ipe_for_tickers(
     col_especie = _pick_col(cols, "ESPECIE", "ESPECIE_DOCUMENTO")
 
     if any(c is None for c in (col_cvm, col_data, col_link, col_assunto)):
-        return {"ok": False, "errors": {"__all__": f"CSV IPE sem colunas necessárias. Encontradas={cols}"}, "stats": {}, "matched": 0, "considered": 0, "inserted": 0, "skipped": 0, "updated_text": 0, "pdf_fetched": 0, "pdf_text_ok": 0, "requested_max_docs": int(max_docs_per_ticker), "requested_max_pdfs": int(max_pdfs_per_ticker), "window_months": int(window_months), "max_runtime_s": float(effective_runtime_s)}
+        return {"ok": False, "errors": {"__all__": f"CSV IPE sem colunas necessárias. Encontradas={cols}"}, "stats": {}}
 
     df["_dt"] = df[col_data].apply(_parse_date)
     df = df[~df["_dt"].isna()].copy()
@@ -483,7 +468,7 @@ def ingest_ipe_for_tickers(
 
     out_stats: Dict[str, Any] = {}
     out_errors: Dict[str, str] = {}
-    effective_runtime_s = max(float(max_runtime_s or 0.0), 1.0)
+    effective_runtime_s = max(float(max_runtime_s), 180.0)
     started = time.time()
 
     MIN_COVERAGE = 8   # C) cobertura mínima
@@ -501,25 +486,8 @@ def ingest_ipe_for_tickers(
             cvm = cvm_map.get(tk)
             if not cvm:
                 out_errors[tk] = "ticker_sem_mapeamento_cvm (preencha public.cvm_to_ticker)"
-                out_stats[tk] = {
-                    "existing_before": 0,
-                    "matched": 0,
-                    "dataset_candidates": 0,
-                    "considered": 0,
-                    "inserted": 0,
-                    "skipped": 0,
-                    "updated_text": 0,
-                    "pdf_fetched": 0,
-                    "pdf_text_ok": 0,
-                    "requested_max_docs": int(max_docs_per_ticker),
-                    "requested_max_pdfs": int(max_pdfs_per_ticker),
-                    "selection_truncated": False,
-                    "pdf_limit_hit": False,
-                    "stopped_reason": "ticker_sem_mapeamento_cvm",
-                }
+                out_stats[tk] = {"matched": 0, "considered": 0, "inserted": 0, "skipped": 0, "updated_text": 0, "pdf_fetched": 0, "pdf_text_ok": 0}
                 continue
-
-            existing_before = _count_existing_docs_for_ticker(conn, tk)
 
             cvm_norm = _norm_cvm_code(cvm)
             dft_all = df[df["_cvm_norm"] == cvm_norm].copy()
@@ -527,24 +495,9 @@ def ingest_ipe_for_tickers(
 
             matched = int(len(dft_all))
             if verbose:
-                print(f"[IPE] {tk} | cvm={cvm} | cvm_norm={cvm_norm} | matched={matched} | existing_before={existing_before}")
+                print(f"[IPE] {tk} | cvm={cvm} | cvm_norm={cvm_norm} | matched={matched}")
             if matched == 0:
-                out_stats[tk] = {
-                    "existing_before": int(existing_before),
-                    "matched": 0,
-                    "dataset_candidates": 0,
-                    "considered": 0,
-                    "inserted": 0,
-                    "skipped": 0,
-                    "updated_text": 0,
-                    "pdf_fetched": 0,
-                    "pdf_text_ok": 0,
-                    "requested_max_docs": int(max_docs_per_ticker),
-                    "requested_max_pdfs": int(max_pdfs_per_ticker),
-                    "selection_truncated": False,
-                    "pdf_limit_hit": False,
-                    "stopped_reason": "no_dataset_match",
-                }
+                out_stats[tk] = {"matched": 0, "considered": 0, "inserted": 0, "skipped": 0, "updated_text": 0, "pdf_fetched": 0, "pdf_text_ok": 0}
                 continue
 
             fallback_used = False
@@ -554,24 +507,26 @@ def ingest_ipe_for_tickers(
                 dft_ranked = dft_all.sort_values(["_score", "_dt_naive"], ascending=[False, False]).copy()
 
                 strategic = dft_ranked[dft_ranked["_score"] >= MIN_SCORE_STRATEGIC].copy()
+                strategic = strategic.head(int(max_docs_per_ticker))
                 selected = strategic.copy()
                 selected_strategic = int(len(selected))
 
+                # C) cobertura mínima
                 if selected_strategic < MIN_COVERAGE:
                     fallback_used = True
                     remaining = dft_ranked.loc[~dft_ranked.index.isin(selected.index)].sort_values("_dt_naive", ascending=False)
                     need = int(max_docs_per_ticker) - selected_strategic
                     if need > 0:
                         selected = pd.concat([selected, remaining.head(need)], ignore_index=False)
-            else:
-                selected = dft_all.copy()
 
-            selected = selected.drop_duplicates(subset=[col_link, col_assunto, "_dt_naive"], keep="first").copy()
-            dataset_candidates = int(len(selected))
-            selection_truncated = bool(dataset_candidates > int(max_docs_per_ticker))
-            selected = selected.head(int(max_docs_per_ticker)).copy()
+                # finalmente limita
+                selected = selected.head(int(max_docs_per_ticker)).copy()
+            else:
+                selected = dft_all.head(int(max_docs_per_ticker)).copy()
+
             considered = int(len(selected))
 
+            # D) Auditoria top 10 selecionados
             audit_top: List[Dict[str, Any]] = []
             for _, rr in selected.head(10).iterrows():
                 audit_top.append({
@@ -589,7 +544,6 @@ def ingest_ipe_for_tickers(
             pdf_fetched = 0
             pdf_text_ok = 0
             pdf_used = 0
-            pdf_limit_hit = False
 
             for _, r in selected.iterrows():
                 if (time.time() - started) > effective_runtime_s:
@@ -625,8 +579,6 @@ def ingest_ipe_for_tickers(
                                 pdf_text_ok += 1
                     except Exception:
                         pass
-                elif download_pdfs and int(max_pdfs_per_ticker) > 0:
-                    pdf_limit_hit = True
 
                 # Se já existe:
                 if status["exists"]:
