@@ -21,6 +21,7 @@ import json
 import html
 import time
 import math
+import html
 import traceback
 import importlib
 import inspect
@@ -337,6 +338,7 @@ def _import_ingest():
         )
 
     return fn
+    raise ImportError("Não encontrei função de ingest no módulo pickup.ingest_docs_cvm_ipe (ou fallbacks).")
 
 def _safe_call(fn: Callable[..., Any], **kwargs):
     """
@@ -750,7 +752,6 @@ def render() -> None:
     st.caption(f"Atualizar documentos usará automaticamente {analysis_window_months} meses de histórico, conforme o modo selecionado abaixo.")
 
     only_missing_docs = True
-    force_reingest = False
     show_traceback = False
 
     # Diagnóstico sob demanda (não altera pipeline; apenas inspeciona presença de docs/chunks)
@@ -870,6 +871,7 @@ def render() -> None:
                         max_docs_per_ticker=int(max_docs),
                         max_runtime_s=float(max_runtime_s),
                         max_pdfs_per_ticker=int(max_pdfs),
+                        verbose=True,
                     )
                     # normaliza relatório
                     if isinstance(r, dict):
@@ -893,8 +895,8 @@ def render() -> None:
                 if ingest_ran:
                     st.write(f"📥 {tk} — ingest concluído | docs agora={mid_docs} | chunks={mid_chunks}")
                     if ingest_report:
-                        st.caption("Relatório ingest (resumo):")
-                        st.json({k: ingest_report[k] for k in ingest_report.keys() if k in {"matched","inserted","skipped","pdf_fetched","pdf_text_ok","error","result","skipped","reason"}})
+                        st.caption("Relatório ingest (completo):")
+                        st.json(ingest_report)
                 else:
                     st.write(f"📥 {tk} — ingest não executado (docs já existiam) | docs={mid_docs}")
 
