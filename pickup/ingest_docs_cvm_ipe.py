@@ -16,6 +16,7 @@ Requer:
 """
 
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+from dataclasses import dataclass
 from functools import lru_cache
 import hashlib
 import io
@@ -32,6 +33,36 @@ from core.db_loader import get_supabase_engine
 # ──────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class IngestConfig:
+    window_months: int = 12
+    max_docs_per_ticker: int = 60
+    strategic_only: bool = True
+    download_pdfs: bool = True
+    max_pdfs_per_ticker: int = 12
+    pdf_max_pages: int = 25
+    request_timeout: int = 25
+    max_runtime_s: float = 90.0
+    sleep_s: float = 0.0
+    verbose: bool = False
+
+    @classmethod
+    def from_kwargs(cls, **kwargs: Any) -> "IngestConfig":
+        return cls(
+            window_months=max(1, int(kwargs.get("window_months", 12) or 12)),
+            max_docs_per_ticker=max(1, int(kwargs.get("max_docs_per_ticker", 60) or 60)),
+            strategic_only=bool(kwargs.get("strategic_only", True)),
+            download_pdfs=bool(kwargs.get("download_pdfs", True)),
+            max_pdfs_per_ticker=max(0, int(kwargs.get("max_pdfs_per_ticker", 12) or 0)),
+            pdf_max_pages=max(1, int(kwargs.get("pdf_max_pages", 25) or 25)),
+            request_timeout=max(5, int(kwargs.get("request_timeout", 25) or 25)),
+            max_runtime_s=max(5.0, float(kwargs.get("max_runtime_s", 90.0) or 90.0)),
+            sleep_s=max(0.0, float(kwargs.get("sleep_s", 0.0) or 0.0)),
+            verbose=bool(kwargs.get("verbose", False)),
+        )
+
 
 _TEXT_COL_CACHE: Optional[str] = None
 
@@ -406,22 +437,35 @@ def ingest_ipe_for_tickers(
       C) cobertura mínima (fallback) se poucos docs estratégicos
       D) auditoria (top 10 selecionados com score)
     """
+    config = IngestConfig.from_kwargs(
+        window_months=window_months,
+        max_docs_per_ticker=max_docs_per_ticker,
+        strategic_only=strategic_only,
+        download_pdfs=download_pdfs,
+        max_pdfs_per_ticker=max_pdfs_per_ticker,
+        pdf_max_pages=pdf_max_pages,
+        request_timeout=config.request_timeout,
+        max_runtime_s=max_runtime_s,
+        sleep_s=sleep_s,
+        verbose=verbose,
+    )
+
     tickers_n = [_norm_ticker(t) for t in tickers if (t or "").strip()]
     cvm_map = get_cvm_codes_for_tickers(tickers_n)
 
     now = _utcnow()
-    min_dt = _now_minus_months(int(window_months))
+    min_dt = _now_minus_months(config.window_months)
 
     years = list(range(int(min_dt.year), int(now.year) + 1))
     dfs: List[pd.DataFrame] = []
     for y in years:
         try:
-            dfs.append(_load_ipe_csv_cached(y, timeout=request_timeout).copy())
+            dfs.append(_load_ipe_csv_cached(y, timeout=config.request_timeout).copy())
         except Exception as e:
-            if verbose:
+            if config.verbose:
                 print(f"[IPE] Falha ao carregar {y}: {e}")
 
-    if verbose:
+    if config.verbose:
         print(f"[IPE] anos carregados={years} | arquivos={len(dfs)}")
     if not dfs:
         return {"ok": False, "errors": {"__all__": "Nenhum CSV IPE disponível."}, "stats": {}}
@@ -449,7 +493,7 @@ def ingest_ipe_for_tickers(
     df = df[df["_dt_naive"] >= min_ts].copy()
 
     # precompute campos textuais para scoring
-    if strategic_only:
+    if config.strategic_only:
         df["_tipo"] = df[col_tipo].fillna("").map(_clean_text) if col_tipo else ""
         df["_titulo"] = df[col_assunto].fillna("").map(_clean_text)
         df["_assunto"] = df[col_assunto].fillna("").map(_clean_text)
@@ -468,7 +512,7 @@ def ingest_ipe_for_tickers(
 
     out_stats: Dict[str, Any] = {}
     out_errors: Dict[str, str] = {}
-    effective_runtime_s = max(float(max_runtime_s), 180.0)
+    effective_runtime_s = float(config.max_runtime_s)
     started = time.time()
 
     MIN_COVERAGE = 8   # C) cobertura mínima
@@ -494,7 +538,7 @@ def ingest_ipe_for_tickers(
             dft_all = dft_all.sort_values("_dt_naive", ascending=False)
 
             matched = int(len(dft_all))
-            if verbose:
+            if config.verbose:
                 print(f"[IPE] {tk} | cvm={cvm} | cvm_norm={cvm_norm} | matched={matched}")
             if matched == 0:
                 out_stats[tk] = {"matched": 0, "considered": 0, "inserted": 0, "skipped": 0, "updated_text": 0, "pdf_fetched": 0, "pdf_text_ok": 0}
@@ -503,11 +547,11 @@ def ingest_ipe_for_tickers(
             fallback_used = False
             selected_strategic = 0
 
-            if strategic_only:
+            if config.strategic_only:
                 dft_ranked = dft_all.sort_values(["_score", "_dt_naive"], ascending=[False, False]).copy()
 
                 strategic = dft_ranked[dft_ranked["_score"] >= MIN_SCORE_STRATEGIC].copy()
-                strategic = strategic.head(int(max_docs_per_ticker))
+                strategic = strategic.head(int(config.max_docs_per_ticker))
                 selected = strategic.copy()
                 selected_strategic = int(len(selected))
 
@@ -515,14 +559,14 @@ def ingest_ipe_for_tickers(
                 if selected_strategic < MIN_COVERAGE:
                     fallback_used = True
                     remaining = dft_ranked.loc[~dft_ranked.index.isin(selected.index)].sort_values("_dt_naive", ascending=False)
-                    need = int(max_docs_per_ticker) - selected_strategic
+                    need = int(config.max_docs_per_ticker) - selected_strategic
                     if need > 0:
                         selected = pd.concat([selected, remaining.head(need)], ignore_index=False)
 
                 # finalmente limita
-                selected = selected.head(int(max_docs_per_ticker)).copy()
+                selected = selected.head(int(config.max_docs_per_ticker)).copy()
             else:
-                selected = dft_all.head(int(max_docs_per_ticker)).copy()
+                selected = dft_all.head(int(config.max_docs_per_ticker)).copy()
 
             considered = int(len(selected))
 
@@ -566,13 +610,13 @@ def ingest_ipe_for_tickers(
                 status = _get_doc_status(conn, doc_hash)
 
                 texto = ""
-                if download_pdfs and pdf_used < int(max_pdfs_per_ticker):
+                if config.download_pdfs and pdf_used < int(config.max_pdfs_per_ticker):
                     try:
-                        pdf_bytes = _fetch_pdf_bytes(url, timeout=request_timeout)
+                        pdf_bytes = _fetch_pdf_bytes(url, timeout=config.request_timeout)
                         if pdf_bytes:
                             pdf_fetched += 1
                             pdf_used += 1
-                            tpdf = _extract_pdf_text(pdf_bytes, max_pages=int(pdf_max_pages))
+                            tpdf = _extract_pdf_text(pdf_bytes, max_pages=int(config.pdf_max_pages))
                             tpdf = tpdf.strip() if tpdf else ""
                             if tpdf and len(tpdf) >= 200:
                                 texto = tpdf
@@ -606,22 +650,26 @@ def ingest_ipe_for_tickers(
                 else:
                     inserted += 1
 
-                if sleep_s:
-                    time.sleep(float(sleep_s))
+                if config.sleep_s:
+                    time.sleep(float(config.sleep_s))
 
             out_stats[tk] = {
                 "matched": matched,
+                "requested_max_docs": int(config.max_docs_per_ticker),
+                "requested_max_pdfs": int(config.max_pdfs_per_ticker),
                 "considered": considered,
                 "inserted": inserted,
                 "skipped": skipped,
                 "updated_text": updated_text,
                 "pdf_fetched": pdf_fetched,
                 "pdf_text_ok": pdf_text_ok,
+                "pdf_limit_hit": bool(config.download_pdfs and int(config.max_pdfs_per_ticker) > 0 and pdf_used >= int(config.max_pdfs_per_ticker) and considered > 0),
+                "selection_truncated": bool(matched > considered),
                 # D) auditoria
-                "selected_strategic": selected_strategic if strategic_only else None,
-                "fallback_used": fallback_used if strategic_only else None,
+                "selected_strategic": selected_strategic if config.strategic_only else None,
+                "fallback_used": fallback_used if config.strategic_only else None,
                 "top_selected": audit_top,
             }
 
     ok = (len(out_errors) == 0)
-    return {"ok": ok, "stats": out_stats, "errors": out_errors}
+    return {"ok": ok, "stats": out_stats, "errors": out_errors, "config": config.__dict__}
