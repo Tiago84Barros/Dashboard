@@ -36,8 +36,8 @@ from core.portfolio_snapshot_store import get_latest_snapshot
 from core.docs_corporativos_store import (
     count_docs,
     count_chunks,
-    process_missing_chunks_for_ticker,
 )
+from core.patch6_store import process_missing_chunks_for_ticker
 from core.patch6_runs_store import save_patch6_run, list_patch6_history
 from core.patch6_writer import build_result_json
 
