@@ -4,12 +4,11 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 import time
 import requests
 
 import pandas as pd
-from bcb import sgs
 from sqlalchemy import create_engine, text
 
 
@@ -222,27 +221,50 @@ def build_annual_df(dados: Dict[str, pd.DataFrame], icc_mode: str) -> pd.DataFra
         return pd.DataFrame()
 
     df = pd.concat(parts, axis=1).sort_index()
-    df.index.name = "Data"
+    df.index.name = "data"
     df = df.reset_index()
 
     # ICC_delta (YoY em nível)
     if "ICC" in df.columns:
         df["ICC_delta"] = df["ICC"].diff()
 
-    # Juros real ex-ante (aprox): Selic final - IPCA anual
+    # Juros real ex-ante (aprox): Selic final - IPCA anual em %
     if "Selic" in df.columns and "IPCA" in df.columns:
-        df["Juros_Real_ExAnte"] = df["Selic"] - df["IPCA"]  # IPCA está em fração (ex: 0.045); converte para %
-        # Se você preferir IPCA em %, comente o *100.0 acima e grave IPCA como %.
+        df["Juros_Real_ExAnte"] = df["Selic"] - df["IPCA"]
+
+    # Padroniza nomes para snake_case minúsculo
+    df = df.rename(columns={
+        "Selic": "selic",
+        "Cambio": "cambio",
+        "IPCA": "ipca",
+        "ICC": "icc",
+        "ICC_delta": "icc_delta",
+        "PIB": "pib",
+        "BALANCA_COMERCIAL": "balanca_comercial",
+        "Divida_Publica": "divida_publica",
+        "Juros_Real_ExAnte": "juros_real_ex_ante",
+    })
 
     # Ajuste de tipos/datas
-    df["Data"] = pd.to_datetime(df["Data"], utc=True)
+    df["data"] = pd.to_datetime(df["data"], utc=True)
 
     # Limpeza: manter apenas colunas relevantes
-    keep = ["Data", "Selic", "Cambio", "IPCA", "ICC", "ICC_delta", "PIB", "BALANCA_COMERCIAL", "Divida_Publica", "Juros_Real_ExAnte"]
+    keep = [
+        "data",
+        "selic",
+        "cambio",
+        "ipca",
+        "icc",
+        "icc_delta",
+        "pib",
+        "balanca_comercial",
+        "divida_publica",
+        "juros_real_ex_ante",
+    ]
     df = df[[c for c in keep if c in df.columns]]
 
-    # Remove linhas onde todos os indicadores (exceto Data) são NaN
-    value_cols = [c for c in df.columns if c != "Data"]
+    # Remove linhas onde todos os indicadores (exceto data) são NaN
+    value_cols = [c for c in df.columns if c != "data"]
     df = df.dropna(subset=value_cols, how="all")
     
     return df
@@ -298,24 +320,40 @@ def build_monthly_df(dados: Dict[str, pd.DataFrame]) -> pd.DataFrame:
         return pd.DataFrame()
 
     dfm = pd.concat(parts, axis=1).sort_index()
-    dfm.index.name = "Data"
+    dfm.index.name = "data"
     dfm = dfm.reset_index()
-    dfm["Data"] = pd.to_datetime(dfm["Data"], utc=True)
 
     # Juros real ex-ante 12m (aprox): Selic final - IPCA_12m
     if "Selic_Final" in dfm.columns and "IPCA_12m" in dfm.columns:
         dfm["Juros_Real_ExAnte_12m"] = dfm["Selic_Final"] - dfm["IPCA_12m"]
 
+    # Padroniza nomes para snake_case minúsculo
+    dfm = dfm.rename(columns={
+        "Selic_Final": "selic_final",
+        "Selic_Media": "selic_media",
+        "Cambio_Final": "cambio_final",
+        "IPCA_MoM": "ipca_mom",
+        "IPCA_12m": "ipca_12m",
+        "ICC_Final": "icc_final",
+        "ICC_Media": "icc_media",
+        "ICC_delta_12m": "icc_delta_12m",
+        "BALANCA_COMERCIAL": "balanca_comercial",
+        "Divida_Publica_Final": "divida_publica_final",
+        "Juros_Real_ExAnte_12m": "juros_real_ex_ante_12m",
+    })
+
+    dfm["data"] = pd.to_datetime(dfm["data"], utc=True)
+
     # Seleção final (tabela mensal)
     keep = [
-        "Data",
-        "Selic_Final", "Selic_Media",
-        "Cambio_Final",
-        "IPCA_MoM", "IPCA_12m",
-        "ICC_Final", "ICC_Media", "ICC_delta_12m",
-        "BALANCA_COMERCIAL",
-        "Divida_Publica_Final",
-        "Juros_Real_ExAnte_12m",
+        "data",
+        "selic_final", "selic_media",
+        "cambio_final",
+        "ipca_mom", "ipca_12m",
+        "icc_final", "icc_media", "icc_delta_12m",
+        "balanca_comercial",
+        "divida_publica_final",
+        "juros_real_ex_ante_12m",
     ]
     dfm = dfm[[c for c in keep if c in dfm.columns]]
     return dfm
@@ -343,7 +381,7 @@ def table_columns(engine, schema: str, table: str) -> List[str]:
     return [r[0] for r in rows]
 
 
-def upsert_dataframe(engine, schema: str, table: str, df: pd.DataFrame, pk: str = "Data") -> Tuple[int, List[str]]:
+def upsert_dataframe(engine, schema: str, table: str, df: pd.DataFrame, pk: str = "data") -> Tuple[int, List[str]]:
     if df.empty:
         return 0, []
 
@@ -410,7 +448,7 @@ def main() -> None:
     print(f"Anual: {len(df_annual)} linhas")
 
     engine = get_engine()
-    n_annual, cols_annual = upsert_dataframe(engine, cfg.schema, cfg.table_annual, df_annual, pk="Data")
+    n_annual, cols_annual = upsert_dataframe(engine, cfg.schema, cfg.table_annual, df_annual, pk="data")
     print(f"Upsert anual OK: {n_annual} registros em {cfg.schema}.{cfg.table_annual}")
     print(f"Colunas gravadas (anual): {cols_annual}")
 
@@ -419,7 +457,7 @@ def main() -> None:
         try:
             df_monthly = build_monthly_df(dados)
             print(f"Mensal: {len(df_monthly)} linhas")
-            n_month, cols_month = upsert_dataframe(engine, cfg.schema, cfg.table_monthly, df_monthly, pk="Data")
+            n_month, cols_month = upsert_dataframe(engine, cfg.schema, cfg.table_monthly, df_monthly, pk="data")
             print(f"Upsert mensal OK: {n_month} registros em {cfg.schema}.{cfg.table_monthly}")
             print(f"Colunas gravadas (mensal): {cols_month}")
         except Exception as e:
