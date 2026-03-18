@@ -871,6 +871,7 @@ def render() -> None:
                         max_docs_per_ticker=int(max_docs),
                         max_runtime_s=float(max_runtime_s),
                         max_pdfs_per_ticker=int(max_pdfs),
+                        download_pdfs=bool(int(max_pdfs) > 0),
                     )
                     # normaliza relatório
                     if isinstance(r, dict):
@@ -895,7 +896,12 @@ def render() -> None:
                     st.write(f"📥 {tk} — ingest concluído | docs agora={mid_docs} | chunks={mid_chunks}")
                     if ingest_report:
                         st.caption("Relatório ingest (resumo):")
-                        st.json({k: ingest_report[k] for k in ingest_report.keys() if k in {"matched","inserted","skipped","pdf_fetched","pdf_text_ok","error","result","skipped","reason"}})
+                        summary_keys = {
+                            "matched", "considered", "requested_max_docs", "requested_max_pdfs",
+                            "selection_truncated", "inserted", "skipped", "pdf_fetched",
+                            "pdf_text_ok", "pdf_limit_hit", "error", "result", "reason", "config"
+                        }
+                        st.json({k: ingest_report[k] for k in ingest_report.keys() if k in summary_keys})
                 else:
                     st.write(f"📥 {tk} — ingest não executado (docs já existiam) | docs={mid_docs}")
 
