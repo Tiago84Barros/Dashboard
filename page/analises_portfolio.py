@@ -308,40 +308,36 @@ def _import_first(*module_paths: str):
 
 def _import_ingest():
     """
-    Import robusto do ingest, com fallback para deploy.
-    Evita erro em ambientes onde o loader do spec vem nulo.
+    Carrega ingest diretamente do arquivo físico,
+    ignorando problemas de PYTHONPATH no Streamlit Cloud.
     """
-    try:
-        from pickup.ingest_docs_cvm_ipe import ingest_ipe_for_tickers
-        if callable(ingest_ipe_for_tickers):
-            return ingest_ipe_for_tickers
-        raise ImportError("ingest_ipe_for_tickers não é chamável no import direto.")
-    except Exception as e1:
-        try:
-            import importlib.util
-            import pathlib
-            import sys
+    import importlib.util
+    from pathlib import Path
 
-            base_dir = pathlib.Path(__file__).resolve().parents[1]
-            ingest_path = base_dir / "pickup" / "ingest_docs_cvm_ipe.py"
+    # sobe de page/ para raiz do projeto
+    base_dir = Path(__file__).resolve().parents[1]
+    ingest_path = base_dir / "pickup" / "ingest_docs_cvm_ipe.py"
 
-            if not ingest_path.exists():
-                raise ImportError(f"Arquivo não encontrado: {ingest_path}")
+    if not ingest_path.exists():
+        raise ImportError(f"Arquivo não encontrado: {ingest_path}")
 
-            spec = importlib.util.spec_from_file_location("ingest_docs_cvm_ipe_fallback", str(ingest_path))
-            if spec is None or spec.loader is None:
-                raise ImportError("spec.loader inválido (None)")
+    spec = importlib.util.spec_from_file_location(
+        "ingest_docs_cvm_ipe",
+        str(ingest_path)
+    )
 
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[spec.name] = module
-            spec.loader.exec_module(module)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
 
-            fn = getattr(module, "ingest_ipe_for_tickers", None)
-            if not callable(fn):
-                raise ImportError("Função ingest_ipe_for_tickers não encontrada em ingest_docs_cvm_ipe.py")
-            return fn
-        except Exception as e2:
-            raise ImportError(f"Falha total ao importar ingest. Direto= {e1!r} | Fallback= {e2!r}")
+    fn = getattr(module, "ingest_ipe_for_tickers", None)
+
+    if not callable(fn):
+        raise ImportError(
+            "Função ingest_ipe_for_tickers não encontrada em ingest_docs_cvm_ipe.py"
+        )
+
+    return fn
+    raise ImportError("Não encontrei função de ingest no módulo pickup.ingest_docs_cvm_ipe (ou fallbacks).")
 
 def _safe_call(fn: Callable[..., Any], **kwargs):
     """
@@ -722,11 +718,10 @@ def render() -> None:
     # ------------------------------------------------------------------
 
     # Fonte única de verdade para profundidade temporal.
-    # Lemos do session_state para que a janela de evidências fique sempre
-    # sincronizada com o modo de análise selecionado na seção qualitativa.
-    analysis_mode = st.session_state.get("analysis_mode", "Padrão (24 meses)")
-    analysis_window_months = 24 if analysis_mode == "Padrão (24 meses)" else 36
-    analysis_period_ref = "24M" if analysis_window_months == 24 else "36M"
+    # A atualização documental e a análise qualitativa operam sempre com o
+    # maior histórico-alvo disponível no fluxo padrão: 36 meses.
+    analysis_window_months = 36
+    analysis_period_ref = "36M"
 
     # ------------------------------------------------------------------
     # Ingest + Chunking com logs por ticker
@@ -752,7 +747,7 @@ def render() -> None:
     with col4:
         max_runtime_s = st.number_input("Tempo máx total (s)", min_value=5, max_value=180, value=60, step=5)
 
-    st.caption(f"Atualizar documentos usará automaticamente {analysis_window_months} meses de histórico, conforme o modo selecionado abaixo.")
+    st.caption(f"Atualizar documentos usará automaticamente 36 meses de histórico, que também serão usados na análise qualitativa.")
 
     only_missing_docs = True
     force_reingest = False
@@ -840,12 +835,10 @@ def render() -> None:
         # carrega ingest uma vez
         try:
             ingest_fn = _import_ingest()
-            if ingest_fn is None or not callable(ingest_fn):
-                raise ValueError("ingest_fn retornou valor inválido")
         except Exception as e:
             st.error("Não consegui importar o módulo de ingest do CVM/IPE no deploy.")
-            st.exception(e)
-            return
+            st.code(str(e))
+            st.stop()
 
         t0 = _now_ms()
         results: List[Dict[str, Any]] = []
@@ -1135,17 +1128,7 @@ def render() -> None:
     )
     st.caption("O sistema usa budget adaptativo por ticker. Este valor é apenas o teto máximo de evidências permitidas por empresa.")
 
-    analysis_mode = st.radio(
-        "Modo de análise",
-        options=["Padrão (24 meses)", "Aprofundada (36 meses)"],
-        index=(0 if analysis_mode == "Padrão (24 meses)" else 1),
-        horizontal=True,
-        key="analysis_mode",
-        help="A análise padrão observa os últimos 24 meses. A aprofundada amplia a leitura para 36 meses, favorecendo avaliação de trajetória, consistência do discurso e execução ao longo do tempo."
-    )
-    analysis_window_months = 24 if analysis_mode == "Padrão (24 meses)" else 36
-    analysis_period_ref = "24M" if analysis_window_months == 24 else "36M"
-    st.caption(f"Janela temporal ativa da análise qualitativa: {analysis_window_months} meses. Esta mesma janela é usada na atualização de evidências.")
+    st.caption("A análise qualitativa utiliza automaticamente a mesma janela da ingestão documental: 36 meses.")
 
     st.markdown("## 📘 Relatório consolidado do portfólio")
     st.caption("Montado a partir do que está salvo em patch6_runs. Ao rodar a LLM, este relatório é atualizado automaticamente.")
@@ -1511,7 +1494,7 @@ CONTEXTO TEMPORAL:
                     "top_k_retry_used": (int(topk_retry_used) if topk_retry_used is not None else None),
                     "top_k_cap_ui": int(top_k),
                     "window_months": int(analysis_window_months),
-                    "analysis_mode": analysis_mode,
+                    "analysis_mode": "36M fixo",
                     "docs_retrieved": int((retrieval_audit or {}).get("docs_retrieved", 0)),
                     "context_years": list((retrieval_audit or {}).get("years", []) or []),
                     "retrieval_mix": (retrieval_audit or {}).get("mix_total", {}),
