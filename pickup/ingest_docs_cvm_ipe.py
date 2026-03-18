@@ -40,6 +40,22 @@ def _engine():
 def _norm_ticker(t: str) -> str:
     return (t or "").upper().replace(".SA", "").strip()
 
+def _norm_cvm_code(val: Any) -> str:
+    """Normaliza código CVM para comparação resiliente entre banco e CSV.
+
+    Exemplos tratados:
+    - 20532
+    - 020532
+    - 20532.0
+    - '20532 '
+    """
+    s = str(val or "").strip()
+    if not s:
+        return ""
+    s = s.replace('.0', '')
+    s = ''.join(ch for ch in s if ch.isdigit())
+    return s.lstrip('0') or '0'
+
 def _sha256(s: str) -> str:
     return hashlib.sha256((s or "").encode("utf-8")).hexdigest()
 
@@ -447,6 +463,10 @@ def ingest_ipe_for_tickers(
     if any(c is None for c in (col_cvm, col_data, col_link, col_assunto)):
         return {"ok": False, "errors": {"__all__": f"CSV IPE sem colunas necessárias. Encontradas={cols}"}, "stats": {}}
 
+    # Comparação resiliente do código CVM. Evita regressões quando o CSV vem
+    # com zeros à esquerda, sufixo .0 ou espaços extras.
+    df["_cvm_norm"] = df[col_cvm].map(_norm_cvm_code)
+
     df["_dt"] = df[col_data].apply(_parse_date)
     df = df[~df["_dt"].isna()].copy()
 
@@ -491,10 +511,18 @@ def ingest_ipe_for_tickers(
                 out_stats[tk] = {"matched": 0, "considered": 0, "inserted": 0, "skipped": 0, "updated_text": 0, "pdf_fetched": 0, "pdf_text_ok": 0}
                 continue
 
-            dft_all = df[df[col_cvm].astype(str) == str(cvm)].copy()
+            cvm_norm = _norm_cvm_code(cvm)
+            dft_all = df[df["_cvm_norm"] == cvm_norm].copy()
             dft_all = dft_all.sort_values("_dt_naive", ascending=False)
 
             matched = int(len(dft_all))
+            if verbose:
+                try:
+                    sample_codes = dft_all["_cvm_norm"].head(3).tolist() if not dft_all.empty else []
+                except Exception:
+                    sample_codes = []
+                print(f"[IPE] ticker={tk} cvm={cvm} cvm_norm={cvm_norm} matched={matched} sample_codes={sample_codes}")
+
             if matched == 0:
                 out_stats[tk] = {"matched": 0, "considered": 0, "inserted": 0, "skipped": 0, "updated_text": 0, "pdf_fetched": 0, "pdf_text_ok": 0}
                 continue
