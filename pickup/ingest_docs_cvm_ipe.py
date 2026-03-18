@@ -386,7 +386,7 @@ def _load_ipe_csv_cached(year: int, timeout: int = 30) -> pd.DataFrame:
 def ingest_ipe_for_tickers(
     tickers: Sequence[str],
     *,
-    window_months: int = 12,
+    window_months: int = 36,
     max_docs_per_ticker: int = 60,
     strategic_only: bool = True,
     download_pdfs: bool = True,
@@ -468,16 +468,8 @@ def ingest_ipe_for_tickers(
 
     out_stats: Dict[str, Any] = {}
     out_errors: Dict[str, str] = {}
-    effective_runtime_s = max(float(max_runtime_s), 1.0)
+    effective_runtime_s = max(float(max_runtime_s), 180.0)
     started = time.time()
-
-    total_matched = 0
-    total_considered = 0
-    total_inserted = 0
-    total_skipped = 0
-    total_updated_text = 0
-    total_pdf_fetched = 0
-    total_pdf_text_ok = 0
 
     MIN_COVERAGE = 8   # C) cobertura mínima
     MIN_SCORE_STRATEGIC = 3  # threshold leve, evita ficar vazio
@@ -502,7 +494,6 @@ def ingest_ipe_for_tickers(
             dft_all = dft_all.sort_values("_dt_naive", ascending=False)
 
             matched = int(len(dft_all))
-            total_matched += matched
             if verbose:
                 print(f"[IPE] {tk} | cvm={cvm} | cvm_norm={cvm_norm} | matched={matched}")
             if matched == 0:
@@ -626,38 +617,11 @@ def ingest_ipe_for_tickers(
                 "updated_text": updated_text,
                 "pdf_fetched": pdf_fetched,
                 "pdf_text_ok": pdf_text_ok,
-                "requested_max_docs": int(max_docs_per_ticker),
-                "requested_max_pdfs": int(max_pdfs_per_ticker),
-                "selection_truncated": bool(matched > considered),
-                "pdf_limit_hit": bool(download_pdfs and pdf_used >= int(max_pdfs_per_ticker) and pdf_fetched >= int(max_pdfs_per_ticker)),
                 # D) auditoria
                 "selected_strategic": selected_strategic if strategic_only else None,
                 "fallback_used": fallback_used if strategic_only else None,
                 "top_selected": audit_top,
             }
 
-            total_considered += considered
-            total_inserted += inserted
-            total_skipped += skipped
-            total_updated_text += updated_text
-            total_pdf_fetched += pdf_fetched
-            total_pdf_text_ok += pdf_text_ok
-
     ok = (len(out_errors) == 0)
-    return {
-        "ok": ok,
-        "tickers": tickers_n,
-        "matched": int(total_matched),
-        "considered": int(total_considered),
-        "inserted": int(total_inserted),
-        "skipped": int(total_skipped),
-        "updated_text": int(total_updated_text),
-        "pdf_fetched": int(total_pdf_fetched),
-        "pdf_text_ok": int(total_pdf_text_ok),
-        "requested_max_docs": int(max_docs_per_ticker),
-        "requested_max_pdfs": int(max_pdfs_per_ticker),
-        "window_months": int(window_months),
-        "max_runtime_s": float(effective_runtime_s),
-        "stats": out_stats,
-        "errors": out_errors,
-    }
+    return {"ok": ok, "stats": out_stats, "errors": out_errors}
