@@ -83,7 +83,7 @@ def build_session() -> requests.Session:
 def _normalize_db_url(db_url: str) -> str:
     db_url = (db_url or "").strip()
     if not db_url:
-        raise RuntimeError("Defina SUPABASE_DB_URL (connection string Postgres do Supabase).")
+        raise RuntimeError("Defina  (connection string Postgres do Supabase).")
 
     # psycopg2 não aceita o prefixo do SQLAlchemy
     db_url = re.sub(r"^postgresql\+psycopg2://", "postgresql://", db_url, flags=re.IGNORECASE)
