@@ -35,7 +35,7 @@ FORCAR_REDOWNLOAD = os.getenv("FORCAR_REDOWNLOAD", "0").strip() == "1"
 BATCH_SIZE_UPSERT = int(os.getenv("BATCH_SIZE_UPSERT", "5000"))
 LOG_PREFIX = os.getenv("LOG_PREFIX", "[DFP]")
 
-SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL_PG", os.getenv("SUPABASE_DB_URL", "")).strip()
+SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL_PG", "").strip()
 
 BASE_DIR = Path(__file__).resolve().parent
 TICKER_PATH = Path(os.getenv("TICKER_PATH", str(BASE_DIR / "cvm_to_ticker.csv")))
