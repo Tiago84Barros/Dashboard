@@ -1359,7 +1359,9 @@ Regras:
 - não faça resumo genérico;
 - não invente fatos;
 - quando houver pouca base, diga isso explicitamente;
-- use no mínimo 5 evidências se o contexto trouxer material suficiente;
+- use 10 ou mais evidências quando o contexto trouxer material suficiente;
+- priorize evidências com números, guidance, dividendos, capex, dívida, lucratividade, margens, governança, M&A, reestruturações e mudanças concretas de estratégia;
+- as considerações finais devem ser analíticas, opinativas e fundamentadas nos fatos, com linguagem de investidor fundamentalista disciplinado;
 - sempre que possível, atribua ano ou janela temporal às evidências;
 - prefira evidências sobre dívida, capex, dividendos, recompra, guidance, execução, governança e M&A.
 
@@ -1390,7 +1392,7 @@ Responda APENAS em JSON válido neste formato:
   "catalisadores": ["..."],
   "riscos": ["..."],
   "o_que_monitorar": ["..."],
-  "consideracoes_llm": "limitações do contexto, qualidade dos documentos e lacunas",
+  "consideracoes_llm": "parecer analítico e opinativo, fundamentado nos fatos, abordando qualidade do negócio, gestão, alocação de capital, riscos estruturais, previsibilidade e margem de segurança",
   "evidencias": [
     {{
       "topico": "2024 ou janela",
