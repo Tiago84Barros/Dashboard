@@ -274,8 +274,15 @@ def _fmt_score(value: int) -> str:
 
 def _box_html(text: str) -> str:
     return f"""
-        <div class="p6-box">
-            <div class="p6-box-text">{_esc(text).replace(chr(10), '<br/>')}</div>
+        <div style="
+            border:1px solid rgba(255,255,255,0.08);
+            background:rgba(255,255,255,0.03);
+            border-radius:14px;
+            padding:14px 16px;
+            box-shadow:0 10px 24px rgba(0,0,0,0.18);
+            margin-top:8px;
+            line-height:1.6;">
+            {_esc(text).replace(chr(10), '<br/>')}
         </div>
     """
 
@@ -403,10 +410,11 @@ def _render_score_explanations(company: Dict[str, Any]) -> None:
 
 
 def _render_section_text(title: str, text_value: str) -> None:
-    if not _strip_html(text_value):
+    clean = _strip_html(text_value)
+    if not clean:
         return
-    st.markdown(f"<div class='p6-section-title'>{_esc(title)}</div>", unsafe_allow_html=True)
-    st.markdown(_box_html(text_value), unsafe_allow_html=True)
+    st.markdown(f"### {title}")
+    st.markdown(_box_html(clean), unsafe_allow_html=True)
 
 
 def _render_section_list(title: str, values: List[str], limit: Optional[int] = None) -> None:
@@ -415,9 +423,14 @@ def _render_section_list(title: str, values: List[str], limit: Optional[int] = N
         clean_values = clean_values[:limit]
     if not clean_values:
         return
-    st.markdown(f"<div class='p6-section-title'>{_esc(title)}</div>", unsafe_allow_html=True)
-    items = ''.join(f"<li>{_esc(item)}</li>" for item in clean_values)
-    st.markdown(f"<div class='p6-list-box'><ul>{items}</ul></div>", unsafe_allow_html=True)
+    st.markdown(f"### {title}")
+    st.markdown(
+        "<div style='border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02);"
+        "border-radius:14px;padding:12px 16px;margin-top:8px;'>"
+        + "".join([f"<div style='margin:8px 0;line-height:1.5;'><span style='font-weight:800;margin-right:8px;'>•</span>{_esc(item)}</div>" for item in clean_values])
+        + "</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _render_key_value_section(title: str, data: Dict[str, Any], label_map: List[tuple[str, str]]) -> None:
@@ -428,19 +441,28 @@ def _render_key_value_section(title: str, data: Dict[str, Any], label_map: List[
         value = data.get(key)
         if isinstance(value, str) and _strip_html(value):
             rows.append(
-                f"<div class='p6-kv-key'>{_esc(label)}</div><div class='p6-kv-val'>{_esc(value)}</div>"
+                f"<div style='margin:10px 0 14px 0;'>"
+                f"<div style='font-size:12px;opacity:.72;font-weight:700;letter-spacing:.2px;text-transform:uppercase;margin-bottom:4px;'>{_esc(label)}</div>"
+                f"<div style='font-size:15px;line-height:1.6;'>{_esc(value)}</div>"
+                f"</div>"
             )
         elif isinstance(value, list):
             clean_values = [_strip_html(v) for v in value if _strip_html(v)]
             if clean_values:
-                rendered_list = "<ul style='margin:0;padding-left:18px;'>" + ''.join(f"<li>{_esc(v)}</li>" for v in clean_values) + "</ul>"
+                joined = "<br/>".join([f"• {_esc(v)}" for v in clean_values])
                 rows.append(
-                    f"<div class='p6-kv-key'>{_esc(label)}</div><div class='p6-kv-val'>{rendered_list}</div>"
+                    f"<div style='margin:10px 0 14px 0;'>"
+                    f"<div style='font-size:12px;opacity:.72;font-weight:700;letter-spacing:.2px;text-transform:uppercase;margin-bottom:4px;'>{_esc(label)}</div>"
+                    f"<div style='font-size:15px;line-height:1.6;'>{joined}</div>"
+                    f"</div>"
                 )
     if rows:
-        st.markdown(f"<div class='p6-section-title'>{_esc(title)}</div>", unsafe_allow_html=True)
+        st.markdown(f"### {title}")
         st.markdown(
-            "<div class='p6-box'><div class='p6-kv'>" + ''.join(rows) + "</div></div>",
+            "<div style='border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.03);"
+            "border-radius:14px;padding:14px 16px;box-shadow:0 10px 24px rgba(0,0,0,0.18);margin-top:8px;line-height:1.5;'>"
+            + "".join(rows)
+            + "</div>",
             unsafe_allow_html=True,
         )
 
@@ -463,19 +485,18 @@ def _render_evidence_section(evidences: List[Any], limit: int = 6) -> None:
     if not normalized:
         return
 
-    st.markdown("<div class='p6-section-title'>Evidências documentais</div>", unsafe_allow_html=True)
+    st.markdown("### Evidências")
     for item in normalized:
-        head = item["topico"] or "Evidência"
-        body_parts = []
-        if item["trecho"]:
-            body_parts.append(f"<span class='p6-label'>Trecho selecionado</span><div class='p6-body'>{_esc(item['trecho'])}</div>")
-        if item["interpretacao"]:
-            body_parts.append(f"<span class='p6-label'>Leitura analítica</span><div class='p6-body'>{_esc(item['interpretacao'])}</div>")
+        head = item["topico"] or "Evidência documental"
+        trecho_html = f"<div style='font-size:12px;opacity:.72;font-weight:700;letter-spacing:.2px;text-transform:uppercase;margin-bottom:4px;'>Trecho selecionado</div><div style='font-size:15px;line-height:1.6;'>{_esc(item['trecho'])}</div>" if item["trecho"] else ""
+        leitura_html = f"<div style='font-size:12px;opacity:.72;font-weight:700;letter-spacing:.2px;text-transform:uppercase;margin:12px 0 4px 0;'>Leitura analítica</div><div style='font-size:15px;line-height:1.6;'>{_esc(item['interpretacao'])}</div>" if item["interpretacao"] else ""
         st.markdown(
             f"""
-            <div class="p6-list-box">
-                <div class="p6-evidence-topic">{_esc(head)}</div>
-                {'<div style="height:10px"></div>'.join(body_parts)}
+            <div style="border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.025);
+                        border-radius:12px;padding:12px 14px;margin:10px 0;line-height:1.5;">
+                <div style="font-size:12px;opacity:0.7;margin-bottom:8px;">{_esc(head)}</div>
+                {trecho_html}
+                {leitura_html}
             </div>
             """,
             unsafe_allow_html=True,
@@ -495,7 +516,7 @@ def _render_strategy_detector(detector: Dict[str, Any]) -> None:
     if not (summary or years or changes or timeline or n_events):
         return
 
-    st.markdown("<div class='p6-section-title'>Detector de Mudança Estratégica</div>", unsafe_allow_html=True)
+    st.markdown("**Detector de Mudança Estratégica**")
     _render_metric_cards(
         [
             ("Cobertura temporal", ", ".join([str(y) for y in years]) if years else "—"),
@@ -511,7 +532,7 @@ def _render_strategy_detector(detector: Dict[str, Any]) -> None:
         _render_section_list("Mudanças detectadas", [_strip_html(v) for v in changes], limit=6)
 
     if timeline:
-        st.markdown("<div class='p6-section-title'>Linha do Tempo Estratégica</div>", unsafe_allow_html=True)
+        st.markdown("**Linha do Tempo Estratégica**")
         for item in timeline[:6]:
             if not isinstance(item, dict):
                 continue
@@ -627,23 +648,21 @@ def render_patch6_report(
           box-shadow:0 10px 24px rgba(0,0,0,0.25);
           min-height:110px;
         }
-        .p6-card-label{font-size:12px;opacity:0.7;margin-bottom:6px;letter-spacing:0.3px;}
-        .p6-card-value{font-size:28px;font-weight:900;margin-bottom:6px;}
-        .p6-card-extra{font-size:12px;opacity:0.65;}
-        .p6-section-title{font-size:12px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;opacity:.75;margin:14px 0 6px 0;}
-        .p6-box{border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.03);border-radius:14px;padding:14px 16px;box-shadow:0 10px 24px rgba(0,0,0,0.18);margin-top:8px;line-height:1.55;}
-        .p6-box-text{font-size:15px;line-height:1.65;}
-        .p6-kv{display:grid;grid-template-columns:190px 1fr;gap:10px 14px;align-items:start;}
-        .p6-kv-key{font-size:12px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;opacity:.72;padding-top:2px;}
-        .p6-kv-val{font-size:15px;line-height:1.65;}
-        .p6-list-box{border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.025);border-radius:12px;padding:12px 14px;margin:8px 0;}
-        .p6-list-box ul{margin:0;padding-left:20px;}
-        .p6-list-box li{margin:8px 0;line-height:1.55;}
-        .p6-evidence-head{display:inline-block;font-size:12px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;opacity:.75;margin-bottom:8px;}
-        .p6-evidence-topic{display:inline-block;padding:2px 10px;border-radius:999px;border:1px solid rgba(148,163,184,.45);font-size:11px;font-weight:700;letter-spacing:.3px;opacity:.92;margin-bottom:10px;}
-        .p6-label{font-size:11px;font-weight:800;letter-spacing:.35px;text-transform:uppercase;opacity:.72;display:block;margin-bottom:4px;}
-        .p6-body{font-size:15px;line-height:1.62;}
-        .p6-expander [data-testid="stExpander"] summary p{font-weight:700;}
+        .p6-card-label{
+          font-size:12px;
+          opacity:0.7;
+          margin-bottom:6px;
+          letter-spacing:0.3px;
+        }
+        .p6-card-value{
+          font-size:28px;
+          font-weight:900;
+          margin-bottom:6px;
+        }
+        .p6-card-extra{
+          font-size:12px;
+          opacity:0.65;
+        }
         </style>
         """,
         unsafe_allow_html=True,
