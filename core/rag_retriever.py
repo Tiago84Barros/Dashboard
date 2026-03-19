@@ -42,7 +42,7 @@ def _materiality_bonus(txt: str) -> float:
     if re.search(r"\d+[\.,]?\d*%", txt):
         score += 0.8
     if re.search(r"\d+[\.,]?\d*\s*(milh|milhão|milhoes|milhões|bilh|bilhão|bilhoes|bilhões)", txt):
-        score += 0.9
+        score += 1.1
     return score
 
 
@@ -66,7 +66,7 @@ def _score_text_quality(texto: str, theme: str = "", tipo_doc: str = "", dist: O
         "emissão", "emissao", "rating", "desinvest", "m&a", "capital social"
     ]
     if any(k in txt for k in key_terms_strong):
-        score += 1.8
+        score += 2.2
 
     event_terms = ["aprov", "delibera", "anunci", "conclus", "revis", "renegoci", "reestrutur", "incorpora", "cisão", "aliena"]
     if any(k in txt for k in event_terms):
@@ -93,7 +93,7 @@ def _score_text_quality(texto: str, theme: str = "", tipo_doc: str = "", dist: O
 
     td = (tipo_doc or "").lower()
     if any(k in td for k in ["fato relevante", "comunicado", "itr", "dfp", "formulário de referência", "formulario de referencia", "release"]):
-        score += 0.9
+        score += 1.2
     elif any(k in td for k in ["ata", "aviso", "edital"]):
         score -= 0.2
 
@@ -148,8 +148,8 @@ def _distribute_hits(rows: List[Dict[str, Any]], top_k: int) -> List[Dict[str, A
     seen = set()
     doc_counts: Dict[Any, int] = {}
     year_counts: Dict[str, int] = {}
-    max_per_doc = 2
-    max_per_year_soft = max(4, int(math.ceil(top_k * 0.45)))
+    max_per_doc = 3
+    max_per_year_soft = max(6, int(math.ceil(top_k * 0.55)))
 
     while len(selected) < top_k:
         progressed = False
@@ -206,8 +206,8 @@ def get_topk_chunks_inteligente(ticker: str, top_k: int = 24, months_window: int
             ticker=str(ticker).strip().upper(),
             period_ref=None,
             months_back=int(months_window),
-            top_k_total=max(int(top_k) * 4, 64),
-            per_topic_k=max(10, min(18, int(math.ceil(top_k / 2)))),
+            top_k_total=max(int(top_k) * 6, 96),
+            per_topic_k=max(14, min(24, int(math.ceil(top_k * 0.75)))),
             topics=None,
         )
     doc_ids = [int(h.get('doc_id')) for h in hits if h.get('doc_id') is not None]

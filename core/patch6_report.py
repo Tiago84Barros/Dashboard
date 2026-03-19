@@ -542,13 +542,13 @@ def _render_strategy_detector(detector: Dict[str, Any]) -> None:
             evidences = item.get("evidences") if isinstance(item.get("evidences"), list) else []
             extra = ""
             if evidences:
-                extra = "<br/><span style='opacity:.88;font-size:14px;line-height:1.55;'>" + _esc(" | ".join([_strip_html(x) for x in evidences[:2] if _strip_html(x)])) + "</span>"
+                extra = "<br/><span style='opacity:.90;font-size:15px;line-height:1.75;'>" + _esc(" | ".join([_strip_html(x) for x in evidences[:2] if _strip_html(x)])) + "</span>"
             st.markdown(
                 f"""
                 <div style="border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.025);
                             border-radius:12px;padding:12px 14px;margin:8px 0;line-height:1.45;">
                     <div style="font-size:13px;opacity:0.82;margin-bottom:8px;font-weight:700;">{_esc(year)}</div>
-                    <div style='font-size:18px;font-weight:800;line-height:1.45;margin-bottom:6px;'>{_esc(summary_line or 'Sem resumo temporal consolidado.')}</div>
+                    <div style='font-size:20px;font-weight:800;line-height:1.55;margin-bottom:8px;'>{_esc(summary_line or 'Sem resumo temporal consolidado.')}</div>
                     {extra}
                 </div>
                 """,
@@ -676,18 +676,19 @@ def _render_allocation_section(allocation_rows: List[Dict[str, Any]]) -> None:
         return
     st.markdown("## 💼 Alocação sugerida")
     st.caption("Heurística guiada pela leitura qualitativa: score, confiança e perspectiva relativa de cada ativo dentro do portfólio analisado.")
-    cols = st.columns(min(4, max(1, len(allocation_rows))))
-    for idx, row in enumerate(allocation_rows[:8]):
-        col = cols[idx % len(cols)]
-        col.markdown(
-            f"""
-            <div style="border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.025);border-radius:12px;padding:12px 14px;margin-bottom:8px;">
-              <div style="font-size:12px;opacity:.72;margin-bottom:4px;">{_esc(row['ticker'])}</div>
-              <div style="font-size:26px;font-weight:900;">{row['pct']:.1f}%</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    rows = [allocation_rows[i:i+4] for i in range(0, len(allocation_rows), 4)]
+    for row_group in rows:
+        cols = st.columns(len(row_group))
+        for idx, row in enumerate(row_group):
+            cols[idx].markdown(
+                f"""
+                <div style="border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.025);border-radius:12px;padding:12px 14px;margin-bottom:8px;">
+                  <div style="font-size:12px;opacity:.72;margin-bottom:4px;">{_esc(row['ticker'])}</div>
+                  <div style="font-size:26px;font-weight:900;">{row['pct']:.1f}%</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
 def render_patch6_report(
     tickers: List[str],
@@ -968,7 +969,7 @@ BULLETS:
                     ],
                 )
 
-                _render_evidence_section(company["evidencias"], limit=10)
+                _render_evidence_section(company["evidencias"], limit=14)
                 _render_section_text("Considerações da LLM", company["consideracoes"])
 
         allocation_base = _build_allocation_heuristic(df_latest, company_views)
@@ -1019,15 +1020,13 @@ BULLETS:
     final_allocation: List[Dict[str, Any]] = []
     valid_llm = True
     if alloc_from_llm:
-        acc = []
-        seen = set()
+        base_map = {str(x["ticker"]).upper(): float(x["pct"]) for x in allocation_base}
+        acc_map: Dict[str, float] = {}
         for item in alloc_from_llm:
             if not isinstance(item, dict):
                 continue
             tk = str(item.get("ticker") or "").strip().upper()
-            if not tk or tk in seen:
-                continue
-            if tk not in company_views:
+            if not tk or tk not in company_views:
                 continue
             try:
                 pct = float(item.get("pct"))
@@ -1035,18 +1034,24 @@ BULLETS:
                 continue
             if pct <= 0:
                 continue
-            seen.add(tk)
-            acc.append({"ticker": tk, "pct": pct})
-        if len(acc) == len(company_views):
-            total_pct = sum(x["pct"] for x in acc)
+            acc_map[tk] = pct
+
+        if acc_map:
+            # completa tickers faltantes com a heurística base, em vez de descartar a resposta inteira
+            for tk, pct in base_map.items():
+                if tk not in acc_map:
+                    acc_map[tk] = pct
+
+            total_pct = sum(acc_map.values())
             if total_pct > 0:
-                for x in acc:
-                    x["pct"] = round(x["pct"] / total_pct * 100.0, 1)
-                diff = round(100.0 - sum(x["pct"] for x in acc), 1)
-                if acc and abs(diff) >= 0.1:
-                    acc[0]["pct"] = round(acc[0]["pct"] + diff, 1)
-                acc.sort(key=lambda x: x["pct"], reverse=True)
-                final_allocation = acc
+                final_allocation = [
+                    {"ticker": tk, "pct": round(pct / total_pct * 100.0, 1)}
+                    for tk, pct in acc_map.items()
+                ]
+                diff = round(100.0 - sum(x["pct"] for x in final_allocation), 1)
+                if final_allocation and abs(diff) >= 0.1:
+                    final_allocation[0]["pct"] = round(final_allocation[0]["pct"] + diff, 1)
+                final_allocation.sort(key=lambda x: x["pct"], reverse=True)
             else:
                 valid_llm = False
         else:
