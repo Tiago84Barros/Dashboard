@@ -96,7 +96,7 @@ def _safe_call_llm(llm_client: Any, prompt: str) -> Optional[str]:
             resp = llm_client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
+                temperature=0.0,
             )
             return resp.choices[0].message.content
 
@@ -281,7 +281,7 @@ def _box_html(text: str) -> str:
             padding:14px 16px;
             box-shadow:0 10px 24px rgba(0,0,0,0.18);
             margin-top:8px;
-            line-height:1.6;">
+            line-height:1.5;">
             {_esc(text).replace(chr(10), '<br/>')}
         </div>
     """
@@ -410,11 +410,10 @@ def _render_score_explanations(company: Dict[str, Any]) -> None:
 
 
 def _render_section_text(title: str, text_value: str) -> None:
-    clean = _strip_html(text_value)
-    if not clean:
+    if not _strip_html(text_value):
         return
-    st.markdown(f"### {title}")
-    st.markdown(_box_html(clean), unsafe_allow_html=True)
+    st.markdown(f"**{title}**")
+    st.markdown(_box_html(text_value), unsafe_allow_html=True)
 
 
 def _render_section_list(title: str, values: List[str], limit: Optional[int] = None) -> None:
@@ -423,51 +422,38 @@ def _render_section_list(title: str, values: List[str], limit: Optional[int] = N
         clean_values = clean_values[:limit]
     if not clean_values:
         return
-    st.markdown(f"### {title}")
-    st.markdown(
-        "<div style='border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02);"
-        "border-radius:14px;padding:12px 16px;margin-top:8px;'>"
-        + "".join([f"<div style='margin:8px 0;line-height:1.5;'><span style='font-weight:800;margin-right:8px;'>•</span>{_esc(item)}</div>" for item in clean_values])
-        + "</div>",
-        unsafe_allow_html=True,
-    )
+    st.markdown(f"**{title}**")
+    for item in clean_values:
+        st.markdown(f"<div style='font-size:15px;line-height:1.6;margin:4px 0 4px 0;'>• {_esc(item)}</div>", unsafe_allow_html=True)
 
 
 def _render_key_value_section(title: str, data: Dict[str, Any], label_map: List[tuple[str, str]]) -> None:
     if not data:
         return
-    rows: List[str] = []
+    rendered = False
+    blocks: List[str] = []
     for key, label in label_map:
         value = data.get(key)
         if isinstance(value, str) and _strip_html(value):
-            rows.append(
-                f"<div style='margin:10px 0 14px 0;'>"
-                f"<div style='font-size:12px;opacity:.72;font-weight:700;letter-spacing:.2px;text-transform:uppercase;margin-bottom:4px;'>{_esc(label)}</div>"
-                f"<div style='font-size:16px;line-height:1.72;'>{_esc(value)}</div>"
-                f"</div>"
-            )
+            rendered = True
+            blocks.append(f"**{label}:** {_esc(value)}")
         elif isinstance(value, list):
             clean_values = [_strip_html(v) for v in value if _strip_html(v)]
             if clean_values:
-                joined = "<br/>".join([f"• {_esc(v)}" for v in clean_values])
-                rows.append(
-                    f"<div style='margin:10px 0 14px 0;'>"
-                    f"<div style='font-size:12px;opacity:.72;font-weight:700;letter-spacing:.2px;text-transform:uppercase;margin-bottom:4px;'>{_esc(label)}</div>"
-                    f"<div style='font-size:16px;line-height:1.72;'>{joined}</div>"
-                    f"</div>"
-                )
-    if rows:
-        st.markdown(f"### {title}")
+                rendered = True
+                blocks.append(f"**{label}:** " + " • ".join(_esc(v) for v in clean_values))
+    if rendered:
+        st.markdown(f"**{title}**")
         st.markdown(
             "<div style='border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.03);"
             "border-radius:14px;padding:14px 16px;box-shadow:0 10px 24px rgba(0,0,0,0.18);margin-top:8px;line-height:1.5;'>"
-            + "".join(rows)
+            + "<br/><br/>".join(blocks)
             + "</div>",
             unsafe_allow_html=True,
         )
 
 
-def _render_evidence_section(evidences: List[Any], limit: int = 10) -> None:
+def _render_evidence_section(evidences: List[Any], limit: int = 6) -> None:
     normalized: List[Dict[str, str]] = []
     for item in evidences[:limit]:
         if isinstance(item, dict):
@@ -485,19 +471,20 @@ def _render_evidence_section(evidences: List[Any], limit: int = 10) -> None:
     if not normalized:
         return
 
-    st.markdown("### Evidências")
-    st.caption("Trechos priorizados por relevância material, diversidade temporal e utilidade analítica para a tese.")
+    st.markdown("**Evidências**")
     for item in normalized:
-        head = item["topico"] or "Evidência documental"
-        trecho_html = f"<div style='font-size:12px;opacity:.72;font-weight:700;letter-spacing:.2px;text-transform:uppercase;margin-bottom:4px;'>Trecho selecionado</div><div style='font-size:16px;line-height:1.72;'>{_esc(item['trecho'])}</div>" if item["trecho"] else ""
-        leitura_html = f"<div style='font-size:12px;opacity:.72;font-weight:700;letter-spacing:.2px;text-transform:uppercase;margin:12px 0 4px 0;'>Leitura analítica</div><div style='font-size:16px;line-height:1.72;'>{_esc(item['interpretacao'])}</div>" if item["interpretacao"] else ""
+        head = item["topico"] or "Evidência"
+        body_parts = []
+        if item["trecho"]:
+            body_parts.append(f"**Trecho:** {_esc(item['trecho'])}")
+        if item["interpretacao"]:
+            body_parts.append(f"**Leitura:** {_esc(item['interpretacao'])}")
         st.markdown(
             f"""
             <div style="border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.025);
-                        border-radius:12px;padding:12px 14px;margin:10px 0;line-height:1.5;">
-                <div style="font-size:13px;opacity:0.82;margin-bottom:10px;font-weight:700;">{_esc(head)}</div>
-                {trecho_html}
-                {leitura_html}
+                        border-radius:12px;padding:12px 14px;margin:8px 0;line-height:1.45;">
+                <div style="font-size:12px;opacity:0.7;margin-bottom:6px;">{_esc(head)}</div>
+                {'<br/>'.join(body_parts)}
             </div>
             """,
             unsafe_allow_html=True,
@@ -530,7 +517,7 @@ def _render_strategy_detector(detector: Dict[str, Any]) -> None:
         st.markdown(_box_html(summary), unsafe_allow_html=True)
 
     if changes:
-        _render_section_list("Mudanças detectadas", [_strip_html(v) for v in changes], limit=6)
+        _render_section_list("Mudanças detectadas", [_strip_html(v) for v in changes], limit=10)
 
     if timeline:
         st.markdown("**Linha do Tempo Estratégica**")
@@ -542,13 +529,13 @@ def _render_strategy_detector(detector: Dict[str, Any]) -> None:
             evidences = item.get("evidences") if isinstance(item.get("evidences"), list) else []
             extra = ""
             if evidences:
-                extra = "<br/><span style='opacity:.90;font-size:15px;line-height:1.75;'>" + _esc(" | ".join([_strip_html(x) for x in evidences[:2] if _strip_html(x)])) + "</span>"
+                extra = "<br/><span style='opacity:.75;font-size:12px;'>" + _esc(" | ".join([_strip_html(x) for x in evidences[:2] if _strip_html(x)])) + "</span>"
             st.markdown(
                 f"""
                 <div style="border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.025);
                             border-radius:12px;padding:12px 14px;margin:8px 0;line-height:1.45;">
-                    <div style="font-size:13px;opacity:0.82;margin-bottom:8px;font-weight:700;">{_esc(year)}</div>
-                    <div style='font-size:20px;font-weight:800;line-height:1.55;margin-bottom:8px;'>{_esc(summary_line or 'Sem resumo temporal consolidado.')}</div>
+                    <div style="font-size:13px;opacity:0.80;margin-bottom:6px;font-weight:700;letter-spacing:.2px;">{_esc(year)}</div>
+                    <div style="font-size:16px;line-height:1.55;font-weight:700;">{_esc(summary_line or 'Sem resumo temporal consolidado.')}</div>
                     {extra}
                 </div>
                 """,
@@ -632,59 +619,70 @@ def _portfolio_context_line(row: Any, company: Dict[str, Any]) -> str:
 
 
 
-def _build_allocation_heuristic(df_latest: pd.DataFrame, company_views: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
-    for row in df_latest.itertuples(index=False):
-        company = company_views.get(row.ticker) or {}
-        score = max(15, _safe_int(company.get("score_qualitativo"), 0)) / 100.0
-        conf = max(0.35, _safe_float(company.get("confianca"), 0.0))
-        p = str(getattr(row, "perspectiva_compra", "") or "").strip().lower()
-        factor = 1.15 if p == "forte" else 1.0 if p == "moderada" else 0.8 if p == "fraca" else 0.9
-        raw = score * (0.65 + 0.35 * conf) * factor
-        rows.append({"ticker": row.ticker, "raw": max(raw, 0.01)})
-    total = sum(r["raw"] for r in rows) or 1.0
-    for r in rows:
-        r["pct"] = round((r["raw"] / total) * 100.0, 1)
-    diff = round(100.0 - sum(r["pct"] for r in rows), 1)
-    if rows and abs(diff) >= 0.1:
-        rows[0]["pct"] = round(rows[0]["pct"] + diff, 1)
-    rows.sort(key=lambda x: x["pct"], reverse=True)
+def _allocation_base_from_company(company: Dict[str, Any], perspectiva: str) -> float:
+    score = _safe_int(company.get('score_qualitativo'), 0)
+    conf = _safe_float(company.get('confianca'), 0.0)
+    evid = len(company.get('evidencias') or [])
+    execucao = _pick_text(company.get('execucao') or {}, 'avaliacao_execucao').lower()
+    mult = 1.0
+    p = (perspectiva or '').strip().lower()
+    if p == 'forte':
+        mult *= 1.20
+    elif p == 'moderada':
+        mult *= 1.00
+    elif p == 'fraca':
+        mult *= 0.72
+    if 'forte' in execucao:
+        mult *= 1.08
+    elif 'fraca' in execucao or 'inconsistente' in execucao:
+        mult *= 0.84
+    base = max(0.5, (score / 100.0) * (0.65 + conf) * mult * (1.0 + min(evid, 14) / 40.0))
+    return base
+
+
+def _normalize_allocations(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    total = sum(max(0.0, float(r.get('raw_weight', 0.0))) for r in rows)
+    if total <= 0:
+        n = max(1, len(rows))
+        for r in rows:
+            r['allocation_pct'] = round(100.0 / n, 2)
+        return rows
+    acc = 0.0
+    for i, r in enumerate(rows):
+        pct = round((max(0.0, float(r.get('raw_weight', 0.0))) / total) * 100.0, 2)
+        r['allocation_pct'] = pct
+        acc += pct
+    if rows:
+        rows[-1]['allocation_pct'] = round(rows[-1]['allocation_pct'] + (100.0 - acc), 2)
     return rows
 
 
-def _try_parse_json_loose(text_value: Optional[str]) -> Dict[str, Any]:
-    if not text_value:
-        return {}
-    txt = str(text_value).strip()
-    txt = re.sub(r"^```(?:json)?\s*", "", txt, flags=re.IGNORECASE).strip()
-    txt = re.sub(r"\s*```$", "", txt).strip()
-    try:
-        return json.loads(txt)
-    except Exception:
-        pass
-    m = re.search(r"\{.*\}", txt, flags=re.DOTALL)
-    if not m:
-        return {}
-    try:
-        return json.loads(m.group(0))
-    except Exception:
-        return {}
+def _render_allocation_section(df_latest: pd.DataFrame, company_views: Dict[str, Dict[str, Any]], llm_client: Any) -> None:
+    rows: List[Dict[str, Any]] = []
+    for row in df_latest.itertuples(index=False):
+        company = company_views[row.ticker]
+        rows.append({
+            'ticker': row.ticker,
+            'perspectiva': str(row.perspectiva_compra or '').strip().lower(),
+            'raw_weight': _allocation_base_from_company(company, str(row.perspectiva_compra or '')),
+            'score': _safe_int(company.get('score_qualitativo'), 0),
+            'confianca': _safe_float(company.get('confianca'), 0.0),
+        })
+    rows = sorted(_normalize_allocations(rows), key=lambda x: (-x['allocation_pct'], x['ticker']))
 
-
-def _render_allocation_section(allocation_rows: List[Dict[str, Any]]) -> None:
-    if not allocation_rows:
-        return
-    st.markdown("## 💼 Alocação sugerida")
-    st.caption("Heurística guiada pela leitura qualitativa: score, confiança e perspectiva relativa de cada ativo dentro do portfólio analisado.")
-    rows = [allocation_rows[i:i+4] for i in range(0, len(allocation_rows), 4)]
-    for row_group in rows:
-        cols = st.columns(len(row_group))
-        for idx, row in enumerate(row_group):
-            cols[idx].markdown(
+    st.markdown('## 💼 Alocação Sugerida')
+    st.caption('Distribuição percentual heurística entre todos os ativos cobertos no portfólio. Soma total = 100%.')
+    cols_per_row = 4
+    for i in range(0, len(rows), cols_per_row):
+        row_items = rows[i:i+cols_per_row]
+        cols = st.columns(len(row_items))
+        for col, item in zip(cols, row_items):
+            col.markdown(
                 f"""
-                <div style="border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.025);border-radius:12px;padding:12px 14px;margin-bottom:8px;">
-                  <div style="font-size:12px;opacity:.72;margin-bottom:4px;">{_esc(row['ticker'])}</div>
-                  <div style="font-size:26px;font-weight:900;">{row['pct']:.1f}%</div>
+                <div class="p6-card">
+                  <div class="p6-card-label">{_esc(item['ticker'])}</div>
+                  <div class="p6-card-value" style="font-size:24px">{item['allocation_pct']:.2f}%</div>
+                  <div class="p6-card-extra">{_esc((item['perspectiva'] or '—').upper())} • Score {_fmt_score(item['score'])} • Conf. {_fmt_confidence(item['confianca'])}</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -835,19 +833,17 @@ def render_patch6_report(
             llm_client = None
 
     prompt_exec = f"""
-Você é um analista buy-side disciplinado, com foco em qualidade do negócio, governança, previsibilidade, alocação de capital e margem de segurança.
-Escreva um resumo executivo profissional do portfólio com base SOMENTE nos bullets abaixo.
+Você é um analista sell-side (research). Escreva um resumo executivo profissional do portfólio com base SOMENTE nos bullets abaixo.
 Estruture em 4 blocos curtos:
 1) Leitura geral do portfólio
-2) Principais oportunidades realmente diferenciadas
-3) Principais riscos estruturais
+2) Principais oportunidades
+3) Principais riscos/alertas
 4) Perspectiva base para 12 meses
 
 Regras:
-- linguagem institucional, objetiva e analítica
+- linguagem institucional e objetiva
 - não invente fatos não citados
-- não floreie; interprete os fatos como um investidor profissional
-- use no máximo 14 linhas
+- use no máximo 12 linhas
 - não use tabelas
 
 BULLETS:
@@ -865,6 +861,8 @@ BULLETS:
             f"e score qualitativo médio de **{_fmt_score(score_medio)}**. "
             "Abaixo, os relatórios por empresa mostram evolução estratégica, execução, riscos, mudança estratégica e evidências documentais."
         )
+
+    _render_allocation_section(df_latest, company_views, llm_client)
 
     if show_company_details:
         st.markdown("## 🏢 Relatórios por Empresa")
@@ -969,97 +967,28 @@ BULLETS:
                     ],
                 )
 
-                _render_evidence_section(company["evidencias"], limit=14)
+                _render_evidence_section(company["evidencias"], limit=10)
                 _render_section_text("Considerações da LLM", company["consideracoes"])
-
-        allocation_base = _build_allocation_heuristic(df_latest, company_views)
-    allocation_lines = "\n".join([f"- {x['ticker']}: {x['pct']:.1f}%" for x in allocation_base])
 
     st.markdown("## 🔎 Conclusão Estratégica")
     prompt_conc = f"""
-Você é um investidor fundamentalista disciplinado, com foco em qualidade de negócio, previsibilidade, governança, uso racional do caixa e alocação de capital.
-Escreva uma conclusão estratégica para o portfólio usando SOMENTE os bullets abaixo.
+Escreva uma conclusão estratégica (research) para o portfólio, em até 10 linhas, com foco em:
+- coerência do conjunto do portfólio
+- principais alavancas para melhora ou deterioração
+- recomendação de acompanhamento nos próximos trimestres
 
-Entregue APENAS JSON válido no formato:
-{{
-  "conclusao": "texto em até 12 linhas, analítico e opinativo, sem floreio",
-  "alocacao_sugerida": [
-    {{"ticker": "AAA1", "pct": 12.5}}
-  ]
-}}
-
-Regras:
-- a conclusão deve soar como parecer profissional, não como marketing
-- destaque coerência do conjunto, riscos estruturais, qualidade de gestão e disciplina de alocação de capital
-- use a base de pesos abaixo como âncora quantitativa; você pode fazer pequenos ajustes, mas a soma final deve ser 100%
-- não use linguagem vaga
-
-Base de pesos:
-{allocation_lines}
+Use SOMENTE os bullets abaixo.
 
 BULLETS:
 {contexto_portfolio}
 """
 
     llm_conc = _safe_call_llm(llm_client, prompt_conc)
-    parsed_conc = _try_parse_json_loose(llm_conc)
-    conclusao_text = _strip_html(parsed_conc.get("conclusao") or "")
-    alloc_from_llm = parsed_conc.get("alocacao_sugerida") if isinstance(parsed_conc.get("alocacao_sugerida"), list) else []
-
-    if conclusao_text:
-        st.write(conclusao_text)
-    elif llm_conc and not parsed_conc:
+    if llm_conc:
         st.write(llm_conc)
     else:
         st.write(
-            "A carteira mostra assimetria mais favorável nos nomes com melhor combinação entre score qualitativo, confiança, coerência estratégica e disciplina de capital. "
-            "Os principais pontos de atenção permanecem na execução, no endividamento, na qualidade das mudanças estratégicas e na persistência dos catalisadores documentais. "
-            "O acompanhamento deve priorizar entregas concretas, narrativa consistente e capacidade de transformar planos em retorno ajustado ao risco."
+            "A carteira deve ser acompanhada por gatilhos de execução, evolução da narrativa corporativa, score qualitativo, "
+            "mudanças estratégicas detectadas e sinais de alocação de capital. Reforce o monitoramento de resultados trimestrais, "
+            "consistência entre discurso e entrega, dívida/custo financeiro e manutenção dos catalisadores já visíveis nas evidências do RAG."
         )
-
-    final_allocation: List[Dict[str, Any]] = []
-    valid_llm = True
-    if alloc_from_llm:
-        base_map = {str(x["ticker"]).upper(): float(x["pct"]) for x in allocation_base}
-        acc_map: Dict[str, float] = {}
-        for item in alloc_from_llm:
-            if not isinstance(item, dict):
-                continue
-            tk = str(item.get("ticker") or "").strip().upper()
-            if not tk or tk not in company_views:
-                continue
-            try:
-                pct = float(item.get("pct"))
-            except Exception:
-                continue
-            if pct <= 0:
-                continue
-            acc_map[tk] = pct
-
-        if acc_map:
-            # completa tickers faltantes com a heurística base, em vez de descartar a resposta inteira
-            for tk, pct in base_map.items():
-                if tk not in acc_map:
-                    acc_map[tk] = pct
-
-            total_pct = sum(acc_map.values())
-            if total_pct > 0:
-                final_allocation = [
-                    {"ticker": tk, "pct": round(pct / total_pct * 100.0, 1)}
-                    for tk, pct in acc_map.items()
-                ]
-                diff = round(100.0 - sum(x["pct"] for x in final_allocation), 1)
-                if final_allocation and abs(diff) >= 0.1:
-                    final_allocation[0]["pct"] = round(final_allocation[0]["pct"] + diff, 1)
-                final_allocation.sort(key=lambda x: x["pct"], reverse=True)
-            else:
-                valid_llm = False
-        else:
-            valid_llm = False
-    else:
-        valid_llm = False
-
-    if not valid_llm:
-        final_allocation = allocation_base
-
-    _render_allocation_section(final_allocation)
