@@ -440,7 +440,7 @@ def _subtract_chunks(base: List[str], already_seen: List[str]) -> List[str]:
         out.append(key)
     return out
 
-def _build_temporal_context(sections: Dict[str, List[Any]], per_chunk_chars: int = 1100, total_chars: int = 20000) -> str:
+def _build_temporal_context(sections: Dict[str, List[Any]], per_chunk_chars: int = 1000, total_chars: int = 26000) -> str:
     labels = [
         ("janela_0_12m", "JANELA RECENTE (0-12 meses)"),
         ("janela_12_24m", "JANELA INTERMEDIÁRIA (12-24 meses)"),
@@ -718,10 +718,11 @@ def render() -> None:
     # ------------------------------------------------------------------
 
     # Fonte única de verdade para profundidade temporal.
-    # A atualização documental e a análise qualitativa operam sempre com o
-    # maior histórico-alvo disponível no fluxo padrão: 36 meses.
-    analysis_window_months = 36
-    analysis_period_ref = "36M"
+    # Lemos do session_state para que a janela de evidências fique sempre
+    # sincronizada com o modo de análise selecionado na seção qualitativa.
+    analysis_mode = st.session_state.get("analysis_mode", "Padrão (24 meses)")
+    analysis_window_months = 24 if analysis_mode == "Padrão (24 meses)" else 36
+    analysis_period_ref = "24M" if analysis_window_months == 24 else "36M"
 
     # ------------------------------------------------------------------
     # Ingest + Chunking com logs por ticker
@@ -747,9 +748,9 @@ def render() -> None:
     with col4:
         max_runtime_s = st.number_input("Tempo máx total (s)", min_value=5, max_value=180, value=60, step=5)
 
-    st.caption(f"Atualizar documentos usará automaticamente 36 meses de histórico, que também serão usados na análise qualitativa.")
+    st.caption(f"Atualizar documentos usará automaticamente {analysis_window_months} meses de histórico, conforme o modo selecionado abaixo.")
 
-    only_missing_docs = False
+    only_missing_docs = True
     force_reingest = False
     show_traceback = False
 
@@ -860,21 +861,24 @@ def render() -> None:
             ingest_ran = False
 
             # ---- Ingest
-            # ---- Ingest
             try:
-                ingest_ran = True
-                r = _safe_call(
-                    ingest_fn,
-                    tickers=[tk],
-                    window_months=int(analysis_window_months),
-                    max_docs_per_ticker=int(max_docs),
-                    max_runtime_s=float(max_runtime_s),
-                    max_pdfs_per_ticker=int(max_pdfs),
-                )
-                if isinstance(r, dict):
-                    ingest_report = r
+                if force_reingest or (not only_missing_docs) or (before_docs == 0):
+                    ingest_ran = True
+                    r = _safe_call(
+                        ingest_fn,
+                        tickers=[tk],
+                        window_months=int(analysis_window_months),
+                        max_docs_per_ticker=int(max_docs),
+                        max_runtime_s=float(max_runtime_s),
+                        max_pdfs_per_ticker=int(max_pdfs),
+                    )
+                    # normaliza relatório
+                    if isinstance(r, dict):
+                        ingest_report = r
+                    else:
+                        ingest_report = {"result": str(r)}
                 else:
-                    ingest_report = {"result": str(r)}
+                    ingest_report = {"skipped": True, "reason": "docs já existem"}
             except Exception as e:
                 tb = traceback.format_exc()
                 msg = f"Ingest {type(e).__name__}: {e}"
@@ -887,25 +891,13 @@ def render() -> None:
             mid_chunks = count_chunks(tk)
 
             with log_panel.container():
-                st.write(f"📥 {tk} — ingest concluído | docs agora={mid_docs} | chunks={mid_chunks}")
-                if ingest_report:
-                    st.caption("Relatório ingest (resumo):")
-                    st.json({
-                        k: ingest_report[k]
-                        for k in ingest_report.keys()
-                        if k in {
-                            "matched",
-                            "inserted",
-                            "skipped",
-                            "pdf_fetched",
-                            "pdf_text_ok",
-                            "error",
-                            "result",
-                            "reason",
-                            "stats",
-                            "errors"
-                        }
-                    })
+                if ingest_ran:
+                    st.write(f"📥 {tk} — ingest concluído | docs agora={mid_docs} | chunks={mid_chunks}")
+                    if ingest_report:
+                        st.caption("Relatório ingest (resumo):")
+                        st.json({k: ingest_report[k] for k in ingest_report.keys() if k in {"matched","inserted","skipped","pdf_fetched","pdf_text_ok","error","result","skipped","reason"}})
+                else:
+                    st.write(f"📥 {tk} — ingest não executado (docs já existiam) | docs={mid_docs}")
 
             # Se ainda não tem docs, explique claramente e pule chunking
             if mid_docs == 0:
@@ -1126,10 +1118,28 @@ def render() -> None:
     use_topk_inteligente = True
     debug_topk = False
 
-    # A análise qualitativa usa sempre a máxima cobertura possível por ticker.
-    # O budget adaptativo continua ativo, limitado apenas pelo cap técnico abaixo.
-    TOP_K_CAP = 120
-    st.caption("A análise qualitativa usa automaticamente a máxima quantidade possível de evidências por ticker, respeitando os limites técnicos do retrieval e a janela fixa de 36 meses.")
+    # Controles da análise qualitativa
+    top_k = st.slider(
+        "Máx evidências por ticker (cap)",
+        min_value=20,
+        max_value=120,
+        value=80,
+        step=5,
+        help="O budget adaptativo define quantas evidências usar por ticker. Este controle atua apenas como limite máximo para evitar excesso de contexto."
+    )
+    st.caption("O sistema usa budget adaptativo por ticker. Este valor é apenas o teto máximo de evidências permitidas por empresa.")
+
+    analysis_mode = st.radio(
+        "Modo de análise",
+        options=["Padrão (24 meses)", "Aprofundada (36 meses)"],
+        index=(0 if analysis_mode == "Padrão (24 meses)" else 1),
+        horizontal=True,
+        key="analysis_mode",
+        help="A análise padrão observa os últimos 24 meses. A aprofundada amplia a leitura para 36 meses, favorecendo avaliação de trajetória, consistência do discurso e execução ao longo do tempo."
+    )
+    analysis_window_months = 24 if analysis_mode == "Padrão (24 meses)" else 36
+    analysis_period_ref = "24M" if analysis_window_months == 24 else "36M"
+    st.caption(f"Janela temporal ativa da análise qualitativa: {analysis_window_months} meses. Esta mesma janela é usada na atualização de evidências.")
 
     st.markdown("## 📘 Relatório consolidado do portfólio")
     st.caption("Montado a partir do que está salvo em patch6_runs. Ao rodar a LLM, este relatório é atualizado automaticamente.")
@@ -1268,51 +1278,27 @@ def render() -> None:
         return chunks or [], "fetch_topk_chunks"
 
     def _get_temporal_chunks_for_ticker(t: str, top_k_used: int):
+        # Distribuição balanceada para preservar cobertura real dos 36 meses.
+        recent_cap = max(10, min(int(top_k_used * 0.34), 24))
+        middle_cap = max(10, min(int(top_k_used * 0.33), 24))
+        older_cap = max(8, min(int(top_k_used * 0.33), 24))
+
         recent, fonte_recent, mix_recent = _get_chunks_for_ticker(
             t,
-            top_k_used=max(6, min(top_k_used, 18)),
+            top_k_used=max(recent_cap + 6, 18),
             months_window=12,
             return_debug=True,
         )
 
-        if int(analysis_window_months) <= 24:
-            cumulative_24, fonte_24, mix_24 = _get_chunks_for_ticker(
-                t,
-                top_k_used=max(10, min(top_k_used, 28)),
-                months_window=24,
-                return_debug=True,
-            )
-
-            recent_texts = [x.get("text", "") for x in recent]
-            previous = [x for x in cumulative_24 if x.get("text", "") not in set(recent_texts)]
-
-            sections = {
-                "janela_0_12m": recent[:18],
-                "janela_12_24m": previous[:18],
-                "janela_24_36m": [],
-            }
-
-            audit = {
-                "mix_recent": mix_recent,
-                "mix_total": mix_24,
-                "docs_retrieved": len({x.get("doc_id") for x in cumulative_24 if x.get("doc_id")}),
-                "years": sorted({
-                    str(x.get("data_doc", ""))[:4]
-                    for x in cumulative_24
-                    if str(x.get("data_doc", ""))[:4].isdigit()
-                }),
-            }
-            return sections, fonte_24 or fonte_recent, audit
-
         cumulative_24, fonte_24, mix_24 = _get_chunks_for_ticker(
             t,
-            top_k_used=max(10, min(top_k_used, 24)),
+            top_k_used=max(recent_cap + middle_cap + 8, 32),
             months_window=24,
             return_debug=True,
         )
         cumulative_36, fonte_36, mix_36 = _get_chunks_for_ticker(
             t,
-            top_k_used=max(12, min(top_k_used, 36)),
+            top_k_used=max(recent_cap + middle_cap + older_cap + 10, 48),
             months_window=36,
             return_debug=True,
         )
@@ -1324,9 +1310,9 @@ def render() -> None:
         older = [x for x in cumulative_36 if x.get("text", "") not in cumulative_24_texts]
 
         sections = {
-            "janela_0_12m": recent[:18],
-            "janela_12_24m": middle[:18],
-            "janela_24_36m": older[:18],
+            "janela_0_12m": recent[:recent_cap],
+            "janela_12_24m": middle[:middle_cap],
+            "janela_24_36m": older[:older_cap],
         }
 
         audit = {
@@ -1338,6 +1324,11 @@ def render() -> None:
                 for x in cumulative_36
                 if str(x.get("data_doc", ""))[:4].isdigit()
             }),
+            "requested_distribution": {
+                "0_12m": int(recent_cap),
+                "12_24m": int(middle_cap),
+                "24_36m": int(older_cap),
+            },
         }
         return sections, fonte_36 or fonte_24 or fonte_recent, audit
 
@@ -1359,9 +1350,11 @@ Regras:
 - não faça resumo genérico;
 - não invente fatos;
 - quando houver pouca base, diga isso explicitamente;
-- use no mínimo 5 evidências se o contexto trouxer material suficiente;
+- use no mínimo 8 evidências se o contexto trouxer material suficiente;
 - sempre que possível, atribua ano ou janela temporal às evidências;
-- prefira evidências sobre dívida, capex, dividendos, recompra, guidance, execução, governança e M&A.
+- prefira evidências sobre dívida, capex, dividendos, recompra, guidance, execução, governança e M&A;
+- não use inglês se a evidência original estiver em português;
+- destaque números, valores, percentuais e decisões concretas quando estiverem presentes.
 
 Responda APENAS em JSON válido neste formato:
 
@@ -1424,7 +1417,7 @@ CONTEXTO TEMPORAL:
             try:
                 num_chunks = count_chunks(t)
                 peso = weight_map.get(t, 0.0)
-                budget_info = _calc_budget_topk(num_chunks=num_chunks, peso=peso, cap_max=int(TOP_K_CAP))
+                budget_info = _calc_budget_topk(num_chunks=num_chunks, peso=peso, cap_max=int(top_k))
                 topk_run = int(budget_info['budget_used'])
 
                 temporal_sections, fonte_chunks, retrieval_audit = _get_temporal_chunks_for_ticker(t, topk_run)
@@ -1438,8 +1431,8 @@ CONTEXTO TEMPORAL:
                 topk_retry_used = None
 
                 # Quality Gate: se evidência muito baixa, tenta ampliar budget (respeitando o cap da UI)
-                if total_temporal_evidence < 10 and int(TOP_K_CAP) > int(topk_run):
-                    topk_retry = min(int(TOP_K_CAP), int(topk_run) + 6)
+                if total_temporal_evidence < 10 and int(top_k) > int(topk_run):
+                    topk_retry = min(int(top_k), int(topk_run) + 6)
                     try:
                         temporal_sections2, fonte2, retrieval_audit2 = _get_temporal_chunks_for_ticker(t, topk_retry)
                         total2 = sum(len(v or []) for v in temporal_sections2.values())
@@ -1451,7 +1444,7 @@ CONTEXTO TEMPORAL:
                     except Exception:
                         pass
 
-                contexto = _build_temporal_context(temporal_sections, per_chunk_chars=1100, total_chars=20000)
+                contexto = _build_temporal_context(temporal_sections, per_chunk_chars=1000, total_chars=26000)
                 context_preview = contexto[:4000]
                 try:
                     raw = _call_llm(client, _build_prompt(contexto))
@@ -1493,9 +1486,9 @@ CONTEXTO TEMPORAL:
                     "budget_raw": int(budget_info.get("budget_raw", topk_run)),
                     "top_k_used": int(topk_run),
                     "top_k_retry_used": (int(topk_retry_used) if topk_retry_used is not None else None),
-                    "top_k_cap_ui": int(TOP_K_CAP),
+                    "top_k_cap_ui": int(top_k),
                     "window_months": int(analysis_window_months),
-                    "analysis_mode": "36M fixo",
+                    "analysis_mode": analysis_mode,
                     "docs_retrieved": int((retrieval_audit or {}).get("docs_retrieved", 0)),
                     "context_years": list((retrieval_audit or {}).get("years", []) or []),
                     "retrieval_mix": (retrieval_audit or {}).get("mix_total", {}),
