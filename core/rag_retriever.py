@@ -4,8 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 import math
 import re
-
-from sqlalchemy import text
+from collections import defaultdict
 
 from core.db_loader import get_supabase_engine
 from core.rag_multitopic import retrieve_multitopic_chunks
@@ -21,13 +20,7 @@ class RagHit:
     data_doc: Optional[str] = None
     tipo_doc: str = ""
     strategic_theme: str = ""
-
-
-def _safe_float(x: Any, default: float = 0.0) -> float:
-    try:
-        return float(x)
-    except Exception:
-        return default
+    score: float = 0.0
 
 
 def _extract_year(data_doc: Any) -> str:
@@ -35,244 +28,253 @@ def _extract_year(data_doc: Any) -> str:
     return s if s.isdigit() else ""
 
 
+def _bucket_for_months(data_doc: Any) -> str:
+    s = str(data_doc or "")[:10]
+    if len(s) < 7:
+        return "sem_data"
+    try:
+        year = int(s[:4])
+        month = int(s[5:7])
+        # aproximação robusta sem depender de timezone do container
+        # bucket relativo pelos últimos 36 meses; anos mais recentes tendem a ficar em buckets menores
+        from datetime import datetime
+        now = datetime.utcnow()
+        months_delta = (now.year - year) * 12 + (now.month - month)
+        if months_delta <= 12:
+            return "0_12m"
+        if months_delta <= 24:
+            return "12_24m"
+        if months_delta <= 36:
+            return "24_36m"
+        return "fora_janela"
+    except Exception:
+        return "sem_data"
+
+
+def _tipo_bucket(tipo_doc: str) -> str:
+    blob = (tipo_doc or "").lower()
+    if "fato relevante" in blob or "comunicado" in blob:
+        return "evento"
+    if any(k in blob for k in ["itr", "dfp", "fre", "formulário", "formulario"]):
+        return "financeiro"
+    if any(k in blob for k in ["assembleia", "governança", "governanca", "estatuto", "conselho"]):
+        return "governanca"
+    return "outros"
+
+
 def _materiality_bonus(txt: str) -> float:
     score = 0.0
-    if re.search(r"R\$\s?[\d\.,]+", txt):
-        score += 1.1
-    if re.search(r"\d+[\.,]?\d*%", txt):
-        score += 0.8
-    if re.search(r"\d+[\.,]?\d*\s*(milh|milhão|milhoes|milhões|bilh|bilhão|bilhoes|bilhões)", txt):
-        score += 1.1
+    if re.search(r"R\$\s?[\d\.,]+", txt):
+        score += 1.4
+    if re.search(r"\b\d+[\.,]?\d*%", txt):
+        score += 1.0
+    if re.search(r"\b\d+[\.,]?\d*\s*(milh|milhão|milhoes|milhões|bilh|bilhão|bilhoes|bilhões)\b", txt, flags=re.I):
+        score += 1.2
+    if re.search(r"\b(capex|guidance|payout|dividendos?|jcp|alavanc|dívida|divida|margem|ebitda|covenant|reestrutura|aquisi|cisão|fusão|incorporação|desinvest)\b", txt, flags=re.I):
+        score += 1.4
     return score
 
 
-def _score_text_quality(texto: str, theme: str = "", tipo_doc: str = "", dist: Optional[float] = None, data_doc: str = "") -> float:
-    txt = (texto or "").strip().lower()
+def _strategic_bonus(txt: str, theme: str = "", tipo_doc: str = "") -> float:
+    blob = f"{txt} {theme} {tipo_doc}".lower()
+    kws = [
+        "guidance", "capex", "dividend", "jcp", "payout", "dívida", "divida", "alavanc", "desalavanc",
+        "reestrutura", "aquisi", "fusão", "cisão", "incorp", "joint venture", "governan", "conting",
+        "covenant", "emissão", "debênt", "debent", "margem", "eficiência", "eficiencia", "produção", "producao",
+        "retorno ao acionista", "alocação de capital", "alocacao de capital", "desinvest", "meta", "execução", "execucao"
+    ]
+    return 0.35 * sum(1 for k in kws if k in blob)
+
+
+def _generic_penalty(txt: str) -> float:
+    blob = txt.lower()
+    bad = [
+        "a companhia segue", "busca continuamente", "estratégia de longo prazo", "estrategia de longo prazo",
+        "permanece comprometida", "segue focada", "reforça seu compromisso", "fortalecer sua atuação",
+        "criação de valor no longo prazo", "geração de valor no longo prazo", "geracao de valor no longo prazo"
+    ]
+    return 1.6 if any(k in blob for k in bad) else 0.0
+
+
+def _score_text_quality(texto: str, theme: str = "", tipo_doc: str = "", dist: Optional[float] = None) -> float:
+    txt = (texto or "").strip()
     if not txt:
         return -999.0
     score = 0.0
-    if dist is not None:
-        score -= _safe_float(dist, 9.0) * 1.1
-
-    # materialidade / números
-    if any(ch.isdigit() for ch in txt):
-        score += 1.4
+    if dist is not None and not (isinstance(dist, float) and math.isnan(dist)):
+        score += max(0.0, 3.8 - float(dist))
     score += _materiality_bonus(txt)
-
-    key_terms_strong = [
-        "capex", "dividend", "jcp", "guidance", "endivid", "dívida", "divida", "alavanc",
-        "margem", "receita", "lucro", "ebitda", "recompra", "aquisi", "fusão", "fusao",
-        "governan", "conting", "risco", "covenant", "invest", "payout", "caixa", "debênt", "debent",
-        "emissão", "emissao", "rating", "desinvest", "m&a", "capital social"
-    ]
-    if any(k in txt for k in key_terms_strong):
-        score += 2.2
-
-    event_terms = ["aprov", "delibera", "anunci", "conclus", "revis", "renegoci", "reestrutur", "incorpora", "cisão", "aliena"]
-    if any(k in txt for k in event_terms):
+    score += _strategic_bonus(txt, theme=theme, tipo_doc=tipo_doc)
+    score -= _generic_penalty(txt)
+    n = len(txt)
+    if 220 <= n <= 1500:
         score += 0.9
+    elif 120 <= n < 220:
+        score += 0.3
+    elif n < 100:
+        score -= 1.0
 
-    generic_terms = [
-        "a companhia segue", "busca continuamente", "estratégia de longo prazo",
-        "melhores práticas", "criação de valor", "valor aos acionistas", "fortalecer sua posição",
-        "foco na geração de valor"
-    ]
-    if any(g in txt for g in generic_terms):
-        score -= 1.7
-
-    boilerplate_terms = ["ordem do dia", "convocação", "edital", "ata da assembleia", "presença dos acionistas"]
-    if any(g in txt for g in boilerplate_terms):
-        score -= 0.8
-
-    if len(txt) < 80:
-        score -= 0.9
-    elif len(txt) > 160:
-        score += 0.4
-    elif len(txt) > 260:
-        score += 0.2
-
-    td = (tipo_doc or "").lower()
-    if any(k in td for k in ["fato relevante", "comunicado", "itr", "dfp", "formulário de referência", "formulario de referencia", "release"]):
+    tipo_blob = (tipo_doc or "").lower()
+    if "fato relevante" in tipo_blob:
         score += 1.2
-    elif any(k in td for k in ["ata", "aviso", "edital"]):
-        score -= 0.2
-
-    th = (theme or "").lower().strip() or "geral"
-    if th != 'geral':
-        score += 0.35
-
-    yr = _extract_year(data_doc)
-    if yr:
-        score += 0.1
-
+    elif "comunicado" in tipo_blob:
+        score += 0.8
+    elif any(k in tipo_blob for k in ["itr", "dfp", "fre"]):
+        score += 0.6
     return score
 
 
-def _load_doc_metadata(doc_ids: List[int]) -> Dict[int, Dict[str, Any]]:
-    if not doc_ids:
-        return {}
-    q = text("""
-        select id as doc_id,
-               coalesce(data::text,'') as data_doc,
-               coalesce(tipo,'') as tipo_doc,
-               coalesce(titulo,'') as titulo
-        from public.docs_corporativos
-        where id = any(:ids)
-    """)
-    with get_supabase_engine().connect() as conn:
-        rows = conn.execute(q, {"ids": doc_ids}).mappings().all()
-    return {int(r['doc_id']): dict(r) for r in rows}
+def _take_best(
+    pool: List[RagHit],
+    selected: List[RagHit],
+    used: set,
+    target: int,
+    per_doc: Dict[int, int],
+    per_year: Dict[str, int],
+    per_tipo: Dict[str, int],
+    max_per_doc: int,
+) -> None:
+    for cand in pool:
+        if len(selected) >= target:
+            return
+        key = (cand.doc_id, cand.chunk_text)
+        if key in used:
+            continue
+        if cand.doc_id is not None and per_doc[int(cand.doc_id)] >= max_per_doc:
+            continue
+        year = _extract_year(cand.data_doc) or "sem_ano"
+        tipo = _tipo_bucket(cand.tipo_doc)
+        selected.append(cand)
+        used.add(key)
+        if cand.doc_id is not None:
+            per_doc[int(cand.doc_id)] += 1
+        per_year[year] += 1
+        per_tipo[tipo] += 1
 
 
-def _distribute_hits(rows: List[Dict[str, Any]], top_k: int) -> List[Dict[str, Any]]:
-    if not rows:
-        return []
+def _select_diverse_hits(hits: List[RagHit], top_k: int) -> List[RagHit]:
+    top_k = max(12, int(top_k))
+    year_buckets: Dict[str, List[RagHit]] = defaultdict(list)
+    tipo_buckets: Dict[str, List[RagHit]] = defaultdict(list)
+    by_all: List[RagHit] = list(hits)
 
-    # round-robin por (ano, tema) para evitar concentração excessiva em poucos documentos/anos
-    by_bucket: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
-    for r in rows:
-        year = _extract_year(r.get('data_doc')) or 'sem_ano'
-        topic = (r.get('topic') or r.get('strategic_theme') or 'geral').strip() or 'geral'
-        by_bucket.setdefault((year, topic), []).append(r)
+    for h in hits:
+        year_buckets[_bucket_for_months(h.data_doc)].append(h)
+        tipo_buckets[_tipo_bucket(h.tipo_doc)].append(h)
 
-    for bucket_rows in by_bucket.values():
-        bucket_rows.sort(key=lambda x: x.get('_score', -999.0), reverse=True)
+    for bucket in year_buckets.values():
+        bucket.sort(key=lambda h: (-h.score, str(h.data_doc or ""), -(int(h.doc_id) if h.doc_id else 0), h.chunk_text[:48]))
+    for bucket in tipo_buckets.values():
+        bucket.sort(key=lambda h: (-h.score, str(h.data_doc or ""), -(int(h.doc_id) if h.doc_id else 0), h.chunk_text[:48]))
 
-    ordered_buckets = sorted(
-        by_bucket.keys(),
-        key=lambda b: max([x.get('_score', -999.0) for x in by_bucket[b]] or [-999.0]),
-        reverse=True,
-    )
+    selected: List[RagHit] = []
+    used = set()
+    per_doc: Dict[int, int] = defaultdict(int)
+    per_year: Dict[str, int] = defaultdict(int)
+    per_tipo: Dict[str, int] = defaultdict(int)
 
-    selected: List[Dict[str, Any]] = []
-    seen = set()
-    doc_counts: Dict[Any, int] = {}
-    year_counts: Dict[str, int] = {}
-    max_per_doc = 3
-    max_per_year_soft = max(6, int(math.ceil(top_k * 0.55)))
+    # quota temporal agressiva, mas segura
+    temporal_targets = {
+        "0_12m": 3,
+        "12_24m": 3,
+        "24_36m": 2,
+    }
+    if top_k >= 14:
+        temporal_targets["24_36m"] = 3
+    for bucket_name, target in temporal_targets.items():
+        _take_best(year_buckets.get(bucket_name, []), selected, used, len(selected) + target, per_doc, per_year, per_tipo, max_per_doc=2)
 
-    while len(selected) < top_k:
-        progressed = False
-        for bucket in ordered_buckets:
-            bucket_rows = by_bucket.get(bucket) or []
-            if not bucket_rows:
-                continue
-            cand = bucket_rows.pop(0)
-            key = (cand.get('doc_id'), cand.get('chunk_text'))
-            if key in seen:
-                continue
-            doc_id = cand.get('doc_id')
-            year = _extract_year(cand.get('data_doc')) or 'sem_ano'
-            if doc_counts.get(doc_id, 0) >= max_per_doc:
-                continue
-            if year_counts.get(year, 0) >= max_per_year_soft and len(year_counts) > 1:
-                continue
-            selected.append(cand)
-            seen.add(key)
-            doc_counts[doc_id] = doc_counts.get(doc_id, 0) + 1
-            year_counts[year] = year_counts.get(year, 0) + 1
-            progressed = True
-            if len(selected) >= top_k:
-                break
-        if not progressed:
-            break
+    # quota por tipo documental
+    tipo_targets = {
+        "financeiro": 3,
+        "evento": 3,
+        "governanca": 1,
+    }
+    for bucket_name, target in tipo_targets.items():
+        _take_best(tipo_buckets.get(bucket_name, []), selected, used, len(selected) + target, per_doc, per_year, per_tipo, max_per_doc=2)
 
-    # backfill caso o soft cap por ano tenha reduzido demais o conjunto
-    if len(selected) < top_k:
-        all_rows = sorted(rows, key=lambda x: x.get('_score', -999.0), reverse=True)
-        for cand in all_rows:
-            key = (cand.get('doc_id'), cand.get('chunk_text'))
-            if key in seen:
-                continue
-            doc_id = cand.get('doc_id')
-            if doc_counts.get(doc_id, 0) >= max_per_doc:
-                continue
-            selected.append(cand)
-            seen.add(key)
-            doc_counts[doc_id] = doc_counts.get(doc_id, 0) + 1
-            if len(selected) >= top_k:
-                break
+    # completar com melhores scores, permitindo mais densidade mas mantendo diversidade
+    _take_best(by_all, selected, used, top_k, per_doc, per_year, per_tipo, max_per_doc=3)
 
+    selected.sort(key=lambda h: (-h.score, str(h.data_doc or ""), -(int(h.doc_id) if h.doc_id else 0), h.chunk_text[:48]))
     return selected[:top_k]
 
 
-def get_topk_chunks_inteligente(ticker: str, top_k: int = 24, months_window: int = 36, debug: bool = False) -> List[RagHit]:
-    client = llm_factory.get_llm_client()
+def get_topk_chunks_inteligente(
+    ticker: str,
+    top_k: int = 24,
+    months_window: int = 36,
+    debug: bool = False,
+    period_ref: Optional[str] = None,
+):
     engine = get_supabase_engine()
-    with engine.connect() as conn:
-        hits, _stats = retrieve_multitopic_chunks(
-            conn=conn,
-            llm_client=client,
-            ticker=str(ticker).strip().upper(),
-            period_ref=None,
-            months_back=int(months_window),
-            top_k_total=max(int(top_k) * 6, 96),
-            per_topic_k=max(14, min(24, int(math.ceil(top_k * 0.75)))),
-            topics=None,
-        )
-    doc_ids = [int(h.get('doc_id')) for h in hits if h.get('doc_id') is not None]
-    meta = _load_doc_metadata(doc_ids)
-    enriched: List[Dict[str, Any]] = []
-    for h in hits:
-        doc_id = h.get('doc_id')
-        m = meta.get(int(doc_id)) if doc_id is not None and int(doc_id) in meta else {}
-        theme = str(h.get('topic') or 'geral')
-        row = {
-            'doc_id': doc_id,
-            'ticker': h.get('ticker') or str(ticker).strip().upper(),
-            'chunk_text': str(h.get('chunk_text') or '').strip(),
-            'dist': h.get('dist'),
-            'data_doc': m.get('data_doc', ''),
-            'tipo_doc': m.get('tipo_doc', ''),
-            'strategic_theme': theme,
-            'topic': theme,
-        }
-        row['_score'] = _score_text_quality(
-            row['chunk_text'],
-            theme=theme,
-            tipo_doc=row['tipo_doc'],
-            dist=row['dist'],
-            data_doc=row['data_doc'],
-        )
-        if row['chunk_text']:
-            enriched.append(row)
+    llm_client = llm_factory.get_llm_client()
+    topics = None
+    top_k = max(14, int(top_k))
+    recall_total = max(top_k * 5, 120)
+    per_topic_k = max(18, math.ceil(recall_total / 10))
 
-    selected = _distribute_hits(enriched, int(top_k))
-    selected.sort(key=lambda x: (x.get('_score', -999.0), str(x.get('data_doc') or '')), reverse=True)
-    return [
-        RagHit(
-            doc_id=s.get('doc_id'),
-            ticker=str(s.get('ticker') or ''),
-            chunk_text=str(s.get('chunk_text') or ''),
-            dist=s.get('dist'),
-            data_doc=s.get('data_doc'),
-            tipo_doc=str(s.get('tipo_doc') or ''),
-            strategic_theme=str(s.get('strategic_theme') or ''),
+    with engine.connect() as conn:
+        rows, _stats = retrieve_multitopic_chunks(
+            conn=conn,
+            llm_client=llm_client,
+            ticker=str(ticker).strip().upper(),
+            period_ref=period_ref,
+            months_back=int(months_window),
+            top_k_total=recall_total,
+            per_topic_k=per_topic_k,
+            topics=topics,
         )
-        for s in selected
-    ]
+
+    hits: List[RagHit] = []
+    for row in rows:
+        txt = str(row.get("chunk_text") or "").strip()
+        if not txt:
+            continue
+        hit = RagHit(
+            doc_id=row.get("doc_id"),
+            ticker=str(row.get("ticker") or ticker).strip().upper(),
+            chunk_text=txt,
+            dist=row.get("dist"),
+            data_doc=str(row.get("data_doc") or ""),
+            tipo_doc=str(row.get("tipo_doc") or ""),
+            strategic_theme=str(row.get("topic") or ""),
+        )
+        hit.score = _score_text_quality(
+            hit.chunk_text,
+            theme=hit.strategic_theme,
+            tipo_doc=hit.tipo_doc,
+            dist=hit.dist,
+        )
+        hits.append(hit)
+
+    hits.sort(key=lambda h: (-h.score, str(h.data_doc or ""), -(int(h.doc_id) if h.doc_id else 0), h.chunk_text[:48]))
+    final_hits = _select_diverse_hits(hits, top_k=top_k)
+    return final_hits
 
 
 def summarize_retrieval_mix(hits: List[Any]) -> Dict[str, Any]:
-    out: Dict[str, Any] = {
-        'themes': {},
-        'tipos_doc': {},
-        'years': {},
-        'docs': 0,
-        'chunks': 0,
-    }
-    if not hits:
-        return out
+    years: Dict[str, int] = defaultdict(int)
+    tipos: Dict[str, int] = defaultdict(int)
+    temas: Dict[str, int] = defaultdict(int)
+    buckets: Dict[str, int] = defaultdict(int)
     docs = set()
-    for h in hits:
-        docs.add(getattr(h, 'doc_id', None))
-        out['chunks'] += 1
-        theme = str(getattr(h, 'strategic_theme', '') or 'geral')
-        tipo = str(getattr(h, 'tipo_doc', '') or 'não informado')
-        year = str(getattr(h, 'data_doc', '') or '')[:4]
-        out['themes'][theme] = out['themes'].get(theme, 0) + 1
-        out['tipos_doc'][tipo] = out['tipos_doc'].get(tipo, 0) + 1
-        if year.isdigit():
-            out['years'][year] = out['years'].get(year, 0) + 1
-    out['docs'] = len([d for d in docs if d is not None])
-    return out
+    for h in hits or []:
+        year = _extract_year(getattr(h, "data_doc", "") or "") or "sem_ano"
+        years[year] += 1
+        tipo = str(getattr(h, "tipo_doc", "") or "sem_tipo").strip() or "sem_tipo"
+        tipos[tipo] += 1
+        tema = str(getattr(h, "strategic_theme", "") or "geral").strip() or "geral"
+        temas[tema] += 1
+        buckets[_bucket_for_months(getattr(h, "data_doc", "") or "")] += 1
+        doc_id = getattr(h, "doc_id", None)
+        if doc_id is not None:
+            docs.add(doc_id)
+    return {
+        "total_hits": len(hits or []),
+        "docs": len(docs),
+        "years": dict(sorted(years.items(), reverse=True)),
+        "time_buckets": dict(sorted(buckets.items())),
+        "tipos": dict(sorted(tipos.items(), key=lambda kv: (-kv[1], kv[0]))),
+        "temas": dict(sorted(temas.items(), key=lambda kv: (-kv[1], kv[0]))),
+    }
