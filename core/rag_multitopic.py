@@ -17,7 +17,6 @@ DEFAULT_TOPICS = [
     "eficiência operacional e margens",
     "alocação de capital e retorno ao acionista",
     "reestruturações, M&A e desinvestimentos",
-    "execução operacional e metas estratégicas",
 ]
 
 
@@ -101,21 +100,19 @@ def _sql_search_chunks(
     rows = conn.execute(text(sql), params).fetchall()
     out: List[Dict[str, Any]] = []
     for r in rows:
-        dist = r.dist if hasattr(r, "dist") else r["dist"]
+        dist = r.dist if hasattr(r, 'dist') else r['dist']
         try:
             dist_f = float(dist) if dist is not None else None
         except Exception:
             dist_f = None
-        out.append(
-            {
-                "doc_id": r.doc_id if hasattr(r, "doc_id") else r["doc_id"],
-                "ticker": r.ticker if hasattr(r, "ticker") else r["ticker"],
-                "chunk_text": r.chunk_text if hasattr(r, "chunk_text") else r["chunk_text"],
-                "data_doc": r.data_doc if hasattr(r, "data_doc") else r["data_doc"],
-                "tipo_doc": r.tipo_doc if hasattr(r, "tipo_doc") else r["tipo_doc"],
-                "dist": dist_f,
-            }
-        )
+        out.append({
+            'doc_id': r.doc_id if hasattr(r, 'doc_id') else r['doc_id'],
+            'ticker': r.ticker if hasattr(r, 'ticker') else r['ticker'],
+            'chunk_text': r.chunk_text if hasattr(r, 'chunk_text') else r['chunk_text'],
+            'data_doc': r.data_doc if hasattr(r, 'data_doc') else r['data_doc'],
+            'tipo_doc': r.tipo_doc if hasattr(r, 'tipo_doc') else r['tipo_doc'],
+            'dist': dist_f,
+        })
     return out
 
 
@@ -125,20 +122,20 @@ def retrieve_multitopic_chunks(
     ticker: str,
     period_ref: Optional[str] = None,
     months_back: Optional[int] = 36,
-    top_k_total: int = 96,
-    per_topic_k: int = 20,
+    top_k_total: int = 84,
+    per_topic_k: int = 14,
     topics: Optional[List[str]] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     topics = topics or DEFAULT_TOPICS
-    top_k_total = int(max(24, top_k_total))
-    per_topic_k = int(max(12, per_topic_k))
+    top_k_total = int(max(20, top_k_total))
+    per_topic_k = int(max(10, per_topic_k))
 
     hits_all: List[Dict[str, Any]] = []
     for t in topics:
         query = (
             f"{ticker}. {t}. "
-            f"Foque em fatos materiais, números, guidance, dívida, capex, dividendos, retorno sobre capital, "
-            f"governança, reestruturações, M&A, riscos, mudanças concretas de estratégia e execução versus promessa."
+            f"Foque em fatos materiais, números, guidance, dívida, capex, dividendos, "
+            f"governança, reestruturações, M&A, riscos e mudanças concretas de estratégia."
         )
         emb = embed_text(llm_client, query)
         emb_lit = _to_pgvector_literal(emb)
@@ -151,28 +148,23 @@ def retrieve_multitopic_chunks(
             months_back=months_back,
         )
         for row in rows:
-            row["topic"] = t
+            row['topic'] = t
         hits_all.extend(rows)
 
     seen = set()
     dedup: List[Dict[str, Any]] = []
     for h in hits_all:
-        key = (h.get("doc_id"), h.get("chunk_text"))
+        key = (h.get('doc_id'), h.get('chunk_text'))
         if key in seen:
             continue
         seen.add(key)
         dedup.append(h)
 
     def _dist_key(x: Dict[str, Any]):
-        d = x.get("dist")
+        d = x.get('dist')
         if d is None or (isinstance(d, float) and math.isnan(d)):
-            return (1e9, "", 0, "")
-        return (
-            float(d),
-            str(x.get("data_doc") or ""),
-            -int(x.get("doc_id") or 0),
-            str(x.get("chunk_text") or "")[:32],
-        )
+            return (1e9, '', 0, '')
+        return (float(d), str(x.get('data_doc') or ''), -int(x.get('doc_id') or 0), str(x.get('chunk_text') or '')[:32])
 
     dedup.sort(key=_dist_key)
     final_hits = dedup[:top_k_total]
