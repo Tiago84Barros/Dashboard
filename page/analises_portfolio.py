@@ -1200,7 +1200,7 @@ def render() -> None:
             resp = client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
+                temperature=0.0,
             )
             return resp.choices[0].message.content
     
@@ -1359,9 +1359,10 @@ Regras:
 - não faça resumo genérico;
 - não invente fatos;
 - quando houver pouca base, diga isso explicitamente;
-- use 10 ou mais evidências quando o contexto trouxer material suficiente;
-- priorize evidências com números, guidance, dividendos, capex, dívida, lucratividade, margens, governança, M&A, reestruturações e mudanças concretas de estratégia;
-- as considerações finais devem ser analíticas, opinativas e fundamentadas nos fatos, com linguagem de investidor fundamentalista disciplinado;
+- use entre 10 e 14 evidências quando o contexto trouxer material suficiente;
+- priorize evidências materialmente relevantes, com números, guidance, dividendos, capex, dívida, governança, M&A, reestruturações e mudanças concretas de estratégia;
+- evite repetir evidências redundantes do mesmo documento quando houver alternativas melhores;
+- nas considerações finais, seja analítico, opinativo e consistente, privilegiando a saúde econômica do negócio, a qualidade da gestão, a alocação de capital, a previsibilidade e a margem de segurança;
 - sempre que possível, atribua ano ou janela temporal às evidências;
 - prefira evidências sobre dívida, capex, dividendos, recompra, guidance, execução, governança e M&A.
 
