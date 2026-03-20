@@ -283,7 +283,7 @@ def calcular_patrimonio_selic_macro(
     dm = dm.dropna(subset=["Data"])
     dm = dm.set_index("Data").sort_index()
 
-    if "Selic" not in dm.columns:
+    if "selic" not in dm.columns:
         return pd.DataFrame(columns=["Tesouro Selic"])
 
     datas = sorted(pd.to_datetime(list(datas_aportes)))
