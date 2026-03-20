@@ -57,7 +57,8 @@ if ULTIMO_ANO <= 0:
 
 
 def _anos_processamento() -> Iterable[int]:
-    return range(ANO_INICIAL, ULTIMO_ANO)  # ULTIMO_ANO não incluso
+    # inclui o último ano disponível/desejado
+    return range(ANO_INICIAL, ULTIMO_ANO + 1)
 
 
 # =========================
@@ -467,7 +468,7 @@ def main():
         print("[WARN] Intervalo de anos vazio. Verifique ANO_INICIAL/ULTIMO_ANO.")
         return
 
-    print(f"[INFO] ITR: processando anos {anos[0]}..{anos[-1]} (ULTIMO_ANO não incluso)")
+    print(f"[INFO] ITR: processando anos {anos[0]}..{anos[-1]} (ULTIMO_ANO incluso)")
 
     for ano in anos:
         zip_bytes = _baixar_zip_itr(ano)
