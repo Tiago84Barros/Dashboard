@@ -108,6 +108,11 @@ def _load_empresa_dados(ticker: str, nome: str) -> Optional[EmpresaDados]:
 
     dre = _clean_df_cols(dre)
     mult = _clean_df_cols(mult)
+    if "data" in dre.columns and "Data" not in dre.columns:
+    dre = dre.rename(columns={"data": "Data"})
+
+    if "data" in mult.columns and "Data" not in mult.columns:
+        mult = mult.rename(columns={"data": "Data"})
 
     # normaliza nome da coluna de data sem alterar layout geral da página
     if "data" in dre.columns and "Data" not in dre.columns:
