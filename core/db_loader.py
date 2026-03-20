@@ -53,20 +53,18 @@ def _read_sql_df(sql: str, params: Dict[str, Any] | None = None) -> pd.DataFrame
 
 def _coerce_sort_by_data(df: pd.DataFrame | None, ascending: bool = True) -> pd.DataFrame | None:
     """
-    Normaliza a coluna de data para datetime (aceitando 'Data' ou 'data') e ordena.
+    Normaliza a coluna 'Data' para datetime (se existir) e ordena.
     Mantém comportamento defensivo para DataFrames vazios.
     """
     if df is None or df.empty:
         return df
     df = df.copy()
-    if "Data" in df.columns:
-        df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
-        df = df.dropna(subset=["Data"])
-        df = df.sort_values("Data", ascending=ascending)
-    elif "data" in df.columns:
-        df["data"] = pd.to_datetime(df["data"], errors="coerce")
-        df = df.dropna(subset=["data"])
-        df = df.sort_values("data", ascending=ascending)
+    cols_lower = {str(c).strip().lower(): c for c in df.columns}
+    data_col = cols_lower.get("data")
+    if data_col is not None:
+        df[data_col] = pd.to_datetime(df[data_col], errors="coerce")
+        df = df.dropna(subset=[data_col])
+        df = df.sort_values(data_col, ascending=ascending)
     return df
 
 
@@ -175,7 +173,7 @@ def load_multiplos_from_db(ticker: str) -> pd.DataFrame | None:
             SELECT *
             FROM public.multiplos
             WHERE "Ticker" = :tk1 OR "Ticker" = :tk2
-            ORDER BY "Data" ASC
+            ORDER BY data ASC
             """,
             {"tk1": tk1, "tk2": tk2},
         )
@@ -199,7 +197,7 @@ def load_multiplos_limitado_from_db(ticker: str, limite: int = 250) -> pd.DataFr
             SELECT *
             FROM public.multiplos
             WHERE "Ticker" = :tk1 OR "Ticker" = :tk2
-            ORDER BY "Data" DESC
+            ORDER BY data DESC
             LIMIT :limite
             """,
             {"tk1": tk1, "tk2": tk2, "limite": limite},
@@ -222,7 +220,7 @@ def load_multiplos_tri_from_db(ticker: str) -> pd.DataFrame | None:
             SELECT *
             FROM public.multiplos_TRI
             WHERE "Ticker" = :tk1 OR "Ticker" = :tk2
-            ORDER BY "Data" DESC
+            ORDER BY data DESC
             LIMIT 1
             """,
             {"tk1": tk1, "tk2": tk2},
@@ -247,7 +245,7 @@ def load_multiplos_tri_hist_from_db(ticker: str, limite: int = 250) -> pd.DataFr
             SELECT *
             FROM public.multiplos_TRI
             WHERE "Ticker" = :tk1 OR "Ticker" = :tk2
-            ORDER BY "Data" DESC
+            ORDER BY data DESC
             LIMIT :limite
             """,
             {"tk1": tk1, "tk2": tk2, "limite": limite},
@@ -269,7 +267,7 @@ def load_macro_summary() -> pd.DataFrame | None:
             """
             SELECT *
             FROM public.info_economica
-            ORDER BY "Data" ASC
+            ORDER BY data ASC
             """
         )
         return _coerce_sort_by_data(df, ascending=True)
@@ -288,7 +286,7 @@ def load_macro_mensal() -> pd.DataFrame | None:
             """
             SELECT *
             FROM public.info_economica_mensal
-            ORDER BY "Data" ASC
+            ORDER BY data ASC
             """
         )
         return _coerce_sort_by_data(df, ascending=True)
