@@ -111,11 +111,6 @@ def _safe_macro() -> Optional[pd.DataFrame]:
     if dm is None or dm.empty:
         return None
     dm = _clean_df_cols(dm)
-    # compatibilidade com schema antigo/novo: data -> Data
-    cols_lower = {str(c).strip().lower(): c for c in dm.columns}
-    data_col = cols_lower.get("data")
-    if data_col is not None and data_col != "Data":
-        dm = dm.rename(columns={data_col: "Data"})
     # portfolio.calcular_patrimonio_selic_macro aceita Data em coluna ou índice com nome Data
     if "Data" in dm.columns:
         dm["Data"] = pd.to_datetime(dm["Data"], errors="coerce")
@@ -265,11 +260,27 @@ def render() -> None:
             return n >= 10
         return n > 0
 
-    seg_df = seg_df[seg_df["ticker"].apply(_pass_tipo)]
+    seg_df_filtrado = seg_df[seg_df["ticker"].apply(_pass_tipo)].copy()
+
+    diag_hist = seg_df[["ticker", "nome_empresa"]].drop_duplicates().copy()
+    diag_hist["anos_dre"] = diag_hist["ticker"].map(years_map).fillna(0).astype(int)
+    diag_hist["passa_filtro"] = diag_hist["ticker"].apply(_pass_tipo)
+
+    if seg_df_filtrado.empty:
+        st.warning("Nenhuma empresa atendeu ao perfil selecionado. Exibindo diagnóstico e aplicando fallback para 'Todas'.")
+        st.dataframe(
+            diag_hist.sort_values(["anos_dre", "ticker"], ascending=[False, True]),
+            use_container_width=True,
+        )
+
+        seg_df_filtrado = seg_df[diag_hist["anos_dre"] > 0].copy()
+
+        if seg_df_filtrado.empty:
+            st.warning("Nenhuma empresa do segmento possui DRE carregada no banco.")
+            return
+
+    seg_df = seg_df_filtrado
     n_total_segmento = int(seg_df["ticker"].nunique())  # OPÇÃO 2: tamanho do segmento condicionado ao filtro de histórico (tipo)
-    if seg_df.empty:
-        st.warning("Nenhuma empresa atende ao filtro de histórico escolhido.")
-        return
 
     # ── exibição cards empresas
     st.markdown("### Empresas no filtro")
