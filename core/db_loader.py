@@ -53,16 +53,20 @@ def _read_sql_df(sql: str, params: Dict[str, Any] | None = None) -> pd.DataFrame
 
 def _coerce_sort_by_data(df: pd.DataFrame | None, ascending: bool = True) -> pd.DataFrame | None:
     """
-    Normaliza a coluna 'Data' para datetime (se existir) e ordena.
+    Normaliza a coluna de data para datetime (aceitando 'Data' ou 'data') e ordena.
     Mantém comportamento defensivo para DataFrames vazios.
     """
     if df is None or df.empty:
         return df
+    df = df.copy()
     if "Data" in df.columns:
-        df = df.copy()
         df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
         df = df.dropna(subset=["Data"])
         df = df.sort_values("Data", ascending=ascending)
+    elif "data" in df.columns:
+        df["data"] = pd.to_datetime(df["data"], errors="coerce")
+        df = df.dropna(subset=["data"])
+        df = df.sort_values("data", ascending=ascending)
     return df
 
 
@@ -127,7 +131,7 @@ def load_data_from_db(ticker: str) -> pd.DataFrame | None:
             SELECT *
             FROM public."Demonstracoes_Financeiras"
             WHERE "Ticker" = :tk1 OR "Ticker" = :tk2
-            ORDER BY "Data" ASC
+            ORDER BY data ASC
             """,
             {"tk1": tk1, "tk2": tk2},
         )
@@ -149,7 +153,7 @@ def load_data_tri_from_db(ticker: str) -> pd.DataFrame | None:
             SELECT *
             FROM public."Demonstracoes_Financeiras_TRI"
             WHERE "Ticker" = :tk1 OR "Ticker" = :tk2
-            ORDER BY "Data" ASC
+            ORDER BY data ASC
             """,
             {"tk1": tk1, "tk2": tk2},
         )
