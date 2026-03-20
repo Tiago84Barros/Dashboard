@@ -24,7 +24,7 @@ ULTIMO_ANO = int(os.getenv("ULTIMO_ANO", "0"))  # 0 => auto
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "240"))
 UPSERT_PAGE_SIZE = int(os.getenv("UPSERT_PAGE_SIZE", "5000"))
 
-SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL", "").strip()
+SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL_PG", "").strip()
 
 BASE_DIR = Path(__file__).resolve().parent
 TICKER_PATH = Path(os.getenv("TICKER_PATH", str(BASE_DIR / "cvm_to_ticker.csv")))
