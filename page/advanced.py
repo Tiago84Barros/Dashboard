@@ -67,9 +67,21 @@ def _clean_df_cols(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _count_years_from_dre(dre: Optional[pd.DataFrame]) -> int:
-    if dre is None or dre.empty or "Data" not in dre.columns:
+    if dre is None or dre.empty:
         return 0
-    y = pd.to_datetime(dre["Data"], errors="coerce").dt.year
+
+    dre = _clean_df_cols(dre)
+
+    col_data = None
+    if "Data" in dre.columns:
+        col_data = "Data"
+    elif "data" in dre.columns:
+        col_data = "data"
+
+    if col_data is None:
+        return 0
+
+    y = pd.to_datetime(dre[col_data], errors="coerce").dt.year
     return int(y.dropna().nunique())
 
 
@@ -97,6 +109,12 @@ def _load_empresa_dados(ticker: str, nome: str) -> Optional[EmpresaDados]:
     dre = _clean_df_cols(dre)
     mult = _clean_df_cols(mult)
 
+    # normaliza nome da coluna de data sem alterar layout geral da página
+    if "data" in dre.columns and "Data" not in dre.columns:
+        dre = dre.rename(columns={"data": "Data"})
+    if "data" in mult.columns and "Data" not in mult.columns:
+        mult = mult.rename(columns={"data": "Data"})
+
     # adiciona Ano quando existir Data
     if "Data" in dre.columns and "Ano" not in dre.columns:
         dre["Ano"] = pd.to_datetime(dre["Data"], errors="coerce").dt.year
@@ -111,6 +129,8 @@ def _safe_macro() -> Optional[pd.DataFrame]:
     if dm is None or dm.empty:
         return None
     dm = _clean_df_cols(dm)
+    if "data" in dm.columns and "Data" not in dm.columns:
+        dm = dm.rename(columns={"data": "Data"})
     # portfolio.calcular_patrimonio_selic_macro aceita Data em coluna ou índice com nome Data
     if "Data" in dm.columns:
         dm["Data"] = pd.to_datetime(dm["Data"], errors="coerce")
@@ -260,27 +280,11 @@ def render() -> None:
             return n >= 10
         return n > 0
 
-    seg_df_filtrado = seg_df[seg_df["ticker"].apply(_pass_tipo)].copy()
-
-    diag_hist = seg_df[["ticker", "nome_empresa"]].drop_duplicates().copy()
-    diag_hist["anos_dre"] = diag_hist["ticker"].map(years_map).fillna(0).astype(int)
-    diag_hist["passa_filtro"] = diag_hist["ticker"].apply(_pass_tipo)
-
-    if seg_df_filtrado.empty:
-        st.warning("Nenhuma empresa atendeu ao perfil selecionado. Exibindo diagnóstico e aplicando fallback para 'Todas'.")
-        st.dataframe(
-            diag_hist.sort_values(["anos_dre", "ticker"], ascending=[False, True]),
-            use_container_width=True,
-        )
-
-        seg_df_filtrado = seg_df[diag_hist["anos_dre"] > 0].copy()
-
-        if seg_df_filtrado.empty:
-            st.warning("Nenhuma empresa do segmento possui DRE carregada no banco.")
-            return
-
-    seg_df = seg_df_filtrado
+    seg_df = seg_df[seg_df["ticker"].apply(_pass_tipo)]
     n_total_segmento = int(seg_df["ticker"].nunique())  # OPÇÃO 2: tamanho do segmento condicionado ao filtro de histórico (tipo)
+    if seg_df.empty:
+        st.warning("Nenhuma empresa atende ao filtro de histórico escolhido.")
+        return
 
     # ── exibição cards empresas
     st.markdown("### Empresas no filtro")
