@@ -108,9 +108,19 @@ def _strip_sa(ticker: str) -> str:
 def _safe_year_count_from_dre(dre: pd.DataFrame) -> int:
     if dre is None or dre.empty:
         return 0
-    if "Data" not in dre.columns:
+
+    dre = _clean_columns(dre)
+
+    col_data = None
+    if "Data" in dre.columns:
+        col_data = "Data"
+    elif "data" in dre.columns:
+        col_data = "data"
+
+    if col_data is None:
         return 0
-    years = pd.to_datetime(dre["Data"], errors="coerce").dt.year
+
+    years = pd.to_datetime(dre[col_data], errors="coerce").dt.year
     return int(years.dropna().nunique())
 
 
@@ -139,6 +149,11 @@ def _carregar_empresa(row: dict) -> Optional[EmpresaCarregada]:
 
         mult = _clean_columns(mult)
         dre = _clean_columns(dre)
+
+        if "data" in mult.columns and "Data" not in mult.columns:
+            mult = mult.rename(columns={"data": "Data"})
+        if "data" in dre.columns and "Data" not in dre.columns:
+            dre = dre.rename(columns={"data": "Data"})
 
         # adiciona Ano quando possível (compatível com scoring)
         if "Data" in mult.columns and "Ano" not in mult.columns:
@@ -179,11 +194,14 @@ def _filtrar_tickers_com_min_anos(
 
 
 def _build_macro() -> Optional[pd.DataFrame]:
-    """Retorna macro com coluna 'Data' (não index), igual ao criacao_portfolio (1).py."""
     dados_macro = load_macro_summary()
     if dados_macro is None or dados_macro.empty:
         return None
+
     dados_macro = _clean_columns(dados_macro)
+
+    if "data" in dados_macro.columns and "Data" not in dados_macro.columns:
+        dados_macro = dados_macro.rename(columns={"data": "Data"})
 
     if "Data" not in dados_macro.columns:
         return None
