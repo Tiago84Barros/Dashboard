@@ -111,9 +111,12 @@ def _safe_macro() -> Optional[pd.DataFrame]:
     if dm is None or dm.empty:
         return None
     dm = _clean_df_cols(dm)
+    # compatibilidade com schema antigo/novo: data -> Data
+    cols_lower = {str(c).strip().lower(): c for c in dm.columns}
+    data_col = cols_lower.get("data")
+    if data_col is not None and data_col != "Data":
+        dm = dm.rename(columns={data_col: "Data"})
     # portfolio.calcular_patrimonio_selic_macro aceita Data em coluna ou índice com nome Data
-    if "data" in dm.columns and "Data" not in dm.columns:
-        dm = dm.rename(columns={"data": "Data"})
     if "Data" in dm.columns:
         dm["Data"] = pd.to_datetime(dm["Data"], errors="coerce")
         dm = dm.dropna(subset=["Data"]).sort_values("Data")
