@@ -276,15 +276,24 @@ def calcular_patrimonio_selic_macro(
         return pd.DataFrame(columns=["Tesouro Selic"])
 
     dm = dados_macro.copy()
-    if "Data" not in dm.columns and dm.index.name == "Data":
-        dm = dm.reset_index()
+    dm.columns = [str(c).strip().lower() for c in dm.columns]
 
-    dm["Data"] = pd.to_datetime(dm["Data"], errors="coerce")
-    dm = dm.dropna(subset=["Data"])
-    dm = dm.set_index("Data").sort_index()
+    index_name = "" if dm.index.name is None else str(dm.index.name).strip().lower()
+    if "data" not in dm.columns and index_name == "data":
+        dm = dm.reset_index()
+        dm.columns = [str(c).strip().lower() for c in dm.columns]
+
+    if "data" not in dm.columns:
+        return pd.DataFrame(columns=["Tesouro Selic"])
+
+    dm["data"] = pd.to_datetime(dm["data"], errors="coerce")
+    dm = dm.dropna(subset=["data"])
+    dm = dm.set_index("data").sort_index()
 
     if "selic" not in dm.columns:
         return pd.DataFrame(columns=["Tesouro Selic"])
+
+    dm["selic"] = pd.to_numeric(dm["selic"], errors="coerce")
 
     datas = sorted(pd.to_datetime(list(datas_aportes)))
     df_patr = pd.DataFrame(index=datas, columns=["Tesouro Selic"], dtype="float64")
@@ -292,9 +301,11 @@ def calcular_patrimonio_selic_macro(
     saldo = 0.0
     for d in datas:
         ano_ref = int(d.year)
-        taxa_ano = dm.loc[dm.index.year == ano_ref, "Selic"]
+        taxa_ano = dm.loc[dm.index.year == ano_ref, "selic"]
+        taxa_ano = taxa_ano.dropna()
         if taxa_ano.empty:
-            prev = dm.loc[dm.index <= d, "Selic"]
+            prev = dm.loc[dm.index <= d, "selic"]
+            prev = prev.dropna()
             if prev.empty:
                 continue
             taxa = float(prev.iloc[-1]) / 100.0
