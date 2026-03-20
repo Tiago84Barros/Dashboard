@@ -112,6 +112,8 @@ def _safe_macro() -> Optional[pd.DataFrame]:
         return None
     dm = _clean_df_cols(dm)
     # portfolio.calcular_patrimonio_selic_macro aceita Data em coluna ou índice com nome Data
+    if "data" in dm.columns and "Data" not in dm.columns:
+        dm = dm.rename(columns={"data": "Data"})
     if "Data" in dm.columns:
         dm["Data"] = pd.to_datetime(dm["Data"], errors="coerce")
         dm = dm.dropna(subset=["Data"]).sort_values("Data")
