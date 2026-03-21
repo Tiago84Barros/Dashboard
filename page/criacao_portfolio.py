@@ -835,10 +835,21 @@ def render():
                 # ─────────────────────────────────────────
                 selic_ref = None
                 try:
-                    if dados_macro is not None and not dados_macro.empty and "Selic" in dados_macro.columns:
-                        selic_ref = float(
-                            pd.to_numeric(dados_macro["Selic"], errors="coerce").dropna().iloc[-1]
-                        )
+                    if dados_macro is not None and not dados_macro.empty:
+                        dm = dados_macro.copy()
+                        dm.columns = [str(c).strip() for c in dm.columns]
+                
+                        col_selic = None
+                        if "selic" in [c.lower() for c in dm.columns]:
+                            for c in dm.columns:
+                                if c.lower() == "selic":
+                                    col_selic = c
+                                    break
+                
+                        if col_selic is not None:
+                            s = pd.to_numeric(dm[col_selic], errors="coerce").dropna()
+                            if not s.empty:
+                                selic_ref = float(s.iloc[-1])
                 except Exception:
                     selic_ref = None
 
