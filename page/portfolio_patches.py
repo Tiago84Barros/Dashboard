@@ -144,6 +144,16 @@ def _safe_float(x: Any) -> Optional[float]:
         return None
 
 
+
+def _normalize_df_date_cols(df: Optional[pd.DataFrame]) -> pd.DataFrame:
+    if df is None or not isinstance(df, pd.DataFrame):
+        return pd.DataFrame()
+    out = df.copy()
+    out.columns = [str(c).strip() for c in out.columns]
+    if "data" in out.columns and "Data" not in out.columns:
+        out = out.rename(columns={"data": "Data"})
+    return out
+
 # ─────────────────────────────────────────────────────────────
 # PATCH 1 — Régua de Convicção (sem preço)
 # ─────────────────────────────────────────────────────────────
@@ -1721,14 +1731,15 @@ def render_patch5_desempenho_empresas(
 
     # ------------------------- financial helpers (Supabase) -------------------------
     def _prep_financial(df_fin: pd.DataFrame) -> pd.DataFrame:
-        if df_fin is None or df_fin.empty or "Data" not in df_fin.columns:
+        d = _normalize_df_date_cols(df_fin)
+        if d is None or d.empty or "Data" not in d.columns:
             return pd.DataFrame()
-        d = df_fin.copy()
         d["Data"] = pd.to_datetime(d["Data"], errors="coerce")
         d = d.dropna(subset=["Data"]).sort_values("Data")
         return d
 
     def _annual_series(df_fin: pd.DataFrame, col: str, how: str = "sum") -> pd.Series:
+        df_fin = _normalize_df_date_cols(df_fin)
         if df_fin is None or df_fin.empty or col not in df_fin.columns or "Data" not in df_fin.columns:
             return pd.Series(dtype="float64")
         d = df_fin[["Data", col]].copy()
@@ -1758,9 +1769,9 @@ def render_patch5_desempenho_empresas(
         return float((last_val / first_val) ** (1.0 / years) - 1.0)
 
     def _mean_5y_from_mult(df_mult: pd.DataFrame, col: str) -> float:
-        if df_mult is None or df_mult.empty:
+        d = _normalize_df_date_cols(df_mult)
+        if d is None or d.empty:
             return np.nan
-        d = df_mult.copy()
         if "Data" in d.columns:
             d["Data"] = pd.to_datetime(d["Data"], errors="coerce")
             d = d.dropna(subset=["Data"]).sort_values("Data")
@@ -1783,9 +1794,10 @@ def render_patch5_desempenho_empresas(
 
     def _latest_ratio_dl_ebitda(df_fin: pd.DataFrame) -> float:
         # usa últimos valores disponíveis de Divida_Liquida e EBITDA
+        df_fin = _normalize_df_date_cols(df_fin)
         if df_fin is None or df_fin.empty:
             return np.nan
-        if "Divida_Liquida" not in df_fin.columns or "EBITDA" not in df_fin.columns:
+        if "Divida_Liquida" not in df_fin.columns or "EBITDA" not in df_fin.columns or "Data" not in df_fin.columns:
             return np.nan
         d = df_fin[["Data", "Divida_Liquida", "EBITDA"]].copy()
         d["Data"] = pd.to_datetime(d["Data"], errors="coerce")
@@ -1832,7 +1844,7 @@ def render_patch5_desempenho_empresas(
         nome = _get_nome(tk, empresas_lideres_finais)
         # Supabase
         df_fin = _prep_financial(load_data_from_db(tk))
-        df_mult = load_multiplos_limitado_from_db(tk, limite=60)
+        df_mult = _normalize_df_date_cols(load_multiplos_limitado_from_db(tk, limite=60))
 
         # métricas supabase
         roic_5a = _mean_5y_from_mult(df_mult, "ROIC") if isinstance(df_mult, pd.DataFrame) else np.nan
