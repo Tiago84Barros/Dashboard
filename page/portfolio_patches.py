@@ -1834,8 +1834,8 @@ def render_patch5_desempenho_empresas(
     
         vals = d[col].copy()
     
-        # normalização de escala para campos percentuais armazenados como 12.5 em vez de 0.125
-        if col.upper() in {"ROIC", "ROE", "ROA", "DY", "MARGEM_BRUTA", "MARGEM_EBITDA", "MARGEM_LIQUIDA"}:
+        # Normalização somente para ROIC
+        if col.upper() == "ROIC":
             med = float(vals.abs().median()) if not vals.empty else np.nan
             if np.isfinite(med) and med > 1.0:
                 vals = vals / 100.0
@@ -1850,7 +1850,7 @@ def render_patch5_desempenho_empresas(
         else:
             v = float(d[col].tail(5).mean())
     
-        # sanity check específico para ROIC
+        # sanity check apenas para ROIC
         if col.upper() == "ROIC":
             if not np.isfinite(v):
                 return np.nan
