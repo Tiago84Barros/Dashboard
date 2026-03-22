@@ -11,7 +11,7 @@ from core.db_loader import (
     load_multiplos_from_db,
     load_multiplos_limitado_from_db,
 )
-from core.yf_data import get_price, get_fundamentals_yf
+from core.yf_data import get_price, get_fundamentals_yf, coletar_dividendos
 
 # Histórico de preços (yfinance)
 try:
@@ -70,6 +70,57 @@ def _normalize_date_col(df: pd.DataFrame) -> pd.DataFrame:
     out.columns = [str(c).strip() for c in out.columns]
     if "data" in out.columns and "Data" not in out.columns:
         out = out.rename(columns={"data": "Data"})
+    return out
+
+
+def _get_yf_dividend_series(ticker: str) -> pd.Series:
+    try:
+        div_map = coletar_dividendos([ticker])
+        if isinstance(div_map, dict):
+            keys = [str(ticker).strip().upper().replace('.SA', ''), str(ticker).strip().upper(), f"{str(ticker).strip().upper().replace('.SA', '')}.SA"]
+            for key in keys:
+                s = div_map.get(key)
+                if isinstance(s, pd.Series) and not s.empty:
+                    s = pd.to_numeric(s, errors="coerce").dropna()
+                    s.index = pd.to_datetime(s.index, errors="coerce")
+                    s = s[~s.index.isna()].sort_index()
+                    return s
+    except Exception:
+        pass
+    return pd.Series(dtype="float64")
+
+
+def _enrich_dividendos_from_yf(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
+    """Preenche somente lacunas relevantes de dividendos sem alterar o layout existente."""
+    df = _normalize_date_col(df)
+    if df is None or df.empty or "Data" not in df.columns:
+        return df
+
+    out = df.copy()
+    current = pd.to_numeric(out["Dividendos"], errors="coerce") if "Dividendos" in out.columns else pd.Series(dtype="float64")
+    needs_fill = ("Dividendos" not in out.columns) or current.dropna().empty or (current.fillna(0) <= 0).all()
+    if not needs_fill:
+        return out
+
+    s_div = _get_yf_dividend_series(ticker)
+    if s_div.empty:
+        if "Dividendos" not in out.columns:
+            out["Dividendos"] = np.nan
+        return out
+
+    annual = pd.to_numeric(s_div, errors="coerce").dropna().groupby(s_div.index.year).sum()
+    annual = annual[annual > 0]
+    if annual.empty:
+        if "Dividendos" not in out.columns:
+            out["Dividendos"] = np.nan
+        return out
+
+    out["Data"] = pd.to_datetime(out["Data"], errors="coerce")
+    mapped = out["Data"].dt.year.map(annual.to_dict())
+    if "Dividendos" in out.columns:
+        out["Dividendos"] = current.where(current.notna() & (current > 0), mapped)
+    else:
+        out["Dividendos"] = mapped
     return out
 
 # ─────────────────────────────────────────────────────────────
@@ -704,6 +755,8 @@ def render_empresa_view(ticker: str) -> None:
     df = _normalize_date_col(df)
     if "Data" in df.columns:
         df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
+
+    df = _enrich_dividendos_from_yf(df, ticker)
 
     nome, website = get_company_info(ticker)
     price_now = get_price(ticker)

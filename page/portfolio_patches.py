@@ -1376,55 +1376,82 @@ def _get_net_income_from_supabase(ticker: str) -> Optional[float]:
     return None
 
 
+def _normalize_ratio_value(v: Any) -> Optional[float]:
+    """Normaliza razão percentual para fração quando necessário."""
+    fv = _safe_float(v)
+    if fv is None:
+        return None
+    return fv / 100.0 if abs(fv) > 1.0 else fv
+
+
+def _get_yf_div_series(ticker: str) -> pd.Series:
+    """Retorna série histórica de dividendos por ação via Yahoo para um único ticker."""
+    try:
+        from core.yf_data import coletar_dividendos
+        div_map = coletar_dividendos([ticker])
+        if isinstance(div_map, dict):
+            for key in (_strip_sa(ticker), str(ticker).upper(), f"{_strip_sa(ticker)}.SA"):
+                s = div_map.get(key)
+                if isinstance(s, pd.Series) and not s.empty:
+                    s = pd.to_numeric(s, errors="coerce").dropna()
+                    if not s.empty:
+                        s.index = pd.to_datetime(s.index, errors="coerce")
+                        s = s[~s.index.isna()].sort_index()
+                        return s
+    except Exception:
+        pass
+    return pd.Series(dtype="float64")
+
+
 def _get_dy_from_sources(ticker: str, score_global: pd.DataFrame | None) -> Optional[float]:
+    tk_norm = _strip_sa(ticker)
+
     # 1) score_global (se tiver DY)
     if isinstance(score_global, pd.DataFrame) and (not score_global.empty):
-        for c in ["DY", "Dividend Yield", "DIVIDEND_YIELD", "dividend_yield", "dy"]:
-            if c in score_global.columns and "ticker" in score_global.columns:
-                s = score_global.loc[score_global["ticker"].astype(str).str.upper() == ticker.upper(), c]
-                s = pd.to_numeric(s, errors="coerce").dropna()
-                if not s.empty:
-                    return float(s.iloc[-1])
+        sg = score_global.copy()
+        if "ticker" in sg.columns:
+            sg["ticker"] = sg["ticker"].astype(str).map(_strip_sa)
+            sg = sg[sg["ticker"] == tk_norm]
+            if not sg.empty:
+                for c in ["DY", "Dividend Yield", "DIVIDEND_YIELD", "dividend_yield", "dy"]:
+                    if c in sg.columns:
+                        s = pd.to_numeric(sg[c], errors="coerce").dropna()
+                        if not s.empty:
+                            v = _normalize_ratio_value(s.iloc[-1])
+                            if v is not None:
+                                return v
 
     # 2) dividendos 12m via yfinance (core/yf_data.py)
     try:
-        from core.yf_data import coletar_dividendos
-        div = coletar_dividendos(ticker)
-        if isinstance(div, pd.DataFrame) and (not div.empty):
-            # tenta colunas comuns
-            col = None
-            for c in ["Dividendo", "dividendo", "dividends", "Dividendos", "valor"]:
-                if c in div.columns:
-                    col = c
-                    break
-            if col is not None and "Data" in div.columns:
-                d = div.copy()
-                d["Data"] = pd.to_datetime(d["Data"], errors="coerce")
-                d = d.dropna(subset=["Data"])
-                if not d.empty:
-                    cutoff = pd.Timestamp.today() - pd.Timedelta(days=365)
-                    d = d[d["Data"] >= cutoff]
-                    vals = pd.to_numeric(d[col], errors="coerce").dropna()
-                    if not vals.empty:
-                        # DY = dividendos_12m / preço_atual (precisa de preço)
-                        try:
-                            from core.yf_data import get_price
-                            px = get_price(ticker)
-                            if px and px > 0:
-                                return float(vals.sum() / px)
-                        except Exception:
-                            pass
+        s_div = _get_yf_div_series(ticker)
+        if not s_div.empty:
+            cutoff = pd.Timestamp.today().normalize() - pd.Timedelta(days=365)
+            vals = pd.to_numeric(s_div[s_div.index >= cutoff], errors="coerce").dropna()
+            if not vals.empty:
+                try:
+                    from core.yf_data import get_price
+                    px = get_price(ticker)
+                    if px and px > 0:
+                        return float(vals.sum() / px)
+                except Exception:
+                    pass
     except Exception:
         pass
 
-    # 3) dividendYield (Yahoo info)
+    # 3) dividendYield (Yahoo fundamentals)
     try:
-        from core.yf_data import get_company_info
-        info = get_company_info(ticker)
-        if isinstance(info, dict):
-            dy = info.get("dividendYield", None)
-            if dy is not None:
-                return float(dy)
+        from core.yf_data import get_fundamentals_yf
+        yf = get_fundamentals_yf(ticker)
+        if isinstance(yf, pd.DataFrame) and not yf.empty:
+            row_yf = yf.iloc[0].to_dict()
+        elif isinstance(yf, dict):
+            row_yf = yf
+        else:
+            row_yf = {}
+        for c in ["DY", "dividendYield", "dividend_yield"]:
+            v = _normalize_ratio_value(row_yf.get(c))
+            if v is not None:
+                return v
     except Exception:
         pass
 
@@ -1447,13 +1474,30 @@ def _get_prices_series(ticker: str, precos: Optional[pd.DataFrame]) -> Optional[
     # fallback: baixar via yfinance
     try:
         from core.yf_data import baixar_precos
-        df = baixar_precos([ticker], period="2y")
-        if isinstance(df, pd.DataFrame) and (not df.empty) and ticker in df.columns:
-            s = pd.to_numeric(df[ticker], errors="coerce").dropna()
-            return s if not s.empty else None
+        start_dt = (pd.Timestamp.today().normalize() - pd.DateOffset(years=6)).strftime("%Y-%m-%d")
+        df = baixar_precos([ticker], start=start_dt)
+        if isinstance(df, pd.DataFrame) and (not df.empty):
+            key = _strip_sa(ticker)
+            if key in df.columns:
+                s = pd.to_numeric(df[key], errors="coerce").dropna()
+                return s if not s.empty else None
     except Exception:
         return None
     return None
+
+
+def _get_dividend_cagr_from_yf(ticker: str) -> Optional[float]:
+    s_div = _get_yf_div_series(ticker)
+    if s_div.empty:
+        return None
+    annual = pd.to_numeric(s_div, errors="coerce").dropna().groupby(s_div.index.year).sum()
+    annual = annual[annual > 0]
+    if annual.empty:
+        return None
+    try:
+        return float(_cagr_5y_from_annual(annual))
+    except Exception:
+        return None
 
 
 def _calc_metrics_from_prices(prices: pd.Series) -> Dict[str, Optional[float]]:
@@ -1865,18 +1909,36 @@ def render_patch5_desempenho_empresas(
             div_cagr_5a = _cagr_5y_from_annual(s_div)
             dl_ebitda = _latest_ratio_dl_ebitda(df_fin)
 
-        # fallback de fundamentos (quando Supabase estiver vazio)
-        if (_is_nan(roic_5a) or _is_nan(dy_5a)) or (df_fin.empty):
+        # fallback de fundamentos / dividendos (quando Supabase estiver vazio ou incompleto)
+        if (_is_nan(roic_5a) or _is_nan(dy_5a) or _is_nan(div_cagr_5a)) or (df_fin.empty):
             try:
                 yf = get_fundamentals_yf(tk)
-                if isinstance(yf, dict):
-                    # não assume chaves; só usa se existir e for numérico
-                    if _is_nan(roic_5a):
-                        v = yf.get("ROIC") or yf.get("roic")
-                        roic_5a = float(v) / 100.0 if isinstance(v, (int, float)) and abs(float(v)) > 1 else (float(v) if isinstance(v, (int, float)) else roic_5a)
-                    if _is_nan(dy_5a):
-                        v = yf.get("DY") or yf.get("dividendYield") or yf.get("dividend_yield")
-                        dy_5a = float(v) if isinstance(v, (int, float)) else dy_5a
+                if isinstance(yf, pd.DataFrame) and not yf.empty:
+                    row_yf = yf.iloc[0].to_dict()
+                elif isinstance(yf, dict):
+                    row_yf = yf
+                else:
+                    row_yf = {}
+
+                if _is_nan(roic_5a):
+                    v = row_yf.get("ROIC") or row_yf.get("roic")
+                    if isinstance(v, (int, float)):
+                        roic_5a = float(v) / 100.0 if abs(float(v)) > 1 else float(v)
+
+                if _is_nan(dy_5a):
+                    v = row_yf.get("DY") or row_yf.get("dividendYield") or row_yf.get("dividend_yield")
+                    if isinstance(v, (int, float)):
+                        dy_5a = float(v) / 100.0 if abs(float(v)) > 1 else float(v)
+
+                if _is_nan(dy_5a):
+                    v = _get_dy_from_sources(tk, score_global if isinstance(score_global, pd.DataFrame) else None)
+                    if v is not None:
+                        dy_5a = float(v)
+
+                if _is_nan(div_cagr_5a):
+                    v = _get_dividend_cagr_from_yf(tk)
+                    if v is not None:
+                        div_cagr_5a = float(v)
             except Exception:
                 pass
 
