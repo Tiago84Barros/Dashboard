@@ -1816,25 +1816,48 @@ def render_patch5_desempenho_empresas(
         d = _normalize_df_date_cols(df_mult)
         if d is None or d.empty:
             return np.nan
+    
         if "Data" in d.columns:
             d["Data"] = pd.to_datetime(d["Data"], errors="coerce")
             d = d.dropna(subset=["Data"]).sort_values("Data")
             d["Ano"] = d["Data"].dt.year.astype("Int64")
         elif "Ano" not in d.columns:
             return np.nan
+    
         if col not in d.columns:
             return np.nan
+    
         d[col] = pd.to_numeric(d[col], errors="coerce")
         d = d.dropna(subset=[col])
         if d.empty:
             return np.nan
-        # média dos últimos 5 anos (por ano, média)
+    
+        vals = d[col].copy()
+    
+        # normalização de escala para campos percentuais armazenados como 12.5 em vez de 0.125
+        if col.upper() in {"ROIC", "ROE", "ROA", "DY", "MARGEM_BRUTA", "MARGEM_EBITDA", "MARGEM_LIQUIDA"}:
+            med = float(vals.abs().median()) if not vals.empty else np.nan
+            if np.isfinite(med) and med > 1.0:
+                vals = vals / 100.0
+    
+        d[col] = vals
+    
         if "Ano" in d.columns:
             byy = d.groupby("Ano")[col].mean().dropna().sort_index().tail(5)
             if byy.empty:
                 return np.nan
-            return float(byy.mean())
-        return float(d[col].tail(5).mean())
+            v = float(byy.mean())
+        else:
+            v = float(d[col].tail(5).mean())
+    
+        # sanity check específico para ROIC
+        if col.upper() == "ROIC":
+            if not np.isfinite(v):
+                return np.nan
+            if v < -1.0 or v > 3.0:
+                return np.nan
+    
+        return v
 
     def _latest_ratio_dl_ebitda(df_fin: pd.DataFrame) -> float:
         # usa últimos valores disponíveis de Divida_Liquida e EBITDA
