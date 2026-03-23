@@ -1383,6 +1383,17 @@ def _normalize_ratio_value(v: Any) -> Optional[float]:
         return None
     return fv / 100.0 if abs(fv) > 1.0 else fv
 
+def _is_invalid_dy(v: Any) -> bool:
+    fv = _safe_float(v)
+    if fv is None:
+        return True
+    if not np.isfinite(fv):
+        return True
+    if fv <= 0:
+        return True
+    if fv > 0.50:  # sanity check: >50% provavelmente erro de base/escala
+        return True
+    return False
 
 def _get_yf_div_series(ticker: str) -> pd.Series:
     """Retorna série histórica de dividendos por ação via Yahoo para um único ticker."""
@@ -1406,7 +1417,7 @@ def _get_yf_div_series(ticker: str) -> pd.Series:
 def _get_dy_from_sources(ticker: str, score_global: pd.DataFrame | None) -> Optional[float]:
     tk_norm = _strip_sa(ticker)
 
-    # 1) score_global (se tiver DY)
+    # 1) score_global (se tiver DY), mas ignorando zero/negativo
     if isinstance(score_global, pd.DataFrame) and (not score_global.empty):
         sg = score_global.copy()
         if "ticker" in sg.columns:
@@ -1418,10 +1429,10 @@ def _get_dy_from_sources(ticker: str, score_global: pd.DataFrame | None) -> Opti
                         s = pd.to_numeric(sg[c], errors="coerce").dropna()
                         if not s.empty:
                             v = _normalize_ratio_value(s.iloc[-1])
-                            if v is not None:
+                            if v is not None and v > 0:
                                 return v
 
-    # 2) dividendos 12m via yfinance (core/yf_data.py)
+    # 2) dividendos 12m via yfinance
     try:
         s_div = _get_yf_div_series(ticker)
         if not s_div.empty:
@@ -1432,7 +1443,9 @@ def _get_dy_from_sources(ticker: str, score_global: pd.DataFrame | None) -> Opti
                     from core.yf_data import get_price
                     px = get_price(ticker)
                     if px and px > 0:
-                        return float(vals.sum() / px)
+                        dy = float(vals.sum() / px)
+                        if dy > 0:
+                            return dy
                 except Exception:
                     pass
     except Exception:
@@ -1448,9 +1461,10 @@ def _get_dy_from_sources(ticker: str, score_global: pd.DataFrame | None) -> Opti
             row_yf = yf
         else:
             row_yf = {}
+
         for c in ["DY", "dividendYield", "dividend_yield"]:
             v = _normalize_ratio_value(row_yf.get(c))
-            if v is not None:
+            if v is not None and v > 0:
                 return v
     except Exception:
         pass
@@ -1933,7 +1947,7 @@ def render_patch5_desempenho_empresas(
             dl_ebitda = _latest_ratio_dl_ebitda(df_fin)
 
         # fallback de fundamentos / dividendos (quando Supabase estiver vazio ou incompleto)
-        if (_is_nan(roic_5a) or _is_nan(dy_5a) or _is_nan(div_cagr_5a)) or (df_fin.empty):
+        if (_is_nan(roic_5a) or _is_invalid_dy(dy_5a) or _is_nan(div_cagr_5a)) or (df_fin.empty):
             try:
                 yf = get_fundamentals_yf(tk)
                 if isinstance(yf, pd.DataFrame) and not yf.empty:
@@ -1942,29 +1956,31 @@ def render_patch5_desempenho_empresas(
                     row_yf = yf
                 else:
                     row_yf = {}
-
+        
                 if _is_nan(roic_5a):
                     v = row_yf.get("ROIC") or row_yf.get("roic")
                     if isinstance(v, (int, float)):
                         roic_5a = float(v) / 100.0 if abs(float(v)) > 1 else float(v)
-
-                if _is_nan(dy_5a):
+        
+                if _is_invalid_dy(dy_5a):
                     v = row_yf.get("DY") or row_yf.get("dividendYield") or row_yf.get("dividend_yield")
                     if isinstance(v, (int, float)):
                         dy_5a = float(v) / 100.0 if abs(float(v)) > 1 else float(v)
-
-                if _is_nan(dy_5a):
+        
+                if _is_invalid_dy(dy_5a):
                     v = _get_dy_from_sources(tk, score_global if isinstance(score_global, pd.DataFrame) else None)
-                    if v is not None:
+                    if v is not None and v > 0:
                         dy_5a = float(v)
-
+        
+                if _is_invalid_dy(dy_5a):
+                    dy_5a = np.nan
+        
                 if _is_nan(div_cagr_5a):
                     v = _get_dividend_cagr_from_yf(tk)
                     if v is not None:
                         div_cagr_5a = float(v)
             except Exception:
                 pass
-
         # preços
         price = _get_price_series(tk)
         ret_12m = _retorno_12m(price) if not price.empty else np.nan
