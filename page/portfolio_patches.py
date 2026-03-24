@@ -1811,7 +1811,7 @@ def render_patch5_desempenho_empresas(
         s = (g.sum() if how == "sum" else g.mean()).sort_index()
         return pd.to_numeric(s, errors="coerce").dropna()
 
-    
+    def _cagr_5y_from_annual(s: pd.Series) -> float:
         if s is None or s.empty or s.shape[0] < 2:
             return np.nan
         # pega até 6 anos para formar ~5 intervalos
@@ -1824,6 +1824,63 @@ def render_patch5_desempenho_empresas(
         years = min(years, 5)
         if first_val <= 0 or last_val <= 0 or years <= 0:
             return np.nan
+        return float((last_val / first_val) ** (1.0 / years) - 1.0)
+
+    def _annual_dividend_series(df_fin: pd.DataFrame) -> pd.Series:
+        candidatos = [
+            "Dividendos",
+            "Dividendos_e_JCP",
+            "Dividendos e JCP",
+            "JCP",
+            "Proventos",
+            "Juros_sobre_Capital_Proprio",
+            "Juros sobre Capital Próprio",
+            "Juros sobre Capital Proprio",
+        ]
+
+        acumulada: Optional[pd.Series] = None
+        for col in candidatos:
+            s = _annual_series(df_fin, col, how="sum")
+            if s is None or s.empty:
+                continue
+            s = pd.to_numeric(s, errors="coerce").dropna()
+            if s.empty:
+                continue
+            if acumulada is None or acumulada.empty:
+                acumulada = s.copy()
+            else:
+                acumulada = acumulada.add(s, fill_value=0.0)
+
+        if acumulada is None:
+            return pd.Series(dtype="float64")
+
+        return pd.to_numeric(acumulada, errors="coerce").dropna().sort_index()
+
+    def _dividend_cagr_5y_from_annual(s: pd.Series) -> float:
+        if s is None or s.empty:
+            return np.nan
+
+        s = pd.to_numeric(s, errors="coerce").dropna()
+        if s.empty:
+            return np.nan
+
+        # Dividendos costumam ser irregulares; considera apenas anos positivos
+        s = s[s > 0]
+        if s.shape[0] < 2:
+            return np.nan
+
+        last = s.tail(6)
+        if last.shape[0] < 2:
+            return np.nan
+
+        first_val = float(last.iloc[0])
+        last_val = float(last.iloc[-1])
+        years = max(int(last.index[-1] - last.index[0]), 1)
+        years = min(years, 5)
+
+        if first_val <= 0 or last_val <= 0 or years <= 0:
+            return np.nan
+
         return float((last_val / first_val) ** (1.0 / years) - 1.0)
 
     def _mean_5y_from_mult(df_mult: pd.DataFrame, col: str) -> float:
@@ -1939,11 +1996,11 @@ def render_patch5_desempenho_empresas(
         if not df_fin.empty:
             s_rev = _annual_series(df_fin, "Receita_Liquida", how="sum")
             s_luc = _annual_series(df_fin, "Lucro_Liquido", how="sum")
-            s_div = _annual_series(df_fin, "Dividendos", how="sum")
+            s_div = _annual_dividend_series(df_fin)
 
             cagr_receita_5a = _cagr_5y_from_annual(s_rev)
             cagr_lucro_5a = _cagr_5y_from_annual(s_luc)
-            div_cagr_5a = _cagr_5y_from_annual(s_div)
+            div_cagr_5a = _dividend_cagr_5y_from_annual(s_div)
             dl_ebitda = _latest_ratio_dl_ebitda(df_fin)
 
         # fallback de fundamentos / dividendos (quando Supabase estiver vazio ou incompleto)
@@ -1977,7 +2034,7 @@ def render_patch5_desempenho_empresas(
         
                 if _is_nan(div_cagr_5a):
                     v = _get_dividend_cagr_from_yf(tk)
-                    if v is not None:
+                    if v is not None and np.isfinite(float(v)):
                         div_cagr_5a = float(v)
             except Exception:
                 pass
