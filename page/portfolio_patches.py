@@ -1811,7 +1811,7 @@ def render_patch5_desempenho_empresas(
         s = (g.sum() if how == "sum" else g.mean()).sort_index()
         return pd.to_numeric(s, errors="coerce").dropna()
 
-    def _cagr_5y_from_annual(s: pd.Series) -> float:
+    
         if s is None or s.empty or s.shape[0] < 2:
             return np.nan
         # pega até 6 anos para formar ~5 intervalos
