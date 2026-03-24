@@ -1500,7 +1500,7 @@ def _get_prices_series(ticker: str, precos: Optional[pd.DataFrame]) -> Optional[
     return None
 
 
-def _get_dividend_cagr_from_yf(ticker: str) -> Optional[float]:
+def _get_dividend_slope_from_yf(ticker: str) -> Optional[float]:
     s_div = _get_yf_div_series(ticker)
     if s_div.empty:
         return None
@@ -1509,7 +1509,7 @@ def _get_dividend_cagr_from_yf(ticker: str) -> Optional[float]:
     if annual.empty:
         return None
     try:
-        return float(_cagr_5y_from_annual(annual))
+        return float(_slope_5y_from_annual(annual))
     except Exception:
         return None
 
@@ -1562,13 +1562,13 @@ def render_patch5_desempenho_empresas(
 
     Exibe:
       - ROIC médio (5a) [Supabase múltiplos]
-      - CAGR Receita (5a) [Supabase demonstrações]
-      - Cresc. Lucro (5a) [Supabase demonstrações]
-      - Dividend CAGR (5a) [Supabase demonstrações]
+      - Coef. Regr. Receita (5a) [Supabase demonstrações]
+      - Coef. Regr. Lucro (5a) [Supabase demonstrações]
+      - Coef. Regr. Dividendos (5a) [Supabase demonstrações]
       - DY médio (5a) [Supabase múltiplos]
       - Dívida Líq./EBITDA [Supabase demonstrações]
       - Valorização do preço (12m) [yfinance/preços]
-      - CAGR do preço (5a) [yfinance/preços]
+      - Coef. Regr. do preço (5a) [yfinance/preços]
       - Volatilidade (12m, a.a.) [yfinance/preços]
       - Máxima queda (5a) [yfinance/preços]  (termo em PT, sem “drawdown”)
     """
@@ -1679,6 +1679,11 @@ def render_patch5_desempenho_empresas(
             return "-"
         return f"{float(x):.2f}"
 
+    def _fmt_coef(x) -> str:
+        if _is_nan(x):
+            return "-"
+        return f"{float(x):+.4f}"
+
     def _fmt_short(x) -> str:
         # compacto para "Dívida Líq./EBITDA"
         if _is_nan(x):
@@ -1759,22 +1764,22 @@ def render_patch5_desempenho_empresas(
             return np.nan
         return float(r.std() * np.sqrt(252))
 
-    def _cagr_price_5a(price: pd.Series) -> float:
+    def _slope_price_5a(price: pd.Series) -> float:
         s = pd.to_numeric(price, errors="coerce").dropna()
-        if s.shape[0] < 2:
+        if s.shape[0] < 60:
             return np.nan
-        # tenta 5 anos (~252*5)
-        if s.shape[0] >= 252 * 5 + 1:
-            first = float(s.iloc[-(252 * 5 + 1)])
-            last = float(s.iloc[-1])
-            years = 5.0
-        else:
-            first = float(s.iloc[0])
-            last = float(s.iloc[-1])
-            years = max((s.index[-1] - s.index[0]).days / 365.25, 1e-9)
-        if first <= 0 or last <= 0 or years <= 0:
+        if isinstance(s.index, pd.DatetimeIndex):
+            s = s.sort_index().resample("M").last().dropna()
+        if s.shape[0] < 24:
             return np.nan
-        return float((last / first) ** (1.0 / years) - 1.0)
+        if s.shape[0] > 60:
+            s = s.tail(60)
+        s = s[s > 0]
+        if s.shape[0] < 24:
+            return np.nan
+        x = np.arange(s.shape[0], dtype=float)
+        y = np.log(s.astype(float).values)
+        return _theil_sen_slope(x, y)
 
     def _maxima_queda_5a(price: pd.Series) -> float:
         s = pd.to_numeric(price, errors="coerce").dropna()
@@ -1811,77 +1816,30 @@ def render_patch5_desempenho_empresas(
         s = (g.sum() if how == "sum" else g.mean()).sort_index()
         return pd.to_numeric(s, errors="coerce").dropna()
 
-    def _cagr_5y_from_annual(s: pd.Series) -> float:
-        if s is None or s.empty or s.shape[0] < 2:
-            return np.nan
-        # pega até 6 anos para formar ~5 intervalos
-        last = s.tail(6)
-        if last.shape[0] < 2:
-            return np.nan
-        first_val = float(last.iloc[0])
-        last_val = float(last.iloc[-1])
-        years = max(int(last.index[-1] - last.index[0]), 1)
-        years = min(years, 5)
-        if first_val <= 0 or last_val <= 0 or years <= 0:
-            return np.nan
-        return float((last_val / first_val) ** (1.0 / years) - 1.0)
+    def _theil_sen_slope(x: np.ndarray, y: np.ndarray) -> float:
+        try:
+            from scipy.stats import theilslopes
+            slope = theilslopes(y, x)[0]
+            return float(slope)
+        except Exception:
+            slope, _ = np.polyfit(x, y, 1)
+            return float(slope)
 
-    def _annual_dividend_series(df_fin: pd.DataFrame) -> pd.Series:
-        candidatos = [
-            "Dividendos",
-            "Dividendos_e_JCP",
-            "Dividendos e JCP",
-            "JCP",
-            "Proventos",
-            "Juros_sobre_Capital_Proprio",
-            "Juros sobre Capital Próprio",
-            "Juros sobre Capital Proprio",
-        ]
-
-        acumulada: Optional[pd.Series] = None
-        for col in candidatos:
-            s = _annual_series(df_fin, col, how="sum")
-            if s is None or s.empty:
-                continue
-            s = pd.to_numeric(s, errors="coerce").dropna()
-            if s.empty:
-                continue
-            if acumulada is None or acumulada.empty:
-                acumulada = s.copy()
-            else:
-                acumulada = acumulada.add(s, fill_value=0.0)
-
-        if acumulada is None:
-            return pd.Series(dtype="float64")
-
-        return pd.to_numeric(acumulada, errors="coerce").dropna().sort_index()
-
-    def _dividend_cagr_5y_from_annual(s: pd.Series) -> float:
+    def _slope_5y_from_annual(s: pd.Series) -> float:
         if s is None or s.empty:
             return np.nan
-
         s = pd.to_numeric(s, errors="coerce").dropna()
         if s.empty:
             return np.nan
-
-        # Dividendos costumam ser irregulares; considera apenas anos positivos
         s = s[s > 0]
-        if s.shape[0] < 2:
+        if s.shape[0] < 3:
             return np.nan
-
         last = s.tail(6)
-        if last.shape[0] < 2:
+        if last.shape[0] < 3:
             return np.nan
-
-        first_val = float(last.iloc[0])
-        last_val = float(last.iloc[-1])
-        years = max(int(last.index[-1] - last.index[0]), 1)
-        years = min(years, 5)
-
-        if first_val <= 0 or last_val <= 0 or years <= 0:
-            return np.nan
-
-        return float((last_val / first_val) ** (1.0 / years) - 1.0)
+        x = np.arange(last.shape[0], dtype=float)
+        y = np.log(last.astype(float).values)
+        return _theil_sen_slope(x, y)
 
     def _mean_5y_from_mult(df_mult: pd.DataFrame, col: str) -> float:
         d = _normalize_df_date_cols(df_mult)
@@ -1988,23 +1946,23 @@ def render_patch5_desempenho_empresas(
         roic_5a = _mean_5y_from_mult(df_mult, "ROIC") if isinstance(df_mult, pd.DataFrame) else np.nan
         dy_5a = _mean_5y_from_mult(df_mult, "DY") if isinstance(df_mult, pd.DataFrame) else np.nan
 
-        cagr_receita_5a = np.nan
-        cagr_lucro_5a = np.nan
-        div_cagr_5a = np.nan
+        slope_receita_5a = np.nan
+        slope_lucro_5a = np.nan
+        slope_dividendos_5a = np.nan
         dl_ebitda = np.nan
 
         if not df_fin.empty:
             s_rev = _annual_series(df_fin, "Receita_Liquida", how="sum")
             s_luc = _annual_series(df_fin, "Lucro_Liquido", how="sum")
-            s_div = _annual_dividend_series(df_fin)
+            s_div = _annual_series(df_fin, "Dividendos", how="sum")
 
-            cagr_receita_5a = _cagr_5y_from_annual(s_rev)
-            cagr_lucro_5a = _cagr_5y_from_annual(s_luc)
-            div_cagr_5a = _dividend_cagr_5y_from_annual(s_div)
+            slope_receita_5a = _slope_5y_from_annual(s_rev)
+            slope_lucro_5a = _slope_5y_from_annual(s_luc)
+            slope_dividendos_5a = _slope_5y_from_annual(s_div)
             dl_ebitda = _latest_ratio_dl_ebitda(df_fin)
 
         # fallback de fundamentos / dividendos (quando Supabase estiver vazio ou incompleto)
-        if (_is_nan(roic_5a) or _is_invalid_dy(dy_5a) or _is_nan(div_cagr_5a)) or (df_fin.empty):
+        if (_is_nan(roic_5a) or _is_invalid_dy(dy_5a) or _is_nan(slope_dividendos_5a)) or (df_fin.empty):
             try:
                 yf = get_fundamentals_yf(tk)
                 if isinstance(yf, pd.DataFrame) and not yf.empty:
@@ -2032,16 +1990,16 @@ def render_patch5_desempenho_empresas(
                 if _is_invalid_dy(dy_5a):
                     dy_5a = np.nan
         
-                if _is_nan(div_cagr_5a):
-                    v = _get_dividend_cagr_from_yf(tk)
-                    if v is not None and np.isfinite(float(v)):
-                        div_cagr_5a = float(v)
+                if _is_nan(slope_dividendos_5a):
+                    v = _get_dividend_slope_from_yf(tk)
+                    if v is not None:
+                        slope_dividendos_5a = float(v)
             except Exception:
                 pass
         # preços
         price = _get_price_series(tk)
         ret_12m = _retorno_12m(price) if not price.empty else np.nan
-        cagr_preco_5a = _cagr_price_5a(price) if not price.empty else np.nan
+        slope_preco_5a = _slope_price_5a(price) if not price.empty else np.nan
         vol_12m = _vol_12m(price) if not price.empty else np.nan
         max_queda_5a = _maxima_queda_5a(price) if not price.empty else np.nan
 
@@ -2052,13 +2010,13 @@ def render_patch5_desempenho_empresas(
                 ticker=tk,
                 nome=nome,
                 roic_5a=roic_5a,
-                cagr_receita_5a=cagr_receita_5a,
-                cagr_lucro_5a=cagr_lucro_5a,
-                div_cagr_5a=div_cagr_5a,
+                slope_receita_5a=slope_receita_5a,
+                slope_lucro_5a=slope_lucro_5a,
+                slope_dividendos_5a=slope_dividendos_5a,
                 dy_5a=dy_5a,
                 dl_ebitda=dl_ebitda,
                 ret_12m=ret_12m,
-                cagr_preco_5a=cagr_preco_5a,
+                slope_preco_5a=slope_preco_5a,
                 vol_12m=vol_12m,
                 max_queda_5a=max_queda_5a,
             )
@@ -2080,25 +2038,25 @@ def render_patch5_desempenho_empresas(
     w = {
         "roic_5a": 0.18,
         "dy_5a": 0.16,
-        "div_cagr_5a": 0.10,
-        "cagr_receita_5a": 0.12,
-        "cagr_lucro_5a": 0.12,
+        "slope_dividendos_5a": 0.10,
+        "slope_receita_5a": 0.12,
+        "slope_lucro_5a": 0.12,
         "dl_ebitda": 0.10,      # menor melhor
         "vol_12m": 0.10,        # menor melhor
         "max_queda_5a": 0.08,   # menor (mais negativo) pior => invert=True usando o próprio valor (negativo)
-        "cagr_preco_5a": 0.04,
+        "slope_preco_5a": 0.04,
     }
 
     score_ord = (
         _pct_rank(dfm["roic_5a"]) * w["roic_5a"]
         + _pct_rank(dfm["dy_5a"]) * w["dy_5a"]
-        + _pct_rank(dfm["div_cagr_5a"]) * w["div_cagr_5a"]
-        + _pct_rank(dfm["cagr_receita_5a"]) * w["cagr_receita_5a"]
-        + _pct_rank(dfm["cagr_lucro_5a"]) * w["cagr_lucro_5a"]
+        + _pct_rank(dfm["slope_dividendos_5a"]) * w["slope_dividendos_5a"]
+        + _pct_rank(dfm["slope_receita_5a"]) * w["slope_receita_5a"]
+        + _pct_rank(dfm["slope_lucro_5a"]) * w["slope_lucro_5a"]
         + _pct_rank(dfm["dl_ebitda"], invert=True) * w["dl_ebitda"]
         + _pct_rank(dfm["vol_12m"], invert=True) * w["vol_12m"]
         + _pct_rank(dfm["max_queda_5a"], invert=True) * w["max_queda_5a"]
-        + _pct_rank(dfm["cagr_preco_5a"]) * w["cagr_preco_5a"]
+        + _pct_rank(dfm["slope_preco_5a"]) * w["slope_preco_5a"]
     )
 
     dfm["_ord"] = score_ord.fillna(-1.0)
@@ -2143,10 +2101,10 @@ def render_patch5_desempenho_empresas(
         )
         c3.markdown(
             f"""
-            <div class="cf-card {_cls_posneg(r['div_cagr_5a'])}">
-                <div class="cf-card-label">Dividend CAGR (5a)</div>
-                <div class="cf-card-value">{_fmt_pct(r['div_cagr_5a'])}</div>
-                <div class="cf-card-extra">Crescimento composto dos dividendos.</div>
+            <div class="cf-card {_cls_posneg(r['slope_dividendos_5a'])}">
+                <div class="cf-card-label">Coef. Regr. Dividendos (5a)</div>
+                <div class="cf-card-value">{_fmt_coef(r['slope_dividendos_5a'])}</div>
+                <div class="cf-card-extra">Inclinação log-linear robusta dos dividendos.</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -2166,20 +2124,20 @@ def render_patch5_desempenho_empresas(
         c1, c2, c3, c4 = st.columns(4)
         c1.markdown(
             f"""
-            <div class="cf-card {_cls_posneg(r['cagr_receita_5a'])}">
-                <div class="cf-card-label">CAGR Receita (5a)</div>
-                <div class="cf-card-value">{_fmt_pct(r['cagr_receita_5a'])}</div>
-                <div class="cf-card-extra">Crescimento composto da receita.</div>
+            <div class="cf-card {_cls_posneg(r['slope_receita_5a'])}">
+                <div class="cf-card-label">Coef. Regr. Receita (5a)</div>
+                <div class="cf-card-value">{_fmt_coef(r['slope_receita_5a'])}</div>
+                <div class="cf-card-extra">Inclinação log-linear robusta da receita.</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
         c2.markdown(
             f"""
-            <div class="cf-card {_cls_posneg(r['cagr_lucro_5a'])}">
-                <div class="cf-card-label">Cresc. Lucro (5a)</div>
-                <div class="cf-card-value">{_fmt_pct(r['cagr_lucro_5a'])}</div>
-                <div class="cf-card-extra">Crescimento composto do lucro.</div>
+            <div class="cf-card {_cls_posneg(r['slope_lucro_5a'])}">
+                <div class="cf-card-label">Coef. Regr. Lucro (5a)</div>
+                <div class="cf-card-value">{_fmt_coef(r['slope_lucro_5a'])}</div>
+                <div class="cf-card-extra">Inclinação log-linear robusta do lucro.</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -2196,10 +2154,10 @@ def render_patch5_desempenho_empresas(
         )
         c4.markdown(
             f"""
-            <div class="cf-card {_cls_posneg(r['cagr_preco_5a'])}">
-                <div class="cf-card-label">CAGR do preço (5a)</div>
-                <div class="cf-card-value">{_fmt_pct(r['cagr_preco_5a'])}</div>
-                <div class="cf-card-extra">Crescimento composto do preço.</div>
+            <div class="cf-card {_cls_posneg(r['slope_preco_5a'])}">
+                <div class="cf-card-label">Coef. Regr. do preço (5a)</div>
+                <div class="cf-card-value">{_fmt_coef(r['slope_preco_5a'])}</div>
+                <div class="cf-card-extra">Inclinação log-linear robusta do preço.</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -2241,7 +2199,7 @@ def render_patch5_desempenho_empresas(
         st.markdown("<hr style='border:0;border-top:1px solid rgba(255,255,255,.08);margin: 8px 0 14px 0;'>", unsafe_allow_html=True)
 
     st.caption(
-        "Notas: CAGR = taxa anual composta. Volatilidade 12m é anualizada (≈252 pregões). "
+        "Notas: coeficientes de regressão são inclinações log-lineares robustas (Theil-Sen). Volatilidade 12m é anualizada (≈252 pregões). "
         "Máxima queda (5a) é o pior recuo do preço no período. "
         "Quando faltarem dados no banco, o patch usa fallback do yfinance."
     )
