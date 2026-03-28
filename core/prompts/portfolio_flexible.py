@@ -21,4 +21,6 @@ Regras:
 - seja claro, técnico e útil
 - preencha todos os campos do schema
 - retorne somente JSON válido
+- quando um indicador anual vier de ano ainda em curso, interprete esse valor como acumulado até o mês de referência, e não como fechamento do ano
+- use isso especialmente para IPCA, evitando tratar dados parciais como se fossem o ano encerrado
 """
