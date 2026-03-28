@@ -120,9 +120,7 @@ def build_macro_context(
     mensal: Dict[str, Any],
     anual: Dict[str, Any],
 ) -> Dict[str, Any]:
-    mensal_data = _to_date(mensal.get("data"))
     anual_data = _to_date(anual.get("data"))
-
     ipca_annual_meta = _classify_annual_indicator(anual_data, "ipca")
 
     return {
@@ -150,4 +148,9 @@ def build_macro_context(
             "ipca_reference_month": ipca_annual_meta["reference_month"],
             "icc": _to_float(anual.get("ICC")),
             "pib": _to_float(anual.get("PIB")),
-            "balanca_comercial": _to_float(an
+            "balanca_comercial": _to_float(anual.get("BALANÇA_COMERCIAL")),
+            "icc_delta": _to_float(anual.get("ICC_delta")),
+            "divida_publica": _to_float(anual.get("Divida_Publica")),
+            "juros_real_ex_ante": _to_float(anual.get("Juros_Real_ExAnte")),
+        },
+    }

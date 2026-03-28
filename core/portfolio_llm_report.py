@@ -14,20 +14,34 @@ PORTFOLIO_REPORT_SCHEMA_HINT = json.dumps(
         "analytical_basis": "string",
         "executive_summary": "string",
         "portfolio_identity": "string",
+        "current_market_context": "string",
+        "macro_reading": "string",
+        "international_risk_links": ["string"],
+        "macro_scenario_dependencies": ["string"],
+        "portfolio_vulnerabilities_under_current_regime": ["string"],
+        "what_the_portfolio_is_implicitly_betting_on": ["string"],
+        "portfolio_concentration_analysis": "string",
+        "allocation_adjustment_rationale": "string",
         "key_strengths": ["string"],
         "key_weaknesses": ["string"],
-        "macro_reading": "string",
         "hidden_risks": ["string"],
         "asset_roles": [
             {
                 "ticker": "string",
                 "role": "string",
-                "rationale": "string",
+                "rationale": "string"
+            }
+        ],
+        "suggested_allocations": [
+            {
+                "ticker": "string",
+                "suggested_range": "string",
+                "rationale": "string"
             }
         ],
         "misalignments": ["string"],
         "action_plan": ["string"],
-        "final_insight": "string",
+        "final_insight": "string"
     },
     ensure_ascii=False,
     indent=2,
