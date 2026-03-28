@@ -19,4 +19,5 @@ Regras:
 - aponte forças, fragilidades, desalinhamentos e plano de ação
 - preencha todos os campos do schema
 - retorne somente JSON válido
+- quando um indicador anual vier de ano ainda em curso, interprete esse valor como acumulado até o mês de referência, e não como fechamento do ano
 """
