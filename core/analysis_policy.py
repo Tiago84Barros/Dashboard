@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Literal
 
@@ -18,25 +16,24 @@ class AnalysisPolicy:
 
 
 def get_analysis_policy(mode: str) -> AnalysisPolicy:
-    mode_norm = str(mode or "rigid").strip().lower()
-
-    if mode_norm == "flexible":
+    mode = (mode or "").strip().lower()
+    if mode == "rigid":
         return AnalysisPolicy(
-            mode="flexible",
-            label="Análise Flexível",
-            allow_external_inference=True,
-            require_strict_grounding=False,
-            allow_macro_generalization=True,
+            mode="rigid",
+            label="Análise Rígida",
+            allow_external_inference=False,
+            require_strict_grounding=True,
+            allow_macro_generalization=False,
             allow_behavioral_inference=True,
-            temperature=0.30,
+            temperature=0.15,
         )
 
     return AnalysisPolicy(
-        mode="rigid",
-        label="Análise Rígida",
-        allow_external_inference=False,
-        require_strict_grounding=True,
-        allow_macro_generalization=False,
+        mode="flexible",
+        label="Análise Flexível",
+        allow_external_inference=True,
+        require_strict_grounding=False,
+        allow_macro_generalization=True,
         allow_behavioral_inference=True,
-        temperature=0.15,
+        temperature=0.30,
     )

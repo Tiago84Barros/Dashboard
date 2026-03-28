@@ -4,8 +4,8 @@ import json
 from typing import Any, Dict, List
 
 from core.analysis_policy import AnalysisPolicy
-from core.prompts.portfolio_flexible import PROMPT_FLEXIBLE
 from core.prompts.portfolio_rigid import PROMPT_RIGID
+from core.prompts.portfolio_flexible import PROMPT_FLEXIBLE
 
 
 PORTFOLIO_REPORT_SCHEMA_HINT = json.dumps(
