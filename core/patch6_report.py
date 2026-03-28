@@ -975,61 +975,62 @@ def render_patch6_report(
     contexto_portfolio = "\n".join(contexto_lines)
 
 
-llm_client = None
-portfolio_report = None
-if llm_factory is not None:
+    llm_client = None
+    portfolio_report = None
+    if llm_factory is not None:
+        try:
+            llm_client = llm_factory.get_llm_client()
+        except Exception:
+            llm_client = None
+
+    macro_context: Dict[str, Any] = {}
+    market_context: Dict[str, Any] = {}
     try:
-        llm_client = llm_factory.get_llm_client()
+        macro_context = load_latest_macro_context()
+        market_context = build_market_context(macro_context)
     except Exception:
-        llm_client = None
+        macro_context = {}
+        market_context = {}
 
-macro_context: Dict[str, Any] = {}
-market_context: Dict[str, Any] = {}
-try:
-    macro_context = load_latest_macro_context()
-    market_context = build_market_context(macro_context)
-except Exception:
-    macro_context = {}
-    market_context = {}
+    allocation_rows = _build_allocation_rows(df_latest, company_views)
 
-if llm_client is not None:
-    try:
-        policy = get_analysis_policy(analysis_mode)
-        allocation_rows = _build_allocation_rows(df_latest, company_views)
-        context_payload = _build_portfolio_context_payload(
-            df_latest=df_latest,
-            company_views=company_views,
-            stats=stats,
-            qualidade=qualidade,
-            perspectiva=perspectiva,
-            cobertura=cobertura,
-            confianca_media=confianca_media,
-            score_medio=score_medio,
-            period_ref=period_ref,
-            macro_context=macro_context,
-            market_context=market_context,
-            allocation_rows=allocation_rows,
+    if llm_client is not None:
+        try:
+            policy = get_analysis_policy(analysis_mode)
+            context_payload = _build_portfolio_context_payload(
+                df_latest=df_latest,
+                company_views=company_views,
+                stats=stats,
+                qualidade=qualidade,
+                perspectiva=perspectiva,
+                cobertura=cobertura,
+                confianca_media=confianca_media,
+                score_medio=score_medio,
+                period_ref=period_ref,
+                macro_context=macro_context,
+                market_context=market_context,
+                allocation_rows=allocation_rows,
+            )
+            portfolio_report = generate_portfolio_report(
+                llm_client=llm_client,
+                context_payload=context_payload,
+                policy=policy,
+            )
+        except Exception:
+            portfolio_report = None
+
+    if portfolio_report:
+        mode_label = "Análise Rígida" if analysis_mode == "rigid" else "Análise Flexível"
+        _render_structured_portfolio_report(portfolio_report, mode_label)
+    else:
+        st.markdown("## 🧠 Resumo Executivo")
+        st.write(
+            f"O portfólio apresenta leitura **{stats.label_perspectiva().lower()}** para 12 meses, com distribuição de perspectivas: "
+            f"**{stats.fortes}** forte, **{stats.moderadas}** moderada e **{stats.fracas}** fraca. "
+            f"A cobertura atual é de **{stats.total}** ativos, com confiança média de **{_fmt_confidence(confianca_media)}** "
+            f"e score qualitativo médio de **{_fmt_score(score_medio)}**. "
+            "Abaixo, os relatórios por empresa mostram evolução estratégica, execução, riscos, mudança estratégica e evidências documentais."
         )
-        portfolio_report = generate_portfolio_report(
-            llm_client=llm_client,
-            context_payload=context_payload,
-            policy=policy,
-        )
-    except Exception:
-        portfolio_report = None
-
-if portfolio_report:
-    mode_label = "Análise Rígida" if analysis_mode == "rigid" else "Análise Flexível"
-    _render_structured_portfolio_report(portfolio_report, mode_label)
-else:
-    st.markdown("## 🧠 Resumo Executivo")
-    st.write(
-        f"O portfólio apresenta leitura **{stats.label_perspectiva().lower()}** para 12 meses, com distribuição de perspectivas: "
-        f"**{stats.fortes}** forte, **{stats.moderadas}** moderada e **{stats.fracas}** fraca. "
-        f"A cobertura atual é de **{stats.total}** ativos, com confiança média de **{_fmt_confidence(confianca_media)}** "
-        f"e score qualitativo médio de **{_fmt_score(score_medio)}**. "
-        "Abaixo, os relatórios por empresa mostram evolução estratégica, execução, riscos, mudança estratégica e evidências documentais."
-    )
 
     _render_allocation_section(df_latest, company_views, llm_client)
 
