@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Any, Dict, Optional
 
 import pandas as pd
@@ -15,6 +16,66 @@ def _to_float(value: Any) -> Optional[float]:
         return float(value)
     except Exception:
         return None
+
+
+def _to_date(value: Any) -> Optional[date]:
+    try:
+        if value is None:
+            return None
+        if isinstance(value, date):
+            return value
+        if isinstance(value, datetime):
+            return value.date()
+        return pd.to_datetime(value).date()
+    except Exception:
+        return None
+
+
+def _year_progress_info(ref_date: Optional[date]) -> Dict[str, Any]:
+    if ref_date is None:
+        return {
+            "year": None,
+            "month": None,
+            "is_closed_year": False,
+            "is_partial_year": False,
+        }
+
+    return {
+        "year": ref_date.year,
+        "month": ref_date.month,
+        "is_closed_year": ref_date.month == 12,
+        "is_partial_year": ref_date.month < 12,
+    }
+
+
+def _classify_annual_indicator(ref_date: Optional[date], indicator_name: str) -> Dict[str, Any]:
+    info = _year_progress_info(ref_date)
+
+    if info["year"] is None:
+        return {
+            "indicator": indicator_name,
+            "reference_year": None,
+            "reference_month": None,
+            "interpretation": "desconhecida",
+            "label": f"{indicator_name}_desconhecido",
+        }
+
+    if info["is_closed_year"]:
+        return {
+            "indicator": indicator_name,
+            "reference_year": info["year"],
+            "reference_month": info["month"],
+            "interpretation": "anual_fechado",
+            "label": f"{indicator_name}_anual_fechado",
+        }
+
+    return {
+        "indicator": indicator_name,
+        "reference_year": info["year"],
+        "reference_month": info["month"],
+        "interpretation": "acumulado_no_ano_ate_mes",
+        "label": f"{indicator_name}_acumulado_ate_mes",
+    }
 
 
 def load_latest_macro_context() -> Dict[str, Any]:
@@ -59,6 +120,11 @@ def build_macro_context(
     mensal: Dict[str, Any],
     anual: Dict[str, Any],
 ) -> Dict[str, Any]:
+    mensal_data = _to_date(mensal.get("data"))
+    anual_data = _to_date(anual.get("data"))
+
+    ipca_annual_meta = _classify_annual_indicator(anual_data, "ipca")
+
     return {
         "mensal": {
             "data": str(mensal.get("data") or ""),
@@ -79,11 +145,9 @@ def build_macro_context(
             "selic": _to_float(anual.get("selic")),
             "cambio": _to_float(anual.get("Cambio")),
             "ipca": _to_float(anual.get("ipca")),
+            "ipca_interpretation": ipca_annual_meta["interpretation"],
+            "ipca_reference_year": ipca_annual_meta["reference_year"],
+            "ipca_reference_month": ipca_annual_meta["reference_month"],
             "icc": _to_float(anual.get("ICC")),
             "pib": _to_float(anual.get("PIB")),
-            "balanca_comercial": _to_float(anual.get("BALANÇA_COMERCIAL")),
-            "icc_delta": _to_float(anual.get("ICC_delta")),
-            "divida_publica": _to_float(anual.get("Divida_Publica")),
-            "juros_real_ex_ante": _to_float(anual.get("Juros_Real_ExAnte")),
-        },
-    }
+            "balanca_comercial": _to_float(an
