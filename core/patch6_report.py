@@ -25,6 +25,8 @@ import streamlit as st
 from sqlalchemy import text
 
 from core.db_loader import get_supabase_engine
+from core.analysis_policy import get_analysis_policy
+from core.portfolio_llm_report import generate_portfolio_report
 
 
 @dataclass
@@ -657,6 +659,29 @@ def _normalize_allocations(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return rows
 
 
+
+
+def _render_asset_roles_section(asset_roles: List[Dict[str, Any]]) -> None:
+    clean_roles = [r for r in (asset_roles or []) if isinstance(r, dict) and str(r.get("ticker") or "").strip()]
+    if not clean_roles:
+        return
+
+    st.markdown("**Papel estratégico dos ativos**")
+    for item in clean_roles[:12]:
+        ticker = _strip_html(item.get("ticker") or "—")
+        role = _strip_html(item.get("role") or "—")
+        rationale = _strip_html(item.get("rationale") or "")
+        st.markdown(
+            f"""
+            <div style="border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.025);
+                        border-radius:12px;padding:12px 14px;margin:8px 0;line-height:1.45;">
+                <div style="font-size:13px;opacity:0.80;margin-bottom:6px;font-weight:700;letter-spacing:.2px;">{_esc(ticker)} • {_esc(role)}</div>
+                <div style="font-size:15px;line-height:1.55;">{_esc(rationale or "Sem justificativa detalhada.")}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
 def _render_allocation_section(df_latest: pd.DataFrame, company_views: Dict[str, Dict[str, Any]], llm_client: Any) -> None:
     rows: List[Dict[str, Any]] = []
     for row in df_latest.itertuples(index=False):
@@ -693,6 +718,7 @@ def render_patch6_report(
     period_ref: str,
     llm_factory: Optional[Any] = None,
     show_company_details: bool = True,
+    analysis_mode: str = "rigid",
 ) -> None:
     #st.markdown("# 📘 Relatório de Análise de Portfólio (Patch6)")
     #st.caption("Consolidação qualitativa com base em evidências do RAG. Formato institucional (research).")
@@ -823,16 +849,81 @@ def render_patch6_report(
         contexto_lines.append(_portfolio_context_line(row, company_views[row.ticker]))
     contexto_portfolio = "\n".join(contexto_lines)
 
-    st.markdown("## 🧠 Resumo Executivo")
+    policy = get_analysis_policy(analysis_mode)
 
-    llm_client = None
-    if llm_factory is not None:
+    ticker_rows: List[Dict[str, Any]] = []
+    for row in df_latest.itertuples(index=False):
+        company = company_views[row.ticker]
+        ticker_rows.append(
+            {
+                "ticker": row.ticker,
+                "perspectiva_compra": str(row.perspectiva_compra or ""),
+                "score_qualitativo": company.get("score_qualitativo"),
+                "confianca": company.get("confianca"),
+                "tese": company.get("tese"),
+                "riscos": company.get("riscos"),
+                "catalisadores": company.get("catalisadores"),
+                "pontos_chave": company.get("pontos_chave"),
+                "monitorar": company.get("monitorar"),
+                "mudancas": company.get("mudancas"),
+                "consideracoes": company.get("consideracoes"),
+            }
+        )
+
+    context_payload = {
+        "period_ref": period_ref,
+        "analysis_mode": analysis_mode,
+        "portfolio_stats": {
+            "fortes": stats.fortes,
+            "moderadas": stats.moderadas,
+            "fracas": stats.fracas,
+            "desconhecidas": stats.desconhecidas,
+            "qualidade": qualidade,
+            "perspectiva": perspectiva,
+            "cobertura": cobertura,
+            "confianca_media": _fmt_confidence(confianca_media),
+            "score_medio": _fmt_score(score_medio),
+        },
+        "tickers": ticker_rows,
+    }
+
+    portfolio_report: Optional[Dict[str, Any]] = None
+    if llm_client is not None:
         try:
-            llm_client = llm_factory.get_llm_client()
+            portfolio_report = generate_portfolio_report(
+                llm_client=llm_client,
+                context_payload=context_payload,
+                policy=policy,
+            )
         except Exception:
-            llm_client = None
+            portfolio_report = None
 
-    prompt_exec = f"""
+    st.markdown("## 🧠 Relatório Estratégico do Portfólio")
+
+    mode_badge = "Análise Rígida" if analysis_mode == "rigid" else "Análise Flexível"
+    st.caption(
+        f"{mode_badge} • "
+        + (
+            "Baseada exclusivamente nos dados disponíveis no sistema."
+            if analysis_mode == "rigid"
+            else "Combina os dados do sistema com inferência contextual ampliada da IA."
+        )
+    )
+
+    if portfolio_report:
+        _render_section_text("Base analítica", portfolio_report.get("analytical_basis", ""))
+        _render_section_text("Diagnóstico executivo", portfolio_report.get("executive_summary", ""))
+        _render_section_text("Identidade da carteira", portfolio_report.get("portfolio_identity", ""))
+        _render_section_list("Forças principais", portfolio_report.get("key_strengths", []), limit=8)
+        _render_section_list("Fragilidades principais", portfolio_report.get("key_weaknesses", []), limit=8)
+        _render_section_text("Leitura macro", portfolio_report.get("macro_reading", ""))
+        _render_section_list("Riscos invisíveis", portfolio_report.get("hidden_risks", []), limit=8)
+        _render_asset_roles_section(portfolio_report.get("asset_roles", []))
+        _render_section_list("Desalinhamentos", portfolio_report.get("misalignments", []), limit=8)
+        _render_section_list("Plano de ação", portfolio_report.get("action_plan", []), limit=10)
+        _render_section_text("Insight final", portfolio_report.get("final_insight", ""))
+    else:
+        prompt_exec = f"""
 Você é um analista sell-side (research). Escreva um resumo executivo profissional do portfólio com base SOMENTE nos bullets abaixo.
 Estruture em 4 blocos curtos:
 1) Leitura geral do portfólio
@@ -849,18 +940,17 @@ Regras:
 BULLETS:
 {contexto_portfolio}
 """
-
-    llm_text = _safe_call_llm(llm_client, prompt_exec)
-    if llm_text:
-        st.write(llm_text)
-    else:
-        st.write(
-            f"O portfólio apresenta leitura **{stats.label_perspectiva().lower()}** para 12 meses, com distribuição de perspectivas: "
-            f"**{stats.fortes}** forte, **{stats.moderadas}** moderada e **{stats.fracas}** fraca. "
-            f"A cobertura atual é de **{stats.total}** ativos, com confiança média de **{_fmt_confidence(confianca_media)}** "
-            f"e score qualitativo médio de **{_fmt_score(score_medio)}**. "
-            "Abaixo, os relatórios por empresa mostram evolução estratégica, execução, riscos, mudança estratégica e evidências documentais."
-        )
+        llm_text = _safe_call_llm(llm_client, prompt_exec)
+        if llm_text:
+            st.write(llm_text)
+        else:
+            st.write(
+                f"O portfólio apresenta leitura **{stats.label_perspectiva().lower()}** para 12 meses, com distribuição de perspectivas: "
+                f"**{stats.fortes}** forte, **{stats.moderadas}** moderada e **{stats.fracas}** fraca. "
+                f"A cobertura atual é de **{stats.total}** ativos, com confiança média de **{_fmt_confidence(confianca_media)}** "
+                f"e score qualitativo médio de **{_fmt_score(score_medio)}**. "
+                "Abaixo, os relatórios por empresa mostram evolução estratégica, execução, riscos, mudança estratégica e evidências documentais."
+            )
 
     _render_allocation_section(df_latest, company_views, llm_client)
 
@@ -970,8 +1060,10 @@ BULLETS:
                 _render_evidence_section(company["evidencias"], limit=10)
                 _render_section_text("Considerações da LLM", company["consideracoes"])
 
-    st.markdown("## 🔎 Conclusão Estratégica")
-    prompt_conc = f"""
+
+    if not portfolio_report:
+        st.markdown("## 🔎 Conclusão Estratégica")
+        prompt_conc = f"""
 Escreva uma conclusão estratégica (research) para o portfólio, em até 10 linhas, com foco em:
 - coerência do conjunto do portfólio
 - principais alavancas para melhora ou deterioração
@@ -982,13 +1074,12 @@ Use SOMENTE os bullets abaixo.
 BULLETS:
 {contexto_portfolio}
 """
-
-    llm_conc = _safe_call_llm(llm_client, prompt_conc)
-    if llm_conc:
-        st.write(llm_conc)
-    else:
-        st.write(
-            "A carteira deve ser acompanhada por gatilhos de execução, evolução da narrativa corporativa, score qualitativo, "
-            "mudanças estratégicas detectadas e sinais de alocação de capital. Reforce o monitoramento de resultados trimestrais, "
-            "consistência entre discurso e entrega, dívida/custo financeiro e manutenção dos catalisadores já visíveis nas evidências do RAG."
-        )
+        llm_conc = _safe_call_llm(llm_client, prompt_conc)
+        if llm_conc:
+            st.write(llm_conc)
+        else:
+            st.write(
+                "A carteira deve ser acompanhada por gatilhos de execução, evolução da narrativa corporativa, score qualitativo, "
+                "mudanças estratégicas detectadas e sinais de alocação de capital. Reforce o monitoramento de resultados trimestrais, "
+                "consistência entre discurso e entrega, dívida/custo financeiro e manutenção dos catalisadores já visíveis nas evidências do RAG."
+            )

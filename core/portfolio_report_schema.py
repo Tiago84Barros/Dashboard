@@ -1,5 +1,13 @@
+from __future__ import annotations
 
-from typing import TypedDict, List, Dict, Any
+from typing import Any, Dict, List, TypedDict
+
+
+class AssetRole(TypedDict):
+    ticker: str
+    role: str
+    rationale: str
+
 
 class PortfolioReport(TypedDict):
     analysis_mode: str
@@ -10,7 +18,7 @@ class PortfolioReport(TypedDict):
     key_weaknesses: List[str]
     macro_reading: str
     hidden_risks: List[str]
-    asset_roles: List[Dict[str, Any]]
+    asset_roles: List[AssetRole]
     misalignments: List[str]
     action_plan: List[str]
     final_insight: str
