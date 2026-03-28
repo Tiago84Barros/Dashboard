@@ -6,6 +6,9 @@ Não invente fatos externos.
 Não preencha lacunas com conhecimento geral.
 Não use narrativa genérica.
 
+Considere o contexto macro fornecido como referência para interpretar a coerência do portfólio, os riscos e os desalinhamentos.
+Não extrapole além dessas informações.
+
 Objetivo:
 produzir um parecer consolidado de portfólio com rastreabilidade alta, foco em estrutura, risco, alocação e ação prática.
 
