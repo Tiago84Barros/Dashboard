@@ -41,6 +41,8 @@ from core.patch6_runs_store import save_patch6_run, list_patch6_history
 from core.patch6_writer import build_result_json
 
 import core.ai_models.llm_client.factory as llm_factory
+from core.macro_context import load_latest_macro_context
+from core.market_context import build_market_context
 
 
 # ------------------------------------------------------------------
@@ -505,6 +507,21 @@ def _parse_json_loose(text: str) -> Dict[str, Any]:
 
 def render() -> None:
     st.title("🧠 Análises de Portfólio")
+
+    with st.sidebar:
+        st.markdown("## Análises de Portfólio")
+        st.caption("Configurações desta seção")
+        analysis_mode_label = st.radio(
+            "Modo de análise",
+            options=["Rígida", "Flexível"],
+            index=0,
+            key="portfolio_analysis_mode_sidebar",
+            help=(
+                "Rígida: usa apenas os dados presentes no sistema. "
+                "Flexível: combina os dados do sistema com inferência contextual ampliada da IA."
+            ),
+        )
+    analysis_mode = "rigid" if analysis_mode_label == "Rígida" else "flexible"
 
     # CSS institucional (header + cards + chips + cards LLM)
     st.markdown(
@@ -990,7 +1007,18 @@ def render() -> None:
                     with st.expander(key):
                         st.code(tb)
 
+
     st.divider()
+
+    try:
+        macro_context = load_latest_macro_context()
+    except Exception:
+        macro_context = {}
+
+    try:
+        market_context = build_market_context(macro_context)
+    except Exception:
+        market_context = {}
 
     # ------------------------------------------------------------------
     # LLM
@@ -1000,23 +1028,6 @@ def render() -> None:
     # LLM (RAG + julgamento qualitativo)
     # ------------------------------------------------------------------
     st.subheader("🤖 Análise qualitativa")
-
-    analysis_mode_label = st.radio(
-        "Modo de análise do relatório consolidado",
-        options=["Rígida", "Flexível"],
-        horizontal=True,
-        help=(
-            "Rígida: usa apenas os dados presentes no sistema. "
-            "Flexível: combina os dados do sistema com inferência contextual ampliada da IA."
-        ),
-    )
-    analysis_mode = "rigid" if analysis_mode_label == "Rígida" else "flexible"
-
-    if analysis_mode == "rigid":
-        st.caption("Base analítica: somente dados já presentes no sistema, evidências internas e consolidação disciplinada.")
-    else:
-        st.caption("Base analítica: dados do sistema combinados com inferência contextual ampliada da IA para leitura estratégica.")
-
     if not tickers:
         st.info("Sem tickers no snapshot.")
         return
@@ -1359,11 +1370,33 @@ def render() -> None:
         }
         return sections, fonte_36 or fonte_24 or fonte_recent, audit
 
-    def _build_prompt(contexto: str) -> str:
-        return f"""
+    
+    def _build_prompt(
+        contexto: str,
+        *,
+        analysis_mode: str,
+        ticker: str,
+        macro_context: Optional[Dict[str, Any]] = None,
+        market_context: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        macro_context = macro_context or {}
+        market_context = market_context or {}
+
+        contexto_macro = f"""
+MACRO_CONTEXT:
+{json.dumps(macro_context, ensure_ascii=False, indent=2)}
+
+MARKET_CONTEXT:
+{json.dumps(market_context, ensure_ascii=False, indent=2)}
+"""
+
+        if analysis_mode == "rigid":
+            return f"""
 Você é um analista fundamentalista institucional especializado em trajetória estratégica, execução, alocação de capital e consistência de discurso corporativo.
 
 Use SOMENTE o CONTEXTO abaixo, organizado por janelas temporais e com metadados de data/tipo documental/tema.
+Use também o MACRO_CONTEXT apenas como referência complementar objetiva.
+Não extrapole além do que foi fornecido.
 
 Objetivo:
 1. comparar as janelas temporais;
@@ -1374,15 +1407,13 @@ Objetivo:
 6. produzir um JSON rico, auditável e específico.
 
 Regras:
-- não faça resumo genérico;
-- não invente fatos;
-- quando houver pouca base, diga isso explicitamente;
-- use entre 10 e 14 evidências quando o contexto trouxer material suficiente;
-- priorize evidências materialmente relevantes, com números, guidance, dividendos, capex, dívida, governança, M&A, reestruturações e mudanças concretas de estratégia;
-- evite repetir evidências redundantes do mesmo documento quando houver alternativas melhores;
-- nas considerações finais, seja analítico, opinativo e consistente, privilegiando a saúde econômica do negócio, a qualidade da gestão, a alocação de capital, a previsibilidade e a margem de segurança;
-- sempre que possível, atribua ano ou janela temporal às evidências;
-- prefira evidências sobre dívida, capex, dividendos, recompra, guidance, execução, governança e M&A.
+- não faça resumo genérico
+- não invente fatos
+- quando houver pouca base, diga isso explicitamente
+- use entre 8 e 12 evidências quando o contexto trouxer material suficiente
+- quando um indicador anual vier de ano ainda em curso, interprete esse valor como acumulado até o mês de referência, e não como fechamento do ano
+- não use repertório externo para preencher lacunas
+- retorne apenas JSON válido
 
 Responda APENAS em JSON válido neste formato:
 
@@ -1406,12 +1437,18 @@ Responda APENAS em JSON válido neste formato:
     "entregas_confirmadas": ["..."],
     "entregas_pendentes_ou_incertas": ["..."]
   }},
+  "papel_estrategico": "papel da empresa dentro de uma carteira, mas limitado ao que é suportado pelos dados",
+  "sensibilidades_macro": ["..."],
+  "fragilidade_regime_atual": "texto curto e objetivo",
+  "dependencias_cenario": ["..."],
   "mudancas_estrategicas": ["..."],
   "pontos_chave": ["..."],
   "catalisadores": ["..."],
   "riscos": ["..."],
   "o_que_monitorar": ["..."],
-  "consideracoes_llm": "parecer analítico e opinativo, fundamentado nos fatos, abordando qualidade do negócio, gestão, alocação de capital, riscos estruturais, previsibilidade e margem de segurança",
+  "alocacao_sugerida_faixa": "ex.: 3%–5%",
+  "racional_alocacao": "texto curto e objetivo",
+  "consideracoes_llm": "parecer analítico e fundamentado",
   "evidencias": [
     {{
       "topico": "2024 ou janela",
@@ -1421,6 +1458,83 @@ Responda APENAS em JSON válido neste formato:
   ],
   "tese_final": "conclusão final integrada"
 }}
+
+{contexto_macro}
+
+CONTEXTO TEMPORAL:
+{contexto}
+"""
+
+        return f"""
+Você é um analista institucional com repertório amplo em empresas, setores, ciclo macroeconômico, risco de mercado, comportamento de investidores e relações entre Brasil e cenário internacional.
+
+O ticker analisado é: {ticker}
+
+Use o CONTEXTO TEMPORAL fornecido como base factual principal.
+Use também o MACRO_CONTEXT e o MARKET_CONTEXT como âncoras.
+Mas NÃO se limite aos inputs: use seu conhecimento econômico, setorial e de mercado para ampliar a análise.
+
+Objetivo:
+1. interpretar a empresa além do que está explícito no material;
+2. identificar como ela tende a reagir ao regime atual de juros, inflação, câmbio e atividade;
+3. inferir seu papel estratégico dentro de uma carteira;
+4. apontar dependências implícitas de cenário;
+5. sugerir uma faixa de alocação coerente com risco, qualidade e função estratégica.
+
+Regras:
+- use o contexto do sistema como base, mas nunca como limite máximo
+- você pode usar inferência econômica, setorial e internacional
+- não invente fatos corporativos específicos não suportados, mas pode inferir comportamento provável da empresa e do setor
+- quando um indicador anual vier de ano ainda em curso, interprete esse valor como acumulado até o mês de referência, e não como fechamento do ano
+- explique como o ambiente atual pode ajudar ou prejudicar a empresa
+- seja mais profundo que um simples resumo documental
+- retorne apenas JSON válido
+
+Responda APENAS em JSON válido neste formato:
+
+{{
+  "perspectiva_compra": "forte|moderada|fraca",
+  "leitura_direcionalidade": "construtiva|equilibrada|cautelosa|negativa",
+  "resumo": "síntese em 4 a 6 linhas",
+  "evolucao_estrategica": {{
+    "historico": "...",
+    "fase_atual": "...",
+    "tendencia": "..."
+  }},
+  "consistencia_discurso": {{
+    "analise": "...",
+    "grau_consistencia": "alto|medio|baixo",
+    "contradicoes": ["..."]
+  }},
+  "execucao_vs_promessa": {{
+    "analise": "...",
+    "avaliacao_execucao": "forte|moderada|fraca|inconsistente",
+    "entregas_confirmadas": ["..."],
+    "entregas_pendentes_ou_incertas": ["..."]
+  }},
+  "papel_estrategico": "ex.: núcleo de renda, cíclica, defensiva, quality compounder, satélite, exportadora, sensível a juros, etc.",
+  "sensibilidades_macro": ["juros", "câmbio", "commodities", "atividade doméstica", "crédito", "fluxo global", "regulação"],
+  "fragilidade_regime_atual": "como a empresa tende a sofrer ou se beneficiar sob o regime atual",
+  "dependencias_cenario": ["quais cenários a empresa precisa para performar melhor"],
+  "mudancas_estrategicas": ["..."],
+  "pontos_chave": ["..."],
+  "catalisadores": ["..."],
+  "riscos": ["..."],
+  "o_que_monitorar": ["..."],
+  "alocacao_sugerida_faixa": "ex.: 3%–5%",
+  "racional_alocacao": "justifique a alocação com base em risco, qualidade, papel estratégico e cenário",
+  "consideracoes_llm": "parecer analítico, mais livre e interpretativo, incluindo visão setorial e de mercado",
+  "evidencias": [
+    {{
+      "topico": "2024 ou janela",
+      "trecho": "trecho literal curto",
+      "interpretacao": "por que isso importa"
+    }}
+  ],
+  "tese_final": "conclusão final integrada"
+}}
+
+{contexto_macro}
 
 CONTEXTO TEMPORAL:
 {contexto}
@@ -1475,7 +1589,16 @@ CONTEXTO TEMPORAL:
                 contexto = _build_temporal_context(temporal_sections, per_chunk_chars=1100, total_chars=20000)
                 context_preview = contexto[:4000]
                 try:
-                    raw = _call_llm(client, _build_prompt(contexto))
+                    raw = _call_llm(
+                        client,
+                        _build_prompt(
+                            contexto,
+                            analysis_mode=analysis_mode,
+                            ticker=t,
+                            macro_context=macro_context,
+                            market_context=market_context,
+                        ),
+                    )
                 except Exception as e_call:
                     msg = str(e_call).lower()
                     if "context window" in msg or "exceed" in msg:
@@ -1483,7 +1606,16 @@ CONTEXTO TEMPORAL:
                         for _bucket in temporal_sections.values():
                             flat_chunks.extend(_bucket or [])
                         contexto = _build_context_limited(flat_chunks, per_chunk_chars=800, total_chars=8000)
-                        raw = _call_llm(client, _build_prompt(contexto))
+                        raw = _call_llm(
+                        client,
+                        _build_prompt(
+                            contexto,
+                            analysis_mode=analysis_mode,
+                            ticker=t,
+                            macro_context=macro_context,
+                            market_context=market_context,
+                        ),
+                    )
                     else:
                         raise
 
