@@ -1000,6 +1000,23 @@ def render() -> None:
     # LLM (RAG + julgamento qualitativo)
     # ------------------------------------------------------------------
     st.subheader("🤖 Análise qualitativa")
+
+    analysis_mode_label = st.radio(
+        "Modo de análise do relatório consolidado",
+        options=["Rígida", "Flexível"],
+        horizontal=True,
+        help=(
+            "Rígida: usa apenas os dados presentes no sistema. "
+            "Flexível: combina os dados do sistema com inferência contextual ampliada da IA."
+        ),
+    )
+    analysis_mode = "rigid" if analysis_mode_label == "Rígida" else "flexible"
+
+    if analysis_mode == "rigid":
+        st.caption("Base analítica: somente dados já presentes no sistema, evidências internas e consolidação disciplinada.")
+    else:
+        st.caption("Base analítica: dados do sistema combinados com inferência contextual ampliada da IA para leitura estratégica.")
+
     if not tickers:
         st.info("Sem tickers no snapshot.")
         return
@@ -1145,6 +1162,7 @@ def render() -> None:
                     period_ref=analysis_period_ref,
                     llm_factory=llm_factory,
                     show_company_details=True,
+                    analysis_mode=analysis_mode,
                 )
             except Exception as e:
                 st.error("Relatório indisponível.")
