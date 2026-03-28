@@ -27,7 +27,26 @@ from sqlalchemy import text
 from core.db_loader import get_supabase_engine
 from core.analysis_policy import get_analysis_policy
 from core.portfolio_llm_report import generate_portfolio_report
+from core.macro_context import load_latest_macro_context
 
+macro_context = load_latest_macro_context()
+
+context_payload = {
+    "period_ref": period_ref,
+    "portfolio_stats": {
+        "fortes": stats.fortes,
+        "moderadas": stats.moderadas,
+        "fracas": stats.fracas,
+        "desconhecidas": stats.desconhecidas,
+        "qualidade": qualidade,
+        "perspectiva": perspectiva,
+        "cobertura": cobertura,
+        "confianca_media": confianca_media,
+        "score_medio": score_medio,
+    },
+    "tickers": ticker_rows,
+    "macro_context": macro_context,
+}
 
 @dataclass
 class PortfolioStats:
