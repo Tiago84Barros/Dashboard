@@ -9,15 +9,12 @@ Não use narrativa genérica.
 Considere o contexto macro fornecido como referência para interpretar a coerência do portfólio, os riscos e os desalinhamentos.
 Não extrapole além dessas informações.
 
-Objetivo:
-produzir um parecer consolidado de portfólio com rastreabilidade alta, foco em estrutura, risco, alocação e ação prática.
-
 Regras:
 - use apenas os dados fornecidos
 - não extrapole para cenário macro não informado
-- seja objetivo
-- aponte forças, fragilidades, desalinhamentos e plano de ação
-- preencha todos os campos do schema
-- retorne somente JSON válido
 - quando um indicador anual vier de ano ainda em curso, interprete esse valor como acumulado até o mês de referência, e não como fechamento do ano
+- seja objetivo
+- preencha todos os campos do schema
+- suggested_allocations deve refletir prudência, rastreabilidade e coerência com os dados
+- retorne somente JSON válido
 """
