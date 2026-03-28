@@ -19,5 +19,6 @@ Regras:
 - você pode fazer inferências contextuais, mas sem afirmar como fato duro o que não estiver explicitamente nos dados
 - destaque fragilidades estruturais, concentração implícita, dependência de cenário e papel estratégico dos ativos
 - seja claro, técnico e útil
+- preencha todos os campos do schema
 - retorne somente JSON válido
 """

@@ -17,5 +17,6 @@ Regras:
 - não extrapole para cenário macro não informado
 - seja objetivo
 - aponte forças, fragilidades, desalinhamentos e plano de ação
+- preencha todos os campos do schema
 - retorne somente JSON válido
 """
