@@ -1771,7 +1771,7 @@ def render_patch5_desempenho_empresas(
         if s.shape[0] < 60:
             return np.nan
         if isinstance(s.index, pd.DatetimeIndex):
-            s = s.sort_index().resample("M").last().dropna()
+            s = s.sort_index().resample("ME").last().dropna()
         if s.shape[0] < 24:
             return np.nan
         if s.shape[0] > 60:
