@@ -431,7 +431,7 @@ def render():
             except Exception:
                 pass
 
-            precos_mensal = precos.resample("M").last()
+            precos_mensal = precos.resample("ME").last()
             score = penalizar_plato(score, precos_mensal, meses=12, penal=0.30)
         except Exception:
             continue
