@@ -9,6 +9,13 @@ import psycopg2
 from psycopg2.extras import execute_values
 from sqlalchemy import create_engine, text
 
+try:
+    from auditoria_dados.ingestion_log import IngestionLog as _IngestionLog
+    from auditoria_dados.ingestion_log import validate_required_columns
+except ImportError:
+    _IngestionLog = None
+    validate_required_columns = None
+
 
 # ======================
 # CONFIG
@@ -21,6 +28,14 @@ YF_BATCH_SIZE = int(os.getenv("YF_BATCH_SIZE", "50"))  # lote de tickers por dow
 
 # para reduzir ruído do yfinance
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+_RUN_LOG = None
+
+
+def log(msg: str, level: str = "INFO", **fields) -> None:
+    if _RUN_LOG:
+        _RUN_LOG.log(level, "pipeline_log", message=msg, **fields)
+        return
+    print(msg, flush=True)
 
 
 # ======================
@@ -50,6 +65,13 @@ def carregar_demonstracoes() -> pd.DataFrame:
 
     with engine.connect() as conn:
         df = pd.read_sql_query(sql, conn)
+    if validate_required_columns:
+        validate_required_columns(
+            df,
+            ["Ticker", "Data", "Receita_Liquida", "Passivo_Circulante", "Ativo_Circulante", "LPA"],
+            context="Demonstracoes_Financeiras para múltiplos DFP",
+            logger=_RUN_LOG,
+        )
 
     if "Dividendos" in df.columns:
         df["Dividendos"] = df["Dividendos"].astype(float)
@@ -130,6 +152,9 @@ def obter_precos_medios_anuais(tickers_yf: np.ndarray) -> pd.DataFrame:
                     rows.append((t, int(ano), float(pm)))
 
         except Exception:
+            if _RUN_LOG:
+                _RUN_LOG.increment_metric("yf_batches_failed")
+                _RUN_LOG.add_warning(f"Falha no download do Yahoo para batch com {len(batch)} tickers.")
             continue
 
     if not rows:
@@ -153,6 +178,10 @@ def calcular_multiplos(df_demonstracoes: pd.DataFrame) -> pd.DataFrame:
         how="left",
         validate="m:1",
     )
+    if _RUN_LOG:
+        _RUN_LOG.set_metric("preco_rows", len(df_precos))
+        _RUN_LOG.set_metric("preco_tickers", int(df_precos["ticker_yf"].nunique() if not df_precos.empty else 0))
+        _RUN_LOG.set_metric("preco_missing_rows", int(df["Preco_Medio_Anual"].isna().sum()))
 
     out = pd.DataFrame()
     out["Ticker"] = df["Ticker"].astype(str)
@@ -214,6 +243,9 @@ def calcular_multiplos(df_demonstracoes: pd.DataFrame) -> pd.DataFrame:
 
     # ordenação opcional para facilitar debug
     out.sort_values(["Ticker", "Data"], inplace=True)
+    if _RUN_LOG:
+        _RUN_LOG.set_metric("multiplos_rows_gerados", len(out))
+        _RUN_LOG.set_metric("multiplos_tickers_gerados", int(out["Ticker"].nunique() if not out.empty else 0))
 
     return out
 
@@ -252,22 +284,40 @@ def upsert_multiplos(df_multiplos: pd.DataFrame) -> None:
             execute_values(cur, insert_sql, values, page_size=5000)
         conn.commit()
 
-    print(f"[OK] UPSERT public.multiplos: {len(df_multiplos)} linhas processadas.")
+    log(f"UPSERT public.multiplos: {len(df_multiplos)} linhas processadas.", rows=len(df_multiplos))
 
 
 def main() -> None:
-    print("[INFO] Carregando Demonstracoes_Financeiras do Supabase...")
-    df_demonstracoes = carregar_demonstracoes()
-    print(f"[INFO] Linhas de demonstrações: {len(df_demonstracoes)}")
+    global _RUN_LOG
+    if _IngestionLog:
+        with _IngestionLog("multiplos_dfp") as run:
+            _RUN_LOG = run
+            run.set_params({"yf_start": YF_START, "yf_end": YF_END, "yf_batch_size": YF_BATCH_SIZE})
+            log("Carregando Demonstracoes_Financeiras do Supabase...")
+            df_demonstracoes = carregar_demonstracoes()
+            run.set_metric("demonstracoes_rows", len(df_demonstracoes))
+            run.set_metric("demonstracoes_tickers", int(df_demonstracoes["Ticker"].nunique() if not df_demonstracoes.empty else 0))
+            log(f"Linhas de demonstrações: {len(df_demonstracoes)}")
 
-    print("[INFO] Calculando múltiplos (Algoritmo_4)...")
-    df_multiplos = calcular_multiplos(df_demonstracoes)
-    print(f"[INFO] Linhas de múltiplos geradas: {len(df_multiplos)}")
+            log("Calculando múltiplos (Algoritmo_4)...")
+            df_multiplos = calcular_multiplos(df_demonstracoes)
+            validate_required_columns(
+                df_multiplos,
+                ["Ticker", "Data", "Liquidez_Corrente", "P/L", "P/VP", "DY"],
+                context="Múltiplos DFP calculados",
+                logger=run,
+            )
+            log(f"Linhas de múltiplos geradas: {len(df_multiplos)}")
 
-    print("[INFO] Gravando no Supabase (UPSERT)...")
-    upsert_multiplos(df_multiplos)
-
-    print("[DONE] Rotina dados_multiplos_dfp concluída.")
+            log("Gravando no Supabase (UPSERT)...")
+            upsert_multiplos(df_multiplos)
+            run.add_rows(inserted=len(df_multiplos))
+            log("Rotina dados_multiplos_dfp concluída.")
+    else:
+        df_demonstracoes = carregar_demonstracoes()
+        df_multiplos = calcular_multiplos(df_demonstracoes)
+        upsert_multiplos(df_multiplos)
+    _RUN_LOG = None
 
 
 if __name__ == "__main__":

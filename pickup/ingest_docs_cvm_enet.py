@@ -20,9 +20,9 @@ Observações:
 
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 import hashlib
+import json
 import re
 import time
-import json
 
 import pandas as pd
 import requests
@@ -31,6 +31,12 @@ from sqlalchemy import text
 
 from core.db_loader import get_supabase_engine
 from core.ticker_utils import normalize_ticker
+
+
+def _log(level: str, event: str, **fields: Any) -> None:
+    payload = {"pipeline": "docs_enet", "level": level, "event": event}
+    payload.update(fields)
+    print(json.dumps(payload, ensure_ascii=False, default=str), flush=True)
 
 
 # ─────────────────────────────
@@ -282,6 +288,7 @@ def _extract_text_from_url(url: str) -> Tuple[str, str]:
         # fallback
         return _clean_text(html), "unknown"
     except Exception:
+        _log("WARN", "extract_text_failed", url=url[:300])
         return "", "error"
 
 
@@ -392,10 +399,20 @@ def ingest_enet_for_tickers(
         "mapping_missing": [tickers_sem_cvm]
       }
     """
+    _log(
+        "INFO",
+        "start",
+        tickers=len(tickers),
+        anos=anos,
+        max_docs_por_ticker=max_docs_por_ticker,
+        baixar_e_extrair=baixar_e_extrair,
+    )
     tks = [_norm_ticker(t) for t in (tickers or []) if str(t).strip()]
     tks = list(dict.fromkeys(tks))
     if not tks:
-        return {"ok": False, "stats": {}, "errors": {"__all__": "Lista de tickers vazia."}, "mapping_missing": []}
+        result = {"ok": False, "stats": {}, "errors": {"__all__": "Lista de tickers vazia."}, "mapping_missing": []}
+        _log("ERROR", "summary", **result)
+        return result
 
     map_cvm = _get_codigo_cvm_por_tickers(tks)
     missing = [t for t in tks if t not in map_cvm]
@@ -426,6 +443,7 @@ def ingest_enet_for_tickers(
         stats[tk] = {"seen": 0, "inserted": 0, "skipped": 0, "downloaded": 0, "text_ok": 0}
         if tk not in map_cvm:
             errors[tk] = "Sem código CVM em public.cvm_to_ticker"
+            _log("WARN", "missing_cvm_mapping", ticker=tk)
             continue
 
         codigo_cvm = int(map_cvm[tk])
@@ -524,5 +542,18 @@ def ingest_enet_for_tickers(
 
         except Exception as e:
             errors[tk] = f"{type(e).__name__}: {e}"
-
-    return {"ok": (len(errors) == 0), "stats": stats, "errors": errors, "mapping_missing": missing}
+            _log("WARN", "ticker_failed", ticker=tk, error=str(e))
+    result = {"ok": (len(errors) == 0), "stats": stats, "errors": errors, "mapping_missing": missing}
+    _log(
+        "INFO" if result["ok"] else "WARN",
+        "summary",
+        ok=result["ok"],
+        tickers=len(tks),
+        mapping_missing=len(missing),
+        inserted=sum(v["inserted"] for v in stats.values()),
+        skipped=sum(v["skipped"] for v in stats.values()),
+        downloaded=sum(v["downloaded"] for v in stats.values()),
+        text_ok=sum(v["text_ok"] for v in stats.values()),
+        errors=len(errors),
+    )
+    return result

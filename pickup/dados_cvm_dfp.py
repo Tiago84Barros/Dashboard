@@ -11,8 +11,10 @@ from urllib.parse import urlparse, urlunparse
 
 try:
     from auditoria_dados.ingestion_log import IngestionLog as _IngestionLog
+    from auditoria_dados.ingestion_log import validate_required_columns
 except ImportError:
     _IngestionLog = None
+    validate_required_columns = None
 
 import numpy as np
 import pandas as pd
@@ -48,13 +50,18 @@ CACHE_DIR = Path(os.getenv("CVM_CACHE_DIR", str(BASE_DIR / ".cache_cvm_dfp")))
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 LPA_ABS_MAX_DB = 1e14 - 1
+_RUN_LOG = None
 
 
 # =========================
 # LOG
 # =========================
-def log(msg: str) -> None:
-    print(f"{LOG_PREFIX} {msg}")
+def log(msg: str, level: str = "INFO", **fields) -> None:
+    rendered = f"{LOG_PREFIX} {msg}"
+    if _RUN_LOG:
+        _RUN_LOG.log(level, "pipeline_log", message=msg, rendered=rendered, **fields)
+        return
+    print(rendered, flush=True)
 
 
 # =========================
@@ -222,6 +229,13 @@ def processar_ano_dfp(session: requests.Session, ano: int):
                     with zip_ref.open(arquivo) as csvfile:
                         try:
                             df_temp = pd.read_csv(csvfile, sep=";", decimal=",", encoding="ISO-8859-1")
+                            if validate_required_columns:
+                                validate_required_columns(
+                                    df_temp,
+                                    ["CD_CVM", "DT_REFER", "CD_CONTA", "VL_CONTA"],
+                                    context=f"DFP {ano} {arquivo}",
+                                    logger=_RUN_LOG,
+                                )
 
                             if "ORDEM_EXERC" in df_temp.columns:
                                 df_temp = df_temp[df_temp["ORDEM_EXERC"] == "ÚLTIMO"]
@@ -239,10 +253,16 @@ def processar_ano_dfp(session: requests.Session, ano: int):
                                 df_temp_dict["DFC_MI"].append(df_temp)
 
                         except Exception as e:
-                            log(f"[WARN] Erro ao processar {arquivo} no ano {ano}: {e}")
+                            if _RUN_LOG:
+                                _RUN_LOG.increment_metric("arquivos_com_erro")
+                                _RUN_LOG.add_warning(f"Erro ao processar {arquivo} no ano {ano}: {e}")
+                            log(f"Erro ao processar {arquivo} no ano {ano}: {e}", level="WARN", year=ano, file=arquivo)
             return df_temp_dict
     except zipfile.BadZipFile:
-        log(f"[WARN] ZIP inválido para o ano {ano}.")
+        if _RUN_LOG:
+            _RUN_LOG.increment_metric("zips_invalidos")
+            _RUN_LOG.add_warning(f"ZIP inválido para o ano {ano}")
+        log(f"ZIP inválido para o ano {ano}.", level="WARN", year=ano)
         return None
 
 
@@ -256,7 +276,9 @@ def coletar_dfp() -> tuple[dict, int]:
     df_dict_dfp = {"DRE": pd.DataFrame(), "BPA": pd.DataFrame(), "BPP": pd.DataFrame(), "DFC_MI": pd.DataFrame()}
 
     if not anos:
-        log("[WARN] Intervalo de anos vazio. Verifique ANO_INICIAL/ULTIMO_ANO.")
+        if _RUN_LOG:
+            _RUN_LOG.add_warning("Intervalo de anos vazio. Verifique ANO_INICIAL/ULTIMO_ANO.")
+        log("Intervalo de anos vazio. Verifique ANO_INICIAL/ULTIMO_ANO.", level="WARN")
         return df_dict_dfp, ultimo_ano
 
     log(f"Coletando DFP do intervalo {ANO_INICIAL}..{ultimo_ano}")
@@ -272,13 +294,20 @@ def coletar_dfp() -> tuple[dict, int]:
             try:
                 df_temp_dict = future.result()
                 if df_temp_dict is None:
+                    if _RUN_LOG:
+                        _RUN_LOG.increment_metric("anos_sem_dados")
                     continue
                 for key in df_dict_dfp.keys():
                     if df_temp_dict.get(key):
                         df_dict_dfp[key] = pd.concat([df_dict_dfp[key]] + df_temp_dict[key], ignore_index=True)
                 log(f"Ano {ano} processado com sucesso.")
+                if _RUN_LOG:
+                    _RUN_LOG.increment_metric("anos_processados")
             except Exception as e:
-                log(f"[WARN] Falha no ano {ano}: {e}")
+                if _RUN_LOG:
+                    _RUN_LOG.increment_metric("anos_com_erro")
+                    _RUN_LOG.add_warning(f"Falha no ano {ano}: {e}")
+                log(f"Falha no ano {ano}: {e}", level="WARN", year=ano)
 
     elapsed = round(time.time() - start, 1)
     log(f"[OK] Coleta de dados anuais (DFP) concluída em {elapsed}s. (anos {ANO_INICIAL}..{ultimo_ano})")
@@ -291,6 +320,14 @@ def coletar_dfp() -> tuple[dict, int]:
 def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
     if df_dict_dfp["DRE"] is None or df_dict_dfp["DRE"].empty:
         return pd.DataFrame()
+
+    if validate_required_columns:
+        validate_required_columns(
+            df_dict_dfp["DRE"],
+            ["DENOM_CIA", "CD_CVM", "DT_REFER", "CD_CONTA", "VL_CONTA"],
+            context="DFP DRE consolidado",
+            logger=_RUN_LOG,
+        )
 
     empresas = (
         df_dict_dfp["DRE"][["DENOM_CIA", "CD_CVM"]]
@@ -469,6 +506,13 @@ def adicionar_ticker(df_consolidado: pd.DataFrame) -> pd.DataFrame:
         raise FileNotFoundError(f"Não encontrei o arquivo CVM->Ticker em: {TICKER_PATH}")
 
     cvm_to_ticker = pd.read_csv(TICKER_PATH, sep=",", encoding="utf-8")
+    if validate_required_columns:
+        validate_required_columns(
+            cvm_to_ticker,
+            ["CVM", "Ticker"],
+            context="Mapa CVM->Ticker DFP",
+            logger=_RUN_LOG,
+        )
     df = pd.merge(df_consolidado, cvm_to_ticker, left_on="CD_CVM", right_on="CVM")
     df = df.drop(columns=["CD_CVM", "CVM"])
     df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.strftime("%Y-%m-%d")
@@ -507,6 +551,8 @@ def filtrar_empresas(df_consolidado: pd.DataFrame, ultimo_ano_disponivel: int) -
 
     out = df_consolidado[df_consolidado["Ticker"].isin(tickers_aprovados)].copy()
     log(f"Filtro final aprovou {out['Ticker'].nunique() if not out.empty else 0} tickers.")
+    if _RUN_LOG:
+        _RUN_LOG.set_metric("tickers_filtrados", int(out["Ticker"].nunique() if not out.empty else 0))
     return out
 
 
@@ -515,7 +561,9 @@ def filtrar_empresas(df_consolidado: pd.DataFrame, ultimo_ano_disponivel: int) -
 # =========================
 def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None:
     if df_filtrado is None or df_filtrado.empty:
-        log("[WARN] Nenhuma linha DFP para gravar (após filtros).")
+        if _RUN_LOG:
+            _RUN_LOG.add_warning("Nenhuma linha DFP para gravar (após filtros).")
+        log("Nenhuma linha DFP para gravar (após filtros).", level="WARN")
         return
 
     dsn = _normalize_db_url(SUPABASE_DB_URL)
@@ -550,11 +598,16 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None
 
     df_db["LPA"] = _normalizar_lpa_series(df_db["LPA"])
     df_db = df_db.fillna(0)
+    before_dedup = len(df_db)
     df_db = (
         df_db.sort_values(["Ticker", "Data"])
              .drop_duplicates(subset=["Ticker", "Data"], keep="last")
              .reset_index(drop=True)
     )
+    duplicates_removed = before_dedup - len(df_db)
+    if _RUN_LOG:
+        _RUN_LOG.set_metric("df_rows_before_dedup", before_dedup)
+        _RUN_LOG.set_metric("df_duplicates_removed", duplicates_removed)
 
     max_lpa = float(pd.to_numeric(df_db["LPA"], errors="coerce").abs().max())
     if max_lpa >= LPA_ABS_MAX_DB:
@@ -590,7 +643,7 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None
             execute_values(cur, sql, values, page_size=BATCH_SIZE_UPSERT)
         conn.commit()
 
-    log(f"[OK] Upsert concluído: {len(df_db)} linhas em Demonstracoes_Financeiras.")
+    log(f"Upsert concluído: {len(df_db)} linhas em Demonstracoes_Financeiras.", level="INFO", rows=len(df_db))
     return len(df_db)
 
 
@@ -598,28 +651,51 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None
 # MAIN
 # =========================
 def main():
-    _log_ctx = _IngestionLog("dfp") if _IngestionLog else None
-    _log_ctx.__enter__() if _log_ctx else None
-    try:
-        _log_ctx.set_params({"ano_inicial": ANO_INICIAL}) if _log_ctx else None
+    global _RUN_LOG
+    if _IngestionLog:
+        with _IngestionLog("dfp") as _log_ctx:
+            _RUN_LOG = _log_ctx
+            _log_ctx.set_params({"ano_inicial": ANO_INICIAL, "ultimo_ano": ULTIMO_ANO or "auto"})
+            df_dict_dfp, ultimo_ano_disponivel = coletar_dfp()
+            _log_ctx.set_metric("ultimo_ano_disponivel", ultimo_ano_disponivel)
+            df_consolidado = montar_df_consolidado(df_dict_dfp)
+            if df_consolidado.empty:
+                _log_ctx.add_warning("Nenhum dado consolidado retornado pela DFP.")
+                log("Nenhum dado consolidado retornado pela DFP.", level="WARN")
+                return
+
+            validate_required_columns(
+                df_consolidado,
+                ["CD_CVM", "Data", "Receita Líquida", "Ativo Total", "Patrimônio Líquido"],
+                context="DFP consolidado final",
+                logger=_log_ctx,
+            )
+            _log_ctx.set_metric("df_consolidado_linhas", len(df_consolidado))
+            _log_ctx.set_metric("df_consolidado_tickers", int(df_consolidado["CD_CVM"].nunique()))
+
+            df_consolidado = adicionar_ticker(df_consolidado)
+            validate_required_columns(
+                df_consolidado,
+                ["Ticker", "Data", "Receita Líquida", "Ativo Total", "Patrimônio Líquido"],
+                context="DFP com ticker",
+                logger=_log_ctx,
+            )
+            df_filtrado = filtrar_empresas(df_consolidado, ultimo_ano_disponivel=ultimo_ano_disponivel)
+            _log_ctx.set_metric("df_filtrado_linhas", len(df_filtrado))
+            _log_ctx.set_metric("df_filtrado_tickers", int(df_filtrado["Ticker"].nunique() if not df_filtrado.empty else 0))
+            rows = upsert_supabase_demonstracoes_financeiras(df_filtrado)
+            if rows:
+                _log_ctx.add_rows(inserted=rows)
+    else:
         df_dict_dfp, ultimo_ano_disponivel = coletar_dfp()
         df_consolidado = montar_df_consolidado(df_dict_dfp)
         if df_consolidado.empty:
-            log("[WARN] Nenhum dado consolidado retornado pela DFP.")
+            log("Nenhum dado consolidado retornado pela DFP.", level="WARN")
             return
-
         df_consolidado = adicionar_ticker(df_consolidado)
         df_filtrado = filtrar_empresas(df_consolidado, ultimo_ano_disponivel=ultimo_ano_disponivel)
-        rows = upsert_supabase_demonstracoes_financeiras(df_filtrado)
-        if _log_ctx and rows:
-            _log_ctx.add_rows(inserted=rows)
-    except Exception as exc:
-        if _log_ctx:
-            _log_ctx.add_error(str(exc))
-        raise
-    finally:
-        if _log_ctx:
-            _log_ctx.__exit__(None, None, None)
+        upsert_supabase_demonstracoes_financeiras(df_filtrado)
+    _RUN_LOG = None
 
 
 if __name__ == "__main__":

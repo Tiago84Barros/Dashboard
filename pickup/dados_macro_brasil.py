@@ -11,6 +11,21 @@ import requests
 import pandas as pd
 from sqlalchemy import create_engine, text
 
+try:
+    from auditoria_dados.ingestion_log import IngestionLog as _IngestionLog
+    from auditoria_dados.ingestion_log import validate_required_columns
+except ImportError:
+    _IngestionLog = None
+    validate_required_columns = None
+
+_RUN_LOG = None
+
+
+def log(msg: str, level: str = "INFO", **fields) -> None:
+    if _RUN_LOG:
+        _RUN_LOG.log(level, "pipeline_log", message=msg, **fields)
+        return
+    print(msg, flush=True)
 
 
 
@@ -113,7 +128,15 @@ def _fetch_sgs_json(code: int, start: date, end: date, timeout: int = 30, max_re
             last_err = e
             # backoff exponencial leve
             sleep_s = min(2 ** attempt, 20)
-            print(f"[WARN] SGS falhou (serie={code}) tentativa {attempt}/{max_retries}: {e} | retry em {sleep_s}s")
+            if _RUN_LOG:
+                _RUN_LOG.increment_metric("sgs_retries")
+                _RUN_LOG.add_warning(f"SGS falhou (serie={code}) tentativa {attempt}/{max_retries}: {e}")
+            log(
+                f"SGS falhou (serie={code}) tentativa {attempt}/{max_retries}: {e} | retry em {sleep_s}s",
+                level="WARN",
+                series_code=code,
+                attempt=attempt,
+            )
             time.sleep(sleep_s)
 
     raise RuntimeError(f"Falha definitiva ao coletar SGS serie={code} ({start}..{end}): {last_err}")
@@ -154,6 +177,8 @@ def fetch_all(cfg: MacroConfig) -> Dict[str, pd.DataFrame]:
     dados: Dict[str, pd.DataFrame] = {}
     for name, code in SERIES.items():
         dados[name] = fetch_series_chunked(name, code, cfg.start_date, cfg.end_date, cfg.max_years_chunk)
+        if _RUN_LOG:
+            _RUN_LOG.set_metric(f"serie_{name}_rows", len(dados[name]))
     return dados
 
 
@@ -436,34 +461,71 @@ def upsert_dataframe(engine, schema: str, table: str, df: pd.DataFrame, pk: str 
 # Main entrypoint
 # ----------------------------
 def main() -> None:
-    cfg = load_config()
-    print("== Macro Brasil (BCB/SGS) ==")
-    print(f"Período: {cfg.start_date} -> {cfg.end_date}")
-    print(f"Chunk: {cfg.max_years_chunk} anos | ICC_MODE: {cfg.icc_mode} | Mensal: {cfg.write_monthly}")
+    global _RUN_LOG
+    if _IngestionLog:
+        with _IngestionLog("macro_brasil") as run:
+            _RUN_LOG = run
+            cfg = load_config()
+            run.set_params({
+                "start_date": cfg.start_date,
+                "end_date": cfg.end_date,
+                "max_years_chunk": cfg.max_years_chunk,
+                "icc_mode": cfg.icc_mode,
+                "write_monthly": cfg.write_monthly,
+            })
+            log("== Macro Brasil (BCB/SGS) ==")
+            log(f"Período: {cfg.start_date} -> {cfg.end_date}")
+            log(f"Chunk: {cfg.max_years_chunk} anos | ICC_MODE: {cfg.icc_mode} | Mensal: {cfg.write_monthly}")
 
-    dados = fetch_all(cfg)
+            dados = fetch_all(cfg)
+            df_annual = build_annual_df(dados, cfg.icc_mode)
+            validate_required_columns(
+                df_annual,
+                ["data"],
+                context="Macro anual",
+                logger=run,
+            )
+            run.set_metric("macro_annual_rows", len(df_annual))
+            log(f"Anual: {len(df_annual)} linhas")
 
-    # ANUAL
-    df_annual = build_annual_df(dados, cfg.icc_mode)
-    print(f"Anual: {len(df_annual)} linhas")
+            engine = get_engine()
+            n_annual, cols_annual = upsert_dataframe(engine, cfg.schema, cfg.table_annual, df_annual, pk="data")
+            run.add_rows(inserted=n_annual)
+            run.set_metric("macro_annual_columns", cols_annual)
+            log(f"Upsert anual OK: {n_annual} registros em {cfg.schema}.{cfg.table_annual}")
+            log(f"Colunas gravadas (anual): {cols_annual}")
 
-    engine = get_engine()
-    n_annual, cols_annual = upsert_dataframe(engine, cfg.schema, cfg.table_annual, df_annual, pk="data")
-    print(f"Upsert anual OK: {n_annual} registros em {cfg.schema}.{cfg.table_annual}")
-    print(f"Colunas gravadas (anual): {cols_annual}")
+            if cfg.write_monthly:
+                try:
+                    df_monthly = build_monthly_df(dados)
+                    validate_required_columns(
+                        df_monthly,
+                        ["data"],
+                        context="Macro mensal",
+                        logger=run,
+                    )
+                    run.set_metric("macro_monthly_rows", len(df_monthly))
+                    log(f"Mensal: {len(df_monthly)} linhas")
+                    n_month, cols_month = upsert_dataframe(engine, cfg.schema, cfg.table_monthly, df_monthly, pk="data")
+                    run.add_rows(updated=n_month)
+                    run.set_metric("macro_monthly_columns", cols_month)
+                    log(f"Upsert mensal OK: {n_month} registros em {cfg.schema}.{cfg.table_monthly}")
+                    log(f"Colunas gravadas (mensal): {cols_month}")
+                except Exception as e:
+                    run.add_warning(f"Mensal não gravado: {e}")
+                    log(f"Mensal não gravado: {e}", level="WARN")
 
-    # MENSAL (opcional)
-    if cfg.write_monthly:
-        try:
+            log("Concluído.")
+    else:
+        cfg = load_config()
+        dados = fetch_all(cfg)
+        df_annual = build_annual_df(dados, cfg.icc_mode)
+        engine = get_engine()
+        upsert_dataframe(engine, cfg.schema, cfg.table_annual, df_annual, pk="data")
+        if cfg.write_monthly:
             df_monthly = build_monthly_df(dados)
-            print(f"Mensal: {len(df_monthly)} linhas")
-            n_month, cols_month = upsert_dataframe(engine, cfg.schema, cfg.table_monthly, df_monthly, pk="data")
-            print(f"Upsert mensal OK: {n_month} registros em {cfg.schema}.{cfg.table_monthly}")
-            print(f"Colunas gravadas (mensal): {cols_month}")
-        except Exception as e:
-            print(f"[WARN] Mensal não gravado: {e}")
-
-    print("Concluído.")
+            upsert_dataframe(engine, cfg.schema, cfg.table_monthly, df_monthly, pk="data")
+    _RUN_LOG = None
 
 
 if __name__ == "__main__":

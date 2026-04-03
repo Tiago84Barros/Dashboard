@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from functools import lru_cache
 import hashlib
 import io
+import json
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -26,6 +27,11 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 import requests
 from sqlalchemy import text
+
+try:
+    from auditoria_dados.ingestion_log import validate_required_columns
+except ImportError:
+    validate_required_columns = None
 
 from core.db_loader import get_supabase_engine
 from core.ticker_utils import normalize_ticker
@@ -35,6 +41,12 @@ from core.ticker_utils import normalize_ticker
 # ──────────────────────────────────────────────────────────────
 
 _TEXT_COL_CACHE: Optional[str] = None
+
+
+def _log(level: str, event: str, **fields: Any) -> None:
+    payload = {"pipeline": "docs_ipe", "level": level, "event": event}
+    payload.update(fields)
+    print(json.dumps(payload, ensure_ascii=False, default=str), flush=True)
 
 def _engine():
     return get_supabase_engine()
@@ -422,6 +434,14 @@ def ingest_ipe_for_tickers(
       C) cobertura mínima (fallback) se poucos docs estratégicos
       D) auditoria (top 10 selecionados com score)
     """
+    _log(
+        "INFO",
+        "start",
+        tickers=len(tickers),
+        window_months=window_months,
+        max_docs_per_ticker=max_docs_per_ticker,
+        max_pdfs_per_ticker=max_pdfs_per_ticker,
+    )
     tickers_n = [_norm_ticker(t) for t in tickers if (t or "").strip()]
     cvm_map = get_cvm_codes_for_tickers(tickers_n)
 
@@ -434,13 +454,16 @@ def ingest_ipe_for_tickers(
         try:
             dfs.append(_load_ipe_csv_cached(y, timeout=request_timeout).copy())
         except Exception as e:
+            _log("WARN", "year_load_failed", year=y, error=str(e))
             if verbose:
                 print(f"[IPE] Falha ao carregar {y}: {e}")
 
     if verbose:
         print(f"[IPE] anos carregados={years} | arquivos={len(dfs)}")
     if not dfs:
-        return {"ok": False, "errors": {"__all__": "Nenhum CSV IPE disponível."}, "stats": {}, "matched": 0, "considered": 0, "inserted": 0, "skipped": 0, "updated_text": 0, "pdf_fetched": 0, "pdf_text_ok": 0, "requested_max_docs": int(max_docs_per_ticker), "requested_max_pdfs": int(max_pdfs_per_ticker), "window_months": int(window_months), "max_runtime_s": float(effective_runtime_s)}
+        summary = {"ok": False, "errors": {"__all__": "Nenhum CSV IPE disponível."}, "stats": {}, "matched": 0, "considered": 0, "inserted": 0, "skipped": 0, "updated_text": 0, "pdf_fetched": 0, "pdf_text_ok": 0, "requested_max_docs": int(max_docs_per_ticker), "requested_max_pdfs": int(max_pdfs_per_ticker), "window_months": int(window_months), "max_runtime_s": float(max(float(max_runtime_s or 0.0), 1.0))}
+        _log("ERROR", "summary", **summary)
+        return summary
 
     df = pd.concat(dfs, ignore_index=True)
     cols = list(df.columns)
@@ -454,7 +477,15 @@ def ingest_ipe_for_tickers(
     col_especie = _pick_col(cols, "ESPECIE", "ESPECIE_DOCUMENTO")
 
     if any(c is None for c in (col_cvm, col_data, col_link, col_assunto)):
-        return {"ok": False, "errors": {"__all__": f"CSV IPE sem colunas necessárias. Encontradas={cols}"}, "stats": {}, "matched": 0, "considered": 0, "inserted": 0, "skipped": 0, "updated_text": 0, "pdf_fetched": 0, "pdf_text_ok": 0, "requested_max_docs": int(max_docs_per_ticker), "requested_max_pdfs": int(max_pdfs_per_ticker), "window_months": int(window_months), "max_runtime_s": float(effective_runtime_s)}
+        summary = {"ok": False, "errors": {"__all__": f"CSV IPE sem colunas necessárias. Encontradas={cols}"}, "stats": {}, "matched": 0, "considered": 0, "inserted": 0, "skipped": 0, "updated_text": 0, "pdf_fetched": 0, "pdf_text_ok": 0, "requested_max_docs": int(max_docs_per_ticker), "requested_max_pdfs": int(max_pdfs_per_ticker), "window_months": int(window_months), "max_runtime_s": float(max(float(max_runtime_s or 0.0), 1.0))}
+        _log("ERROR", "summary", **summary)
+        return summary
+    if validate_required_columns:
+        validate_required_columns(
+            df,
+            [col_cvm, col_data, col_link, col_assunto],
+            context="CSV IPE normalizado",
+        )
 
     df["_dt"] = df[col_data].apply(_parse_date)
     df = df[~df["_dt"].isna()].copy()
@@ -497,6 +528,7 @@ def ingest_ipe_for_tickers(
         for tk in tickers_n:
             if (time.time() - started) > effective_runtime_s:
                 out_errors["__runtime__"] = f"Tempo máximo atingido ({effective_runtime_s}s)."
+                _log("WARN", "runtime_limit_reached", seconds=effective_runtime_s)
                 break
 
             cvm = cvm_map.get(tk)
@@ -625,6 +657,7 @@ def ingest_ipe_for_tickers(
                                 texto = tpdf
                                 pdf_text_ok += 1
                     except Exception:
+                        _log("WARN", "pdf_extract_failed", ticker=tk, url=url[:300])
                         pass
                 elif download_pdfs and int(max_pdfs_per_ticker) > 0:
                     pdf_limit_hit = True
@@ -673,4 +706,18 @@ def ingest_ipe_for_tickers(
             }
 
     ok = (len(out_errors) == 0)
-    return {"ok": ok, "stats": out_stats, "errors": out_errors}
+    result = {"ok": ok, "stats": out_stats, "errors": out_errors}
+    _log(
+        "INFO" if ok else "WARN",
+        "summary",
+        ok=ok,
+        tickers=len(tickers_n),
+        tickers_with_stats=len(out_stats),
+        errors=len(out_errors),
+        inserted=sum(int(v.get("inserted", 0)) for v in out_stats.values()),
+        skipped=sum(int(v.get("skipped", 0)) for v in out_stats.values()),
+        updated_text=sum(int(v.get("updated_text", 0)) for v in out_stats.values()),
+        pdf_fetched=sum(int(v.get("pdf_fetched", 0)) for v in out_stats.values()),
+        pdf_text_ok=sum(int(v.get("pdf_text_ok", 0)) for v in out_stats.values()),
+    )
+    return result

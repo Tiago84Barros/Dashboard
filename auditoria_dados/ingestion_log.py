@@ -36,7 +36,7 @@ import json
 import os
 import traceback
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
@@ -66,6 +66,8 @@ class IngestionLog:
         self._rows_updated = 0
         self._rows_skipped = 0
         self._errors: List[str] = []
+        self._warnings: List[str] = []
+        self._metrics: Dict[str, Any] = {}
         self._started_at = datetime.now(timezone.utc)
 
     # ── public API ────────────────────────────────────────────────────────
@@ -85,16 +87,64 @@ class IngestionLog:
 
     def add_error(self, message: str) -> None:
         self._errors.append(message)
+        self.log("ERROR", "error", message=message)
+
+    def add_warning(self, message: str) -> None:
+        self._warnings.append(message)
+        self.log("WARN", "warning", message=message)
+
+    def set_metric(self, key: str, value: Any) -> None:
+        self._metrics[key] = value
+
+    def increment_metric(self, key: str, amount: int = 1) -> None:
+        current = self._metrics.get(key, 0)
+        if not isinstance(current, (int, float)):
+            current = 0
+        self._metrics[key] = current + amount
+
+    def log(self, level: str, event: str, **fields: Any) -> None:
+        payload = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "pipeline": self.pipeline,
+            "level": str(level).upper(),
+            "event": event,
+        }
+        payload.update(fields)
+        print(json.dumps(payload, ensure_ascii=False, default=str), flush=True)
+
+    def summary(self, status: Optional[str] = None) -> Dict[str, Any]:
+        finished_at = datetime.now(timezone.utc)
+        duration_s = round((finished_at - self._started_at).total_seconds(), 3)
+        return {
+            "pipeline": self.pipeline,
+            "status": status or ("failed" if self._errors else "success"),
+            "started_at": self._started_at.isoformat(),
+            "finished_at": finished_at.isoformat(),
+            "duration_s": duration_s,
+            "rows_inserted": self._rows_inserted,
+            "rows_updated": self._rows_updated,
+            "rows_skipped": self._rows_skipped,
+            "warnings_count": len(self._warnings),
+            "errors_count": len(self._errors),
+            "metrics": self._metrics,
+            "params": self._params,
+        }
+
+    def emit_summary(self, status: Optional[str] = None) -> Dict[str, Any]:
+        summary = self.summary(status=status)
+        self.log("INFO", "summary", **summary)
+        return summary
 
     # ── context manager ───────────────────────────────────────────────────
 
     def __enter__(self) -> "IngestionLog":
+        self.log("INFO", "start", params=self._params)
         self._engine = _get_engine()
         if self._engine:
             try:
                 self._log_id = self._insert_start()
             except Exception:
-                pass  # soft failure
+                self.log("WARN", "ingestion_log_db_unavailable")
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
@@ -107,7 +157,8 @@ class IngestionLog:
             try:
                 self._update_finish(status)
             except Exception:
-                pass  # soft failure
+                self.log("WARN", "ingestion_log_db_finish_unavailable", status=status)
+        self.emit_summary(status=status)
         return False  # don't suppress exceptions
 
     # ── private ───────────────────────────────────────────────────────────
@@ -158,3 +209,31 @@ class IngestionLog:
                     "id": self._log_id,
                 },
             )
+
+
+def validate_required_columns(
+    df,
+    required_columns: Iterable[str],
+    *,
+    context: str,
+    logger: Optional[IngestionLog] = None,
+) -> List[str]:
+    if df is None:
+        missing = list(required_columns)
+    else:
+        missing = [col for col in required_columns if col not in df.columns]
+
+    if missing:
+        message = f"{context}: colunas obrigatórias ausentes: {missing}"
+        if logger:
+            logger.add_error(message)
+        raise ValueError(message)
+
+    if logger:
+        logger.log(
+            "INFO",
+            "validated_required_columns",
+            context=context,
+            columns=list(required_columns),
+        )
+    return list(required_columns)

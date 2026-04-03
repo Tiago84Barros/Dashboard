@@ -13,6 +13,13 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert
 import yfinance as yf
 
+try:
+    from auditoria_dados.ingestion_log import IngestionLog as _IngestionLog
+    from auditoria_dados.ingestion_log import validate_required_columns
+except ImportError:
+    _IngestionLog = None
+    validate_required_columns = None
+
 # =========================
 # Silenciar ruído do yfinance
 # =========================
@@ -34,9 +41,13 @@ DEST_TABLE = "multiplos_TRI"  # DB: public."multiplos_TRI"
 YF_BATCH_SIZE = int(os.getenv("YF_BATCH_SIZE", "50"))
 YF_MAX_TICKERS = int(os.getenv("YF_MAX_TICKERS", "0"))  # 0 = sem limite
 SKIP_PRICE = os.getenv("SKIP_PRICE", "0") == "1"
+_RUN_LOG = None
 
 
-def log(msg: str) -> None:
+def log(msg: str, level: str = "INFO", **fields) -> None:
+    if _RUN_LOG:
+        _RUN_LOG.log(level, "pipeline_log", message=msg, **fields)
+        return
     print(msg, flush=True)
 
 
@@ -130,6 +141,9 @@ def baixar_precos_quarter_mean(
                 threads=False,
             )
         except Exception:
+            if _RUN_LOG:
+                _RUN_LOG.increment_metric("yf_batches_failed")
+                _RUN_LOG.add_warning(f"Falha no download Yahoo para batch {i+1}-{min(i+batch_size, total)}.")
             continue
 
         if dfp is None or dfp.empty:
@@ -192,6 +206,8 @@ def shares_outstanding(ticker: str) -> Optional[float]:
         if so and so > 0:
             return float(so)
     except Exception:
+        if _RUN_LOG:
+            _RUN_LOG.increment_metric("shares_lookup_failed")
         pass
     return None
 
@@ -230,10 +246,26 @@ def upsert_multiplos(df_out: pd.DataFrame) -> None:
 
 
 def main() -> None:
+    global _RUN_LOG
+    if _IngestionLog:
+        with _IngestionLog("multiplos_tri") as run:
+            _RUN_LOG = run
+            run.set_params({"yf_batch_size": YF_BATCH_SIZE, "yf_max_tickers": YF_MAX_TICKERS, "skip_price": SKIP_PRICE})
+            _main_impl(run)
+    else:
+        _main_impl(None)
+    _RUN_LOG = None
+
+
+def _main_impl(run) -> None:
     log("[INFO] Lendo Demonstracoes_Financeiras_TRI do Supabase...")
     df = pd.read_sql(f"SELECT * FROM {ORIGEM_TRI}", ENGINE)
 
+    if run:
+        run.set_metric("tri_source_rows", len(df))
     if df.empty:
+        if run:
+            run.add_warning("Origem TRI vazia.")
         log("[WARN] Origem TRI vazia.")
         return
 
@@ -251,10 +283,13 @@ def main() -> None:
         "Ativo_Total", "Ativo_Circulante", "Passivo_Circulante", "Passivo_Total",
         "Patrimonio_Liquido", "Divida_Liquida",
     ]
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        log(f"[ERROR] Colunas faltando na TRI: {missing}")
-        return
+    if validate_required_columns:
+        validate_required_columns(
+            df,
+            ["Ticker", "Data"] + required,
+            context="Origem Demonstracoes_Financeiras_TRI para múltiplos TRI",
+            logger=run,
+        )
 
     # Lista de tickers (com filtro para Yahoo)
     tickers_all = sorted(df["Ticker"].unique().tolist())
@@ -289,6 +324,9 @@ def main() -> None:
 
     resultados: list[dict] = []
     total_tickers = df["Ticker"].nunique()
+    if run:
+        run.set_metric("tri_tickers_total", total_tickers)
+        run.set_metric("tri_tickers_price_eligible", len(tickers_ok))
 
     for idx, (ticker, g) in enumerate(df.groupby("Ticker", sort=False), start=1):
         if idx == 1 or idx % 10 == 0:
@@ -395,10 +433,22 @@ def main() -> None:
     df_out = pd.DataFrame(resultados)
 
     if df_out.empty:
+        if run:
+            run.add_warning("Nenhuma linha gerada (TTM incompleto ou sem dados).")
         log("[WARN] Nenhuma linha gerada (TTM incompleto ou sem dados).")
         return
 
     log(f"[INFO] Linhas geradas: {len(df_out)} | Tickers: {df_out['Ticker'].nunique()}")
+    if run:
+        run.set_metric("multiplos_tri_rows", len(df_out))
+        run.set_metric("multiplos_tri_tickers", int(df_out["Ticker"].nunique()))
+    if validate_required_columns:
+        validate_required_columns(
+            df_out,
+            ["Ticker", "Data", "Liquidez_Corrente", "P/L", "P/VP", "DY"],
+            context="Múltiplos TRI calculados",
+            logger=run,
+        )
 
     # Sanity checks
     for col in ["Liquidez_Corrente", "Endividamento_Total", "ROE", "P/L", "DY"]:
@@ -412,6 +462,8 @@ def main() -> None:
 
     log("[INFO] Gravando em public.\"multiplos_TRI\" via UPSERT (Ticker, Data)...")
     upsert_multiplos(df_out)
+    if run:
+        run.add_rows(inserted=len(df_out))
 
     log("[DONE] Rotina concluída com sucesso.")
 

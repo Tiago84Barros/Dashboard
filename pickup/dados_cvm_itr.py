@@ -12,6 +12,13 @@ import requests
 import psycopg2
 from psycopg2.extras import execute_values
 
+try:
+    from auditoria_dados.ingestion_log import IngestionLog as _IngestionLog
+    from auditoria_dados.ingestion_log import validate_required_columns
+except ImportError:
+    _IngestionLog = None
+    validate_required_columns = None
+
 
 # =========================
 # CONFIG
@@ -31,6 +38,14 @@ TICKER_PATH = Path(os.getenv("TICKER_PATH", str(BASE_DIR / "cvm_to_ticker.csv"))
 
 # Proteção numeric(20,6) (LPA)
 LPA_ABS_MAX_DB = 1e14 - 1
+_RUN_LOG = None
+
+
+def log(msg: str, level: str = "INFO", **fields) -> None:
+    if _RUN_LOG:
+        _RUN_LOG.log(level, "pipeline_log", message=msg, **fields)
+        return
+    print(msg, flush=True)
 
 
 # =========================
@@ -116,11 +131,17 @@ def _baixar_zip_itr(ano: int) -> Optional[bytes]:
     try:
         r = requests.get(url, timeout=REQUEST_TIMEOUT)
         if r.status_code != 200:
-            print(f"[WARN] ITR {ano}: download falhou (status={r.status_code})")
+            if _RUN_LOG:
+                _RUN_LOG.increment_metric("downloads_com_erro")
+                _RUN_LOG.add_warning(f"ITR {ano}: download falhou (status={r.status_code})")
+            log(f"ITR {ano}: download falhou (status={r.status_code})", level="WARN", year=ano)
             return None
         return r.content
     except requests.RequestException as e:
-        print(f"[WARN] ITR {ano}: erro de rede: {e}")
+        if _RUN_LOG:
+            _RUN_LOG.increment_metric("downloads_com_erro")
+            _RUN_LOG.add_warning(f"ITR {ano}: erro de rede: {e}")
+        log(f"ITR {ano}: erro de rede: {e}", level="WARN", year=ano)
         return None
 
 
@@ -136,6 +157,13 @@ def _ler_csvs_consolidados(zip_bytes: bytes, contains_upper: str) -> pd.DataFram
             if name.endswith(".csv") and "_CON_" in up and contains_upper in up:
                 with z.open(name) as f:
                     df = pd.read_csv(f, sep=";", decimal=",", encoding="ISO-8859-1")
+                    if validate_required_columns:
+                        validate_required_columns(
+                            df,
+                            ["CD_CVM", "DT_REFER", "CD_CONTA", "VL_CONTA"],
+                            context=f"ITR {contains_upper} {name}",
+                            logger=_RUN_LOG,
+                        )
 
                     # padrão: ORDEM_EXERC == ÚLTIMO
                     if "ORDEM_EXERC" in df.columns:
@@ -360,6 +388,13 @@ def _carregar_mapa_cvm_ticker() -> pd.DataFrame:
     if not TICKER_PATH.exists():
         raise FileNotFoundError(f"Não encontrei cvm_to_ticker.csv em: {TICKER_PATH}")
     mapa = pd.read_csv(TICKER_PATH, sep=",", encoding="utf-8")
+    if validate_required_columns:
+        validate_required_columns(
+            mapa,
+            ["CVM", "Ticker"],
+            context="Mapa CVM->Ticker ITR",
+            logger=_RUN_LOG,
+        )
     if "CVM" not in mapa.columns or "Ticker" not in mapa.columns:
         raise ValueError("cvm_to_ticker.csv precisa ter colunas: CVM, Ticker")
     mapa["CVM"] = pd.to_numeric(mapa["CVM"], errors="coerce")
@@ -414,11 +449,15 @@ def _upsert_supabase_tri(df_tick: pd.DataFrame) -> int:
         "Divida_Liquida": pd.to_numeric(df_tick["Divida Liquida"], errors="coerce").fillna(0).round(2),
     })
 
+    before_dedup = len(df_db)
     df_db = (
         df_db.sort_values(["Ticker", "Data"])
              .drop_duplicates(subset=["Ticker", "Data"], keep="last")
              .reset_index(drop=True)
     )
+    if _RUN_LOG:
+        _RUN_LOG.set_metric("tri_rows_before_dedup", before_dedup)
+        _RUN_LOG.set_metric("tri_duplicates_removed", before_dedup - len(df_db))
 
     max_lpa = float(pd.to_numeric(df_db["LPA"], errors="coerce").abs().max())
     if max_lpa >= LPA_ABS_MAX_DB:
@@ -460,56 +499,98 @@ def _upsert_supabase_tri(df_tick: pd.DataFrame) -> int:
 # MAIN — ano a ano (anti-queda do Streamlit)
 # =========================
 def main():
-    mapa = _carregar_mapa_cvm_ticker()
+    global _RUN_LOG
+    if _IngestionLog:
+        with _IngestionLog("itr") as run:
+            _RUN_LOG = run
+            run.set_params({"ano_inicial": ANO_INICIAL, "ultimo_ano": ULTIMO_ANO})
+            mapa = _carregar_mapa_cvm_ticker()
 
-    total = 0
-    anos = list(_anos_processamento())
-    if not anos:
-        print("[WARN] Intervalo de anos vazio. Verifique ANO_INICIAL/ULTIMO_ANO.")
-        return
+            total = 0
+            anos = list(_anos_processamento())
+            if not anos:
+                run.add_warning("Intervalo de anos vazio. Verifique ANO_INICIAL/ULTIMO_ANO.")
+                log("Intervalo de anos vazio. Verifique ANO_INICIAL/ULTIMO_ANO.", level="WARN")
+                return
 
-    print(f"[INFO] ITR: processando anos {anos[0]}..{anos[-1]} (ULTIMO_ANO incluso)")
+            run.set_metric("anos_planejados", len(anos))
+            log(f"ITR: processando anos {anos[0]}..{anos[-1]} (ULTIMO_ANO incluso)")
 
-    for ano in anos:
-        zip_bytes = _baixar_zip_itr(ano)
-        if not zip_bytes:
-            continue
+            for ano in anos:
+                zip_bytes = _baixar_zip_itr(ano)
+                if not zip_bytes:
+                    continue
 
-        # Lê por demonstrativo (mantém leve; não acumula anos)
-        df_dre = _ler_csvs_consolidados(zip_bytes, "DRE")
-        df_bpa = _ler_csvs_consolidados(zip_bytes, "BPA")
-        df_bpp = _ler_csvs_consolidados(zip_bytes, "BPP")
+                df_dre = _ler_csvs_consolidados(zip_bytes, "DRE")
+                df_bpa = _ler_csvs_consolidados(zip_bytes, "BPA")
+                df_bpp = _ler_csvs_consolidados(zip_bytes, "BPP")
+                df_dfc_mi = _ler_csvs_consolidados(zip_bytes, "DFC_MI")
+                df_dfc_md = _ler_csvs_consolidados(zip_bytes, "DFC_MD")
+                df_dfc = df_dfc_mi if not df_dfc_mi.empty else df_dfc_md
 
-        # DFC: tenta MI e MD (usa o que existir)
-        df_dfc_mi = _ler_csvs_consolidados(zip_bytes, "DFC_MI")
-        df_dfc_md = _ler_csvs_consolidados(zip_bytes, "DFC_MD")
-        if not df_dfc_mi.empty:
-            df_dfc = df_dfc_mi
-        else:
-            df_dfc = df_dfc_md
+                if df_dre.empty and df_bpa.empty and df_bpp.empty and df_dfc.empty:
+                    run.add_warning(f"ITR {ano}: sem arquivos consolidados esperados")
+                    log(f"ITR {ano}: sem arquivos consolidados esperados", level="WARN", year=ano)
+                    continue
 
-        if df_dre.empty and df_bpa.empty and df_bpp.empty and df_dfc.empty:
-            print(f"[WARN] ITR {ano}: sem arquivos consolidados esperados")
-            continue
+                df_cons = _consolidar_itr_ano(df_dre, df_bpa, df_bpp, df_dfc)
+                if df_cons.empty:
+                    run.add_warning(f"ITR {ano}: consolidação vazia")
+                    log(f"ITR {ano}: consolidação vazia", level="WARN", year=ano)
+                    continue
 
-        df_cons = _consolidar_itr_ano(df_dre, df_bpa, df_bpp, df_dfc)
-        if df_cons.empty:
-            print(f"[WARN] ITR {ano}: consolidação vazia")
-            continue
+                validate_required_columns(
+                    df_cons,
+                    ["CD_CVM", "DT_REFER", "Receita Líquida", "Ativo Total", "Patrimônio Líquido"],
+                    context=f"ITR consolidado {ano}",
+                    logger=run,
+                )
+                df_tick = _adicionar_ticker(df_cons, mapa)
+                if df_tick.empty:
+                    run.add_warning(f"ITR {ano}: nenhum ticker após merge CVM->Ticker")
+                    log(f"ITR {ano}: nenhum ticker após merge CVM->Ticker", level="WARN", year=ano)
+                    continue
 
-        df_tick = _adicionar_ticker(df_cons, mapa)
-        if df_tick.empty:
-            print(f"[WARN] ITR {ano}: nenhum ticker após merge CVM->Ticker")
-            continue
+                validate_required_columns(
+                    df_tick,
+                    ["Ticker", "Data", "Receita Líquida", "Ativo Total", "Patrimônio Líquido"],
+                    context=f"ITR com ticker {ano}",
+                    logger=run,
+                )
+                n = _upsert_supabase_tri(df_tick)
+                total += n
+                run.add_rows(inserted=n)
+                run.increment_metric("anos_processados")
+                log(f"ITR {ano}: upsert {n} linhas (acumulado={total})", year=ano, rows=n, total=total)
 
-        n = _upsert_supabase_tri(df_tick)
-        total += n
-        print(f"[OK] ITR {ano}: upsert {n} linhas (acumulado={total})")
+                del zip_bytes, df_dre, df_bpa, df_bpp, df_dfc_mi, df_dfc_md, df_dfc, df_cons, df_tick
 
-        # libera memória (importante em deploy)
-        del zip_bytes, df_dre, df_bpa, df_bpp, df_dfc_mi, df_dfc_md, df_dfc, df_cons, df_tick
-
-    print(f"[OK] ITR concluído: total upsertado={total}")
+            run.set_metric("total_upsertado", total)
+            log(f"ITR concluído: total upsertado={total}")
+    else:
+        mapa = _carregar_mapa_cvm_ticker()
+        total = 0
+        anos = list(_anos_processamento())
+        if not anos:
+            log("Intervalo de anos vazio. Verifique ANO_INICIAL/ULTIMO_ANO.", level="WARN")
+            return
+        for ano in anos:
+            zip_bytes = _baixar_zip_itr(ano)
+            if not zip_bytes:
+                continue
+            df_dre = _ler_csvs_consolidados(zip_bytes, "DRE")
+            df_bpa = _ler_csvs_consolidados(zip_bytes, "BPA")
+            df_bpp = _ler_csvs_consolidados(zip_bytes, "BPP")
+            df_dfc_mi = _ler_csvs_consolidados(zip_bytes, "DFC_MI")
+            df_dfc_md = _ler_csvs_consolidados(zip_bytes, "DFC_MD")
+            df_dfc = df_dfc_mi if not df_dfc_mi.empty else df_dfc_md
+            df_cons = _consolidar_itr_ano(df_dre, df_bpa, df_bpp, df_dfc)
+            if df_cons.empty:
+                continue
+            df_tick = _adicionar_ticker(df_cons, mapa)
+            total += _upsert_supabase_tri(df_tick)
+        log(f"ITR concluído: total upsertado={total}")
+    _RUN_LOG = None
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ Requisitos:
 """
 
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+import json
 import re
 import time
 import urllib.parse
@@ -27,6 +28,12 @@ from sqlalchemy import text
 
 from core.db_loader import get_supabase_engine
 from core.ticker_utils import normalize_ticker
+
+
+def _log(level: str, event: str, **fields: Any) -> None:
+    payload = {"pipeline": "docs_fallback", "level": level, "event": event}
+    payload.update(fields)
+    print(json.dumps(payload, ensure_ascii=False, default=str), flush=True)
 
 # ---------------------------------
 # Util
@@ -301,10 +308,21 @@ def ingest_strategy_for_tickers(
     enable_c: bool = False,
 ) -> Dict[str, Any]:
     """Executa ingestão em camadas A/B/C e retorna um dicionário unificado."""
+    _log(
+        "INFO",
+        "start",
+        tickers=len(tickers),
+        anos=anos,
+        max_docs_por_ticker=max_docs_por_ticker,
+        strategy=strategy,
+        enable_c=enable_c,
+    )
     tks = [_norm_ticker(t) for t in (tickers or []) if str(t).strip()]
     tks = list(dict.fromkeys(tks))
     if not tks:
-        return {"ok": False, "error": "Lista vazia", "by_ticker": {}}
+        result = {"ok": False, "error": "Lista vazia", "by_ticker": {}}
+        _log("ERROR", "summary", **result)
+        return result
 
     out: Dict[str, Any] = {"ok": True, "by_ticker": {}}
 
@@ -314,14 +332,14 @@ def ingest_strategy_for_tickers(
             from pickup.ingest_docs_cvm_ipe import ingest_ipe_for_tickers  # type: ignore
             resA = ingest_ipe_for_tickers(
                 tks,
-                years=int(anos),
-                max_docs_por_ticker=int(max_docs_por_ticker),
+                window_months=max(int(anos) * 12, 1),
+                max_docs_per_ticker=int(max_docs_por_ticker),
                 sleep_s=float(sleep_s),
-                fetch_html_text=False,
                 max_runtime_s=float(max_runtime_s),
             )
         except Exception as e:
             resA = {"ok": False, "stats": {}, "errors": {"__A__": f"{type(e).__name__}: {e}"}}
+            _log("WARN", "layer_a_failed", error=str(e))
 
         for tk in tks:
             out["by_ticker"].setdefault(tk, {})
@@ -364,4 +382,11 @@ def ingest_strategy_for_tickers(
     if "C" in strategy:
         out["C"] = {"enabled": bool(enable_c), "note": "Plano C é opcional e exige curadoria de domínios."}
 
+    _log(
+        "INFO" if out.get("ok") else "WARN",
+        "summary",
+        ok=out.get("ok"),
+        tickers=len(tks),
+        tickers_with_result=len(out["by_ticker"]),
+    )
     return out
