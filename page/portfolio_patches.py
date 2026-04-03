@@ -12,8 +12,6 @@ import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 
-from core.ticker_utils import normalize_ticker
-
 
 # ─────────────────────────────────────────────────────────────
 # Helpers internos
@@ -60,11 +58,11 @@ def _patch_debug_guard(patch_label: str):
     return _decorator
 
 def _norm_tk(t: str) -> str:
-    return normalize_ticker(t)
+    return (t or "").upper().replace(".SA", "").strip()
 
 
 def _strip_sa(ticker: str) -> str:
-    return normalize_ticker(ticker)
+    return (ticker or "").strip().upper().replace(".SA", "").strip()
 
 
 def _get_nome(ticker: str, empresas_lideres_finais: List[Dict]) -> str:
@@ -862,7 +860,7 @@ def render_patch5_ia_selecao_lideres(
 # ─────────────────────────────────────────────────────────────
 
 def _p6_strip_sa(ticker: str) -> str:
-    return normalize_ticker(ticker)
+    return (ticker or "").strip().upper().replace(".SA", "").strip()
 
 
 def _p6_get_nome(ticker: str, empresas_lideres_finais: List[Dict]) -> str:
@@ -1356,7 +1354,7 @@ def _safe_last_number(df: pd.DataFrame, col_candidates: List[str]) -> Optional[f
 
 def _get_net_income_from_supabase(ticker: str) -> Optional[float]:
     try:
-        from core.ui_bridge import load_data_from_db, load_data_tri_from_db
+        from core.db_loader import load_data_from_db, load_data_tri_from_db
     except Exception:
         return None
 
@@ -1564,13 +1562,13 @@ def render_patch5_desempenho_empresas(
 
     Exibe:
       - ROIC médio (5a) [Supabase múltiplos]
-      - Coef. Regr. Receita (5a) [Supabase demonstrações]
-      - Coef. Regr. Lucro (5a) [Supabase demonstrações]
-      - Coef. Regr. Dividendos (5a) [Supabase demonstrações]
+      - Cresc. anual receita (5a) [Supabase demonstrações]
+      - Cresc. anual lucro (5a) [Supabase demonstrações]
+      - Cresc. anual dividendos (5a) [Supabase demonstrações]
       - DY médio (5a) [Supabase múltiplos]
       - Dívida Líq./EBITDA [Supabase demonstrações]
       - Valorização do preço (12m) [yfinance/preços]
-      - Coef. Regr. do preço (5a) [yfinance/preços]
+      - Cresc. anual preço (5a) [yfinance/preços]
       - Volatilidade (12m, a.a.) [yfinance/preços]
       - Máxima queda (5a) [yfinance/preços]  (termo em PT, sem “drawdown”)
     """
@@ -1580,7 +1578,7 @@ def render_patch5_desempenho_empresas(
     import streamlit as st
 
     # DB/YF loaders (mesmo padrão do empresa_view.py)
-    from core.ui_bridge import load_data_from_db, load_multiplos_limitado_from_db
+    from core.db_loader import load_data_from_db, load_multiplos_limitado_from_db
     from core.yf_data import get_fundamentals_yf
 
     try:
@@ -1686,6 +1684,19 @@ def render_patch5_desempenho_empresas(
             return "-"
         return f"{float(x):+.4f}"
 
+    def _slope_to_growth_rate(x, periods_per_year: float = 1.0) -> float:
+        if _is_nan(x):
+            return np.nan
+        try:
+            return float(np.exp(float(x) * float(periods_per_year)) - 1.0)
+        except Exception:
+            return np.nan
+
+    def _fmt_growth(x) -> str:
+        if _is_nan(x):
+            return "-"
+        return f"{float(x):+.2f}%"
+
     def _fmt_short(x) -> str:
         # compacto para "Dívida Líq./EBITDA"
         if _is_nan(x):
@@ -1771,7 +1782,7 @@ def render_patch5_desempenho_empresas(
         if s.shape[0] < 60:
             return np.nan
         if isinstance(s.index, pd.DatetimeIndex):
-            s = s.sort_index().resample("ME").last().dropna()
+            s = s.sort_index().resample("M").last().dropna()
         if s.shape[0] < 24:
             return np.nan
         if s.shape[0] > 60:
@@ -2005,6 +2016,11 @@ def render_patch5_desempenho_empresas(
         vol_12m = _vol_12m(price) if not price.empty else np.nan
         max_queda_5a = _maxima_queda_5a(price) if not price.empty else np.nan
 
+        crescimento_receita_5a = _slope_to_growth_rate(slope_receita_5a, periods_per_year=1.0) * 100.0
+        crescimento_lucro_5a = _slope_to_growth_rate(slope_lucro_5a, periods_per_year=1.0) * 100.0
+        crescimento_dividendos_5a = _slope_to_growth_rate(slope_dividendos_5a, periods_per_year=1.0) * 100.0
+        crescimento_preco_5a = _slope_to_growth_rate(slope_preco_5a, periods_per_year=12.0) * 100.0
+
         # score interno apenas para ordenar (não exibido)
         # (robusto: rank pct, invertendo onde menor é melhor)
         rows.append(
@@ -2015,10 +2031,14 @@ def render_patch5_desempenho_empresas(
                 slope_receita_5a=slope_receita_5a,
                 slope_lucro_5a=slope_lucro_5a,
                 slope_dividendos_5a=slope_dividendos_5a,
+                crescimento_receita_5a=crescimento_receita_5a,
+                crescimento_lucro_5a=crescimento_lucro_5a,
+                crescimento_dividendos_5a=crescimento_dividendos_5a,
                 dy_5a=dy_5a,
                 dl_ebitda=dl_ebitda,
                 ret_12m=ret_12m,
                 slope_preco_5a=slope_preco_5a,
+                crescimento_preco_5a=crescimento_preco_5a,
                 vol_12m=vol_12m,
                 max_queda_5a=max_queda_5a,
             )
@@ -2104,9 +2124,9 @@ def render_patch5_desempenho_empresas(
         c3.markdown(
             f"""
             <div class="cf-card {_cls_posneg(r['slope_dividendos_5a'])}">
-                <div class="cf-card-label">Coef. Regr. Dividendos (5a)</div>
-                <div class="cf-card-value">{_fmt_coef(r['slope_dividendos_5a'])}</div>
-                <div class="cf-card-extra">Inclinação log-linear robusta dos dividendos.</div>
+                <div class="cf-card-label">Cresc. anual dividendos (5a)</div>
+                <div class="cf-card-value">{_fmt_growth(r['crescimento_dividendos_5a'])}</div>
+                <div class="cf-card-extra">Taxa anualizada implícita da tendência robusta dos dividendos.</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -2127,9 +2147,9 @@ def render_patch5_desempenho_empresas(
         c1.markdown(
             f"""
             <div class="cf-card {_cls_posneg(r['slope_receita_5a'])}">
-                <div class="cf-card-label">Coef. Regr. Receita (5a)</div>
-                <div class="cf-card-value">{_fmt_coef(r['slope_receita_5a'])}</div>
-                <div class="cf-card-extra">Inclinação log-linear robusta da receita.</div>
+                <div class="cf-card-label">Cresc. anual receita (5a)</div>
+                <div class="cf-card-value">{_fmt_growth(r['crescimento_receita_5a'])}</div>
+                <div class="cf-card-extra">Taxa anualizada implícita da tendência robusta da receita.</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -2137,9 +2157,9 @@ def render_patch5_desempenho_empresas(
         c2.markdown(
             f"""
             <div class="cf-card {_cls_posneg(r['slope_lucro_5a'])}">
-                <div class="cf-card-label">Coef. Regr. Lucro (5a)</div>
-                <div class="cf-card-value">{_fmt_coef(r['slope_lucro_5a'])}</div>
-                <div class="cf-card-extra">Inclinação log-linear robusta do lucro.</div>
+                <div class="cf-card-label">Cresc. anual lucro (5a)</div>
+                <div class="cf-card-value">{_fmt_growth(r['crescimento_lucro_5a'])}</div>
+                <div class="cf-card-extra">Taxa anualizada implícita da tendência robusta do lucro.</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -2157,9 +2177,9 @@ def render_patch5_desempenho_empresas(
         c4.markdown(
             f"""
             <div class="cf-card {_cls_posneg(r['slope_preco_5a'])}">
-                <div class="cf-card-label">Coef. Regr. do preço (5a)</div>
-                <div class="cf-card-value">{_fmt_coef(r['slope_preco_5a'])}</div>
-                <div class="cf-card-extra">Inclinação log-linear robusta do preço.</div>
+                <div class="cf-card-label">Cresc. anual preço (5a)</div>
+                <div class="cf-card-value">{_fmt_growth(r['crescimento_preco_5a'])}</div>
+                <div class="cf-card-extra">Taxa anualizada implícita da tendência robusta do preço.</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -2201,7 +2221,7 @@ def render_patch5_desempenho_empresas(
         st.markdown("<hr style='border:0;border-top:1px solid rgba(255,255,255,.08);margin: 8px 0 14px 0;'>", unsafe_allow_html=True)
 
     st.caption(
-        "Notas: coeficientes de regressão são inclinações log-lineares robustas (Theil-Sen). Volatilidade 12m é anualizada (≈252 pregões). "
+        "Notas: as taxas de crescimento exibidas convertem a inclinação log-linear robusta (Theil-Sen) em crescimento anualizado. Para preço, a inclinação mensal é anualizada em 12 meses. Volatilidade 12m é anualizada (≈252 pregões). "
         "Máxima queda (5a) é o pior recuo do preço no período. "
         "Quando faltarem dados no banco, o patch usa fallback do yfinance."
     )
