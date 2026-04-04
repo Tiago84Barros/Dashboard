@@ -12,9 +12,13 @@ from sqlalchemy import create_engine, text
 try:
     from auditoria_dados.ingestion_log import IngestionLog as _IngestionLog
     from auditoria_dados.ingestion_log import validate_required_columns
+    from auditoria_dados.ingestion_log import validate_key_columns
+    from auditoria_dados.ingestion_log import validate_unique_rows
 except ImportError:
     _IngestionLog = None
     validate_required_columns = None
+    validate_key_columns = None
+    validate_unique_rows = None
 
 
 # ======================
@@ -52,6 +56,38 @@ def _chunked(it: List[str], n: int) -> Iterable[List[str]]:
         yield it[i : i + n]
 
 
+def _normalize_ticker_series(series: pd.Series) -> pd.Series:
+    return series.astype(str).str.strip().str.upper()
+
+
+def _assert_unique_key_ready(cur, table_name: str, key_columns: Tuple[str, ...]) -> None:
+    cur.execute(
+        """
+        SELECT 1
+        FROM pg_index i
+        JOIN pg_class t ON t.oid = i.indrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE n.nspname = 'public'
+          AND t.relname = %s
+          AND i.indisunique
+          AND (
+              SELECT array_agg(a.attname ORDER BY x.ord)
+              FROM unnest(i.indkey) WITH ORDINALITY AS x(attnum, ord)
+              JOIN pg_attribute a
+                ON a.attrelid = t.oid
+               AND a.attnum = x.attnum
+              WHERE x.attnum > 0
+          ) = %s::text[]
+        LIMIT 1
+        """,
+        (table_name, list(key_columns)),
+    )
+    if cur.fetchone() is None:
+        raise RuntimeError(
+            f'A tabela public."{table_name}" precisa de UNIQUE/PK em {key_columns} para ON CONFLICT.'
+        )
+
+
 # ======================
 # DB READ (Supabase)
 # ======================
@@ -76,6 +112,7 @@ def carregar_demonstracoes() -> pd.DataFrame:
     if "Dividendos" in df.columns:
         df["Dividendos"] = df["Dividendos"].astype(float)
 
+    df["Ticker"] = _normalize_ticker_series(df["Ticker"])
     df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
 
     # normaliza TZ
@@ -85,9 +122,16 @@ def carregar_demonstracoes() -> pd.DataFrame:
         df["Data"] = df["Data"].dt.tz_convert("UTC")
 
     df["Ano"] = df["Data"].dt.year
-    df["ticker_yf"] = df["Ticker"].astype(str) + ".SA"
+    df["ticker_yf"] = df["Ticker"] + ".SA"
 
     df = df[df["Ticker"].notna() & df["Data"].notna()].copy()
+    if validate_key_columns:
+        validate_key_columns(
+            df,
+            ["Ticker", "Data"],
+            context="Demonstracoes_Financeiras normalizado para múltiplos DFP",
+            logger=_RUN_LOG,
+        )
     return df
 
 
@@ -115,6 +159,13 @@ def obter_precos_medios_anuais(tickers_yf: np.ndarray) -> pd.DataFrame:
             )
 
             if data is None or data.empty:
+                log(
+                    f"Yahoo sem dados para batch com {len(batch)} ticker(s).",
+                    level="WARN",
+                    stage="yf_empty_batch",
+                    batch_size=len(batch),
+                    batch_preview=batch[:5],
+                )
                 continue
 
             # Caso 1: MultiIndex (ticker, campo)
@@ -151,10 +202,16 @@ def obter_precos_medios_anuais(tickers_yf: np.ndarray) -> pd.DataFrame:
                 for ano, pm in g.items():
                     rows.append((t, int(ano), float(pm)))
 
-        except Exception:
+        except Exception as e:
             if _RUN_LOG:
                 _RUN_LOG.increment_metric("yf_batches_failed")
-                _RUN_LOG.add_warning(f"Falha no download do Yahoo para batch com {len(batch)} tickers.")
+            log(
+                f"Falha no download do Yahoo para batch com {len(batch)} ticker(s): {e}",
+                level="ERROR",
+                stage="yf_batch_failed",
+                batch_size=len(batch),
+                batch_preview=batch[:5],
+            )
             continue
 
     if not rows:
@@ -162,6 +219,13 @@ def obter_precos_medios_anuais(tickers_yf: np.ndarray) -> pd.DataFrame:
 
     df_precos = pd.DataFrame(rows, columns=["ticker_yf", "Ano", "Preco_Medio_Anual"])
     df_precos["Ano"] = df_precos["Ano"].astype(int)
+    if validate_unique_rows:
+        validate_unique_rows(
+            df_precos,
+            ["ticker_yf", "Ano"],
+            context="Preços médios anuais Yahoo",
+            logger=_RUN_LOG,
+        )
 
     return df_precos
 
@@ -184,7 +248,7 @@ def calcular_multiplos(df_demonstracoes: pd.DataFrame) -> pd.DataFrame:
         _RUN_LOG.set_metric("preco_missing_rows", int(df["Preco_Medio_Anual"].isna().sum()))
 
     out = pd.DataFrame()
-    out["Ticker"] = df["Ticker"].astype(str)
+    out["Ticker"] = _normalize_ticker_series(df["Ticker"])
     out["Data"] = df["Data"]
 
     # 1) Liquidez Corrente
@@ -240,6 +304,13 @@ def calcular_multiplos(df_demonstracoes: pd.DataFrame) -> pd.DataFrame:
 
     # remove linhas sem Data/Ticker
     out = out[out["Ticker"].notna() & out["Data"].notna()].copy()
+    if validate_key_columns:
+        validate_key_columns(
+            out,
+            ["Ticker", "Data"],
+            context="Múltiplos DFP calculados",
+            logger=_RUN_LOG,
+        )
 
     # ordenação opcional para facilitar debug
     out.sort_values(["Ticker", "Data"], inplace=True)
@@ -261,6 +332,39 @@ def upsert_multiplos(df_multiplos: pd.DataFrame) -> None:
         print("[INFO] Nenhuma linha para gravar em public.multiplos.")
         return
 
+    df_multiplos = df_multiplos.copy()
+    df_multiplos["Ticker"] = _normalize_ticker_series(df_multiplos["Ticker"])
+    df_multiplos["Data"] = pd.to_datetime(df_multiplos["Data"], errors="coerce", utc=True)
+    if validate_key_columns:
+        validate_key_columns(
+            df_multiplos,
+            ["Ticker", "Data"],
+            context="Múltiplos DFP pré-upsert",
+            logger=_RUN_LOG,
+        )
+
+    before_dedup = len(df_multiplos)
+    df_multiplos = (
+        df_multiplos.sort_values(["Ticker", "Data"])
+        .drop_duplicates(subset=["Ticker", "Data"], keep="last")
+        .reset_index(drop=True)
+    )
+    duplicates_removed = before_dedup - len(df_multiplos)
+    if duplicates_removed > 0:
+        log(
+            f"Múltiplos DFP pré-upsert removeu {duplicates_removed} duplicata(s) por (Ticker, Data).",
+            level="WARN",
+            stage="pre_upsert_dedup",
+            duplicates_removed=duplicates_removed,
+        )
+    if validate_unique_rows:
+        validate_unique_rows(
+            df_multiplos,
+            ["Ticker", "Data"],
+            context="Múltiplos DFP pré-upsert deduplicado",
+            logger=_RUN_LOG,
+        )
+
     cols = list(df_multiplos.columns)
     values = [tuple(x) for x in df_multiplos.itertuples(index=False, name=None)]
 
@@ -281,6 +385,7 @@ def upsert_multiplos(df_multiplos: pd.DataFrame) -> None:
     with psycopg2.connect(SUPABASE_DB_URL) as conn:
         with conn.cursor() as cur:
             cur.execute(ddl_unique)
+            _assert_unique_key_ready(cur, "multiplos", ("Ticker", "Data"))
             execute_values(cur, insert_sql, values, page_size=5000)
         conn.commit()
 
@@ -307,6 +412,13 @@ def main() -> None:
                 context="Múltiplos DFP calculados",
                 logger=run,
             )
+            if validate_key_columns:
+                validate_key_columns(
+                    df_multiplos,
+                    ["Ticker", "Data"],
+                    context="Múltiplos DFP calculados",
+                    logger=run,
+                )
             log(f"Linhas de múltiplos geradas: {len(df_multiplos)}")
 
             log("Gravando no Supabase (UPSERT)...")

@@ -4,6 +4,47 @@
 -- Rodar manualmente no Supabase SQL Editor ou via psql.
 -- Todos os comandos são idempotentes (IF NOT EXISTS / IF EXISTS).
 --
+-- Aplicação segura recomendada:
+-- 1. Executar primeiro em staging ou clone do banco, nunca direto em produção.
+-- 2. Fazer snapshot/backup de:
+--      public.ingestion_log
+--      public.docs_corporativos
+--      public.docs_corporativos_chunks
+--      public.patch6_runs
+-- 3. Rodar pré-checagens antes desta migration:
+--      -- docs duplicados por hash
+--      SELECT doc_hash, COUNT(*)
+--      FROM public.docs_corporativos
+--      WHERE doc_hash IS NOT NULL
+--      GROUP BY doc_hash
+--      HAVING COUNT(*) > 1;
+--
+--      -- possíveis duplicatas semânticas
+--      SELECT
+--          upper(coalesce(ticker, '')) AS ticker,
+--          lower(coalesce(fonte, '')) AS fonte,
+--          lower(coalesce(tipo, '')) AS tipo,
+--          lower(coalesce(titulo, '')) AS titulo,
+--          lower(coalesce(url, '')) AS url,
+--          coalesce(data::date::text, '') AS data_ref,
+--          COUNT(*)
+--      FROM public.docs_corporativos
+--      GROUP BY 1,2,3,4,5,6
+--      HAVING COUNT(*) > 1;
+--
+--      -- chunks órfãos
+--      SELECT COUNT(*)
+--      FROM public.docs_corporativos_chunks c
+--      LEFT JOIN public.docs_corporativos d ON d.id = c.doc_id
+--      WHERE d.id IS NULL;
+--
+-- 4. Aplicar a migration.
+-- 5. Executar rerun controlado de IPE, ENET e fallback em staging e validar:
+--      - rerun sem duplicação semântica
+--      - rebuild de chunks só quando conteúdo ou versão mudar
+--      - novas execuções com run_id / extraction_version / chunking_version
+-- 6. Só então promover para produção.
+--
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 1. Tabela de log de ingestão
@@ -26,6 +67,16 @@ CREATE TABLE IF NOT EXISTS public.ingestion_log (
 CREATE INDEX IF NOT EXISTS idx_ingestion_log_pipeline
     ON public.ingestion_log (pipeline, started_at DESC);
 
+ALTER TABLE public.ingestion_log
+    ADD COLUMN IF NOT EXISTS run_id TEXT,
+    ADD COLUMN IF NOT EXISTS warnings_count INT DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS metrics JSONB,
+    ADD COLUMN IF NOT EXISTS events JSONB;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ingestion_log_run_id
+    ON public.ingestion_log (run_id)
+    WHERE run_id IS NOT NULL;
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 2. Versão de schema no patch6_runs
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -44,7 +95,11 @@ WHERE schema_version IS NULL;
 
 ALTER TABLE public.docs_corporativos
     ADD COLUMN IF NOT EXISTS texto_chars     INT,      -- comprimento de raw_text em chars
-    ADD COLUMN IF NOT EXISTS texto_qualidade TEXT;     -- 'ok' | 'vazio' | 'curto' | 'ruido'
+    ADD COLUMN IF NOT EXISTS texto_qualidade TEXT,     -- 'ok' | 'vazio' | 'curto' | 'ruido'
+    ADD COLUMN IF NOT EXISTS ingestion_run_id TEXT,
+    ADD COLUMN IF NOT EXISTS extraction_version TEXT,
+    ADD COLUMN IF NOT EXISTS content_hash TEXT,
+    ADD COLUMN IF NOT EXISTS is_stub BOOLEAN DEFAULT FALSE;
 
 -- Backfill para documentos existentes
 UPDATE public.docs_corporativos
@@ -66,6 +121,20 @@ CREATE INDEX IF NOT EXISTS idx_docs_corporativos_ticker_data
 
 CREATE INDEX IF NOT EXISTS idx_docs_chunks_doc_id
     ON public.docs_corporativos_chunks (doc_id, chunk_index ASC);
+
+ALTER TABLE public.docs_corporativos_chunks
+    ADD COLUMN IF NOT EXISTS chunking_version TEXT,
+    ADD COLUMN IF NOT EXISTS extraction_version TEXT,
+    ADD COLUMN IF NOT EXISTS ingestion_run_id TEXT,
+    ADD COLUMN IF NOT EXISTS content_hash TEXT,
+    ADD COLUMN IF NOT EXISTS is_stub BOOLEAN DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS context_preview TEXT,
+    ADD COLUMN IF NOT EXISTS titulo TEXT,
+    ADD COLUMN IF NOT EXISTS fonte TEXT,
+    ADD COLUMN IF NOT EXISTS url TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_docs_chunks_doc_version
+    ON public.docs_corporativos_chunks (doc_id, chunking_version, extraction_version);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 5. Constraint explícita em Demonstracoes_Financeiras (se não existir)

@@ -4,7 +4,7 @@ import os
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Iterable, List
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -15,9 +15,13 @@ from psycopg2.extras import execute_values
 try:
     from auditoria_dados.ingestion_log import IngestionLog as _IngestionLog
     from auditoria_dados.ingestion_log import validate_required_columns
+    from auditoria_dados.ingestion_log import validate_key_columns
+    from auditoria_dados.ingestion_log import validate_unique_rows
 except ImportError:
     _IngestionLog = None
     validate_required_columns = None
+    validate_key_columns = None
+    validate_unique_rows = None
 
 
 # =========================
@@ -46,6 +50,34 @@ def log(msg: str, level: str = "INFO", **fields) -> None:
         _RUN_LOG.log(level, "pipeline_log", message=msg, **fields)
         return
     print(msg, flush=True)
+
+
+def _assert_unique_key_ready(cur, table_name: str, key_columns: Tuple[str, ...]) -> None:
+    cur.execute(
+        """
+        SELECT 1
+        FROM pg_index i
+        JOIN pg_class t ON t.oid = i.indrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE n.nspname = 'public'
+          AND t.relname = %s
+          AND i.indisunique
+          AND (
+              SELECT array_agg(a.attname ORDER BY x.ord)
+              FROM unnest(i.indkey) WITH ORDINALITY AS x(attnum, ord)
+              JOIN pg_attribute a
+                ON a.attrelid = t.oid
+               AND a.attnum = x.attnum
+              WHERE x.attnum > 0
+          ) = %s::text[]
+        LIMIT 1
+        """,
+        (table_name, list(key_columns)),
+    )
+    if cur.fetchone() is None:
+        raise RuntimeError(
+            f'A tabela public."{table_name}" precisa de UNIQUE/PK em {key_columns} para ON CONFLICT.'
+        )
 
 
 # =========================
@@ -126,23 +158,19 @@ def _normalizar_lpa_series(s: pd.Series) -> pd.Series:
 # =========================
 # DOWNLOAD / LEITURA DO ZIP (ano a ano)
 # =========================
-def _baixar_zip_itr(ano: int) -> Optional[bytes]:
+def _baixar_zip_itr(ano: int) -> bytes:
     url = f"{URL_BASE_ITR}itr_cia_aberta_{ano}.zip"
     try:
         r = requests.get(url, timeout=REQUEST_TIMEOUT)
         if r.status_code != 200:
             if _RUN_LOG:
                 _RUN_LOG.increment_metric("downloads_com_erro")
-                _RUN_LOG.add_warning(f"ITR {ano}: download falhou (status={r.status_code})")
-            log(f"ITR {ano}: download falhou (status={r.status_code})", level="WARN", year=ano)
-            return None
+            raise RuntimeError(f"ITR {ano}: download falhou (status={r.status_code})")
         return r.content
     except requests.RequestException as e:
         if _RUN_LOG:
             _RUN_LOG.increment_metric("downloads_com_erro")
-            _RUN_LOG.add_warning(f"ITR {ano}: erro de rede: {e}")
-        log(f"ITR {ano}: erro de rede: {e}", level="WARN", year=ano)
-        return None
+        raise RuntimeError(f"ITR {ano}: erro de rede: {e}") from e
 
 
 def _ler_csvs_consolidados(zip_bytes: bytes, contains_upper: str) -> pd.DataFrame:
@@ -395,6 +423,20 @@ def _carregar_mapa_cvm_ticker() -> pd.DataFrame:
             context="Mapa CVM->Ticker ITR",
             logger=_RUN_LOG,
         )
+    if validate_key_columns:
+        validate_key_columns(
+            mapa,
+            ["CVM", "Ticker"],
+            context="Mapa CVM->Ticker ITR",
+            logger=_RUN_LOG,
+        )
+    if validate_unique_rows:
+        validate_unique_rows(
+            mapa,
+            ["CVM"],
+            context="Mapa CVM->Ticker ITR",
+            logger=_RUN_LOG,
+        )
     if "CVM" not in mapa.columns or "Ticker" not in mapa.columns:
         raise ValueError("cvm_to_ticker.csv precisa ter colunas: CVM, Ticker")
     mapa["CVM"] = pd.to_numeric(mapa["CVM"], errors="coerce")
@@ -417,6 +459,21 @@ def _adicionar_ticker(df: pd.DataFrame, mapa: pd.DataFrame) -> pd.DataFrame:
 
     out["Data"] = pd.to_datetime(out["DT_REFER"], errors="coerce").dt.date
     out = out.drop(columns=["DT_REFER"])
+
+    if validate_key_columns:
+        validate_key_columns(
+            out,
+            ["Ticker", "Data"],
+            context="ITR com ticker",
+            logger=_RUN_LOG,
+        )
+    if validate_unique_rows:
+        validate_unique_rows(
+            out,
+            ["Ticker", "Data"],
+            context="ITR com ticker",
+            logger=_RUN_LOG,
+        )
 
     return out
 
@@ -448,6 +505,13 @@ def _upsert_supabase_tri(df_tick: pd.DataFrame) -> int:
         "Caixa_Liquido": pd.to_numeric(df_tick["Caixa Líquido"], errors="coerce").fillna(0).round(2),
         "Divida_Liquida": pd.to_numeric(df_tick["Divida Liquida"], errors="coerce").fillna(0).round(2),
     })
+    if validate_key_columns:
+        validate_key_columns(
+            df_db,
+            ["Ticker", "Data"],
+            context="ITR pré-upsert",
+            logger=_RUN_LOG,
+        )
 
     before_dedup = len(df_db)
     df_db = (
@@ -458,6 +522,21 @@ def _upsert_supabase_tri(df_tick: pd.DataFrame) -> int:
     if _RUN_LOG:
         _RUN_LOG.set_metric("tri_rows_before_dedup", before_dedup)
         _RUN_LOG.set_metric("tri_duplicates_removed", before_dedup - len(df_db))
+    duplicates_removed = before_dedup - len(df_db)
+    if duplicates_removed > 0:
+        log(
+            f"ITR pré-upsert removeu {duplicates_removed} duplicata(s) por (Ticker, Data).",
+            level="WARN",
+            duplicates_removed=duplicates_removed,
+            stage="pre_upsert_dedup",
+        )
+    if validate_unique_rows:
+        validate_unique_rows(
+            df_db,
+            ["Ticker", "Data"],
+            context="ITR pré-upsert deduplicado",
+            logger=_RUN_LOG,
+        )
 
     max_lpa = float(pd.to_numeric(df_db["LPA"], errors="coerce").abs().max())
     if max_lpa >= LPA_ABS_MAX_DB:
@@ -489,6 +568,7 @@ def _upsert_supabase_tri(df_tick: pd.DataFrame) -> int:
 
     with psycopg2.connect(SUPABASE_DB_URL) as conn:
         with conn.cursor() as cur:
+            _assert_unique_key_ready(cur, "Demonstracoes_Financeiras_TRI", ("Ticker", "Data"))
             execute_values(cur, sql, values, page_size=UPSERT_PAGE_SIZE)
         conn.commit()
 
@@ -515,58 +595,61 @@ def main():
 
             run.set_metric("anos_planejados", len(anos))
             log(f"ITR: processando anos {anos[0]}..{anos[-1]} (ULTIMO_ANO incluso)")
+            failed_years: Dict[int, str] = {}
 
             for ano in anos:
-                zip_bytes = _baixar_zip_itr(ano)
-                if not zip_bytes:
-                    continue
+                try:
+                    zip_bytes = _baixar_zip_itr(ano)
+                    df_dre = _ler_csvs_consolidados(zip_bytes, "DRE")
+                    df_bpa = _ler_csvs_consolidados(zip_bytes, "BPA")
+                    df_bpp = _ler_csvs_consolidados(zip_bytes, "BPP")
+                    df_dfc_mi = _ler_csvs_consolidados(zip_bytes, "DFC_MI")
+                    df_dfc_md = _ler_csvs_consolidados(zip_bytes, "DFC_MD")
+                    df_dfc = df_dfc_mi if not df_dfc_mi.empty else df_dfc_md
 
-                df_dre = _ler_csvs_consolidados(zip_bytes, "DRE")
-                df_bpa = _ler_csvs_consolidados(zip_bytes, "BPA")
-                df_bpp = _ler_csvs_consolidados(zip_bytes, "BPP")
-                df_dfc_mi = _ler_csvs_consolidados(zip_bytes, "DFC_MI")
-                df_dfc_md = _ler_csvs_consolidados(zip_bytes, "DFC_MD")
-                df_dfc = df_dfc_mi if not df_dfc_mi.empty else df_dfc_md
+                    if df_dre.empty and df_bpa.empty and df_bpp.empty and df_dfc.empty:
+                        raise RuntimeError(f"ITR {ano}: sem arquivos consolidados esperados")
 
-                if df_dre.empty and df_bpa.empty and df_bpp.empty and df_dfc.empty:
-                    run.add_warning(f"ITR {ano}: sem arquivos consolidados esperados")
-                    log(f"ITR {ano}: sem arquivos consolidados esperados", level="WARN", year=ano)
-                    continue
+                    df_cons = _consolidar_itr_ano(df_dre, df_bpa, df_bpp, df_dfc)
+                    if df_cons.empty:
+                        raise RuntimeError(f"ITR {ano}: consolidação vazia")
 
-                df_cons = _consolidar_itr_ano(df_dre, df_bpa, df_bpp, df_dfc)
-                if df_cons.empty:
-                    run.add_warning(f"ITR {ano}: consolidação vazia")
-                    log(f"ITR {ano}: consolidação vazia", level="WARN", year=ano)
-                    continue
+                    validate_required_columns(
+                        df_cons,
+                        ["CD_CVM", "DT_REFER", "Receita Líquida", "Ativo Total", "Patrimônio Líquido"],
+                        context=f"ITR consolidado {ano}",
+                        logger=run,
+                    )
+                    df_tick = _adicionar_ticker(df_cons, mapa)
+                    if df_tick.empty:
+                        raise RuntimeError(f"ITR {ano}: nenhum ticker após merge CVM->Ticker")
 
-                validate_required_columns(
-                    df_cons,
-                    ["CD_CVM", "DT_REFER", "Receita Líquida", "Ativo Total", "Patrimônio Líquido"],
-                    context=f"ITR consolidado {ano}",
-                    logger=run,
-                )
-                df_tick = _adicionar_ticker(df_cons, mapa)
-                if df_tick.empty:
-                    run.add_warning(f"ITR {ano}: nenhum ticker após merge CVM->Ticker")
-                    log(f"ITR {ano}: nenhum ticker após merge CVM->Ticker", level="WARN", year=ano)
-                    continue
-
-                validate_required_columns(
-                    df_tick,
-                    ["Ticker", "Data", "Receita Líquida", "Ativo Total", "Patrimônio Líquido"],
-                    context=f"ITR com ticker {ano}",
-                    logger=run,
-                )
-                n = _upsert_supabase_tri(df_tick)
-                total += n
-                run.add_rows(inserted=n)
-                run.increment_metric("anos_processados")
-                log(f"ITR {ano}: upsert {n} linhas (acumulado={total})", year=ano, rows=n, total=total)
-
-                del zip_bytes, df_dre, df_bpa, df_bpp, df_dfc_mi, df_dfc_md, df_dfc, df_cons, df_tick
+                    validate_required_columns(
+                        df_tick,
+                        ["Ticker", "Data", "Receita Líquida", "Ativo Total", "Patrimônio Líquido"],
+                        context=f"ITR com ticker {ano}",
+                        logger=run,
+                    )
+                    n = _upsert_supabase_tri(df_tick)
+                    total += n
+                    run.add_rows(inserted=n)
+                    run.increment_metric("anos_processados")
+                    log(
+                        f"ITR {ano}: upsert {n} linhas (acumulado={total})",
+                        year=ano,
+                        rows=n,
+                        total=total,
+                        stage="year_success",
+                    )
+                except Exception as e:
+                    failed_years[ano] = str(e)
+                    run.add_error(f"ITR {ano}: {e}")
+                    log(f"ITR {ano}: falhou: {e}", level="ERROR", year=ano, stage="year_failed")
 
             run.set_metric("total_upsertado", total)
             log(f"ITR concluído: total upsertado={total}")
+            if failed_years:
+                raise RuntimeError(f"Falhas em {len(failed_years)} ano(s) ITR: {failed_years}")
     else:
         mapa = _carregar_mapa_cvm_ticker()
         total = 0
@@ -574,22 +657,31 @@ def main():
         if not anos:
             log("Intervalo de anos vazio. Verifique ANO_INICIAL/ULTIMO_ANO.", level="WARN")
             return
+        failed_years: Dict[int, str] = {}
         for ano in anos:
-            zip_bytes = _baixar_zip_itr(ano)
-            if not zip_bytes:
-                continue
-            df_dre = _ler_csvs_consolidados(zip_bytes, "DRE")
-            df_bpa = _ler_csvs_consolidados(zip_bytes, "BPA")
-            df_bpp = _ler_csvs_consolidados(zip_bytes, "BPP")
-            df_dfc_mi = _ler_csvs_consolidados(zip_bytes, "DFC_MI")
-            df_dfc_md = _ler_csvs_consolidados(zip_bytes, "DFC_MD")
-            df_dfc = df_dfc_mi if not df_dfc_mi.empty else df_dfc_md
-            df_cons = _consolidar_itr_ano(df_dre, df_bpa, df_bpp, df_dfc)
-            if df_cons.empty:
-                continue
-            df_tick = _adicionar_ticker(df_cons, mapa)
-            total += _upsert_supabase_tri(df_tick)
+            try:
+                zip_bytes = _baixar_zip_itr(ano)
+                df_dre = _ler_csvs_consolidados(zip_bytes, "DRE")
+                df_bpa = _ler_csvs_consolidados(zip_bytes, "BPA")
+                df_bpp = _ler_csvs_consolidados(zip_bytes, "BPP")
+                df_dfc_mi = _ler_csvs_consolidados(zip_bytes, "DFC_MI")
+                df_dfc_md = _ler_csvs_consolidados(zip_bytes, "DFC_MD")
+                df_dfc = df_dfc_mi if not df_dfc_mi.empty else df_dfc_md
+                if df_dre.empty and df_bpa.empty and df_bpp.empty and df_dfc.empty:
+                    raise RuntimeError(f"ITR {ano}: sem arquivos consolidados esperados")
+                df_cons = _consolidar_itr_ano(df_dre, df_bpa, df_bpp, df_dfc)
+                if df_cons.empty:
+                    raise RuntimeError(f"ITR {ano}: consolidação vazia")
+                df_tick = _adicionar_ticker(df_cons, mapa)
+                if df_tick.empty:
+                    raise RuntimeError(f"ITR {ano}: nenhum ticker após merge CVM->Ticker")
+                total += _upsert_supabase_tri(df_tick)
+            except Exception as e:
+                failed_years[ano] = str(e)
+                log(f"ITR {ano}: falhou: {e}", level="ERROR", year=ano, stage="year_failed")
         log(f"ITR concluído: total upsertado={total}")
+        if failed_years:
+            raise RuntimeError(f"Falhas em {len(failed_years)} ano(s) ITR: {failed_years}")
     _RUN_LOG = None
 
 

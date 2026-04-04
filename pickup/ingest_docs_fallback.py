@@ -18,6 +18,7 @@ Requisitos:
 """
 
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+from contextlib import nullcontext
 import json
 import re
 import time
@@ -26,11 +27,29 @@ import urllib.parse
 import requests
 from sqlalchemy import text
 
+try:
+    from auditoria_dados.ingestion_log import IngestionLog as _IngestionLog
+except ImportError:
+    _IngestionLog = None
+
+from core.docs_corporativos_store import DEFAULT_CHUNKING_VERSION
+from core.docs_corporativos_store import persist_document_bundle
 from core.db_loader import get_supabase_engine
 from core.ticker_utils import normalize_ticker
 
+_RUN_LOG = None
+_CHUNKING_VERSION = f"fallback::{DEFAULT_CHUNKING_VERSION}"
+_EXTRACTION_VERSIONS = {
+    "ri_html": "ri_html_text_v1",
+    "ri_pdf": "ri_pdf_text_v1",
+    "ri_stub": "ri_stub_v1",
+}
+
 
 def _log(level: str, event: str, **fields: Any) -> None:
+    if _RUN_LOG:
+        _RUN_LOG.log(level, event, **fields)
+        return
     payload = {"pipeline": "docs_fallback", "level": level, "event": event}
     payload.update(fields)
     print(json.dumps(payload, ensure_ascii=False, default=str), flush=True)
@@ -61,6 +80,20 @@ def _strip_html(html: str) -> str:
     s = s.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
     s = re.sub(r"\s+", " ", s).strip()
     return s
+
+
+def _canonical_url(url: str) -> str:
+    u = (url or "").strip()
+    if not u:
+        return ""
+    try:
+        p = urllib.parse.urlparse(u)
+        scheme = (p.scheme or "https").lower()
+        netloc = (p.netloc or "").lower()
+        path = re.sub(r"/{2,}", "/", p.path or "").rstrip("/")
+        return urllib.parse.urlunparse((scheme, netloc, path, "", p.query or "", ""))
+    except Exception:
+        return u
 
 # ---------------------------------
 # Supabase: RI map
@@ -98,6 +131,42 @@ def _sha256(s: str) -> str:
     import hashlib
     return hashlib.sha256((s or "").encode("utf-8")).hexdigest()
 
+
+def _find_existing_doc_id(
+    conn,
+    *,
+    ticker: str,
+    data: Optional[str],
+    fonte: str,
+    tipo: str,
+    titulo: str,
+    url: str,
+) -> Optional[int]:
+    row = conn.execute(
+        text(
+            """
+            select id
+            from public.docs_corporativos
+            where upper(ticker) = upper(:ticker)
+              and coalesce(data::date::text, '') = coalesce(:data, '')
+              and lower(coalesce(fonte, '')) = lower(:fonte)
+              and lower(coalesce(tipo, '')) = lower(:tipo)
+              and lower(coalesce(titulo, '')) = lower(:titulo)
+              and lower(coalesce(url, '')) = lower(:url)
+            limit 1
+            """
+        ),
+        {
+            "ticker": _norm_ticker(ticker),
+            "data": (data or "").strip() or None,
+            "fonte": (fonte or "").strip() or "UNKNOWN",
+            "tipo": (tipo or "").strip() or "doc",
+            "titulo": (titulo or "").strip(),
+            "url": _canonical_url(url),
+        },
+    ).fetchone()
+    return int(row[0]) if row else None
+
 def upsert_doc(
     *,
     ticker: str,
@@ -107,8 +176,13 @@ def upsert_doc(
     titulo: str,
     url: str,
     raw_text: str,
+    extraction_version: str = _EXTRACTION_VERSIONS["ri_stub"],
+    is_stub: bool = False,
+    chunk_size: int = 1000,
+    chunk_overlap: int = 150,
+    run_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Insere documento bruto em public.docs_corporativos (sem chunks)."""
+    """Insere documento via store institucional."""
     tk = _norm_ticker(ticker)
     if not tk:
         return {"ok": False, "error": "ticker_vazio"}
@@ -116,25 +190,56 @@ def upsert_doc(
     fonte = (fonte or "").strip() or "UNKNOWN"
     tipo = (tipo or "").strip() or "doc"
     titulo = (titulo or "").strip()
-    url = (url or "").strip()
+    url = _canonical_url(url)
     raw_text = (raw_text or "").strip()
 
-    doc_hash = _sha256("|".join([tk, fonte, tipo, titulo, url, raw_text]))
-
     engine = get_supabase_engine()
-    sql = text("""
-        insert into public.docs_corporativos (ticker, data, fonte, tipo, titulo, url, raw_text, doc_hash)
-        values (:ticker, :data, :fonte, :tipo, :titulo, :url, :raw_text, :doc_hash)
-        on conflict (doc_hash) do nothing
-        returning id
-    """)
     with engine.begin() as conn:
-        row = conn.execute(sql, {
-            "ticker": tk, "data": data, "fonte": fonte, "tipo": tipo,
-            "titulo": titulo, "url": url, "raw_text": raw_text, "doc_hash": doc_hash
-        }).first()
+        persisted = persist_document_bundle(
+            conn,
+            ticker=tk,
+            titulo=titulo,
+            url=url,
+            fonte=fonte,
+            tipo=tipo,
+            data=data,
+            texto=raw_text,
+            chunking_version=_CHUNKING_VERSION,
+            extraction_version=extraction_version,
+            run_id=run_id,
+            is_stub=is_stub,
+            chunk_size=int(chunk_size),
+            chunk_overlap=int(chunk_overlap),
+        )
 
-    return {"ok": True, "inserted": row is not None, "doc_hash": doc_hash}
+    inserted = bool(persisted.get("inserted"))
+    _log(
+        "INFO" if inserted else "WARN",
+        "doc_persisted",
+        ticker=tk,
+        fonte=fonte,
+        tipo=tipo,
+        data=data,
+        inserted=inserted,
+        updated_text=bool(persisted.get("updated_text")),
+        duplicate=bool(persisted.get("duplicate")),
+        chunks_inserted=int(persisted.get("chunks_inserted", 0) or 0),
+        extraction_version=extraction_version,
+        is_stub=bool(persisted.get("stub")),
+        raw_text_chars=len(raw_text),
+        url=url[:300],
+    )
+    reason = "existing_metadata" if bool(persisted.get("duplicate")) else None
+    return {
+        "ok": True,
+        "inserted": inserted,
+        "updated_text": bool(persisted.get("updated_text")),
+        "duplicate": bool(persisted.get("duplicate")),
+        "doc_hash": str(persisted.get("doc_hash") or ""),
+        "chunks_inserted": int(persisted.get("chunks_inserted", 0) or 0),
+        "stub": bool(persisted.get("stub")),
+        "reason": reason,
+    }
 
 # ---------------------------------
 # B: Ingestão via RI (crawler simples)
@@ -168,6 +273,7 @@ def ingest_from_ri(
     parsed = urllib.parse.urlparse(start)
     if not parsed.scheme:
         start = "https://" + start.lstrip("/")
+    start = _canonical_url(start)
 
     domain = urllib.parse.urlparse(start).netloc.lower()
 
@@ -187,12 +293,18 @@ def ingest_from_ri(
     queue: List[Tuple[str,int]] = [(start, 0)]
     pages_fetched = 0
     inserted = 0
+    updated_text = 0
     skipped = 0
     pdfs = 0
+    stubs = 0
+    chunks_generated = 0
+    failures = 0
     errors: List[str] = []
 
     session = requests.Session()
     session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; patch6-ingestor/1.0)"})
+    duplicates = 0
+    _log("INFO", "ri_start", ticker=tk, ri_url=start, max_pages=max_pages, max_depth=max_depth)
 
     def score_url(u: str) -> int:
         ul = u.lower()
@@ -215,7 +327,7 @@ def ingest_from_ri(
             pages_fetched += 1
             ct = (r.headers.get("Content-Type") or "").lower()
 
-            final_url = r.url
+            final_url = _canonical_url(r.url)
             if not _same_domain(final_url, start):
                 skipped += 1
                 continue
@@ -238,13 +350,41 @@ def ingest_from_ri(
 
                 titulo = f"PDF RI {tk}"
                 if raw_text:
-                    resp = upsert_doc(ticker=tk, data=None, fonte="RI", tipo="pdf", titulo=titulo, url=final_url, raw_text=raw_text)
+                    resp = upsert_doc(
+                        ticker=tk,
+                        data=None,
+                        fonte="RI",
+                        tipo="pdf",
+                        titulo=titulo,
+                        url=final_url,
+                        raw_text=raw_text,
+                        extraction_version=_EXTRACTION_VERSIONS["ri_pdf"],
+                        is_stub=False,
+                        run_id=getattr(_RUN_LOG, "run_id", None),
+                    )
                 else:
-                    resp = upsert_doc(ticker=tk, data=None, fonte="RI", tipo="pdf_meta", titulo=titulo, url=final_url, raw_text=f"[PDF sem texto extraível automaticamente] {final_url}")
+                    resp = upsert_doc(
+                        ticker=tk,
+                        data=None,
+                        fonte="RI",
+                        tipo="pdf_meta",
+                        titulo=titulo,
+                        url=final_url,
+                        raw_text=f"[PDF sem texto extraível automaticamente] {final_url}",
+                        extraction_version=_EXTRACTION_VERSIONS["ri_stub"],
+                        is_stub=True,
+                        run_id=getattr(_RUN_LOG, "run_id", None),
+                    )
+                    stubs += 1
                 if resp.get("inserted"):
                     inserted += 1
-                else:
+                if resp.get("updated_text"):
+                    updated_text += 1
+                chunks_generated += int(resp.get("chunks_inserted", 0) or 0)
+                if not resp.get("inserted") and not resp.get("updated_text"):
                     skipped += 1
+                    if resp.get("reason") == "existing_metadata":
+                        duplicates += 1
 
             else:
                 html = r.text or ""
@@ -253,11 +393,27 @@ def ingest_from_ri(
                     skipped += 1
                 else:
                     titulo = f"RI {tk}: {urllib.parse.urlparse(final_url).path[:80]}"
-                    resp = upsert_doc(ticker=tk, data=None, fonte="RI", tipo="html", titulo=titulo, url=final_url, raw_text=text_clean)
+                    resp = upsert_doc(
+                        ticker=tk,
+                        data=None,
+                        fonte="RI",
+                        tipo="html",
+                        titulo=titulo,
+                        url=final_url,
+                        raw_text=text_clean,
+                        extraction_version=_EXTRACTION_VERSIONS["ri_html"],
+                        is_stub=False,
+                        run_id=getattr(_RUN_LOG, "run_id", None),
+                    )
                     if resp.get("inserted"):
                         inserted += 1
-                    else:
+                    if resp.get("updated_text"):
+                        updated_text += 1
+                    chunks_generated += int(resp.get("chunks_inserted", 0) or 0)
+                    if not resp.get("inserted") and not resp.get("updated_text"):
                         skipped += 1
+                        if resp.get("reason") == "existing_metadata":
+                            duplicates += 1
 
                 if depth < max_depth:
                     hrefs = re.findall(r'(?is)\bhref\s*=\s*["\']([^"\']+)["\']', html)
@@ -278,19 +434,39 @@ def ingest_from_ri(
                 time.sleep(float(sleep_s))
 
         except Exception as e:
+            failures += 1
             errors.append(f"{type(e).__name__}: {e}")
+            _log("WARN", "ri_page_failed", ticker=tk, url=url[:300], depth=depth, error=str(e))
 
-    return {
+    result = {
         "ok": True,
         "ticker": tk,
         "ri_url": start,
         "domain": domain,
         "pages_fetched": pages_fetched,
         "inserted": inserted,
+        "updated_text": updated_text,
         "skipped": skipped,
+        "duplicates": duplicates,
         "pdfs": pdfs,
+        "stubs": stubs,
+        "chunks_generated": chunks_generated,
+        "failures": failures,
         "errors": errors[:10],
     }
+    if _RUN_LOG:
+        _RUN_LOG.add_source_metrics(
+            source="RI",
+            ticker=tk,
+            documents_read=pages_fetched,
+            documents_inserted=inserted,
+            duplicates=duplicates,
+            chunks_generated=chunks_generated,
+            stubs=stubs,
+            failures=failures,
+        )
+    _log("INFO", "ri_summary", **result)
+    return result
 
 # ---------------------------------
 # Pipeline A->B->C
@@ -308,85 +484,106 @@ def ingest_strategy_for_tickers(
     enable_c: bool = False,
 ) -> Dict[str, Any]:
     """Executa ingestão em camadas A/B/C e retorna um dicionário unificado."""
-    _log(
-        "INFO",
-        "start",
-        tickers=len(tickers),
-        anos=anos,
-        max_docs_por_ticker=max_docs_por_ticker,
-        strategy=strategy,
-        enable_c=enable_c,
-    )
+    global _RUN_LOG
     tks = [_norm_ticker(t) for t in (tickers or []) if str(t).strip()]
     tks = list(dict.fromkeys(tks))
-    if not tks:
-        result = {"ok": False, "error": "Lista vazia", "by_ticker": {}}
-        _log("ERROR", "summary", **result)
-        return result
+    run_ctx = _IngestionLog("docs_fallback") if _IngestionLog else nullcontext(None)
+    if _IngestionLog and run_ctx:
+        run_ctx.set_params(
+            {
+                "tickers": tks,
+                "anos": int(anos),
+                "max_docs_por_ticker": int(max_docs_por_ticker),
+                "strategy": strategy,
+                "max_runtime_s": float(max_runtime_s),
+                "enable_c": bool(enable_c),
+                "chunking_version": _CHUNKING_VERSION,
+            }
+        )
 
-    out: Dict[str, Any] = {"ok": True, "by_ticker": {}}
+    with run_ctx as run:
+        _RUN_LOG = run
+        _log(
+            "INFO",
+            "start",
+            tickers=len(tks),
+            anos=anos,
+            max_docs_por_ticker=max_docs_por_ticker,
+            strategy=strategy,
+            enable_c=enable_c,
+        )
+        if not tks:
+            result = {"ok": False, "run_id": getattr(run, "run_id", None), "error": "Lista vazia", "by_ticker": {}}
+            if run:
+                run.add_error("Lista vazia")
+            _log("ERROR", "summary", **result)
+            _RUN_LOG = None
+            return result
 
-    # A: CVM/IPE
-    if "A" in strategy:
-        try:
-            from pickup.ingest_docs_cvm_ipe import ingest_ipe_for_tickers  # type: ignore
-            resA = ingest_ipe_for_tickers(
-                tks,
-                window_months=max(int(anos) * 12, 1),
-                max_docs_per_ticker=int(max_docs_por_ticker),
-                sleep_s=float(sleep_s),
-                max_runtime_s=float(max_runtime_s),
-            )
-        except Exception as e:
-            resA = {"ok": False, "stats": {}, "errors": {"__A__": f"{type(e).__name__}: {e}"}}
-            _log("WARN", "layer_a_failed", error=str(e))
+        out: Dict[str, Any] = {"ok": True, "run_id": getattr(run, "run_id", None), "by_ticker": {}}
 
-        for tk in tks:
-            out["by_ticker"].setdefault(tk, {})
-            stats = (resA.get("stats") or {}).get(tk)
-            err = (resA.get("errors") or {}).get(tk)
-            # propaga erro global (ex.: __ipe__/__map__/__A__) para facilitar diagnóstico na UI
-            if not err:
-                errs = (resA.get("errors") or {})
-                for k in ("__ipe__", "__map__", "__A__", "__all__"):
-                    if k in errs and errs.get(k):
-                        err = errs.get(k)
-                        break
-            out["by_ticker"][tk]["A"] = {"stats": stats, "error": err}
+        if "A" in strategy:
+            try:
+                from pickup.ingest_docs_cvm_ipe import ingest_ipe_for_tickers  # type: ignore
+                resA = ingest_ipe_for_tickers(
+                    tks,
+                    window_months=max(int(anos) * 12, 1),
+                    max_docs_per_ticker=int(max_docs_por_ticker),
+                    sleep_s=float(sleep_s),
+                    max_runtime_s=float(max_runtime_s),
+                )
+            except Exception as e:
+                resA = {"ok": False, "stats": {}, "errors": {"__A__": f"{type(e).__name__}: {e}"}}
+                _log("WARN", "layer_a_failed", error=str(e))
 
-    # B: RI fallback
-    if "B" in strategy:
-        ri_map = fetch_ri_map(tks, table=ri_map_table)
-        for tk in tks:
-            out["by_ticker"].setdefault(tk, {})
+            for tk in tks:
+                out["by_ticker"].setdefault(tk, {})
+                stats = (resA.get("stats") or {}).get(tk)
+                err = (resA.get("errors") or {}).get(tk)
+                if not err:
+                    errs = (resA.get("errors") or {})
+                    for k in ("__ipe__", "__map__", "__A__", "__all__"):
+                        if k in errs and errs.get(k):
+                            err = errs.get(k)
+                            break
+                out["by_ticker"][tk]["A"] = {"stats": stats, "error": err}
 
-            need_b = True
-            if "A" in out["by_ticker"][tk]:
-                a_stats = out["by_ticker"][tk]["A"].get("stats") or {}
-                if isinstance(a_stats, dict) and int(a_stats.get("inserted") or 0) > 0:
-                    need_b = False
+        if "B" in strategy:
+            ri_map = fetch_ri_map(tks, table=ri_map_table)
+            for tk in tks:
+                out["by_ticker"].setdefault(tk, {})
 
-            if not need_b:
-                out["by_ticker"][tk]["B"] = {"skipped": True, "reason": "A já inseriu docs"}
-                continue
+                need_b = True
+                if "A" in out["by_ticker"][tk]:
+                    a_stats = out["by_ticker"][tk]["A"].get("stats") or {}
+                    if isinstance(a_stats, dict) and int(a_stats.get("inserted") or 0) > 0:
+                        need_b = False
 
-            ri_url = ri_map.get(tk, "")
-            if not ri_url:
-                out["by_ticker"][tk]["B"] = {"ok": False, "error": "ri_url_missing (preencha public.ri_map)"}
-                out["ok"] = False
-                continue
+                if not need_b:
+                    out["by_ticker"][tk]["B"] = {"skipped": True, "reason": "A já inseriu docs"}
+                    _log("INFO", "layer_b_skipped", ticker=tk, reason="A já inseriu docs")
+                    continue
 
-            out["by_ticker"][tk]["B"] = ingest_from_ri(tk, ri_url, max_pages=30, max_depth=2, sleep_s=sleep_s)
+                ri_url = ri_map.get(tk, "")
+                if not ri_url:
+                    out["by_ticker"][tk]["B"] = {"ok": False, "error": "ri_url_missing (preencha public.ri_map)"}
+                    out["ok"] = False
+                    _log("WARN", "layer_b_missing_ri_url", ticker=tk)
+                    continue
 
-    # C placeholder
-    if "C" in strategy:
-        out["C"] = {"enabled": bool(enable_c), "note": "Plano C é opcional e exige curadoria de domínios."}
+                out["by_ticker"][tk]["B"] = ingest_from_ri(tk, ri_url, max_pages=30, max_depth=2, sleep_s=sleep_s)
 
-    _log(
-        "INFO" if out.get("ok") else "WARN",
-        "summary",
-        ok=out.get("ok"),
-        tickers=len(tks),
-        tickers_with_result=len(out["by_ticker"]),
-    )
-    return out
+        if "C" in strategy:
+            out["C"] = {"enabled": bool(enable_c), "note": "Plano C é opcional e exige curadoria de domínios."}
+
+        _log(
+            "INFO" if out.get("ok") else "WARN",
+            "summary",
+            ok=out.get("ok"),
+            run_id=out.get("run_id"),
+            tickers=len(tks),
+            tickers_with_result=len(out["by_ticker"]),
+            duplicates=sum(int((v.get("B") or {}).get("duplicates", 0)) for v in out["by_ticker"].values()),
+        )
+        _RUN_LOG = None
+        return out

@@ -13,10 +13,18 @@ from sqlalchemy import create_engine, text
 
 try:
     from auditoria_dados.ingestion_log import IngestionLog as _IngestionLog
+    from auditoria_dados.ingestion_log import validate_column_types
+    from auditoria_dados.ingestion_log import validate_non_null_columns
     from auditoria_dados.ingestion_log import validate_required_columns
+    from auditoria_dados.ingestion_log import validate_schema_columns
+    from auditoria_dados.ingestion_log import validate_unique_rows
 except ImportError:
     _IngestionLog = None
+    validate_column_types = None
+    validate_non_null_columns = None
     validate_required_columns = None
+    validate_schema_columns = None
+    validate_unique_rows = None
 
 _RUN_LOG = None
 
@@ -81,6 +89,34 @@ SERIES: Dict[str, int] = {
     "pib": 4380,
     "divida_publica": 4502,
 }
+
+ANNUAL_COLUMNS = [
+    "data",
+    "selic",
+    "cambio",
+    "ipca",
+    "icc",
+    "icc_delta",
+    "pib",
+    "balanca_comercial",
+    "divida_publica",
+    "juros_real_ex_ante",
+]
+
+MONTHLY_COLUMNS = [
+    "data",
+    "selic_final",
+    "selic_media",
+    "cambio_final",
+    "ipca_mom",
+    "ipca_12m",
+    "icc_final",
+    "icc_media",
+    "icc_delta_12m",
+    "balanca_comercial",
+    "divida_publica_final",
+    "juros_real_ex_ante_12m",
+]
 
 
 # ----------------------------
@@ -153,10 +189,19 @@ def fetch_series_chunked(name: str, code: int, start_date: date, end_date: date,
         raw = _fetch_sgs_json(code, cursor, end_chunk)
         if raw:
             df_chunk = pd.DataFrame(raw)
+            if validate_required_columns:
+                validate_required_columns(
+                    df_chunk,
+                    ["data", "valor"],
+                    context=f"Macro raw chunk {name}",
+                    logger=_RUN_LOG,
+                )
             # normaliza nomes e tipos
             df_chunk["data"] = pd.to_datetime(df_chunk["data"], format="%d/%m/%Y", errors="coerce")
             df_chunk["valor"] = pd.to_numeric(df_chunk["valor"].astype(str).str.replace(",", ".", regex=False), errors="coerce")
             df_chunk = df_chunk.dropna(subset=["data"]).set_index("data")[["valor"]]
+            if df_chunk.empty or bool(df_chunk["valor"].isna().all()):
+                raise ValueError(f"Série {name} retornou chunk sem valores válidos ({cursor}..{end_chunk}).")
             df_chunk = df_chunk.rename(columns={"valor": name})
             chunks.append(df_chunk)
 
@@ -173,10 +218,22 @@ def fetch_series_chunked(name: str, code: int, start_date: date, end_date: date,
     return df_full
 
 
+def validate_series_frame(name: str, df: pd.DataFrame) -> None:
+    if df is None or df.empty:
+        raise ValueError(f"Série {name} vazia no período solicitado.")
+    if name not in df.columns:
+        raise ValueError(f"Série {name} sem coluna esperada após normalização.")
+    if bool(df.index.duplicated().any()):
+        raise ValueError(f"Série {name} com datas duplicadas após concatenação.")
+    if bool(df[name].isna().all()):
+        raise ValueError(f"Série {name} sem valores numéricos válidos.")
+
+
 def fetch_all(cfg: MacroConfig) -> Dict[str, pd.DataFrame]:
     dados: Dict[str, pd.DataFrame] = {}
     for name, code in SERIES.items():
         dados[name] = fetch_series_chunked(name, code, cfg.start_date, cfg.end_date, cfg.max_years_chunk)
+        validate_series_frame(name, dados[name])
         if _RUN_LOG:
             _RUN_LOG.set_metric(f"serie_{name}_rows", len(dados[name]))
     return dados
@@ -274,19 +331,13 @@ def build_annual_df(dados: Dict[str, pd.DataFrame], icc_mode: str) -> pd.DataFra
     df["data"] = pd.to_datetime(df["data"], utc=True)
 
     # Limpeza: manter apenas colunas relevantes
-    keep = [
-        "data",
-        "selic",
-        "cambio",
-        "ipca",
-        "icc",
-        "icc_delta",
-        "pib",
-        "balanca_comercial",
-        "divida_publica",
-        "juros_real_ex_ante",
-    ]
-    df = df[[c for c in keep if c in df.columns]]
+    for col in ANNUAL_COLUMNS:
+        if col not in df.columns:
+            df[col] = pd.NA
+    for col in ANNUAL_COLUMNS:
+        if col != "data":
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = df[ANNUAL_COLUMNS]
 
     # Remove linhas onde todos os indicadores (exceto data) são NaN
     value_cols = [c for c in df.columns if c != "data"]
@@ -370,17 +421,13 @@ def build_monthly_df(dados: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     dfm["data"] = pd.to_datetime(dfm["data"], utc=True)
 
     # Seleção final (tabela mensal)
-    keep = [
-        "data",
-        "selic_final", "selic_media",
-        "cambio_final",
-        "ipca_mom", "ipca_12m",
-        "icc_final", "icc_media", "icc_delta_12m",
-        "balanca_comercial",
-        "divida_publica_final",
-        "juros_real_ex_ante_12m",
-    ]
-    dfm = dfm[[c for c in keep if c in dfm.columns]]
+    for col in MONTHLY_COLUMNS:
+        if col not in dfm.columns:
+            dfm[col] = pd.NA
+    for col in MONTHLY_COLUMNS:
+        if col != "data":
+            dfm[col] = pd.to_numeric(dfm[col], errors="coerce")
+    dfm = dfm[MONTHLY_COLUMNS]
     return dfm
 
 
@@ -394,48 +441,86 @@ def get_engine():
     return create_engine(db_url)
 
 
-def table_columns(engine, schema: str, table: str) -> List[str]:
+def table_columns(conn, schema: str, table: str) -> List[str]:
     q = text("""
         select column_name
         from information_schema.columns
         where table_schema = :schema and table_name = :table
         order by ordinal_position
     """)
-    with engine.connect() as conn:
-        rows = conn.execute(q, {"schema": schema, "table": table}).fetchall()
+    rows = conn.execute(q, {"schema": schema, "table": table}).fetchall()
     return [r[0] for r in rows]
 
 
-def upsert_dataframe(engine, schema: str, table: str, df: pd.DataFrame, pk: str = "data") -> Tuple[int, List[str]]:
+def validate_macro_output(df: pd.DataFrame, *, columns: List[str], context: str) -> None:
+    if validate_required_columns:
+        validate_required_columns(df, ["data"], context=context, logger=_RUN_LOG)
+    if validate_non_null_columns and not df.empty:
+        validate_non_null_columns(df, ["data"], context=context, logger=_RUN_LOG)
+    if validate_unique_rows and not df.empty:
+        validate_unique_rows(df, ["data"], context=context, logger=_RUN_LOG)
+    if validate_column_types and not df.empty:
+        type_contract = {"data": "datetime"}
+        type_contract.update({col: "numeric" for col in columns if col != "data"})
+        validate_column_types(df, type_contract, context=context, logger=_RUN_LOG)
+
+    if df.empty:
+        raise ValueError(f"{context}: DataFrame vazio após transformação.")
+
+    value_cols = [col for col in columns if col != "data"]
+    if not value_cols or bool(df[value_cols].isna().all().all()):
+        raise ValueError(f"{context}: nenhuma métrica válida disponível para gravação.")
+
+
+def upsert_dataframe(conn, schema: str, table: str, df: pd.DataFrame, pk: str = "data", expected_columns: Optional[List[str]] = None) -> Tuple[int, List[str]]:
     if df.empty:
         return 0, []
 
-    cols_db = table_columns(engine, schema, table)
+    cols_db = table_columns(conn, schema, table)
     if not cols_db:
         raise RuntimeError(f"Tabela {schema}.{table} não encontrada (ou sem colunas).")
 
-    # Ajuste: nomes no DF podem não bater em case; tentamos mapear por lower()
     map_db = {c.lower(): c for c in cols_db}
     df_cols = list(df.columns)
+    expected = expected_columns or df_cols
 
-    # Converte colunas DF para os nomes reais do DB quando possível
+    missing_db = [col for col in expected if col.lower() not in map_db]
+    if missing_db:
+        raise RuntimeError(
+            f"Schema drift em {schema}.{table}: colunas esperadas ausentes no banco: {missing_db}"
+        )
+
     rename = {}
+    unmapped = []
     for c in df_cols:
         lc = c.lower()
         if lc in map_db:
             rename[c] = map_db[lc]
-    df2 = df.rename(columns=rename)
+        else:
+            unmapped.append(c)
+    if unmapped:
+        raise RuntimeError(
+            f"Schema drift em {schema}.{table}: colunas do DataFrame sem correspondência no banco: {unmapped}"
+        )
 
-    # Mantém somente interseção
-    cols_insert = [c for c in df2.columns if c in cols_db]
+    df2 = df.rename(columns=rename)
+    cols_insert = [rename.get(c, c) for c in df_cols]
     if pk not in cols_insert and pk.lower() in map_db:
         pk = map_db[pk.lower()]
     if pk not in cols_insert:
         raise RuntimeError(f"PK '{pk}' não está presente no DataFrame após mapeamento para colunas do DB.")
 
     df2 = df2[cols_insert].copy()
+    if validate_schema_columns:
+        validate_schema_columns(
+            cols_insert,
+            [pk],
+            context=f"Contrato de escrita {schema}.{table}",
+            logger=_RUN_LOG,
+            optional_columns=[col for col in cols_insert if col != pk],
+            allow_extra=False,
+        )
 
-    # Monta SQL UPSERT
     cols_sql = ", ".join([f'"{c}"' for c in cols_insert])
     placeholders = ", ".join([f"%({c})s" for c in cols_insert])
 
@@ -450,9 +535,7 @@ def upsert_dataframe(engine, schema: str, table: str, df: pd.DataFrame, pk: str 
     '''
 
     records = df2.to_dict(orient="records")
-
-    with engine.begin() as conn:
-        conn.exec_driver_sql(sql, records)
+    conn.exec_driver_sql(sql, records)
 
     return len(records), cols_insert
 
@@ -462,69 +545,86 @@ def upsert_dataframe(engine, schema: str, table: str, df: pd.DataFrame, pk: str 
 # ----------------------------
 def main() -> None:
     global _RUN_LOG
+    cfg = load_config()
+
     if _IngestionLog:
-        with _IngestionLog("macro_brasil") as run:
-            _RUN_LOG = run
-            cfg = load_config()
-            run.set_params({
-                "start_date": cfg.start_date,
-                "end_date": cfg.end_date,
-                "max_years_chunk": cfg.max_years_chunk,
-                "icc_mode": cfg.icc_mode,
-                "write_monthly": cfg.write_monthly,
-            })
-            log("== Macro Brasil (BCB/SGS) ==")
-            log(f"Período: {cfg.start_date} -> {cfg.end_date}")
-            log(f"Chunk: {cfg.max_years_chunk} anos | ICC_MODE: {cfg.icc_mode} | Mensal: {cfg.write_monthly}")
-
-            dados = fetch_all(cfg)
-            df_annual = build_annual_df(dados, cfg.icc_mode)
-            validate_required_columns(
-                df_annual,
-                ["data"],
-                context="Macro anual",
-                logger=run,
-            )
-            run.set_metric("macro_annual_rows", len(df_annual))
-            log(f"Anual: {len(df_annual)} linhas")
-
-            engine = get_engine()
-            n_annual, cols_annual = upsert_dataframe(engine, cfg.schema, cfg.table_annual, df_annual, pk="data")
-            run.add_rows(inserted=n_annual)
-            run.set_metric("macro_annual_columns", cols_annual)
-            log(f"Upsert anual OK: {n_annual} registros em {cfg.schema}.{cfg.table_annual}")
-            log(f"Colunas gravadas (anual): {cols_annual}")
-
-            if cfg.write_monthly:
-                try:
-                    df_monthly = build_monthly_df(dados)
-                    validate_required_columns(
-                        df_monthly,
-                        ["data"],
-                        context="Macro mensal",
-                        logger=run,
-                    )
-                    run.set_metric("macro_monthly_rows", len(df_monthly))
-                    log(f"Mensal: {len(df_monthly)} linhas")
-                    n_month, cols_month = upsert_dataframe(engine, cfg.schema, cfg.table_monthly, df_monthly, pk="data")
-                    run.add_rows(updated=n_month)
-                    run.set_metric("macro_monthly_columns", cols_month)
-                    log(f"Upsert mensal OK: {n_month} registros em {cfg.schema}.{cfg.table_monthly}")
-                    log(f"Colunas gravadas (mensal): {cols_month}")
-                except Exception as e:
-                    run.add_warning(f"Mensal não gravado: {e}")
-                    log(f"Mensal não gravado: {e}", level="WARN")
-
-            log("Concluído.")
+        ctx = _IngestionLog("macro_brasil")
+        ctx.set_params({
+            "start_date": cfg.start_date,
+            "end_date": cfg.end_date,
+            "max_years_chunk": cfg.max_years_chunk,
+            "icc_mode": cfg.icc_mode,
+            "write_monthly": cfg.write_monthly,
+        })
     else:
-        cfg = load_config()
+        ctx = None
+
+    def _run_pipeline(run=None) -> None:
+        global _RUN_LOG
+        _RUN_LOG = run
+        log("== Macro Brasil (BCB/SGS) ==")
+        log(f"Período: {cfg.start_date} -> {cfg.end_date}")
+        log(f"Chunk: {cfg.max_years_chunk} anos | ICC_MODE: {cfg.icc_mode} | Mensal: {cfg.write_monthly}")
+
         dados = fetch_all(cfg)
         df_annual = build_annual_df(dados, cfg.icc_mode)
-        engine = get_engine()
-        upsert_dataframe(engine, cfg.schema, cfg.table_annual, df_annual, pk="data")
+        validate_macro_output(df_annual, columns=ANNUAL_COLUMNS, context="Macro anual")
+        if run:
+            run.set_metric("macro_annual_rows", len(df_annual))
+        log(f"Anual: {len(df_annual)} linhas")
+
+        df_monthly = None
         if cfg.write_monthly:
             df_monthly = build_monthly_df(dados)
-            upsert_dataframe(engine, cfg.schema, cfg.table_monthly, df_monthly, pk="data")
+            validate_macro_output(df_monthly, columns=MONTHLY_COLUMNS, context="Macro mensal")
+            if run:
+                run.set_metric("macro_monthly_rows", len(df_monthly))
+            log(f"Mensal: {len(df_monthly)} linhas")
+
+        engine = get_engine()
+        with engine.begin() as conn:
+            n_annual, cols_annual = upsert_dataframe(
+                conn,
+                cfg.schema,
+                cfg.table_annual,
+                df_annual,
+                pk="data",
+                expected_columns=ANNUAL_COLUMNS,
+            )
+            if run:
+                run.add_rows(inserted=n_annual)
+                run.set_metric("macro_annual_columns", cols_annual)
+            log(f"Upsert anual OK: {n_annual} registros em {cfg.schema}.{cfg.table_annual}")
+
+            if df_monthly is not None:
+                n_month, cols_month = upsert_dataframe(
+                    conn,
+                    cfg.schema,
+                    cfg.table_monthly,
+                    df_monthly,
+                    pk="data",
+                    expected_columns=MONTHLY_COLUMNS,
+                )
+                if run:
+                    run.add_rows(updated=n_month)
+                    run.set_metric("macro_monthly_columns", cols_month)
+                log(f"Upsert mensal OK: {n_month} registros em {cfg.schema}.{cfg.table_monthly}")
+
+        if run:
+            run.add_source_metrics(
+                source="BCB/SGS",
+                ticker="BRASIL",
+                documents_read=len(SERIES),
+                documents_inserted=len(df_annual) + (len(df_monthly) if df_monthly is not None else 0),
+                failures=0,
+            )
+        log("Concluído.")
+
+    if ctx is not None:
+        with ctx as run:
+            _run_pipeline(run)
+    else:
+        _run_pipeline()
     _RUN_LOG = None
 
 

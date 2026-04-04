@@ -19,21 +19,42 @@ Observações:
 """
 
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+from contextlib import nullcontext
 import hashlib
 import json
 import re
 import time
+import urllib.parse
 
 import pandas as pd
 import requests
 import streamlit as st
 from sqlalchemy import text
 
+try:
+    from auditoria_dados.ingestion_log import IngestionLog as _IngestionLog
+except ImportError:
+    _IngestionLog = None
+
+from core.docs_corporativos_store import DEFAULT_CHUNKING_VERSION
+from core.docs_corporativos_store import persist_document_bundle
 from core.db_loader import get_supabase_engine
 from core.ticker_utils import normalize_ticker
 
+_RUN_LOG = None
+_CHUNKING_VERSION = f"enet::{DEFAULT_CHUNKING_VERSION}"
+_EXTRACTION_VERSIONS = {
+    "pdf": "enet_pdf_text_v1",
+    "html": "enet_html_text_v1",
+    "unknown": "enet_text_v1",
+    "stub": "enet_stub_v1",
+}
+
 
 def _log(level: str, event: str, **fields: Any) -> None:
+    if _RUN_LOG:
+        _RUN_LOG.log(level, event, **fields)
+        return
     payload = {"pipeline": "docs_enet", "level": level, "event": event}
     payload.update(fields)
     print(json.dumps(payload, ensure_ascii=False, default=str), flush=True)
@@ -61,6 +82,116 @@ def _strip_html(html: str) -> str:
     # html entities básicos
     x = x.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
     return _clean_text(x)
+
+
+def _canonical_url(url: str) -> str:
+    u = (url or "").strip()
+    if not u:
+        return ""
+    try:
+        p = urllib.parse.urlparse(u)
+        scheme = (p.scheme or "https").lower()
+        netloc = (p.netloc or "").lower()
+        path = re.sub(r"/{2,}", "/", p.path or "").rstrip("/")
+        return urllib.parse.urlunparse((scheme, netloc, path, "", p.query or "", ""))
+    except Exception:
+        return u
+
+
+def _stable_doc_hash(
+    *,
+    ticker: str,
+    data: Optional[str],
+    fonte: str,
+    tipo: str,
+    categoria: str,
+    titulo: str,
+    url: str,
+) -> str:
+    return _sha256(
+        "|".join(
+            [
+                _norm_ticker(ticker),
+                (data or "").strip(),
+                (fonte or "").strip().upper(),
+                (tipo or "").strip().lower(),
+                (categoria or "").strip().lower(),
+                _clean_text(titulo or "").lower(),
+                _canonical_url(url),
+            ]
+        )
+    )
+
+
+def _dedupe_docs(docs: Sequence[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], int]:
+    seen = set()
+    out: List[Dict[str, Any]] = []
+    dropped = 0
+    for doc in docs:
+        assunto = _clean_text(str(doc.get("Assunto") or doc.get("DescricaoAssunto") or doc.get("Titulo") or ""))
+        categoria = _clean_text(str(doc.get("Categoria") or doc.get("categoria") or ""))
+        tipo_doc = _clean_text(str(doc.get("TipoDocumento") or doc.get("Tipo") or doc.get("tipo") or ""))
+        data_iso = ""
+        for k in ("DataEntrega", "DataReferencia", "DataDocumento", "DataEnvio", "Data"):
+            v = doc.get(k)
+            if isinstance(v, str) and v.strip():
+                d = pd.to_datetime(v, errors="coerce", dayfirst=True)
+                if pd.notna(d):
+                    data_iso = d.date().isoformat()
+                    break
+        url = _build_download_url(
+            str(
+                doc.get("LinkDownload")
+                or doc.get("Link_Download")
+                or doc.get("Link")
+                or doc.get("Url")
+                or doc.get("url")
+                or ""
+            )
+        )
+        key = (data_iso, _canonical_url(url), assunto.lower(), categoria.lower(), tipo_doc.lower())
+        if key in seen:
+            dropped += 1
+            continue
+        seen.add(key)
+        out.append(doc)
+    return out, dropped
+
+
+def _find_existing_doc_id(
+    conn,
+    *,
+    ticker: str,
+    data: Optional[str],
+    fonte: str,
+    tipo: str,
+    titulo: str,
+    url: str,
+) -> Optional[int]:
+    row = conn.execute(
+        text(
+            """
+            select id
+            from public.docs_corporativos
+            where upper(ticker) = upper(:ticker)
+              and coalesce(data::date::text, '') = coalesce(:data, '')
+              and lower(coalesce(fonte, '')) = lower(:fonte)
+              and lower(coalesce(tipo, '')) = lower(:tipo)
+              and lower(coalesce(titulo, '')) = lower(:titulo)
+              and lower(coalesce(url, '')) = lower(:url)
+            limit 1
+            """
+        ),
+        {
+            "ticker": _norm_ticker(ticker),
+            "data": (data or "").strip() or None,
+            "fonte": (fonte or "").strip(),
+            "tipo": (tipo or "").strip(),
+            "titulo": (titulo or "").strip(),
+            "url": _canonical_url(url),
+        },
+    ).fetchone()
+    return int(row[0]) if row else None
 
 def _chunk_text(texto: str, chunk_chars: int = 1500, overlap: int = 200) -> List[str]:
     t = (texto or "").strip()
@@ -307,69 +438,69 @@ def _upsert_doc_and_chunks(
     raw_text: str,
     chunk_chars: int = 1500,
     overlap: int = 200,
-) -> Tuple[bool, str]:
+    extraction_version: str = _EXTRACTION_VERSIONS["stub"],
+    is_stub: bool = False,
+    run_id: Optional[str] = None,
+) -> Dict[str, Any]:
     tk = _norm_ticker(ticker)
     if not tk:
-        return False, ""
+        return {"ok": False, "inserted": False, "doc_hash": "", "duplicate": False, "updated_text": False, "chunks_inserted": 0, "stub": bool(is_stub)}
 
     fonte = (fonte or "CVM").strip()
     tipo = (tipo or "enet").strip()
     categoria = (categoria or "").strip()
     titulo = (titulo or "").strip()
-    url = (url or "").strip()
+    url = _canonical_url(url)
     raw_text = (raw_text or "").strip()
 
-    doc_hash = _sha256("|".join([tk, fonte, tipo, categoria, titulo, url, raw_text]))
+    tipo_persistido = f"{tipo}:{categoria}" if categoria else tipo
+    doc_hash = _stable_doc_hash(
+        ticker=tk,
+        data=data,
+        fonte=fonte,
+        tipo=tipo,
+        categoria=categoria,
+        titulo=titulo,
+        url=url,
+    )
 
     eng = get_supabase_engine()
-
-    sql_doc = text("""
-        INSERT INTO public.docs_corporativos (ticker, data, fonte, tipo, titulo, url, raw_text, doc_hash)
-        VALUES (:ticker, :data, :fonte, :tipo, :titulo, :url, :raw_text, :doc_hash)
-        ON CONFLICT (doc_hash) DO NOTHING
-        RETURNING id
-    """)
-
     with eng.begin() as conn:
-        res = conn.execute(sql_doc, {
-            "ticker": tk,
-            "data": data,
-            "fonte": fonte,
-            "tipo": f"{tipo}:{categoria}" if categoria else tipo,
-            "titulo": titulo,
-            "url": url,
-            "raw_text": raw_text,
-            "doc_hash": doc_hash,
-        })
-        row = res.first()
-        if row is None:
-            return False, doc_hash
+        persisted = persist_document_bundle(
+            conn,
+            ticker=tk,
+            titulo=titulo,
+            url=url,
+            fonte=fonte,
+            tipo=tipo_persistido,
+            data=data,
+            texto=raw_text,
+            doc_hash=doc_hash,
+            chunk_size=int(chunk_chars),
+            chunk_overlap=int(overlap),
+            chunking_version=_CHUNKING_VERSION,
+            extraction_version=extraction_version,
+            run_id=run_id,
+            is_stub=is_stub,
+        )
 
-        doc_id = int(row[0])
-        chunks = _chunk_text(raw_text, chunk_chars=int(chunk_chars), overlap=int(overlap))
-        if not chunks:
-            return True, doc_hash
-
-        sql_chunk = text("""
-            INSERT INTO public.docs_corporativos_chunks (doc_id, ticker, chunk_index, chunk_text, chunk_hash)
-            VALUES (:doc_id, :ticker, :chunk_index, :chunk_text, :chunk_hash)
-            ON CONFLICT (chunk_hash) DO NOTHING
-        """)
-
-        for i, ch in enumerate(chunks):
-            ch_clean = (ch or "").strip()
-            if not ch_clean:
-                continue
-            ch_hash = _sha256("|".join([str(doc_id), tk, str(i), ch_clean]))
-            conn.execute(sql_chunk, {
-                "doc_id": doc_id,
-                "ticker": tk,
-                "chunk_index": int(i),
-                "chunk_text": ch_clean,
-                "chunk_hash": ch_hash,
-            })
-
-    return True, doc_hash
+    _log(
+        "INFO",
+        "doc_persisted",
+        ticker=tk,
+        data=data,
+        fonte=fonte,
+        tipo=tipo_persistido,
+        inserted=bool(persisted.get("inserted")),
+        updated_text=bool(persisted.get("updated_text")),
+        duplicate=bool(persisted.get("duplicate")),
+        chunks_inserted=int(persisted.get("chunks_inserted", 0) or 0),
+        raw_text_chars=len(raw_text),
+        extraction_version=extraction_version,
+        is_stub=bool(persisted.get("stub")),
+        url=url[:300],
+    )
+    return persisted
 
 
 # ─────────────────────────────
@@ -399,161 +530,255 @@ def ingest_enet_for_tickers(
         "mapping_missing": [tickers_sem_cvm]
       }
     """
-    _log(
-        "INFO",
-        "start",
-        tickers=len(tickers),
-        anos=anos,
-        max_docs_por_ticker=max_docs_por_ticker,
-        baixar_e_extrair=baixar_e_extrair,
-    )
+    global _RUN_LOG
+
     tks = [_norm_ticker(t) for t in (tickers or []) if str(t).strip()]
     tks = list(dict.fromkeys(tks))
-    if not tks:
-        result = {"ok": False, "stats": {}, "errors": {"__all__": "Lista de tickers vazia."}, "mapping_missing": []}
-        _log("ERROR", "summary", **result)
-        return result
+    run_ctx = _IngestionLog("docs_enet") if _IngestionLog else nullcontext(None)
+    if _IngestionLog and run_ctx:
+        run_ctx.set_params(
+            {
+                "tickers": tks,
+                "anos": int(anos),
+                "max_docs_por_ticker": int(max_docs_por_ticker),
+                "chunk_chars": int(chunk_chars),
+                "overlap": int(overlap),
+                "baixar_e_extrair": bool(baixar_e_extrair),
+                "chunking_version": _CHUNKING_VERSION,
+            }
+        )
 
-    map_cvm = _get_codigo_cvm_por_tickers(tks)
-    missing = [t for t in tks if t not in map_cvm]
+    with run_ctx as run:
+        _RUN_LOG = run
+        _log(
+            "INFO",
+            "start",
+            tickers=len(tks),
+            anos=anos,
+            max_docs_por_ticker=max_docs_por_ticker,
+            baixar_e_extrair=baixar_e_extrair,
+        )
+        if not tks:
+            result = {
+                "ok": False,
+                "run_id": getattr(run, "run_id", None),
+                "stats": {},
+                "errors": {"__all__": "Lista de tickers vazia."},
+                "mapping_missing": [],
+            }
+            if run:
+                run.add_error("Lista de tickers vazia.")
+            _log("ERROR", "summary", **result)
+            _RUN_LOG = None
+            return result
 
-    ano_fim = int(pd.Timestamp.utcnow().year)
-    ano_ini = int(ano_fim - max(0, int(anos)))
+        map_cvm = _get_codigo_cvm_por_tickers(tks)
+        missing = [t for t in tks if t not in map_cvm]
 
-    dt_ini = f"01/01/{ano_ini}"
-    dt_fim = f"31/12/{ano_fim}"
+        ano_fim = int(pd.Timestamp.utcnow().year)
+        ano_ini = int(ano_fim - max(0, int(anos)))
+        dt_ini = f"01/01/{ano_ini}"
+        dt_fim = f"31/12/{ano_fim}"
 
-    # filtros default (documentos realmente estratégicos)
-    cat_default = [
-        "Fato Relevante",
-        "Comunicado ao Mercado",
-        "Aviso aos Acionistas",
-        "Assembleia",
-        "Edital",
-        "Release",
-        "Apresentação",
-    ]
-    categorias = list(categorias) if categorias is not None else cat_default
-    tipos = list(tipos) if tipos is not None else []
+        cat_default = [
+            "Fato Relevante",
+            "Comunicado ao Mercado",
+            "Aviso aos Acionistas",
+            "Assembleia",
+            "Edital",
+            "Release",
+            "Apresentação",
+        ]
+        categorias = list(categorias) if categorias is not None else cat_default
+        tipos = list(tipos) if tipos is not None else []
 
-    stats: Dict[str, Dict[str, int]] = {}
-    errors: Dict[str, str] = {}
+        stats: Dict[str, Dict[str, int]] = {}
+        errors: Dict[str, str] = {}
 
-    for tk in tks:
-        stats[tk] = {"seen": 0, "inserted": 0, "skipped": 0, "downloaded": 0, "text_ok": 0}
-        if tk not in map_cvm:
-            errors[tk] = "Sem código CVM em public.cvm_to_ticker"
-            _log("WARN", "missing_cvm_mapping", ticker=tk)
-            continue
+        for tk in tks:
+            stats[tk] = {
+                "source": "CVM/ENET",
+                "seen": 0,
+                "inserted": 0,
+                "updated_text": 0,
+                "skipped": 0,
+                "downloaded": 0,
+                "text_ok": 0,
+                "deduped": 0,
+                "stubbed": 0,
+                "chunks_generated": 0,
+                "failures": 0,
+            }
+            if tk not in map_cvm:
+                errors[tk] = "Sem código CVM em public.cvm_to_ticker"
+                if run:
+                    run.add_source_metrics(source="CVM/ENET", ticker=tk, failures=1)
+                _log("WARN", "missing_cvm_mapping", ticker=tk)
+                continue
 
-        codigo_cvm = int(map_cvm[tk])
+            codigo_cvm = int(map_cvm[tk])
+            _log("INFO", "ticker_start", ticker=tk, codigo_cvm=codigo_cvm, dt_ini=dt_ini, dt_fim=dt_fim)
 
-        try:
-            all_docs: List[Dict[str, Any]] = []
+            try:
+                all_docs: List[Dict[str, Any]] = []
+                for page in range(1, 6):
+                    regs = _consultar_documentos_por_cvm(
+                        codigo_cvm,
+                        dt_ini=dt_ini,
+                        dt_fim=dt_fim,
+                        pagina=page,
+                        registros_por_pagina=50,
+                        categorias=categorias,
+                        tipos=tipos,
+                    )
+                    if not regs:
+                        break
+                    all_docs.extend(regs)
+                    if len(regs) < 50:
+                        break
+                    if sleep_s:
+                        time.sleep(float(sleep_s))
 
-            # paginação curta (aumente se quiser)
-            for page in range(1, 6):
-                regs = _consultar_documentos_por_cvm(
-                    codigo_cvm,
-                    dt_ini=dt_ini,
-                    dt_fim=dt_fim,
-                    pagina=page,
-                    registros_por_pagina=50,
-                    categorias=categorias,
-                    tipos=tipos,
-                )
-                if not regs:
-                    break
-                all_docs.extend(regs)
-                if len(regs) < 50:
-                    break
-                if sleep_s:
-                    time.sleep(float(sleep_s))
+                deduped_docs, deduped_count = _dedupe_docs(all_docs)
+                stats[tk]["seen"] = int(len(all_docs))
+                stats[tk]["deduped"] = int(deduped_count)
+                all_docs = deduped_docs
 
-            stats[tk]["seen"] = int(len(all_docs))
+                for doc in all_docs[: int(max_docs_por_ticker)]:
+                    assunto = str(doc.get("Assunto") or doc.get("DescricaoAssunto") or doc.get("Titulo") or "").strip()
+                    categoria = str(doc.get("Categoria") or doc.get("categoria") or "").strip()
+                    tipo_doc = str(doc.get("TipoDocumento") or doc.get("Tipo") or doc.get("tipo") or "").strip()
 
-            # corta para max_docs_por_ticker
-            for doc in all_docs[: int(max_docs_por_ticker)]:
-                # campos variam muito; tentamos o máximo
-                assunto = str(doc.get("Assunto") or doc.get("DescricaoAssunto") or doc.get("Titulo") or "").strip()
-                categoria = str(doc.get("Categoria") or doc.get("categoria") or "").strip()
-                tipo_doc = str(doc.get("TipoDocumento") or doc.get("Tipo") or doc.get("tipo") or "").strip()
+                    data_iso = None
+                    for k in ("DataEntrega", "DataReferencia", "DataDocumento", "DataEnvio", "Data"):
+                        v = doc.get(k)
+                        if isinstance(v, str) and v.strip():
+                            d = pd.to_datetime(v, errors="coerce", dayfirst=True)
+                            if pd.notna(d):
+                                data_iso = d.date().isoformat()
+                                break
 
-                # datas
-                data_iso = None
-                for k in ("DataEntrega", "DataReferencia", "DataDocumento", "DataEnvio", "Data"):
-                    v = doc.get(k)
-                    if isinstance(v, str) and v.strip():
-                        d = pd.to_datetime(v, errors="coerce", dayfirst=True)
-                        if pd.notna(d):
-                            data_iso = d.date().isoformat()
-                            break
+                    url = (
+                        doc.get("LinkDownload")
+                        or doc.get("Link_Download")
+                        or doc.get("Link")
+                        or doc.get("Url")
+                        or doc.get("url")
+                        or ""
+                    )
+                    url = _build_download_url(str(url))
 
-                # link download/url
-                url = (
-                    doc.get("LinkDownload")
-                    or doc.get("Link_Download")
-                    or doc.get("Link")
-                    or doc.get("Url")
-                    or doc.get("url")
-                    or ""
-                )
-                url = _build_download_url(str(url))
+                    raw_text = ""
+                    extraction_version = _EXTRACTION_VERSIONS["stub"]
+                    is_stub = True
 
-                raw_text = ""
-
-                if baixar_e_extrair and url:
-                    txt, mode = _extract_text_from_url(url)
-                    if txt:
-                        raw_text = txt
-                        stats[tk]["downloaded"] += 1
-                        stats[tk]["text_ok"] += 1
+                    if baixar_e_extrair and url:
+                        txt, mode = _extract_text_from_url(url)
+                        if txt:
+                            raw_text = txt
+                            stats[tk]["downloaded"] += 1
+                            stats[tk]["text_ok"] += 1
+                            extraction_version = _EXTRACTION_VERSIONS.get(mode, _EXTRACTION_VERSIONS["unknown"])
+                            is_stub = False
+                        else:
+                            stats[tk]["downloaded"] += 1
+                            stats[tk]["stubbed"] += 1
+                            raw_text = _clean_text(f"{assunto}\n{categoria}\n{tipo_doc}\nURL: {url}")
+                            _log(
+                                "WARN",
+                                "doc_stubbed",
+                                ticker=tk,
+                                url=_canonical_url(url)[:300],
+                                modo=mode,
+                                categoria=categoria,
+                                tipo=tipo_doc,
+                                data=data_iso,
+                            )
                     else:
-                        # sem texto extraível, ainda assim armazenamos metadados + “stub”
-                        stats[tk]["downloaded"] += 1
+                        stats[tk]["stubbed"] += 1
                         raw_text = _clean_text(f"{assunto}\n{categoria}\n{tipo_doc}\nURL: {url}")
-                else:
-                    # fallback mínimo
-                    raw_text = _clean_text(f"{assunto}\n{categoria}\n{tipo_doc}\nURL: {url}")
 
-                if not raw_text:
-                    stats[tk]["skipped"] += 1
-                    continue
+                    if not raw_text:
+                        stats[tk]["skipped"] += 1
+                        stats[tk]["failures"] += 1
+                        continue
 
-                inserted, _ = _upsert_doc_and_chunks(
-                    ticker=tk,
-                    data=data_iso,
-                    fonte="CVM",
-                    tipo="enet",
-                    categoria=categoria or tipo_doc,
-                    titulo=assunto,
-                    url=url,
-                    raw_text=raw_text,
-                    chunk_chars=int(chunk_chars),
-                    overlap=int(overlap),
-                )
-                if inserted:
-                    stats[tk]["inserted"] += 1
-                else:
-                    stats[tk]["skipped"] += 1
+                    try:
+                        persisted = _upsert_doc_and_chunks(
+                            ticker=tk,
+                            data=data_iso,
+                            fonte="CVM",
+                            tipo="enet",
+                            categoria=categoria or tipo_doc,
+                            titulo=assunto,
+                            url=url,
+                            raw_text=raw_text,
+                            chunk_chars=int(chunk_chars),
+                            overlap=int(overlap),
+                            extraction_version=extraction_version,
+                            is_stub=is_stub,
+                            run_id=getattr(run, "run_id", None),
+                        )
+                    except Exception as e:
+                        stats[tk]["failures"] += 1
+                        stats[tk]["skipped"] += 1
+                        _log("WARN", "doc_persist_failed", ticker=tk, error=str(e), url=url[:300])
+                        continue
 
-                if sleep_s:
-                    time.sleep(float(sleep_s))
+                    if persisted.get("inserted"):
+                        stats[tk]["inserted"] += 1
+                    else:
+                        stats[tk]["skipped"] += 1
+                    if persisted.get("updated_text"):
+                        stats[tk]["updated_text"] += 1
+                    if persisted.get("stub"):
+                        stats[tk]["stubbed"] += 0 if is_stub else 0
+                    stats[tk]["chunks_generated"] += int(persisted.get("chunks_inserted", 0) or 0)
 
-        except Exception as e:
-            errors[tk] = f"{type(e).__name__}: {e}"
-            _log("WARN", "ticker_failed", ticker=tk, error=str(e))
-    result = {"ok": (len(errors) == 0), "stats": stats, "errors": errors, "mapping_missing": missing}
-    _log(
-        "INFO" if result["ok"] else "WARN",
-        "summary",
-        ok=result["ok"],
-        tickers=len(tks),
-        mapping_missing=len(missing),
-        inserted=sum(v["inserted"] for v in stats.values()),
-        skipped=sum(v["skipped"] for v in stats.values()),
-        downloaded=sum(v["downloaded"] for v in stats.values()),
-        text_ok=sum(v["text_ok"] for v in stats.values()),
-        errors=len(errors),
-    )
-    return result
+                    if sleep_s:
+                        time.sleep(float(sleep_s))
+
+                if run:
+                    run.add_source_metrics(
+                        source="CVM/ENET",
+                        ticker=tk,
+                        documents_read=min(int(len(all_docs)), int(max_docs_por_ticker)),
+                        documents_inserted=stats[tk]["inserted"],
+                        duplicates=max(int(stats[tk]["skipped"]) - int(stats[tk]["failures"]), 0),
+                        chunks_generated=stats[tk]["chunks_generated"],
+                        stubs=stats[tk]["stubbed"],
+                        failures=stats[tk]["failures"],
+                    )
+                _log("INFO", "ticker_summary", ticker=tk, **stats[tk])
+            except Exception as e:
+                errors[tk] = f"{type(e).__name__}: {e}"
+                stats[tk]["failures"] += 1
+                _log("WARN", "ticker_failed", ticker=tk, error=str(e))
+
+        result = {
+            "ok": len(errors) == 0,
+            "run_id": getattr(run, "run_id", None),
+            "stats": stats,
+            "errors": errors,
+            "mapping_missing": missing,
+        }
+        _log(
+            "INFO" if result["ok"] else "WARN",
+            "summary",
+            ok=result["ok"],
+            run_id=result["run_id"],
+            tickers=len(tks),
+            mapping_missing=len(missing),
+            inserted=sum(v["inserted"] for v in stats.values()),
+            updated_text=sum(v.get("updated_text", 0) for v in stats.values()),
+            skipped=sum(v["skipped"] for v in stats.values()),
+            downloaded=sum(v["downloaded"] for v in stats.values()),
+            text_ok=sum(v["text_ok"] for v in stats.values()),
+            deduped=sum(v.get("deduped", 0) for v in stats.values()),
+            stubbed=sum(v.get("stubbed", 0) for v in stats.values()),
+            chunks_generated=sum(v.get("chunks_generated", 0) for v in stats.values()),
+            failures=sum(v.get("failures", 0) for v in stats.values()),
+            errors=len(errors),
+        )
+        _RUN_LOG = None
+        return result

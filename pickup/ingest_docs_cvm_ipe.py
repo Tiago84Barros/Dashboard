@@ -16,12 +16,14 @@ Requer:
 """
 
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+from contextlib import nullcontext
 from functools import lru_cache
 import hashlib
 import io
 import json
 import re
 import time
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -29,10 +31,16 @@ import requests
 from sqlalchemy import text
 
 try:
+    from auditoria_dados.ingestion_log import IngestionLog as _IngestionLog
+    from auditoria_dados.ingestion_log import validate_non_null_columns
     from auditoria_dados.ingestion_log import validate_required_columns
 except ImportError:
+    _IngestionLog = None
+    validate_non_null_columns = None
     validate_required_columns = None
 
+from core.docs_corporativos_store import DEFAULT_CHUNKING_VERSION
+from core.docs_corporativos_store import persist_document_bundle
 from core.db_loader import get_supabase_engine
 from core.ticker_utils import normalize_ticker
 
@@ -41,9 +49,16 @@ from core.ticker_utils import normalize_ticker
 # ──────────────────────────────────────────────────────────────
 
 _TEXT_COL_CACHE: Optional[str] = None
+_RUN_LOG = None
+_CHUNKING_VERSION = f"ipe::{DEFAULT_CHUNKING_VERSION}"
+_EXTRACTION_VERSION_PDF = "ipe_pdf_text_v1"
+_EXTRACTION_VERSION_STUB = "ipe_metadata_stub_v1"
 
 
 def _log(level: str, event: str, **fields: Any) -> None:
+    if _RUN_LOG:
+        _RUN_LOG.log(level, event, **fields)
+        return
     payload = {"pipeline": "docs_ipe", "level": level, "event": event}
     payload.update(fields)
     print(json.dumps(payload, ensure_ascii=False, default=str), flush=True)
@@ -73,6 +88,20 @@ def _clean_text(s: str) -> str:
     if s.lower() == "nan":
         return ""
     return s
+
+
+def _canonical_url(url: str) -> str:
+    u = (url or "").strip()
+    if not u:
+        return ""
+    try:
+        p = urllib.parse.urlparse(u)
+        scheme = (p.scheme or "https").lower()
+        netloc = (p.netloc or "").lower()
+        path = re.sub(r"/{2,}", "/", p.path or "").rstrip("/")
+        return urllib.parse.urlunparse((scheme, netloc, path, "", p.query or "", ""))
+    except Exception:
+        return u
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -134,6 +163,38 @@ def _sanitize_text(s: str) -> str:
         return ""
     # Postgres não aceita NUL em strings
     return str(s).replace("\x00", "")
+
+
+def _empty_ticker_stats(
+    *,
+    existing_before: int = 0,
+    requested_max_docs: int,
+    requested_max_pdfs: int,
+    stopped_reason: str,
+) -> Dict[str, Any]:
+    return {
+        "source": "CVM/IPE",
+        "existing_before": int(existing_before),
+        "matched": 0,
+        "dataset_candidates": 0,
+        "documents_read": 0,
+        "considered": 0,
+        "inserted": 0,
+        "skipped": 0,
+        "updated_text": 0,
+        "pdf_fetched": 0,
+        "pdf_text_ok": 0,
+        "chunks_generated": 0,
+        "stubs": 0,
+        "failures": 0,
+        "requested_max_docs": int(requested_max_docs),
+        "requested_max_pdfs": int(requested_max_pdfs),
+        "selection_truncated": False,
+        "pdf_limit_hit": False,
+        "stopped_reason": stopped_reason,
+        "selection_deduped": 0,
+        "duplicate_existing": 0,
+    }
 
 
 # ──────────────────────────────────────────────────────────────
@@ -337,6 +398,45 @@ def _get_doc_status(conn, doc_hash: str) -> Dict[str, Any]:
         return {"exists": False, "id": None, "has_text": False}
     return {"exists": True, "id": int(row[0]), "has_text": bool(str(row[1] or "").strip())}
 
+
+def _get_doc_status_by_metadata(
+    conn,
+    *,
+    ticker: str,
+    titulo: str,
+    url: str,
+    fonte: str,
+    tipo: str,
+    data: Optional[pd.Timestamp],
+) -> Dict[str, Any]:
+    text_col = _get_text_column(conn)
+    row = conn.execute(
+        text(
+            f"""
+            select id, coalesce(nullif(trim({text_col}),''), '') as t
+            from public.docs_corporativos
+            where upper(ticker) = upper(:ticker)
+              and lower(coalesce(titulo, '')) = lower(:titulo)
+              and lower(coalesce(url, '')) = lower(:url)
+              and lower(coalesce(fonte, '')) = lower(:fonte)
+              and lower(coalesce(tipo, '')) = lower(:tipo)
+              and coalesce(data::date::text, '') = coalesce(:data, '')
+            limit 1
+            """
+        ),
+        {
+            "ticker": ticker,
+            "titulo": (titulo or "")[:4000],
+            "url": _canonical_url(url)[:4000],
+            "fonte": fonte,
+            "tipo": (tipo or "")[:200],
+            "data": (data.date().isoformat() if isinstance(data, pd.Timestamp) and not pd.isna(data) else None),
+        },
+    ).fetchone()
+    if not row:
+        return {"exists": False, "id": None, "has_text": False}
+    return {"exists": True, "id": int(row[0]), "has_text": bool(str(row[1] or "").strip())}
+
 def _insert_doc(
     conn,
     *,
@@ -353,7 +453,7 @@ def _insert_doc(
     params = {
         "ticker": ticker,
         "titulo": (titulo or "")[:4000],
-        "url": (url or "")[:4000],
+        "url": _canonical_url(url)[:4000],
         "fonte": fonte,
         "tipo": (tipo or "")[:200],
         "data": (data.to_pydatetime() if isinstance(data, pd.Timestamp) and not pd.isna(data) else None),
@@ -434,290 +534,419 @@ def ingest_ipe_for_tickers(
       C) cobertura mínima (fallback) se poucos docs estratégicos
       D) auditoria (top 10 selecionados com score)
     """
-    _log(
-        "INFO",
-        "start",
-        tickers=len(tickers),
-        window_months=window_months,
-        max_docs_per_ticker=max_docs_per_ticker,
-        max_pdfs_per_ticker=max_pdfs_per_ticker,
-    )
+    global _RUN_LOG
+
     tickers_n = [_norm_ticker(t) for t in tickers if (t or "").strip()]
-    cvm_map = get_cvm_codes_for_tickers(tickers_n)
-
-    now = _utcnow()
-    min_dt = _now_minus_months(int(window_months))
-
-    years = list(range(int(min_dt.year), int(now.year) + 1))
-    dfs: List[pd.DataFrame] = []
-    for y in years:
-        try:
-            dfs.append(_load_ipe_csv_cached(y, timeout=request_timeout).copy())
-        except Exception as e:
-            _log("WARN", "year_load_failed", year=y, error=str(e))
-            if verbose:
-                print(f"[IPE] Falha ao carregar {y}: {e}")
-
-    if verbose:
-        print(f"[IPE] anos carregados={years} | arquivos={len(dfs)}")
-    if not dfs:
-        summary = {"ok": False, "errors": {"__all__": "Nenhum CSV IPE disponível."}, "stats": {}, "matched": 0, "considered": 0, "inserted": 0, "skipped": 0, "updated_text": 0, "pdf_fetched": 0, "pdf_text_ok": 0, "requested_max_docs": int(max_docs_per_ticker), "requested_max_pdfs": int(max_pdfs_per_ticker), "window_months": int(window_months), "max_runtime_s": float(max(float(max_runtime_s or 0.0), 1.0))}
-        _log("ERROR", "summary", **summary)
-        return summary
-
-    df = pd.concat(dfs, ignore_index=True)
-    cols = list(df.columns)
-
-    col_cvm = _pick_col(cols, "CODIGO_CVM", "CD_CVM", "CVM", "COD_CVM")
-    col_data = _pick_col(cols, "DATA_ENTREGA", "DT_RECEB", "DT_REFER", "DATA_REFERENCIA", "DATA_REFER", "DT_ENTREGA")
-    col_link = _pick_col(cols, "LINK_DOWNLOAD", "LINK", "LINK_ARQUIVO", "LINK_DOC", "LINK_DOCUMENTO")
-    col_assunto = _pick_col(cols, "ASSUNTO", "ASSUNTO_EVENTO", "TITULO", "DESCRICAO")
-    col_categoria = _pick_col(cols, "CATEGORIA", "CATEGORIA_DOCUMENTO")
-    col_tipo = _pick_col(cols, "TIPO", "TIPO_DOCUMENTO")
-    col_especie = _pick_col(cols, "ESPECIE", "ESPECIE_DOCUMENTO")
-
-    if any(c is None for c in (col_cvm, col_data, col_link, col_assunto)):
-        summary = {"ok": False, "errors": {"__all__": f"CSV IPE sem colunas necessárias. Encontradas={cols}"}, "stats": {}, "matched": 0, "considered": 0, "inserted": 0, "skipped": 0, "updated_text": 0, "pdf_fetched": 0, "pdf_text_ok": 0, "requested_max_docs": int(max_docs_per_ticker), "requested_max_pdfs": int(max_pdfs_per_ticker), "window_months": int(window_months), "max_runtime_s": float(max(float(max_runtime_s or 0.0), 1.0))}
-        _log("ERROR", "summary", **summary)
-        return summary
-    if validate_required_columns:
-        validate_required_columns(
-            df,
-            [col_cvm, col_data, col_link, col_assunto],
-            context="CSV IPE normalizado",
+    effective_runtime_s = max(float(max_runtime_s or 0.0), 1.0)
+    run_ctx = _IngestionLog("docs_ipe") if _IngestionLog else nullcontext(None)
+    if _IngestionLog and run_ctx:
+        run_ctx.set_params(
+            {
+                "tickers": tickers_n,
+                "window_months": int(window_months),
+                "max_docs_per_ticker": int(max_docs_per_ticker),
+                "max_pdfs_per_ticker": int(max_pdfs_per_ticker),
+                "pdf_max_pages": int(pdf_max_pages),
+                "request_timeout": int(request_timeout),
+                "max_runtime_s": effective_runtime_s,
+                "chunking_version": _CHUNKING_VERSION,
+                "extraction_versions": [_EXTRACTION_VERSION_PDF, _EXTRACTION_VERSION_STUB],
+            }
         )
 
-    df["_dt"] = df[col_data].apply(_parse_date)
-    df = df[~df["_dt"].isna()].copy()
+    with run_ctx as run:
+        _RUN_LOG = run
+        _log(
+            "INFO",
+            "start",
+            tickers=len(tickers_n),
+            window_months=window_months,
+            max_docs_per_ticker=max_docs_per_ticker,
+            max_pdfs_per_ticker=max_pdfs_per_ticker,
+        )
+        cvm_map = get_cvm_codes_for_tickers(tickers_n)
 
-    # tz-safe para evitar comparação dtype=datetime64[ns] vs Timestamp tz-aware
-    min_ts = pd.Timestamp(min_dt).tz_localize(None)
-    df["_dt_naive"] = df["_dt"].apply(lambda x: x.tz_localize(None) if hasattr(x, "tz_localize") and getattr(x, "tzinfo", None) is not None else x)
-    df = df[df["_dt_naive"] >= min_ts].copy()
+        now = _utcnow()
+        min_dt = _now_minus_months(int(window_months))
+        years = list(range(int(min_dt.year), int(now.year) + 1))
+        dfs: List[pd.DataFrame] = []
+        out_stats: Dict[str, Any] = {}
+        out_errors: Dict[str, str] = {}
 
-    # precompute campos textuais para scoring
-    if strategic_only:
-        df["_tipo"] = df[col_tipo].fillna("").map(_clean_text) if col_tipo else ""
-        df["_titulo"] = df[col_assunto].fillna("").map(_clean_text)
-        df["_assunto"] = df[col_assunto].fillna("").map(_clean_text)
-        df["_categoria"] = df[col_categoria].fillna("").map(_clean_text) if col_categoria else ""
-        df["_score"] = df.apply(lambda r: _score_doc(
-            str(r.get("_tipo","") or ""),
-            str(r.get("_titulo","") or ""),
-            str(r.get("_assunto","") or ""),
-            str(r.get("_categoria","") or "")
-        ), axis=1)
-    else:
-        df["_score"] = 0
+        for y in years:
+            try:
+                dfs.append(_load_ipe_csv_cached(y, timeout=request_timeout).copy())
+                _log("INFO", "year_loaded", year=y)
+            except Exception as e:
+                _log("WARN", "year_load_failed", year=y, error=str(e))
+                if run:
+                    run.increment_metric("year_load_failures")
+                if verbose:
+                    print(f"[IPE] Falha ao carregar {y}: {e}")
 
-    # normaliza código CVM uma vez para evitar falhas por formato no CSV
-    df["_cvm_norm"] = df[col_cvm].map(_norm_cvm_code)
+        if verbose:
+            print(f"[IPE] anos carregados={years} | arquivos={len(dfs)}")
+        if not dfs:
+            summary = {
+                "ok": False,
+                "run_id": getattr(run, "run_id", None),
+                "errors": {"__all__": "Nenhum CSV IPE disponível."},
+                "stats": {},
+                "window_months": int(window_months),
+                "max_runtime_s": effective_runtime_s,
+            }
+            if run:
+                run.add_error("Nenhum CSV IPE disponível.")
+            _log("ERROR", "summary", **summary)
+            _RUN_LOG = None
+            return summary
 
-    out_stats: Dict[str, Any] = {}
-    out_errors: Dict[str, str] = {}
-    effective_runtime_s = max(float(max_runtime_s or 0.0), 1.0)
-    started = time.time()
+        df = pd.concat(dfs, ignore_index=True)
+        cols = list(df.columns)
 
-    MIN_COVERAGE = 8   # C) cobertura mínima
-    MIN_SCORE_STRATEGIC = 3  # threshold leve, evita ficar vazio
+        col_cvm = _pick_col(cols, "CODIGO_CVM", "CD_CVM", "CVM", "COD_CVM")
+        col_data = _pick_col(cols, "DATA_ENTREGA", "DT_RECEB", "DT_REFER", "DATA_REFERENCIA", "DATA_REFER", "DT_ENTREGA")
+        col_link = _pick_col(cols, "LINK_DOWNLOAD", "LINK", "LINK_ARQUIVO", "LINK_DOC", "LINK_DOCUMENTO")
+        col_assunto = _pick_col(cols, "ASSUNTO", "ASSUNTO_EVENTO", "TITULO", "DESCRICAO")
+        col_categoria = _pick_col(cols, "CATEGORIA", "CATEGORIA_DOCUMENTO")
+        col_tipo = _pick_col(cols, "TIPO", "TIPO_DOCUMENTO")
 
-    with _engine().begin() as conn:
-        # garante cache de coluna de texto inicializado (e falha cedo se schema inválido)
-        _ = _get_text_column(conn)
+        if any(c is None for c in (col_cvm, col_data, col_link, col_assunto)):
+            message = f"CSV IPE sem colunas necessárias. Encontradas={cols}"
+            if run:
+                run.add_error(message)
+            summary = {
+                "ok": False,
+                "run_id": getattr(run, "run_id", None),
+                "errors": {"__all__": message},
+                "stats": {},
+                "window_months": int(window_months),
+                "max_runtime_s": effective_runtime_s,
+            }
+            _log("ERROR", "summary", **summary)
+            _RUN_LOG = None
+            return summary
 
-        for tk in tickers_n:
-            if (time.time() - started) > effective_runtime_s:
-                out_errors["__runtime__"] = f"Tempo máximo atingido ({effective_runtime_s}s)."
-                _log("WARN", "runtime_limit_reached", seconds=effective_runtime_s)
-                break
+        if validate_required_columns:
+            validate_required_columns(
+                df,
+                [col_cvm, col_data, col_link, col_assunto],
+                context="CSV IPE normalizado",
+                logger=run,
+            )
 
-            cvm = cvm_map.get(tk)
-            if not cvm:
-                out_errors[tk] = "ticker_sem_mapeamento_cvm (preencha public.cvm_to_ticker)"
-                out_stats[tk] = {
-                    "existing_before": 0,
-                    "matched": 0,
-                    "dataset_candidates": 0,
-                    "considered": 0,
-                    "inserted": 0,
-                    "skipped": 0,
-                    "updated_text": 0,
-                    "pdf_fetched": 0,
-                    "pdf_text_ok": 0,
-                    "requested_max_docs": int(max_docs_per_ticker),
-                    "requested_max_pdfs": int(max_pdfs_per_ticker),
-                    "selection_truncated": False,
-                    "pdf_limit_hit": False,
-                    "stopped_reason": "ticker_sem_mapeamento_cvm",
-                }
-                continue
+        df["_dt"] = df[col_data].apply(_parse_date)
+        df = df[~df["_dt"].isna()].copy()
+        df["_url_norm"] = df[col_link].fillna("").map(lambda x: _canonical_url(str(x)))
 
-            existing_before = _count_existing_docs_for_ticker(conn, tk)
+        min_ts = pd.Timestamp(min_dt).tz_localize(None)
+        df["_dt_naive"] = df["_dt"].apply(
+            lambda x: x.tz_localize(None)
+            if hasattr(x, "tz_localize") and getattr(x, "tzinfo", None) is not None
+            else x
+        )
+        df = df[df["_dt_naive"] >= min_ts].copy()
 
-            cvm_norm = _norm_cvm_code(cvm)
-            dft_all = df[df["_cvm_norm"] == cvm_norm].copy()
-            dft_all = dft_all.sort_values("_dt_naive", ascending=False)
+        if validate_non_null_columns and not df.empty:
+            valid_df = df[df["_url_norm"].astype(str).str.strip().ne("")].copy()
+            if not valid_df.empty:
+                validate_non_null_columns(
+                    valid_df,
+                    [col_cvm, col_data, col_link, col_assunto],
+                    context="CSV IPE filtrado",
+                    logger=run,
+                )
 
-            matched = int(len(dft_all))
-            if verbose:
-                print(f"[IPE] {tk} | cvm={cvm} | cvm_norm={cvm_norm} | matched={matched} | existing_before={existing_before}")
-            if matched == 0:
-                out_stats[tk] = {
-                    "existing_before": int(existing_before),
-                    "matched": 0,
-                    "dataset_candidates": 0,
-                    "considered": 0,
-                    "inserted": 0,
-                    "skipped": 0,
-                    "updated_text": 0,
-                    "pdf_fetched": 0,
-                    "pdf_text_ok": 0,
-                    "requested_max_docs": int(max_docs_per_ticker),
-                    "requested_max_pdfs": int(max_pdfs_per_ticker),
-                    "selection_truncated": False,
-                    "pdf_limit_hit": False,
-                    "stopped_reason": "no_dataset_match",
-                }
-                continue
+        if strategic_only:
+            df["_tipo"] = df[col_tipo].fillna("").map(_clean_text) if col_tipo else ""
+            df["_titulo"] = df[col_assunto].fillna("").map(_clean_text)
+            df["_assunto"] = df[col_assunto].fillna("").map(_clean_text)
+            df["_categoria"] = df[col_categoria].fillna("").map(_clean_text) if col_categoria else ""
+            df["_score"] = df.apply(
+                lambda r: _score_doc(
+                    str(r.get("_tipo", "") or ""),
+                    str(r.get("_titulo", "") or ""),
+                    str(r.get("_assunto", "") or ""),
+                    str(r.get("_categoria", "") or ""),
+                ),
+                axis=1,
+            )
+        else:
+            df["_score"] = 0
 
-            fallback_used = False
-            selected_strategic = 0
+        df["_cvm_norm"] = df[col_cvm].map(_norm_cvm_code)
+        started = time.time()
+        min_coverage = 8
+        min_score_strategic = 3
 
-            if strategic_only:
-                dft_ranked = dft_all.sort_values(["_score", "_dt_naive"], ascending=[False, False]).copy()
+        with _engine().begin() as conn:
+            _ = _get_text_column(conn)
 
-                strategic = dft_ranked[dft_ranked["_score"] >= MIN_SCORE_STRATEGIC].copy()
-                selected = strategic.copy()
-                selected_strategic = int(len(selected))
-
-                if selected_strategic < MIN_COVERAGE:
-                    fallback_used = True
-                    remaining = dft_ranked.loc[~dft_ranked.index.isin(selected.index)].sort_values("_dt_naive", ascending=False)
-                    need = int(max_docs_per_ticker) - selected_strategic
-                    if need > 0:
-                        selected = pd.concat([selected, remaining.head(need)], ignore_index=False)
-            else:
-                selected = dft_all.copy()
-
-            selected = selected.drop_duplicates(subset=[col_link, col_assunto, "_dt_naive"], keep="first").copy()
-            dataset_candidates = int(len(selected))
-            selection_truncated = bool(dataset_candidates > int(max_docs_per_ticker))
-            selected = selected.head(int(max_docs_per_ticker)).copy()
-            considered = int(len(selected))
-
-            audit_top: List[Dict[str, Any]] = []
-            for _, rr in selected.head(10).iterrows():
-                audit_top.append({
-                    "data": str(rr.get("_dt_naive") or ""),
-                    "tipo": _clean_text(str(rr.get(col_tipo, "") or "")) if col_tipo else "",
-                    "titulo": _clean_text(str(rr.get(col_assunto, "") or "")),
-                    "categoria": _clean_text(str(rr.get(col_categoria, "") or "")) if col_categoria else "",
-                    "score": int(rr.get("_score") or 0),
-                    "url": str(rr.get(col_link, "") or "")[:300],
-                })
-
-            inserted = 0
-            skipped = 0
-            updated_text = 0
-            pdf_fetched = 0
-            pdf_text_ok = 0
-            pdf_used = 0
-            pdf_limit_hit = False
-
-            for _, r in selected.iterrows():
+            for tk in tickers_n:
                 if (time.time() - started) > effective_runtime_s:
                     out_errors["__runtime__"] = f"Tempo máximo atingido ({effective_runtime_s}s)."
+                    _log("WARN", "runtime_limit_reached", seconds=effective_runtime_s)
                     break
 
-                url = str(r.get(col_link, "") or "").strip()
-                if not url:
-                    skipped += 1
+                cvm = cvm_map.get(tk)
+                if not cvm:
+                    out_errors[tk] = "ticker_sem_mapeamento_cvm (preencha public.cvm_to_ticker)"
+                    out_stats[tk] = _empty_ticker_stats(
+                        requested_max_docs=max_docs_per_ticker,
+                        requested_max_pdfs=max_pdfs_per_ticker,
+                        stopped_reason="ticker_sem_mapeamento_cvm",
+                    )
+                    if run:
+                        run.add_source_metrics(
+                            source="CVM/IPE",
+                            ticker=tk,
+                            failures=1,
+                        )
                     continue
 
-                titulo = _clean_text(str(r.get(col_assunto, "") or "")) or ""
-                tipo = _clean_text(str(r.get(col_tipo, "") or "")) if col_tipo else ""
-                if not tipo:
-                    tipo = "IPE"
+                existing_before = _count_existing_docs_for_ticker(conn, tk)
+                cvm_norm = _norm_cvm_code(cvm)
+                dft_all = df[df["_cvm_norm"] == cvm_norm].copy().sort_values("_dt_naive", ascending=False)
+                matched = int(len(dft_all))
 
-                dt = r.get("_dt")  # Timestamp
-                doc_hash = _sha256(f"{tk}|{url}|{titulo}|{dt}")
+                if verbose:
+                    print(f"[IPE] {tk} | cvm={cvm} | cvm_norm={cvm_norm} | matched={matched} | existing_before={existing_before}")
 
-                status = _get_doc_status(conn, doc_hash)
-
-                texto = ""
-                if download_pdfs and pdf_used < int(max_pdfs_per_ticker):
-                    try:
-                        pdf_bytes = _fetch_pdf_bytes(url, timeout=request_timeout)
-                        if pdf_bytes:
-                            pdf_fetched += 1
-                            pdf_used += 1
-                            tpdf = _extract_pdf_text(pdf_bytes, max_pages=int(pdf_max_pages))
-                            tpdf = tpdf.strip() if tpdf else ""
-                            if tpdf and len(tpdf) >= 200:
-                                texto = tpdf
-                                pdf_text_ok += 1
-                    except Exception:
-                        _log("WARN", "pdf_extract_failed", ticker=tk, url=url[:300])
-                        pass
-                elif download_pdfs and int(max_pdfs_per_ticker) > 0:
-                    pdf_limit_hit = True
-
-                # Se já existe:
-                if status["exists"]:
-                    if (not status["has_text"]) and texto:
-                        if _update_doc_text(conn, int(status["id"]), texto):
-                            updated_text += 1
-                    else:
-                        skipped += 1
+                if matched == 0:
+                    stats = _empty_ticker_stats(
+                        existing_before=existing_before,
+                        requested_max_docs=max_docs_per_ticker,
+                        requested_max_pdfs=max_pdfs_per_ticker,
+                        stopped_reason="no_dataset_match",
+                    )
+                    out_stats[tk] = stats
+                    if run:
+                        run.add_source_metrics(source="CVM/IPE", ticker=tk, documents_read=0)
                     continue
 
-                # Novo documento
-                doc_id = _insert_doc(
-                    conn,
-                    ticker=tk,
-                    titulo=titulo or "Documento CVM/IPE",
-                    url=url,
-                    fonte="CVM/IPE",
-                    tipo=tipo,
-                    data=dt,
-                    texto=texto,
-                    doc_hash=doc_hash,
-                )
-                if doc_id is None:
-                    skipped += 1
+                fallback_used = False
+                selected_strategic = 0
+                if strategic_only:
+                    dft_ranked = dft_all.sort_values(["_score", "_dt_naive"], ascending=[False, False]).copy()
+                    strategic = dft_ranked[dft_ranked["_score"] >= min_score_strategic].copy()
+                    selected = strategic.copy()
+                    selected_strategic = int(len(selected))
+                    if selected_strategic < min_coverage:
+                        fallback_used = True
+                        remaining = dft_ranked.loc[~dft_ranked.index.isin(selected.index)].sort_values("_dt_naive", ascending=False)
+                        need = int(max_docs_per_ticker) - selected_strategic
+                        if need > 0:
+                            selected = pd.concat([selected, remaining.head(need)], ignore_index=False)
                 else:
-                    inserted += 1
+                    selected = dft_all.copy()
 
-                if sleep_s:
-                    time.sleep(float(sleep_s))
+                before_selection_dedup = len(selected)
+                selected = selected.drop_duplicates(subset=["_url_norm", col_assunto, "_dt_naive"], keep="first").copy()
+                dataset_candidates = int(len(selected))
+                selection_deduped = int(before_selection_dedup - dataset_candidates)
+                selection_truncated = bool(dataset_candidates > int(max_docs_per_ticker))
+                selected = selected.head(int(max_docs_per_ticker)).copy()
+                considered = int(len(selected))
 
-            out_stats[tk] = {
-                "matched": matched,
-                "considered": considered,
-                "inserted": inserted,
-                "skipped": skipped,
-                "updated_text": updated_text,
-                "pdf_fetched": pdf_fetched,
-                "pdf_text_ok": pdf_text_ok,
-                # D) auditoria
-                "selected_strategic": selected_strategic if strategic_only else None,
-                "fallback_used": fallback_used if strategic_only else None,
-                "top_selected": audit_top,
-            }
+                _log(
+                    "INFO",
+                    "ticker_selection_ready",
+                    ticker=tk,
+                    matched=matched,
+                    dataset_candidates=dataset_candidates,
+                    selection_deduped=selection_deduped,
+                    selection_truncated=selection_truncated,
+                    fallback_used=fallback_used if strategic_only else None,
+                )
 
-    ok = (len(out_errors) == 0)
-    result = {"ok": ok, "stats": out_stats, "errors": out_errors}
-    _log(
-        "INFO" if ok else "WARN",
-        "summary",
-        ok=ok,
-        tickers=len(tickers_n),
-        tickers_with_stats=len(out_stats),
-        errors=len(out_errors),
-        inserted=sum(int(v.get("inserted", 0)) for v in out_stats.values()),
-        skipped=sum(int(v.get("skipped", 0)) for v in out_stats.values()),
-        updated_text=sum(int(v.get("updated_text", 0)) for v in out_stats.values()),
-        pdf_fetched=sum(int(v.get("pdf_fetched", 0)) for v in out_stats.values()),
-        pdf_text_ok=sum(int(v.get("pdf_text_ok", 0)) for v in out_stats.values()),
-    )
-    return result
+                audit_top: List[Dict[str, Any]] = []
+                for _, rr in selected.head(10).iterrows():
+                    audit_top.append(
+                        {
+                            "data": str(rr.get("_dt_naive") or ""),
+                            "tipo": _clean_text(str(rr.get(col_tipo, "") or "")) if col_tipo else "",
+                            "titulo": _clean_text(str(rr.get(col_assunto, "") or "")),
+                            "categoria": _clean_text(str(rr.get(col_categoria, "") or "")) if col_categoria else "",
+                            "score": int(rr.get("_score") or 0),
+                            "url": str(rr.get(col_link, "") or "")[:300],
+                        }
+                    )
+
+                inserted = 0
+                skipped = 0
+                updated_text = 0
+                pdf_fetched = 0
+                pdf_text_ok = 0
+                pdf_used = 0
+                pdf_limit_hit = False
+                duplicate_existing = 0
+                chunks_generated = 0
+                stubs = 0
+                failures = 0
+
+                for _, r in selected.iterrows():
+                    if (time.time() - started) > effective_runtime_s:
+                        out_errors["__runtime__"] = f"Tempo máximo atingido ({effective_runtime_s}s)."
+                        break
+
+                    url = _canonical_url(str(r.get(col_link, "") or "").strip())
+                    if not url:
+                        skipped += 1
+                        failures += 1
+                        continue
+
+                    titulo = _clean_text(str(r.get(col_assunto, "") or "")) or "Documento CVM/IPE"
+                    tipo = _clean_text(str(r.get(col_tipo, "") or "")) if col_tipo else ""
+                    if not tipo:
+                        tipo = "IPE"
+
+                    dt = r.get("_dt")
+                    dt_key = dt.date().isoformat() if isinstance(dt, pd.Timestamp) and not pd.isna(dt) else ""
+                    doc_hash = _sha256(f"{tk}|{url}|{titulo}|{dt_key}")
+
+                    texto = ""
+                    extraction_version = _EXTRACTION_VERSION_STUB
+                    is_stub = True
+                    if download_pdfs and pdf_used < int(max_pdfs_per_ticker):
+                        try:
+                            pdf_bytes = _fetch_pdf_bytes(url, timeout=request_timeout)
+                            if pdf_bytes:
+                                pdf_fetched += 1
+                                pdf_used += 1
+                                tpdf = _extract_pdf_text(pdf_bytes, max_pages=int(pdf_max_pages))
+                                tpdf = tpdf.strip() if tpdf else ""
+                                if tpdf and len(tpdf) >= 200:
+                                    texto = tpdf
+                                    pdf_text_ok += 1
+                                    extraction_version = _EXTRACTION_VERSION_PDF
+                                    is_stub = False
+                        except Exception as e:
+                            failures += 1
+                            _log("WARN", "pdf_extract_failed", ticker=tk, url=url[:300], error=str(e))
+                    elif download_pdfs and int(max_pdfs_per_ticker) > 0:
+                        pdf_limit_hit = True
+
+                    try:
+                        persisted = persist_document_bundle(
+                            conn,
+                            ticker=tk,
+                            titulo=titulo,
+                            url=url,
+                            fonte="CVM/IPE",
+                            tipo=tipo,
+                            data=dt,
+                            texto=_sanitize_text(texto),
+                            doc_hash=doc_hash,
+                            chunking_version=_CHUNKING_VERSION,
+                            extraction_version=extraction_version,
+                            run_id=getattr(run, "run_id", None),
+                            is_stub=is_stub,
+                        )
+                    except Exception as e:
+                        failures += 1
+                        skipped += 1
+                        _log("ERROR", "doc_persist_failed", ticker=tk, url=url[:300], error=str(e))
+                        if run:
+                            run.add_warning(f"{tk}: falha ao persistir doc {url[:120]}: {e}")
+                        continue
+
+                    if persisted.get("inserted"):
+                        inserted += 1
+                    if persisted.get("updated_text"):
+                        updated_text += 1
+                    if persisted.get("duplicate"):
+                        duplicate_existing += 1
+                        skipped += 1
+                    chunks_generated += int(persisted.get("chunks_inserted", 0) or 0)
+                    if persisted.get("stub"):
+                        stubs += 1
+
+                    if sleep_s:
+                        time.sleep(float(sleep_s))
+
+                stats = {
+                    "source": "CVM/IPE",
+                    "existing_before": int(existing_before),
+                    "matched": matched,
+                    "dataset_candidates": dataset_candidates,
+                    "documents_read": considered,
+                    "considered": considered,
+                    "inserted": inserted,
+                    "skipped": skipped,
+                    "updated_text": updated_text,
+                    "pdf_fetched": pdf_fetched,
+                    "pdf_text_ok": pdf_text_ok,
+                    "chunks_generated": chunks_generated,
+                    "stubs": stubs,
+                    "failures": failures,
+                    "requested_max_docs": int(max_docs_per_ticker),
+                    "requested_max_pdfs": int(max_pdfs_per_ticker),
+                    "selection_truncated": selection_truncated,
+                    "pdf_limit_hit": pdf_limit_hit,
+                    "selection_deduped": selection_deduped,
+                    "duplicate_existing": duplicate_existing,
+                    "selected_strategic": selected_strategic if strategic_only else None,
+                    "fallback_used": fallback_used if strategic_only else None,
+                    "top_selected": audit_top,
+                }
+                out_stats[tk] = stats
+
+                if run:
+                    run.add_source_metrics(
+                        source="CVM/IPE",
+                        ticker=tk,
+                        documents_read=considered,
+                        documents_inserted=inserted,
+                        duplicates=duplicate_existing,
+                        chunks_generated=chunks_generated,
+                        stubs=stubs,
+                        failures=failures,
+                    )
+
+                _log(
+                    "INFO",
+                    "ticker_summary",
+                    ticker=tk,
+                    matched=matched,
+                    considered=considered,
+                    inserted=inserted,
+                    skipped=skipped,
+                    updated_text=updated_text,
+                    pdf_fetched=pdf_fetched,
+                    pdf_text_ok=pdf_text_ok,
+                    chunks_generated=chunks_generated,
+                    stubs=stubs,
+                    failures=failures,
+                    selection_deduped=selection_deduped,
+                    duplicate_existing=duplicate_existing,
+                    fallback_used=fallback_used if strategic_only else None,
+                )
+
+        ok = len(out_errors) == 0
+        result = {
+            "ok": ok,
+            "run_id": getattr(run, "run_id", None),
+            "stats": out_stats,
+            "errors": out_errors,
+        }
+        _log(
+            "INFO" if ok else "WARN",
+            "summary",
+            ok=ok,
+            run_id=result["run_id"],
+            tickers=len(tickers_n),
+            tickers_with_stats=len(out_stats),
+            errors=len(out_errors),
+            inserted=sum(int(v.get("inserted", 0)) for v in out_stats.values()),
+            skipped=sum(int(v.get("skipped", 0)) for v in out_stats.values()),
+            updated_text=sum(int(v.get("updated_text", 0)) for v in out_stats.values()),
+            pdf_fetched=sum(int(v.get("pdf_fetched", 0)) for v in out_stats.values()),
+            pdf_text_ok=sum(int(v.get("pdf_text_ok", 0)) for v in out_stats.values()),
+            chunks_generated=sum(int(v.get("chunks_generated", 0)) for v in out_stats.values()),
+            stubs=sum(int(v.get("stubs", 0)) for v in out_stats.values()),
+            failures=sum(int(v.get("failures", 0)) for v in out_stats.values()),
+            selection_deduped=sum(int(v.get("selection_deduped", 0)) for v in out_stats.values()),
+            duplicate_existing=sum(int(v.get("duplicate_existing", 0)) for v in out_stats.values()),
+        )
+        _RUN_LOG = None
+        return result

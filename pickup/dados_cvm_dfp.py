@@ -6,15 +6,19 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse, urlunparse
 
 try:
     from auditoria_dados.ingestion_log import IngestionLog as _IngestionLog
     from auditoria_dados.ingestion_log import validate_required_columns
+    from auditoria_dados.ingestion_log import validate_key_columns
+    from auditoria_dados.ingestion_log import validate_unique_rows
 except ImportError:
     _IngestionLog = None
     validate_required_columns = None
+    validate_key_columns = None
+    validate_unique_rows = None
 
 import numpy as np
 import pandas as pd
@@ -112,6 +116,38 @@ def _normalize_db_url(db_url: str) -> str:
 
     normalized = urlunparse(("postgresql", parsed.netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
     return normalized
+
+
+def _empty_year_result() -> Dict[str, List[pd.DataFrame] | List[str]]:
+    return {"DRE": [], "BPA": [], "BPP": [], "DFC_MI": [], "errors": []}
+
+
+def _assert_unique_key_ready(cur, table_name: str, key_columns: Tuple[str, ...]) -> None:
+    cur.execute(
+        """
+        SELECT 1
+        FROM pg_index i
+        JOIN pg_class t ON t.oid = i.indrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE n.nspname = 'public'
+          AND t.relname = %s
+          AND i.indisunique
+          AND (
+              SELECT array_agg(a.attname ORDER BY x.ord)
+              FROM unnest(i.indkey) WITH ORDINALITY AS x(attnum, ord)
+              JOIN pg_attribute a
+                ON a.attrelid = t.oid
+               AND a.attnum = x.attnum
+              WHERE x.attnum > 0
+          ) = %s::text[]
+        LIMIT 1
+        """,
+        (table_name, list(key_columns)),
+    )
+    if cur.fetchone() is None:
+        raise RuntimeError(
+            f'A tabela public."{table_name}" precisa de UNIQUE/PK em {key_columns} para ON CONFLICT.'
+        )
 
 
 # =========================
@@ -214,16 +250,17 @@ def _normalizar_lpa_series(s: pd.Series) -> pd.Series:
 # COLETA DFP (PARALELISMO)
 # =========================
 def processar_ano_dfp(session: requests.Session, ano: int):
+    result = _empty_year_result()
     try:
         raw_zip = _baixar_zip_ano(session, ano)
     except Exception as e:
-        log(f"[WARN] Erro ao baixar o arquivo para o ano {ano}: {e}")
-        return None
+        message = f"DFP {ano}: erro ao baixar ZIP: {e}"
+        result["errors"].append(message)
+        log(message, level="ERROR", year=ano, stage="download_failed")
+        return result
 
     try:
         with zipfile.ZipFile(io.BytesIO(raw_zip)) as zip_ref:
-            df_temp_dict = {"DRE": [], "BPA": [], "BPP": [], "DFC_MI": []}
-
             for arquivo in zip_ref.namelist():
                 if arquivo.endswith(".csv") and "_con_" in arquivo:
                     with zip_ref.open(arquivo) as csvfile:
@@ -244,26 +281,36 @@ def processar_ano_dfp(session: requests.Session, ano: int):
 
                             up = arquivo.upper()
                             if "DRE" in up:
-                                df_temp_dict["DRE"].append(df_temp)
+                                result["DRE"].append(df_temp)
                             elif "BPA" in up:
-                                df_temp_dict["BPA"].append(df_temp)
+                                result["BPA"].append(df_temp)
                             elif "BPP" in up:
-                                df_temp_dict["BPP"].append(df_temp)
+                                result["BPP"].append(df_temp)
                             elif "DFC" in up:
-                                df_temp_dict["DFC_MI"].append(df_temp)
+                                result["DFC_MI"].append(df_temp)
 
                         except Exception as e:
+                            message = f"DFP {ano}: erro ao processar arquivo {arquivo}: {e}"
+                            result["errors"].append(message)
                             if _RUN_LOG:
                                 _RUN_LOG.increment_metric("arquivos_com_erro")
-                                _RUN_LOG.add_warning(f"Erro ao processar {arquivo} no ano {ano}: {e}")
-                            log(f"Erro ao processar {arquivo} no ano {ano}: {e}", level="WARN", year=ano, file=arquivo)
-            return df_temp_dict
+                            log(
+                                message,
+                                level="ERROR",
+                                year=ano,
+                                file=arquivo,
+                                stage="file_processing_failed",
+                            )
+            if not result["DRE"]:
+                result["errors"].append(f"DFP {ano}: nenhum arquivo DRE consolidado válido encontrado.")
+            return result
     except zipfile.BadZipFile:
+        message = f"DFP {ano}: ZIP inválido."
+        result["errors"].append(message)
         if _RUN_LOG:
             _RUN_LOG.increment_metric("zips_invalidos")
-            _RUN_LOG.add_warning(f"ZIP inválido para o ano {ano}")
-        log(f"ZIP inválido para o ano {ano}.", level="WARN", year=ano)
-        return None
+        log(message, level="ERROR", year=ano, stage="bad_zip")
+        return result
 
 
 
@@ -283,6 +330,7 @@ def coletar_dfp() -> tuple[dict, int]:
 
     log(f"Coletando DFP do intervalo {ANO_INICIAL}..{ultimo_ano}")
     start = time.time()
+    failed_years: Dict[int, List[str]] = {}
 
     futures = {}
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -293,24 +341,36 @@ def coletar_dfp() -> tuple[dict, int]:
             ano = futures[future]
             try:
                 df_temp_dict = future.result()
-                if df_temp_dict is None:
+                year_errors = list(df_temp_dict.get("errors", []))
+                if year_errors:
+                    failed_years[ano] = year_errors
                     if _RUN_LOG:
-                        _RUN_LOG.increment_metric("anos_sem_dados")
+                        _RUN_LOG.increment_metric("anos_com_erro")
+                    log(
+                        f"DFP {ano}: falhou com {len(year_errors)} erro(s).",
+                        level="ERROR",
+                        year=ano,
+                        stage="year_failed",
+                        errors=year_errors[:3],
+                    )
                     continue
                 for key in df_dict_dfp.keys():
                     if df_temp_dict.get(key):
                         df_dict_dfp[key] = pd.concat([df_dict_dfp[key]] + df_temp_dict[key], ignore_index=True)
-                log(f"Ano {ano} processado com sucesso.")
+                log(f"Ano {ano} processado com sucesso.", level="INFO", year=ano, stage="year_success")
                 if _RUN_LOG:
                     _RUN_LOG.increment_metric("anos_processados")
             except Exception as e:
+                failed_years[ano] = [str(e)]
                 if _RUN_LOG:
                     _RUN_LOG.increment_metric("anos_com_erro")
-                    _RUN_LOG.add_warning(f"Falha no ano {ano}: {e}")
-                log(f"Falha no ano {ano}: {e}", level="WARN", year=ano)
+                log(f"Falha no ano {ano}: {e}", level="ERROR", year=ano, stage="future_failed")
 
     elapsed = round(time.time() - start, 1)
     log(f"[OK] Coleta de dados anuais (DFP) concluída em {elapsed}s. (anos {ANO_INICIAL}..{ultimo_ano})")
+    if failed_years:
+        failed_preview = {ano: errs[:2] for ano, errs in sorted(failed_years.items())}
+        raise RuntimeError(f"Falhas em {len(failed_years)} ano(s) DFP: {failed_preview}")
     return df_dict_dfp, ultimo_ano
 
 
@@ -513,6 +573,20 @@ def adicionar_ticker(df_consolidado: pd.DataFrame) -> pd.DataFrame:
             context="Mapa CVM->Ticker DFP",
             logger=_RUN_LOG,
         )
+    if validate_key_columns:
+        validate_key_columns(
+            cvm_to_ticker,
+            ["CVM", "Ticker"],
+            context="Mapa CVM->Ticker DFP",
+            logger=_RUN_LOG,
+        )
+    if validate_unique_rows:
+        validate_unique_rows(
+            cvm_to_ticker,
+            ["CVM"],
+            context="Mapa CVM->Ticker DFP",
+            logger=_RUN_LOG,
+        )
     df = pd.merge(df_consolidado, cvm_to_ticker, left_on="CD_CVM", right_on="CVM")
     df = df.drop(columns=["CD_CVM", "CVM"])
     df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.strftime("%Y-%m-%d")
@@ -522,7 +596,22 @@ def adicionar_ticker(df_consolidado: pd.DataFrame) -> pd.DataFrame:
         "Ativo Total", "Ativo Circulante", "Passivo Circulante", "Passivo Total", "Divida Total",
         "Patrimônio Líquido", "Dividendos Totais", "Caixa Líquido", "Dívida Líquida"
     ]
-    return df[colunas]
+    out = df[colunas]
+    if validate_key_columns:
+        validate_key_columns(
+            out,
+            ["Ticker", "Data"],
+            context="DFP com ticker",
+            logger=_RUN_LOG,
+        )
+    if validate_unique_rows:
+        validate_unique_rows(
+            out,
+            ["Ticker", "Data"],
+            context="DFP com ticker",
+            logger=_RUN_LOG,
+        )
+    return out
 
 
 # =========================
@@ -587,6 +676,13 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None
     })
 
     df_db["Data"] = pd.to_datetime(df_db["Data"], errors="coerce").dt.date
+    if validate_key_columns:
+        validate_key_columns(
+            df_db,
+            ["Ticker", "Data"],
+            context="DFP pré-upsert",
+            logger=_RUN_LOG,
+        )
 
     money_cols = [
         "Receita_Liquida", "EBIT", "Lucro_Liquido", "Ativo_Total", "Ativo_Circulante",
@@ -605,9 +701,23 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None
              .reset_index(drop=True)
     )
     duplicates_removed = before_dedup - len(df_db)
+    if duplicates_removed > 0:
+        log(
+            f"DFP pré-upsert removeu {duplicates_removed} duplicata(s) por (Ticker, Data).",
+            level="WARN",
+            duplicates_removed=duplicates_removed,
+            stage="pre_upsert_dedup",
+        )
     if _RUN_LOG:
         _RUN_LOG.set_metric("df_rows_before_dedup", before_dedup)
         _RUN_LOG.set_metric("df_duplicates_removed", duplicates_removed)
+    if validate_unique_rows:
+        validate_unique_rows(
+            df_db,
+            ["Ticker", "Data"],
+            context="DFP pré-upsert deduplicado",
+            logger=_RUN_LOG,
+        )
 
     max_lpa = float(pd.to_numeric(df_db["LPA"], errors="coerce").abs().max())
     if max_lpa >= LPA_ABS_MAX_DB:
@@ -640,6 +750,7 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None
     log(f"Conectando ao banco e fazendo upsert de {len(df_db)} linhas...")
     with psycopg2.connect(dsn) as conn:
         with conn.cursor() as cur:
+            _assert_unique_key_ready(cur, "Demonstracoes_Financeiras", ("Ticker", "Data"))
             execute_values(cur, sql, values, page_size=BATCH_SIZE_UPSERT)
         conn.commit()
 

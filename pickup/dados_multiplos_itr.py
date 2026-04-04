@@ -16,9 +16,13 @@ import yfinance as yf
 try:
     from auditoria_dados.ingestion_log import IngestionLog as _IngestionLog
     from auditoria_dados.ingestion_log import validate_required_columns
+    from auditoria_dados.ingestion_log import validate_key_columns
+    from auditoria_dados.ingestion_log import validate_unique_rows
 except ImportError:
     _IngestionLog = None
     validate_required_columns = None
+    validate_key_columns = None
+    validate_unique_rows = None
 
 # =========================
 # Silenciar ruído do yfinance
@@ -49,6 +53,10 @@ def log(msg: str, level: str = "INFO", **fields) -> None:
         _RUN_LOG.log(level, "pipeline_log", message=msg, **fields)
         return
     print(msg, flush=True)
+
+
+def _normalize_ticker_series(series: pd.Series) -> pd.Series:
+    return series.astype(str).str.strip().str.upper()
 
 
 def ticker_valido_yf(t: str) -> bool:
@@ -140,13 +148,26 @@ def baixar_precos_quarter_mean(
                 progress=False,
                 threads=False,
             )
-        except Exception:
+        except Exception as e:
             if _RUN_LOG:
                 _RUN_LOG.increment_metric("yf_batches_failed")
-                _RUN_LOG.add_warning(f"Falha no download Yahoo para batch {i+1}-{min(i+batch_size, total)}.")
+            log(
+                f"Falha no download Yahoo para batch {i+1}-{min(i+batch_size, total)}: {e}",
+                level="ERROR",
+                stage="yf_batch_failed",
+                batch_preview=batch[:5],
+                batch_size=len(batch),
+            )
             continue
 
         if dfp is None or dfp.empty:
+            log(
+                f"Yahoo sem dados para batch {i+1}-{min(i+batch_size, total)}.",
+                level="WARN",
+                stage="yf_empty_batch",
+                batch_preview=batch[:5],
+                batch_size=len(batch),
+            )
             continue
 
         # Extrair Close de forma robusta
@@ -191,6 +212,14 @@ def baixar_precos_quarter_mean(
     df_preco["Preco_Medio_TRIM"] = pd.to_numeric(df_preco["Preco_Medio_TRIM"], errors="coerce")
     df_preco = df_preco.dropna(subset=["Ticker", "Data", "Preco_Medio_TRIM"])
     df_preco = df_preco[df_preco["Preco_Medio_TRIM"] > 0]
+    df_preco["Ticker"] = _normalize_ticker_series(df_preco["Ticker"])
+    if validate_unique_rows:
+        validate_unique_rows(
+            df_preco,
+            ["Ticker", "Data"],
+            context="Preços médios trimestrais Yahoo",
+            logger=_RUN_LOG,
+        )
     return df_preco
 
 
@@ -225,6 +254,39 @@ def upsert_multiplos(df_out: pd.DataFrame) -> None:
         log("[WARN] df_out vazio — nada para gravar.")
         return
 
+    df_out = df_out.copy()
+    df_out["Ticker"] = _normalize_ticker_series(df_out["Ticker"])
+    df_out["Data"] = pd.to_datetime(df_out["Data"], errors="coerce", utc=True)
+    if validate_key_columns:
+        validate_key_columns(
+            df_out,
+            ["Ticker", "Data"],
+            context='Múltiplos TRI pré-upsert',
+            logger=_RUN_LOG,
+        )
+
+    before_dedup = len(df_out)
+    df_out = (
+        df_out.sort_values(["Ticker", "Data"])
+        .drop_duplicates(subset=["Ticker", "Data"], keep="last")
+        .reset_index(drop=True)
+    )
+    duplicates_removed = before_dedup - len(df_out)
+    if duplicates_removed > 0:
+        log(
+            f"Múltiplos TRI pré-upsert removeu {duplicates_removed} duplicata(s) por (Ticker, Data).",
+            level="WARN",
+            stage="pre_upsert_dedup",
+            duplicates_removed=duplicates_removed,
+        )
+    if validate_unique_rows:
+        validate_unique_rows(
+            df_out,
+            ["Ticker", "Data"],
+            context='Múltiplos TRI pré-upsert deduplicado',
+            logger=_RUN_LOG,
+        )
+
     meta = sa.MetaData()
     table = sa.Table(DEST_TABLE, meta, schema=DEST_SCHEMA, autoload_with=ENGINE)
 
@@ -232,7 +294,8 @@ def upsert_multiplos(df_out: pd.DataFrame) -> None:
     stmt = insert(table).values(records)
 
     key_cols = ["Ticker", "Data"]
-    update_cols = [c.name for c in table.columns if c.name not in key_cols]
+    payload_cols = set(df_out.columns)
+    update_cols = [c.name for c in table.columns if c.name not in key_cols and c.name in payload_cols]
 
     stmt = stmt.on_conflict_do_update(
         index_elements=[table.c["Ticker"], table.c["Data"]],
@@ -272,10 +335,17 @@ def _main_impl(run) -> None:
     # =========================================================
     # NORMALIZAÇÃO CRÍTICA DO TICKER (antes de qualquer lógica)
     # =========================================================
-    df["Ticker"] = (df["Ticker"].astype(str).str.strip().str.upper())
+    df["Ticker"] = _normalize_ticker_series(df["Ticker"])
 
     df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
     df = df.dropna(subset=["Ticker", "Data"]).sort_values(["Ticker", "Data"])
+    if validate_key_columns:
+        validate_key_columns(
+            df,
+            ["Ticker", "Data"],
+            context="Origem Demonstracoes_Financeiras_TRI normalizada para múltiplos TRI",
+            logger=run,
+        )
 
     # Validar colunas conforme seu DDL
     required = [
@@ -442,10 +512,19 @@ def _main_impl(run) -> None:
     if run:
         run.set_metric("multiplos_tri_rows", len(df_out))
         run.set_metric("multiplos_tri_tickers", int(df_out["Ticker"].nunique()))
+    df_out["Ticker"] = _normalize_ticker_series(df_out["Ticker"])
+    df_out["Data"] = pd.to_datetime(df_out["Data"], errors="coerce", utc=True)
     if validate_required_columns:
         validate_required_columns(
             df_out,
             ["Ticker", "Data", "Liquidez_Corrente", "P/L", "P/VP", "DY"],
+            context="Múltiplos TRI calculados",
+            logger=run,
+        )
+    if validate_key_columns:
+        validate_key_columns(
+            df_out,
+            ["Ticker", "Data"],
             context="Múltiplos TRI calculados",
             logger=run,
         )
