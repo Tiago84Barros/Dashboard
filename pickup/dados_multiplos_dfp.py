@@ -24,7 +24,10 @@ except ImportError:
 # ======================
 # CONFIG
 # ======================
-SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL_PG", "").strip()
+SUPABASE_DB_URL = (
+    os.getenv("SUPABASE_DB_URL", "").strip()
+    or os.getenv("SUPABASE_DB_URL_PG", "").strip()
+)
 
 YF_START = os.getenv("YF_START", "2010-01-01")
 YF_END = os.getenv("YF_END", "2023-12-31")

@@ -46,7 +46,10 @@ FORCAR_REDOWNLOAD = os.getenv("FORCAR_REDOWNLOAD", "0").strip() == "1"
 BATCH_SIZE_UPSERT = int(os.getenv("BATCH_SIZE_UPSERT", "5000"))
 LOG_PREFIX = os.getenv("LOG_PREFIX", "[DFP]")
 
-SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL_PG", "").strip()
+SUPABASE_DB_URL = (
+    os.getenv("SUPABASE_DB_URL", "").strip()
+    or os.getenv("SUPABASE_DB_URL_PG", "").strip()
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 TICKER_PATH = Path(os.getenv("TICKER_PATH", str(BASE_DIR / "cvm_to_ticker.csv")))
@@ -390,8 +393,8 @@ def montar_df_consolidado(df_dict_dfp: dict) -> pd.DataFrame:
         )
 
     empresas = (
-        df_dict_dfp["DRE"][["DENOM_CIA", "CD_CVM"]]
-        .drop_duplicates()
+        df_dict_dfp["DRE"][["CD_CVM"]]
+        .drop_duplicates(subset=["CD_CVM"])
         .set_index("CD_CVM")
     )
 
@@ -596,7 +599,33 @@ def adicionar_ticker(df_consolidado: pd.DataFrame) -> pd.DataFrame:
         "Ativo Total", "Ativo Circulante", "Passivo Circulante", "Passivo Total", "Divida Total",
         "Patrimônio Líquido", "Dividendos Totais", "Caixa Líquido", "Dívida Líquida"
     ]
-    out = df[colunas]
+    out = df[colunas].copy()
+    out["Ticker"] = out["Ticker"].astype(str).str.upper().str.strip()
+    out["Data"] = pd.to_datetime(out["Data"], errors="coerce").dt.strftime("%Y-%m-%d")
+    out = out[out["Ticker"].ne("") & out["Data"].notna()].copy()
+    before_dedup = len(out)
+    dup_preview = (
+        out[out.duplicated(subset=["Ticker", "Data"], keep=False)][["Ticker", "Data"]]
+        .head(10)
+        .to_dict(orient="records")
+    )
+    out = (
+        out.sort_values(["Ticker", "Data"])
+        .drop_duplicates(subset=["Ticker", "Data"], keep="last")
+        .reset_index(drop=True)
+    )
+    duplicates_removed = before_dedup - len(out)
+    if duplicates_removed > 0:
+        log(
+            f"DFP com ticker removeu {duplicates_removed} duplicata(s) por (Ticker, Data).",
+            level="WARN",
+            duplicates_removed=duplicates_removed,
+            duplicates_preview=dup_preview,
+            stage="ticker_merge_dedup",
+        )
+    if _RUN_LOG:
+        _RUN_LOG.set_metric("df_ticker_rows_before_dedup", before_dedup)
+        _RUN_LOG.set_metric("df_ticker_duplicates_removed", duplicates_removed)
     if validate_key_columns:
         validate_key_columns(
             out,
