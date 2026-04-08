@@ -1,13 +1,11 @@
 import io
 import os
-import re
 import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import urlparse, urlunparse
 
 try:
     from auditoria_dados.ingestion_log import IngestionLog as _IngestionLog
@@ -22,9 +20,9 @@ except ImportError:
 
 import numpy as np
 import pandas as pd
-import psycopg2
 import requests
 from psycopg2.extras import execute_values
+from core.db import get_engine
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -45,11 +43,6 @@ CACHE_ZIPS = os.getenv("CACHE_ZIPS", "1").strip() == "1"
 FORCAR_REDOWNLOAD = os.getenv("FORCAR_REDOWNLOAD", "0").strip() == "1"
 BATCH_SIZE_UPSERT = int(os.getenv("BATCH_SIZE_UPSERT", "5000"))
 LOG_PREFIX = os.getenv("LOG_PREFIX", "[DFP]")
-
-SUPABASE_DB_URL = (
-    os.getenv("SUPABASE_DB_URL", "").strip()
-    or os.getenv("SUPABASE_DB_URL_PG", "").strip()
-)
 
 BASE_DIR = Path(__file__).resolve().parent
 TICKER_PATH = Path(os.getenv("TICKER_PATH", str(BASE_DIR / "cvm_to_ticker.csv")))
@@ -97,30 +90,8 @@ def build_session() -> requests.Session:
 
 
 # =========================
-# DB URL / DSN
+# DB / CONSTRAINTS
 # =========================
-def _normalize_db_url(db_url: str) -> str:
-    db_url = (db_url or "").strip()
-    if not db_url:
-        raise RuntimeError("Defina  (connection string Postgres do Supabase).")
-
-    # psycopg2 não aceita o prefixo do SQLAlchemy
-    db_url = re.sub(r"^postgresql\+psycopg2://", "postgresql://", db_url, flags=re.IGNORECASE)
-    db_url = re.sub(r"^postgres://", "postgresql://", db_url, flags=re.IGNORECASE)
-
-    parsed = urlparse(db_url)
-    if parsed.scheme not in {"postgresql", "postgres"}:
-        raise RuntimeError(
-            "SUPABASE_DB_URL inválida. Use formato 'postgresql://usuario:senha@host:5432/postgres'."
-        )
-
-    if not parsed.hostname or not parsed.path or parsed.path == "/":
-        raise RuntimeError("SUPABASE_DB_URL incompleta: host ou database ausente.")
-
-    normalized = urlunparse(("postgresql", parsed.netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
-    return normalized
-
-
 def _empty_year_result() -> Dict[str, List[pd.DataFrame] | List[str]]:
     return {"DRE": [], "BPA": [], "BPP": [], "DFC_MI": [], "errors": []}
 
@@ -677,14 +648,13 @@ def filtrar_empresas(df_consolidado: pd.DataFrame, ultimo_ano_disponivel: int) -
 # =========================
 # GRAVAÇÃO NO SUPABASE
 # =========================
-def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None:
+def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> int:
     if df_filtrado is None or df_filtrado.empty:
         if _RUN_LOG:
             _RUN_LOG.add_warning("Nenhuma linha DFP para gravar (após filtros).")
         log("Nenhuma linha DFP para gravar (após filtros).", level="WARN")
         return
 
-    dsn = _normalize_db_url(SUPABASE_DB_URL)
 
     df_db = pd.DataFrame({
         "Ticker": df_filtrado["Ticker"],
@@ -777,11 +747,13 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> None
     '''
 
     log(f"Conectando ao banco e fazendo upsert de {len(df_db)} linhas...")
-    with psycopg2.connect(dsn) as conn:
-        with conn.cursor() as cur:
+    engine = get_engine()
+
+    with engine.begin() as conn:
+        raw_conn = conn.connection
+        with raw_conn.cursor() as cur:
             _assert_unique_key_ready(cur, "Demonstracoes_Financeiras", ("Ticker", "Data"))
             execute_values(cur, sql, values, page_size=BATCH_SIZE_UPSERT)
-        conn.commit()
 
     log(f"Upsert concluído: {len(df_db)} linhas em Demonstracoes_Financeiras.", level="INFO", rows=len(df_db))
     return len(df_db)
