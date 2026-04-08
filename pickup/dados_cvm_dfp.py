@@ -107,7 +107,7 @@ def _assert_unique_key_ready(cur, table_name: str, key_columns: Tuple[str, ...])
           AND t.relname = %s
           AND i.indisunique
           AND (
-              SELECT array_agg(a.attname ORDER BY x.ord)
+              SELECT array_agg(a.attname::text ORDER BY x.ord)
               FROM unnest(i.indkey) WITH ORDINALITY AS x(attnum, ord)
               JOIN pg_attribute a
                 ON a.attrelid = t.oid
