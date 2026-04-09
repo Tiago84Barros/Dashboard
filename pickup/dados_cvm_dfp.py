@@ -729,7 +729,7 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> int:
     INSERT INTO public."Demonstracoes_Financeiras"
     ({", ".join([f'"{c}"' for c in cols])})
     VALUES %s
-    ON CONFLICT ("Ticker","Data") DO UPDATE SET
+    ON CONFLICT ("Ticker",data) DO UPDATE SET
       "Receita_Liquida" = EXCLUDED."Receita_Liquida",
       "EBIT" = EXCLUDED."EBIT",
       "Lucro_Liquido" = EXCLUDED."Lucro_Liquido",
@@ -751,7 +751,7 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> int:
     raw_conn = engine.raw_connection()
     try:
         with raw_conn.cursor() as cur:
-            _assert_unique_key_ready(cur, "Demonstracoes_Financeiras", ("Ticker", "Data"))
+            _assert_unique_key_ready(cur, "Demonstracoes_Financeiras", ("Ticker", "data"))
             execute_values(cur, sql, values, page_size=BATCH_SIZE_UPSERT)
         raw_conn.commit()
     except Exception:
