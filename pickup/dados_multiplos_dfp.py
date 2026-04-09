@@ -10,11 +10,6 @@ from psycopg2.extras import execute_values
 from sqlalchemy import create_engine, text
 
 try:
-    from core.db import get_engine
-except Exception:  # pragma: no cover
-    get_engine = None
-
-try:
     from auditoria_dados.ingestion_log import IngestionLog as _IngestionLog
     from auditoria_dados.ingestion_log import validate_required_columns
     from auditoria_dados.ingestion_log import validate_key_columns
@@ -103,15 +98,13 @@ def carregar_demonstracoes() -> pd.DataFrame:
     if not SUPABASE_DB_URL:
         raise RuntimeError("Defina SUPABASE_DB_URL com a connection string Postgres do Supabase.")
 
-    engine = get_engine() if get_engine is not None else create_engine(SUPABASE_DB_URL)
+    engine = create_engine(SUPABASE_DB_URL)
 
     sql = text('SELECT * FROM public."Demonstracoes_Financeiras";')
 
     with engine.connect() as conn:
         df = pd.read_sql_query(sql, conn)
 
-    # No banco físico a coluna pode estar como `data` minúsculo; no pandas
-    # mantemos `Data` para compatibilidade com o restante do pipeline.
     if "data" in df.columns and "Data" not in df.columns:
         df = df.rename(columns={"data": "Data"})
 
@@ -379,31 +372,34 @@ def upsert_multiplos(df_multiplos: pd.DataFrame) -> None:
             logger=_RUN_LOG,
         )
 
-    cols = list(df_multiplos.columns)
-    values = [tuple(x) for x in df_multiplos.itertuples(index=False, name=None)]
+    # no pandas seguimos usando "Data"; na tabela física a coluna é `data`
+    df_db = df_multiplos.rename(columns={"Data": "data"}).copy()
+
+    cols = list(df_db.columns)
+    values = [tuple(x) for x in df_db.itertuples(index=False, name=None)]
 
     # cria unique index necessário para ON CONFLICT
     ddl_unique = """
     create unique index if not exists uq_multiplos_ticker_data
-    on public.multiplos ("Ticker","Data");
+    on public.multiplos ("Ticker", data);
     """
 
     insert_sql = f"""
         INSERT INTO public.multiplos
-        ({", ".join([f'"{c}"' for c in cols])})
+        ({", ".join([f'"{c}"' if c != "data" else "data" for c in cols])})
         VALUES %s
-        ON CONFLICT ("Ticker","Data") DO UPDATE SET
-        {", ".join([f'"{c}" = EXCLUDED."{c}"' for c in cols if c not in ("Ticker", "Data")])}
+        ON CONFLICT ("Ticker", data) DO UPDATE SET
+        {", ".join([(f'"{c}" = EXCLUDED."{c}"' if c != "data" else "data = EXCLUDED.data") for c in cols if c not in ("Ticker", "data")])}
     """
 
     with psycopg2.connect(SUPABASE_DB_URL) as conn:
         with conn.cursor() as cur:
             cur.execute(ddl_unique)
-            _assert_unique_key_ready(cur, "multiplos", ("Ticker", "Data"))
+            _assert_unique_key_ready(cur, "multiplos", ("Ticker", "data"))
             execute_values(cur, insert_sql, values, page_size=5000)
         conn.commit()
 
-    log(f"UPSERT public.multiplos: {len(df_multiplos)} linhas processadas.", rows=len(df_multiplos))
+    log(f"UPSERT public.multiplos: {len(df_db)} linhas processadas.", rows=len(df_db))
 
 
 def main() -> None:
