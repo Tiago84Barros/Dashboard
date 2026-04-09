@@ -576,13 +576,13 @@ def adicionar_ticker(df_consolidado: pd.DataFrame) -> pd.DataFrame:
     out = out[out["Ticker"].ne("") & out["Data"].notna()].copy()
     before_dedup = len(out)
     dup_preview = (
-        out[out.duplicated(subset=["Ticker", "Data"], keep=False)][["Ticker", "Data"]]
+        out[out.duplicated(subset=["Ticker", "data"], keep=False)][["Ticker", "data"]]
         .head(10)
         .to_dict(orient="records")
     )
     out = (
-        out.sort_values(["Ticker", "Data"])
-        .drop_duplicates(subset=["Ticker", "Data"], keep="last")
+        out.sort_values(["Ticker", "data"])
+        .drop_duplicates(subset=["Ticker", "data"], keep="last")
         .reset_index(drop=True)
     )
     duplicates_removed = before_dedup - len(out)
@@ -600,14 +600,14 @@ def adicionar_ticker(df_consolidado: pd.DataFrame) -> pd.DataFrame:
     if validate_key_columns:
         validate_key_columns(
             out,
-            ["Ticker", "Data"],
+            ["Ticker", "data"],
             context="DFP com ticker",
             logger=_RUN_LOG,
         )
     if validate_unique_rows:
         validate_unique_rows(
             out,
-            ["Ticker", "Data"],
+            ["Ticker", "data"],
             context="DFP com ticker",
             logger=_RUN_LOG,
         )
@@ -658,7 +658,7 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> int:
 
     df_db = pd.DataFrame({
         "Ticker": df_filtrado["Ticker"],
-        "Data": df_filtrado["Data"],
+        "data": df_filtrado["Data"],
         "Receita_Liquida": df_filtrado["Receita Líquida"],
         "EBIT": df_filtrado["Ebit"],
         "Lucro_Liquido": df_filtrado["Lucro Líquido"],
@@ -674,11 +674,11 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> int:
         "Divida_Liquida": df_filtrado["Dívida Líquida"],
     })
 
-    df_db["Data"] = pd.to_datetime(df_db["Data"], errors="coerce").dt.date
+    df_db["data"] = pd.to_datetime(df_db["data"], errors="coerce").dt.date
     if validate_key_columns:
         validate_key_columns(
             df_db,
-            ["Ticker", "Data"],
+            ["Ticker", "data"],
             context="DFP pré-upsert",
             logger=_RUN_LOG,
         )
@@ -695,8 +695,8 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> int:
     df_db = df_db.fillna(0)
     before_dedup = len(df_db)
     df_db = (
-        df_db.sort_values(["Ticker", "Data"])
-             .drop_duplicates(subset=["Ticker", "Data"], keep="last")
+        df_db.sort_values(["Ticker", "data"])
+             .drop_duplicates(subset=["Ticker", "data"], keep="last")
              .reset_index(drop=True)
     )
     duplicates_removed = before_dedup - len(df_db)
@@ -713,7 +713,7 @@ def upsert_supabase_demonstracoes_financeiras(df_filtrado: pd.DataFrame) -> int:
     if validate_unique_rows:
         validate_unique_rows(
             df_db,
-            ["Ticker", "Data"],
+            ["Ticker", "data"],
             context="DFP pré-upsert deduplicado",
             logger=_RUN_LOG,
         )
