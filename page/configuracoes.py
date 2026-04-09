@@ -1,438 +1,303 @@
 
 from __future__ import annotations
 
+import contextlib
+import importlib
 import io
 import json
-import os
 import traceback
-from contextlib import redirect_stderr, redirect_stdout
-from datetime import datetime
-from typing import Any, Optional
+from dataclasses import dataclass
+from typing import Any
 
+import pandas as pd
 import streamlit as st
+from sqlalchemy import text
 
-try:
-    from core.db import get_engine
-    from sqlalchemy import text
-except Exception:  # pragma: no cover
-    get_engine = None
-    text = None
+from core.db import get_engine
+
+TZ_LOCAL = "America/Sao_Paulo"
 
 
-def _safe_int(value: Any, default: int = 0) -> int:
+@dataclass
+class JobResult:
+    ok: bool
+    stdout: str
+    stderr: str
+    traceback_text: str
+    current_summary: dict[str, Any] | None
+
+
+def _safe_json(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if value is None:
+        return {}
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _to_local_datetime_str(value: Any) -> str | None:
+    if value is None:
+        return None
     try:
-        if value is None:
-            return default
-        return int(value)
+        ts = pd.to_datetime(value, utc=True)
+        return ts.tz_convert(TZ_LOCAL).strftime("%d/%m/%Y %H:%M")
     except Exception:
-        return default
+        try:
+            ts = pd.to_datetime(value)
+            if getattr(ts, "tzinfo", None) is None:
+                return ts.strftime("%d/%m/%Y %H:%M")
+            return ts.tz_convert(TZ_LOCAL).strftime("%d/%m/%Y %H:%M")
+        except Exception:
+            return str(value)
 
 
-def _format_dt(value: Any) -> str:
-    if value in (None, ""):
-        return "—"
-    try:
-        if isinstance(value, datetime):
-            dt = value
-        else:
-            raw = str(value).strip().replace("Z", "+00:00")
-            dt = datetime.fromisoformat(raw)
-        return dt.strftime("%d/%m/%Y %H:%M")
-    except Exception:
-        return str(value)
-
-
-def _extract_summary_from_stdout(stdout_text: str) -> Optional[dict[str, Any]]:
-    summary_event: Optional[dict[str, Any]] = None
-    final_success_event: Optional[dict[str, Any]] = None
-
-    for raw_line in stdout_text.splitlines():
-        line = raw_line.strip()
-        if not line or not line.startswith("{"):
+def _parse_json_lines(blob: str) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for raw in (blob or "").splitlines():
+        line = raw.strip()
+        if not line.startswith("{"):
             continue
         try:
-            evt = json.loads(line)
+            payload = json.loads(line)
         except Exception:
             continue
-
-        event_name = str(evt.get("event", "")).strip()
-        if event_name == "summary" and str(evt.get("status", "")).lower() == "success":
-            summary_event = evt
-        elif event_name == "pipeline_log" and evt.get("stage") == "final_success":
-            final_success_event = evt
-
-    if summary_event:
-        metrics = summary_event.get("metrics") or {}
-        params = summary_event.get("params") or {}
-        return {
-            "pipeline": summary_event.get("pipeline"),
-            "finished_at": summary_event.get("finished_at"),
-            "rows_inserted": _safe_int(summary_event.get("rows_inserted")),
-            "tickers": _safe_int(metrics.get("df_filtrado_tickers")),
-            "year_start": params.get("ano_inicial"),
-            "year_end": metrics.get("ultimo_ano_disponivel") or params.get("ultimo_ano"),
-            "errors_count": _safe_int(summary_event.get("errors_count")),
-            "warnings_count": _safe_int(summary_event.get("warnings_count")),
-        }
-
-    if final_success_event:
-        return {
-            "pipeline": final_success_event.get("pipeline"),
-            "finished_at": final_success_event.get("ts"),
-            "rows_inserted": _safe_int(final_success_event.get("rows")),
-            "tickers": _safe_int(final_success_event.get("tickers")),
-            "year_start": final_success_event.get("year_start"),
-            "year_end": final_success_event.get("year_end"),
-            "errors_count": 0,
-            "warnings_count": 0,
-        }
-
-    return None
+        if isinstance(payload, dict):
+            events.append(payload)
+    return events
 
 
-def _load_latest_success_summary(pipeline_name: str) -> Optional[dict[str, Any]]:
-    if not pipeline_name or get_engine is None or text is None:
-        return None
+def get_latest_ingestion_summary(pipeline: str) -> dict[str, Any] | None:
+    sql = text(
+        """
+        SELECT
+            pipeline,
+            status,
+            started_at,
+            finished_at,
+            rows_inserted,
+            rows_updated,
+            rows_skipped,
+            warnings_count,
+            errors_count,
+            metrics,
+            params
+        FROM public.ingestion_log
+        WHERE pipeline = :pipeline
+          AND status = 'success'
+        ORDER BY finished_at DESC
+        LIMIT 1
+        """
+    )
 
     try:
         engine = get_engine()
-        query = text(
-            """
-            SELECT
-                pipeline,
-                status,
-                started_at,
-                finished_at,
-                rows_inserted,
-                warnings_count,
-                errors_count,
-                metrics,
-                params
-            FROM public.ingestion_log
-            WHERE pipeline = :pipeline
-              AND status = 'success'
-            ORDER BY finished_at DESC
-            LIMIT 1
-            """
-        )
         with engine.connect() as conn:
-            row = conn.execute(query, {"pipeline": pipeline_name}).mappings().first()
-
-        if not row:
-            return None
-
-        metrics = row.get("metrics") or {}
-        params = row.get("params") or {}
-        return {
-            "pipeline": row.get("pipeline"),
-            "finished_at": row.get("finished_at"),
-            "rows_inserted": _safe_int(row.get("rows_inserted")),
-            "tickers": _safe_int(metrics.get("df_filtrado_tickers")),
-            "year_start": params.get("ano_inicial"),
-            "year_end": metrics.get("ultimo_ano_disponivel") or params.get("ultimo_ano"),
-            "errors_count": _safe_int(row.get("errors_count")),
-            "warnings_count": _safe_int(row.get("warnings_count")),
-        }
+            row = conn.execute(sql, {"pipeline": pipeline}).mappings().first()
     except Exception:
         return None
 
+    if not row:
+        return None
 
-def _render_summary(summary: Optional[dict[str, Any]], *, empty_message: str = "Nenhuma atualização bem-sucedida registrada ainda.") -> None:
-    st.markdown("### Última atualização")
+    metrics = _safe_json(row.get("metrics"))
+    params = _safe_json(row.get("params"))
+
+    return {
+        "pipeline": row.get("pipeline"),
+        "status": row.get("status"),
+        "last_update": _to_local_datetime_str(row.get("finished_at")),
+        "rows_inserted": int(row.get("rows_inserted") or 0),
+        "rows_updated": int(row.get("rows_updated") or 0),
+        "rows_skipped": int(row.get("rows_skipped") or 0),
+        "warnings_count": int(row.get("warnings_count") or 0),
+        "errors_count": int(row.get("errors_count") or 0),
+        "tickers": int(metrics.get("df_filtrado_tickers") or 0),
+        "ano_inicial": params.get("ano_inicial"),
+        "ultimo_ano": metrics.get("ultimo_ano_disponivel") or params.get("ultimo_ano"),
+    }
+
+
+def _extract_current_summary(stdout: str, pipeline: str) -> dict[str, Any] | None:
+    events = _parse_json_lines(stdout)
+    summary_event = None
+    final_success = None
+
+    for event in events:
+        if event.get("pipeline") != pipeline:
+            continue
+        if event.get("event") == "summary" and event.get("status") == "success":
+            summary_event = event
+        if event.get("stage") == "final_success":
+            final_success = event
+
+    if not summary_event and not final_success:
+        return None
+
+    metrics = _safe_json(summary_event.get("metrics") if summary_event else {})
+    params = _safe_json(summary_event.get("params") if summary_event else {})
+
+    return {
+        "pipeline": pipeline,
+        "status": "success",
+        "last_update": _to_local_datetime_str(summary_event.get("finished_at") if summary_event else None),
+        "rows_inserted": int((summary_event or {}).get("rows_inserted") or (final_success or {}).get("rows") or 0),
+        "rows_updated": int((summary_event or {}).get("rows_updated") or 0),
+        "rows_skipped": int((summary_event or {}).get("rows_skipped") or 0),
+        "warnings_count": int((summary_event or {}).get("warnings_count") or 0),
+        "errors_count": int((summary_event or {}).get("errors_count") or 0),
+        "tickers": int(metrics.get("df_filtrado_tickers") or (final_success or {}).get("tickers") or 0),
+        "ano_inicial": (final_success or {}).get("year_start") or params.get("ano_inicial"),
+        "ultimo_ano": (final_success or {}).get("year_end") or metrics.get("ultimo_ano_disponivel") or params.get("ultimo_ano"),
+    }
+
+
+def _format_period(summary: dict[str, Any] | None) -> str:
     if not summary:
-        st.info(empty_message)
+        return "-"
+    start = summary.get("ano_inicial")
+    end = summary.get("ultimo_ano")
+    if start and end:
+        return f"{start} → {end}"
+    if end:
+        return str(end)
+    return "-"
+
+
+def render_summary_card(summary: dict[str, Any] | None, title: str = "Última atualização") -> None:
+    st.subheader(title)
+    if not summary:
+        st.info("Nenhuma atualização bem-sucedida registrada ainda.")
         return
+
+    period = _format_period(summary)
+    last_update = summary.get("last_update") or "-"
+    rows_inserted = int(summary.get("rows_inserted") or 0)
+    tickers = int(summary.get("tickers") or 0)
+    errors_count = int(summary.get("errors_count") or 0)
+    warnings_count = int(summary.get("warnings_count") or 0)
 
     st.success(
         "\n".join(
             [
-                f"Última atualização: {_format_dt(summary.get('finished_at'))}",
-                f"Linhas inseridas: {_safe_int(summary.get('rows_inserted'))}",
-                f"Empresas (tickers): {_safe_int(summary.get('tickers'))}",
-                f"Período: {summary.get('year_start', '—')} → {summary.get('year_end', '—')}",
-                f"Erros: {_safe_int(summary.get('errors_count'))}",
-                f"Warnings: {_safe_int(summary.get('warnings_count'))}",
+                f"Última atualização: {last_update}",
+                f"Linhas inseridas: {rows_inserted}",
+                f"Empresas (tickers): {tickers}",
+                f"Período: {period}",
+                f"Erros: {errors_count}",
+                f"Warnings: {warnings_count}",
             ]
         )
     )
 
 
-def _run_job(
+def _run_job(module_name: str, main_func_name: str, pipeline: str) -> JobResult:
+    stdout_buffer = io.StringIO()
+    stderr_buffer = io.StringIO()
+    traceback_text = ""
+    ok = False
+
+    try:
+        mod = importlib.import_module(module_name)
+        mod = importlib.reload(mod)
+
+        with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(stderr_buffer):
+            getattr(mod, main_func_name)()
+
+        ok = True
+    except Exception:
+        traceback_text = traceback.format_exc()
+
+    stdout_value = stdout_buffer.getvalue()
+    stderr_value = stderr_buffer.getvalue()
+    current_summary = _extract_current_summary(stdout_value, pipeline)
+
+    return JobResult(
+        ok=ok,
+        stdout=stdout_value,
+        stderr=stderr_value,
+        traceback_text=traceback_text,
+        current_summary=current_summary,
+    )
+
+
+def _render_job_section(
     *,
-    job_key: str,
+    title: str,
+    description: str,
     button_label: str,
-    info_text: str,
-    status_label: str,
-    module_import_path: str,   # ex: "pickup.dados_cvm_dfp"
-    module_attr_name: str,     # ex: "dados_cvm_dfp"
+    pipeline: str,
+    module_name: str,
     main_func_name: str = "main",
-    pipeline_name: Optional[str] = None,
+    state_key: str,
 ) -> None:
-    if job_key not in st.session_state:
-        st.session_state[job_key] = False
+    st.markdown(f"## {title}")
+    st.info(description)
 
-    col1, col2 = st.columns([1, 2], gap="large")
+    latest_summary = get_latest_ingestion_summary(pipeline)
+    latest_key = f"{state_key}_last_success"
+    if latest_key not in st.session_state:
+        st.session_state[latest_key] = latest_summary
 
-    with col1:
-        run = st.button(
-            button_label,
-            use_container_width=True,
-            disabled=st.session_state[job_key],
-        )
+    button_clicked = st.button(button_label, key=f"btn_{state_key}", use_container_width=True)
 
-    with col2:
-        st.info(info_text)
+    if button_clicked:
+        with st.spinner("Executando rotina..."):
+            result = _run_job(module_name, main_func_name, pipeline)
+
+        if result.ok:
+            if result.current_summary:
+                st.session_state[latest_key] = result.current_summary
+            else:
+                refreshed = get_latest_ingestion_summary(pipeline)
+                if refreshed:
+                    st.session_state[latest_key] = refreshed
+            st.success("Rotina concluída (sem exceções Python).")
+        else:
+            st.error("Falha ao executar a rotina.")
+            with st.expander("Ver detalhes do erro"):
+                st.code(result.traceback_text or result.stderr or result.stdout)
+
+    render_summary_card(st.session_state.get(latest_key))
+
+
+def main() -> None:
+    st.title("Configurações")
 
     with st.expander("Ações de manutenção", expanded=False):
-        if st.button(f"Resetar trava do botão ({button_label})"):
-            st.session_state[job_key] = False
-            st.success("Trava resetada.")
-            st.rerun()
+        st.caption("Use os botões abaixo para atualizar as bases do sistema.")
 
-    summary_box = st.container()
-    technical_logs_box = st.container()
-    latest_summary = _load_latest_success_summary(pipeline_name) if pipeline_name else None
-
-    with summary_box:
-        _render_summary(latest_summary)
-
-    if run:
-        st.session_state[job_key] = True
-
-        if not os.getenv("SUPABASE_DB_URL"):
-            st.error("SUPABASE_DB_URL não está definida. Configure em Secrets/Env Vars e tente novamente.")
-            st.session_state[job_key] = False
-            st.stop()
-
-        stdout_buf = io.StringIO()
-        stderr_buf = io.StringIO()
-
-        try:
-            with st.status(status_label, expanded=True) as status:
-                status.write(f"Importando módulo `{module_import_path}` …")
-
-                with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
-                    mod = __import__(module_import_path, fromlist=[module_attr_name])
-                    status.write(f"Executando `{module_attr_name}.{main_func_name}()` …")
-                    getattr(mod, main_func_name)()
-
-                status.update(label="Execução finalizada.", state="complete")
-
-            out = stdout_buf.getvalue().strip()
-            err = stderr_buf.getvalue().strip()
-
-            summary = _extract_summary_from_stdout(out) or _load_latest_success_summary(pipeline_name) if pipeline_name else None
-            with summary_box:
-                _render_summary(summary)
-
-            st.success("Rotina concluída (sem exceções Python).")
-
-            if out or err:
-                with technical_logs_box.expander("Ver logs técnicos", expanded=False):
-                    if out:
-                        st.text_area("Saída completa do script (stdout)", out, height=320)
-                    if err:
-                        st.markdown("#### stderr")
-                        st.code(err, language="text")
-
-            try:
-                st.cache_data.clear()
-            except Exception:
-                pass
-
-        except Exception as e:
-            st.error("Falha ao executar a rotina. Traceback completo:")
-            st.code("".join(traceback.format_exception(type(e), e, e.__traceback__)), language="text")
-
-            out = stdout_buf.getvalue().strip()
-            err = stderr_buf.getvalue().strip()
-            if out or err:
-                with technical_logs_box.expander("Ver logs técnicos (até o erro)", expanded=False):
-                    if out:
-                        st.markdown("#### stdout")
-                        st.code(out, language="text")
-                    if err:
-                        st.markdown("#### stderr")
-                        st.code(err, language="text")
-
-        finally:
-            st.session_state[job_key] = False
-
-
-def render() -> None:
-    st.header("Configurações")
-    st.caption(
-        "Use esta seção para executar rotinas de atualização das tabelas no Supabase. "
-        "A execução ocorre no servidor do Streamlit e grava nas tabelas do schema public."
-    )
-
-    st.subheader("Atualização de Base")
-    st.write(
-        "**Ordem recomendada (parcial):**\n"
-        "1) Demonstrações completas (DFP/anual)\n"
-        "2) Demonstrações trimestrais (ITR/TRI)\n"
-        "3) Setores/Subsetores/Segmentos (B3)\n"
-        "4) Informações econômicas (macro Brasil)\n"
-        "5) Multiplos (DFP/anual)\n"
-        "6) Multiplos (ITR)\n"
-    )
-
-    st.markdown("### Diagnóstico rápido")
-    st.write("SUPABASE_DB_URL definida?", bool(os.getenv("SUPABASE_DB_URL")))
-
-    st.divider()
-
-    st.markdown("## 0. Correlação CVM → Ticker (B3)")
-    with st.expander("Detalhes / Variáveis de ambiente (CVM→Ticker)", expanded=False):
-        st.write("B3_INSTRUMENTOS_URL:", os.getenv("B3_INSTRUMENTOS_URL", "(não definido)"))
-        st.caption(
-            "Esta rotina baixa o cadastro da CVM (CD_CVM + CNPJ) e cruza com o arquivo da B3 "
-            "(Ticker + CNPJ do emissor) usando CNPJ raiz. "
-            "Grava em public.cvm_to_ticker."
-        )
-
-    _run_job(
-        job_key="job_cvm_ticker_running",
-        button_label="Atualizar correlação CVM → Ticker",
-        info_text=(
-            "Executa **pickup/cvm_to_ticker_sync.py** e atualiza a tabela **public.cvm_to_ticker**.\n\n"
-            "Requisitos: **SUPABASE_DB_URL** e **B3_INSTRUMENTOS_URL** definidos."
+    _render_job_section(
+        title="1. Demonstrações anuais (DFP)",
+        description=(
+            "Este botão executa o script pickup/dados_cvm_dfp.py para baixar os DFP consolidados da CVM, "
+            "consolidar e gravar em public.Demonstracoes_Financeiras no Supabase."
         ),
-        status_label="Atualizando correlação CVM → Ticker (B3)...",
-        module_import_path="pickup.cvm_to_ticker_sync",
-        module_attr_name="cvm_to_ticker_sync",
-        pipeline_name="cvm_to_ticker",
+        button_label="Atualizar Demonstrações Anuais (DFP)",
+        pipeline="dfp",
+        module_name="pickup.dados_cvm_dfp",
+        state_key="dfp",
     )
 
     st.divider()
 
-    st.markdown("## 1. Demonstrações completas (DFP/anual)")
-    _run_job(
-        job_key="job_dfp_running",
-        button_label="Atualizar Demonstrações Completas (DFP)",
-        info_text=(
-            "Este botão executa o script **pickup/dados_cvm_dfp.py** para baixar os DFP da CVM, "
-            "consolidar e gravar em **public.Demonstracoes_Financeiras** no Supabase.\n\n"
-            "Requisitos: configurar **SUPABASE_DB_URL** em Secrets/Env Vars."
+    _render_job_section(
+        title="2. Demonstrações trimestrais (ITR/TRI)",
+        description=(
+            "Este botão executa o script pickup/dados_cvm_itr.py para baixar os ITR consolidados da CVM, "
+            "consolidar e gravar em public.Demonstracoes_Financeiras_TRI no Supabase."
         ),
-        status_label="Executando carga DFP (pode demorar alguns minutos)...",
-        module_import_path="pickup.dados_cvm_dfp",
-        module_attr_name="dados_cvm_dfp",
-        pipeline_name="dfp",
-    )
-
-    st.divider()
-
-    st.markdown("## 2. Demonstrações trimestrais (ITR/TRI)")
-    _run_job(
-        job_key="job_tri_running",
         button_label="Atualizar Demonstrações Trimestrais (TRI/ITR)",
-        info_text=(
-            "Este botão executa o script **pickup/dados_cvm_itr.py** para baixar os ITR consolidados da CVM, "
-            "consolidar e gravar em **public.Demonstracoes_Financeiras_TRI** no Supabase.\n\n"
-            "Requisitos: configurar **SUPABASE_DB_URL** em Secrets/Env Vars e garantir unique key em (Ticker, Data)."
-        ),
-        status_label="Executando carga ITR (pode demorar alguns minutos)...",
-        module_import_path="pickup.dados_cvm_itr",
-        module_attr_name="dados_cvm_itr",
-        pipeline_name="itr",
-    )
-
-    st.divider()
-
-    st.markdown("## 3. Setores / Subsetores / Segmentos (B3)")
-    with st.expander("Detalhes / Variáveis de ambiente (setores)", expanded=False):
-        st.write("SQLITE_METADADOS_PATH:", os.getenv("SQLITE_METADADOS_PATH", "data/metadados.db"))
-        st.caption(
-            "Observação: nesta etapa a fonte é o SQLite local (data/metadados.db, tabela setores) "
-            "para migrar e manter o padrão legado do Algoritmo_2."
-        )
-
-    _run_job(
-        job_key="job_setores_running",
-        button_label="Atualizar Setores (SQLite → Supabase)",
-        info_text=(
-            "Executa **pickup/dados_setores_b3.py** para ler a tabela **setores** do SQLite local "
-            "(**data/metadados.db**) e gravar via **UPSERT** em **public.setores** no Supabase.\n\n"
-            "Requisitos: `SUPABASE_DB_URL` definida. Opcional: `SQLITE_METADADOS_PATH`."
-        ),
-        status_label="Executando carga de Setores (SQLite → Supabase)...",
-        module_import_path="pickup.dados_setores_b3",
-        module_attr_name="dados_setores_b3",
-        pipeline_name="setores",
-    )
-
-    st.markdown("## 4. Informações Econômicas (Macro Brasil)")
-    with st.expander("Detalhes / Variáveis de ambiente (macro)", expanded=False):
-        st.write("ICC_MODE (final|mean):", os.getenv("ICC_MODE", "final"))
-        st.write("MACRO_START_DATE (YYYY-MM-DD):", os.getenv("MACRO_START_DATE", "2010-01-01"))
-        st.write("MACRO_MAX_YEARS_CHUNK:", os.getenv("MACRO_MAX_YEARS_CHUNK", "10"))
-        st.write("MACRO_WRITE_MONTHLY (1 para gravar mensal):", os.getenv("MACRO_WRITE_MONTHLY", "0"))
-        st.caption(
-            "Observação: anual grava em public.info_economica. "
-            "Se MACRO_WRITE_MONTHLY=1, tenta gravar também em public.info_economica_mensal."
-        )
-
-    _run_job(
-        job_key="job_macro_running",
-        button_label="Atualizar Informações Econômicas (BCB/SGS)",
-        info_text=(
-            "Executa **pickup/dados_macro_brasil.py** para coletar séries do BCB/SGS, gerar base **anual** "
-            "para contexto/regime (tabela **public.info_economica**) e, opcionalmente, base **mensal** "
-            "(tabela **public.info_economica_mensal**) quando `MACRO_WRITE_MONTHLY=1`.\n\n"
-            "Requisitos: `SUPABASE_DB_URL` e dependência `python-bcb` no requirements."
-        ),
-        status_label="Executando carga Macro Brasil (BCB/SGS)...",
-        module_import_path="pickup.dados_macro_brasil",
-        module_attr_name="dados_macro_brasil",
-        pipeline_name="macro",
-    )
-
-    st.divider()
-
-    st.markdown("## 5. Múltiplos Fundamentalistas (DFP → yfinance → Supabase)")
-    with st.expander("Detalhes / Variáveis de ambiente (múltiplos)", expanded=False):
-        st.write("YF_START:", os.getenv("YF_START", "2010-01-01"))
-        st.write("YF_END:", os.getenv("YF_END", "2023-12-31"))
-        st.write("YF_BATCH_SIZE:", os.getenv("YF_BATCH_SIZE", "50"))
-        st.caption(
-            "Observação: esta rotina lê Demonstracoes_Financeiras no Supabase, "
-            "baixa preços médios anuais via yfinance e grava em public.multiplos via UPSERT."
-        )
-
-    _run_job(
-        job_key="job_multiplos_running",
-        button_label="Atualizar Múltiplos (DFP)",
-        info_text=(
-            "Executa **pickup/dados_multiplos_dfp.py** para calcular múltiplos fundamentalistas a partir de "
-            "**public.Demonstracoes_Financeiras**, integrar preço médio anual (yfinance) e gravar via **UPSERT** "
-            "em **public.multiplos**.\n\n"
-            "Requisitos: `SUPABASE_DB_URL` definida. Recomendado: índice unique em (Ticker, Data)."
-        ),
-        status_label="Executando cálculo e carga de Múltiplos (pode demorar)...",
-        module_import_path="pickup.dados_multiplos_dfp",
-        module_attr_name="dados_multiplos_dfp",
-        pipeline_name="multiplos_dfp",
-    )
-
-    st.divider()
-
-    st.markdown("## 6. Múltiplos Fundamentalistas Trimestrais (TRI → yfinance → Supabase)")
-    _run_job(
-        job_key="job_multiplos_tri_running",
-        button_label="Atualizar Múltiplos Trimestrais (TRI)",
-        info_text=(
-            "Executa **pickup/dados_multiplos_itr.py** para calcular múltiplos trimestrais "
-            "usando TTM (4 trimestres) para fluxos e último trimestre para estoques, "
-            "integrando preço médio trimestral via yfinance e gravando via **UPSERT** "
-            "em **public.multiplos_TRI**."
-        ),
-        status_label="Executando cálculo de Múltiplos Trimestrais (TRI)...",
-        module_import_path="pickup.dados_multiplos_itr",
-        module_attr_name="dados_multiplos_itr",
-        pipeline_name="multiplos_itr",
+        pipeline="itr",
+        module_name="pickup.dados_cvm_itr",
+        state_key="itr",
     )
 
 
-def configuracoes() -> None:
-    render()
+if __name__ == "__main__":
+    main()
