@@ -628,9 +628,10 @@ def ingest_ipe_for_tickers(
             return summary
 
         if validate_required_columns:
+            # Assunto pode vir nulo no IPE; tratamos com fallback mais adiante.
             validate_required_columns(
                 df,
-                [col_cvm, col_data, col_link, col_assunto],
+                [col_cvm, col_data, col_link],
                 context="CSV IPE normalizado",
                 logger=run,
             )
@@ -647,15 +648,26 @@ def ingest_ipe_for_tickers(
         )
         df = df[df["_dt_naive"] >= min_ts].copy()
 
+        # Assunto no IPE pode ser amplamente nulo; não deve bloquear a ingestão.
+        # Mantemos apenas os campos realmente bloqueantes.
         if validate_non_null_columns and not df.empty:
             valid_df = df[df["_url_norm"].astype(str).str.strip().ne("")].copy()
             if not valid_df.empty:
                 validate_non_null_columns(
                     valid_df,
-                    [col_cvm, col_data, col_link, col_assunto],
+                    [col_cvm, col_data, col_link],
                     context="CSV IPE filtrado",
                     logger=run,
                 )
+
+        # Fallback de assunto/título para evitar docs sem título legível.
+        if col_assunto:
+            df[col_assunto] = (
+                df[col_assunto]
+                .fillna("")
+                .map(lambda x: _clean_text(str(x)))
+                .replace("", "Sem assunto")
+            )
 
         if strategic_only:
             df["_tipo"] = df[col_tipo].fillna("").map(_clean_text) if col_tipo else ""
