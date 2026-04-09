@@ -38,6 +38,16 @@ if not SUPABASE_DB_URL:
 
 ENGINE = sa.create_engine(SUPABASE_DB_URL)
 
+
+def _get_table_date_column(table_name: str, schema: str = "public") -> str:
+    insp = sa.inspect(ENGINE)
+    cols = {col["name"] for col in insp.get_columns(table_name, schema=schema)}
+    if "data" in cols:
+        return "data"
+    if "Data" in cols:
+        return "Data"
+    raise RuntimeError(f"Tabela {schema}.{table_name} não possui coluna de data compatível ('data' ou 'Data').")
+
 ORIGEM_TRI = 'public."Demonstracoes_Financeiras_TRI"'
 DEST_SCHEMA = "public"
 DEST_TABLE = "multiplos_TRI"  # DB: public."multiplos_TRI"
@@ -242,11 +252,14 @@ def shares_outstanding(ticker: str) -> Optional[float]:
 
 
 def garantir_unique_index() -> None:
-    with ENGINE.begin() as conn:
-        conn.execute(sa.text("""
+    date_col = _get_table_date_column(DEST_TABLE, DEST_SCHEMA)
+    date_sql = "data" if date_col == "data" else '"Data"'
+    ddl = f"""
             CREATE UNIQUE INDEX IF NOT EXISTS uq_multiplos_tri_ticker_data
-            ON public."multiplos_TRI" ("Ticker","Data");
-        """))
+            ON public."multiplos_TRI" ("Ticker",{date_sql});
+        """
+    with ENGINE.begin() as conn:
+        conn.execute(sa.text(ddl))
 
 
 def upsert_multiplos(df_out: pd.DataFrame) -> None:
@@ -289,16 +302,21 @@ def upsert_multiplos(df_out: pd.DataFrame) -> None:
 
     meta = sa.MetaData()
     table = sa.Table(DEST_TABLE, meta, schema=DEST_SCHEMA, autoload_with=ENGINE)
+    date_col_name = "data" if "data" in table.c else "Data"
 
-    records = df_out.to_dict(orient="records")
+    df_db = df_out.copy()
+    if date_col_name == "data" and "Data" in df_db.columns:
+        df_db = df_db.rename(columns={"Data": "data"})
+
+    records = df_db.to_dict(orient="records")
     stmt = insert(table).values(records)
 
-    key_cols = ["Ticker", "Data"]
-    payload_cols = set(df_out.columns)
+    key_cols = ["Ticker", date_col_name]
+    payload_cols = set(df_db.columns)
     update_cols = [c.name for c in table.columns if c.name not in key_cols and c.name in payload_cols]
 
     stmt = stmt.on_conflict_do_update(
-        index_elements=[table.c["Ticker"], table.c["Data"]],
+        index_elements=[table.c["Ticker"], table.c[date_col_name]],
         set_={c: getattr(stmt.excluded, c) for c in update_cols},
     )
 
@@ -323,6 +341,8 @@ def main() -> None:
 def _main_impl(run) -> None:
     log("[INFO] Lendo Demonstracoes_Financeiras_TRI do Supabase...")
     df = pd.read_sql(f"SELECT * FROM {ORIGEM_TRI}", ENGINE)
+    if "data" in df.columns and "Data" not in df.columns:
+        df = df.rename(columns={"data": "Data"})
 
     if run:
         run.set_metric("tri_source_rows", len(df))
