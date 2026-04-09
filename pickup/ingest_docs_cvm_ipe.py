@@ -1054,7 +1054,6 @@ def ingest_ipe_for_tickers(
                         documents_inserted=inserted,
                         duplicates=duplicate_existing,
                         chunks_generated=chunks_generated,
-                        skipped=smart_skipped_complete,
                         stubs=stubs,
                         failures=failures,
                     )
