@@ -576,13 +576,13 @@ def adicionar_ticker(df_consolidado: pd.DataFrame) -> pd.DataFrame:
     out = out[out["Ticker"].ne("") & out["Data"].notna()].copy()
     before_dedup = len(out)
     dup_preview = (
-        out[out.duplicated(subset=["Ticker", "data"], keep=False)][["Ticker", "data"]]
+        out[out.duplicated(subset=["Ticker", "Data"], keep=False)][["Ticker", "Data"]]
         .head(10)
         .to_dict(orient="records")
     )
     out = (
-        out.sort_values(["Ticker", "data"])
-        .drop_duplicates(subset=["Ticker", "data"], keep="last")
+        out.sort_values(["Ticker", "Data"])
+        .drop_duplicates(subset=["Ticker", "Data"], keep="last")
         .reset_index(drop=True)
     )
     duplicates_removed = before_dedup - len(out)
@@ -600,14 +600,14 @@ def adicionar_ticker(df_consolidado: pd.DataFrame) -> pd.DataFrame:
     if validate_key_columns:
         validate_key_columns(
             out,
-            ["Ticker", "data"],
+            ["Ticker", "Data"],
             context="DFP com ticker",
             logger=_RUN_LOG,
         )
     if validate_unique_rows:
         validate_unique_rows(
             out,
-            ["Ticker", "data"],
+            ["Ticker", "Data"],
             context="DFP com ticker",
             logger=_RUN_LOG,
         )
