@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import io
@@ -6,15 +5,11 @@ import json
 import os
 import traceback
 from contextlib import redirect_stderr, redirect_stdout
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Optional
 
+import pandas as pd
 import streamlit as st
-
-try:
-    from zoneinfo import ZoneInfo
-except Exception:  # pragma: no cover
-    ZoneInfo = None
 
 try:
     from core.db import get_engine
@@ -24,7 +19,8 @@ except Exception:  # pragma: no cover
     text = None
 
 
-LOCAL_TZ_NAME = os.getenv("APP_TIMEZONE", "America/Sao_Paulo")
+LOCAL_TZ = "America/Sao_Paulo"
+PIPELINES_COM_TICKERS = {"dfp", "itr", "multiplos_dfp", "multiplos_itr"}
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
@@ -36,44 +32,42 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
-def _default_year_start() -> int:
-    return _safe_int(os.getenv("ANO_INICIAL"), 2010)
-
-
 def _format_dt(value: Any) -> str:
     if value in (None, ""):
         return "—"
     try:
-        if isinstance(value, datetime):
-            dt = value
-        else:
-            raw = str(value).strip().replace("Z", "+00:00")
-            dt = datetime.fromisoformat(raw)
-
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-
-        if ZoneInfo is not None:
-            dt = dt.astimezone(ZoneInfo(LOCAL_TZ_NAME))
-
+        dt = pd.to_datetime(value, utc=True)
+        if getattr(dt, "tzinfo", None) is None:
+            dt = dt.tz_localize("UTC")
+        dt = dt.tz_convert(LOCAL_TZ)
         return dt.strftime("%d/%m/%Y %H:%M")
     except Exception:
+        try:
+            if isinstance(value, datetime):
+                return value.strftime("%d/%m/%Y %H:%M")
+        except Exception:
+            pass
         return str(value)
 
 
-def _normalize_period(summary: dict[str, Any]) -> tuple[str, str]:
-    year_start = summary.get("year_start")
-    year_end = summary.get("year_end")
-
-    if year_start in (None, "", "auto"):
-        year_start = _default_year_start()
-    if year_end in (None, "", "auto"):
-        year_end = "—"
-
-    return str(year_start), str(year_end)
+def _normalize_year(value: Any) -> Optional[int]:
+    if value in (None, "", "auto"):
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
 
 
-def _extract_summary_from_stdout(stdout_text: str) -> Optional[dict[str, Any]]:
+def _summary_kind(pipeline_name: Optional[str]) -> str:
+    if pipeline_name in PIPELINES_COM_TICKERS:
+        return "tickers"
+    if pipeline_name == "macro":
+        return "macro"
+    return "default"
+
+
+def _extract_summary_from_stdout(stdout_text: str, pipeline_name: Optional[str] = None) -> Optional[dict[str, Any]]:
     summary_event: Optional[dict[str, Any]] = None
     final_success_event: Optional[dict[str, Any]] = None
 
@@ -96,24 +90,26 @@ def _extract_summary_from_stdout(stdout_text: str) -> Optional[dict[str, Any]]:
         metrics = summary_event.get("metrics") or {}
         params = summary_event.get("params") or {}
         return {
-            "pipeline": summary_event.get("pipeline"),
+            "kind": _summary_kind(summary_event.get("pipeline") or pipeline_name),
+            "pipeline": summary_event.get("pipeline") or pipeline_name,
             "finished_at": summary_event.get("finished_at"),
             "rows_inserted": _safe_int(summary_event.get("rows_inserted")),
             "tickers": _safe_int(metrics.get("df_filtrado_tickers")),
-            "year_start": params.get("ano_inicial") or _default_year_start(),
-            "year_end": metrics.get("ultimo_ano_disponivel") or params.get("ultimo_ano"),
+            "year_start": _normalize_year(params.get("ano_inicial")),
+            "year_end": _normalize_year(metrics.get("ultimo_ano_disponivel") or params.get("ultimo_ano")),
             "errors_count": _safe_int(summary_event.get("errors_count")),
             "warnings_count": _safe_int(summary_event.get("warnings_count")),
         }
 
     if final_success_event:
         return {
-            "pipeline": final_success_event.get("pipeline"),
+            "kind": _summary_kind(final_success_event.get("pipeline") or pipeline_name),
+            "pipeline": final_success_event.get("pipeline") or pipeline_name,
             "finished_at": final_success_event.get("ts"),
             "rows_inserted": _safe_int(final_success_event.get("rows")),
             "tickers": _safe_int(final_success_event.get("tickers")),
-            "year_start": final_success_event.get("year_start") or _default_year_start(),
-            "year_end": final_success_event.get("year_end"),
+            "year_start": _normalize_year(final_success_event.get("year_start")),
+            "year_end": _normalize_year(final_success_event.get("year_end")),
             "errors_count": 0,
             "warnings_count": 0,
         }
@@ -155,12 +151,13 @@ def _load_latest_success_summary(pipeline_name: str) -> Optional[dict[str, Any]]
         metrics = row.get("metrics") or {}
         params = row.get("params") or {}
         return {
+            "kind": _summary_kind(pipeline_name),
             "pipeline": row.get("pipeline"),
             "finished_at": row.get("finished_at"),
             "rows_inserted": _safe_int(row.get("rows_inserted")),
             "tickers": _safe_int(metrics.get("df_filtrado_tickers")),
-            "year_start": params.get("ano_inicial") or _default_year_start(),
-            "year_end": metrics.get("ultimo_ano_disponivel") or params.get("ultimo_ano"),
+            "year_start": _normalize_year(params.get("ano_inicial")),
+            "year_end": _normalize_year(metrics.get("ultimo_ano_disponivel") or params.get("ultimo_ano")),
             "errors_count": _safe_int(row.get("errors_count")),
             "warnings_count": _safe_int(row.get("warnings_count")),
         }
@@ -168,28 +165,40 @@ def _load_latest_success_summary(pipeline_name: str) -> Optional[dict[str, Any]]
         return None
 
 
-def _render_summary(target: Any, summary: Optional[dict[str, Any]], *, empty_message: str = "Nenhuma atualização bem-sucedida registrada ainda.") -> None:
-    target.empty()
-    with target.container():
-        st.markdown("### Última atualização")
-        if not summary:
-            st.info(empty_message)
-            return
+def _render_summary(summary: Optional[dict[str, Any]], *, empty_message: str = "Nenhuma atualização bem-sucedida registrada ainda.") -> None:
+    st.markdown("### Última atualização")
+    if not summary:
+        st.info(empty_message)
+        return
 
-        year_start, year_end = _normalize_period(summary)
+    year_start = summary.get("year_start")
+    year_end = summary.get("year_end")
+    if year_start is None and year_end is None:
+        period_text = "—"
+    elif year_start is None:
+        period_text = f"— → {year_end}"
+    elif year_end is None:
+        period_text = f"{year_start} → —"
+    else:
+        period_text = f"{year_start} → {year_end}"
 
-        st.success(
-            "\n".join(
-                [
-                    f"Última atualização: {_format_dt(summary.get('finished_at'))}",
-                    f"Linhas inseridas: {_safe_int(summary.get('rows_inserted'))}",
-                    f"Empresas (tickers): {_safe_int(summary.get('tickers'))}",
-                    f"Período: {year_start} → {year_end}",
-                    f"Erros: {_safe_int(summary.get('errors_count'))}",
-                    f"Warnings: {_safe_int(summary.get('warnings_count'))}",
-                ]
-            )
-        )
+    lines = [
+        f"Última atualização: {_format_dt(summary.get('finished_at'))}",
+        f"Linhas inseridas: {_safe_int(summary.get('rows_inserted'))}",
+    ]
+
+    if summary.get("kind") == "tickers":
+        lines.append(f"Empresas (tickers): {_safe_int(summary.get('tickers'))}")
+
+    lines.extend(
+        [
+            f"Período: {period_text}",
+            f"Erros: {_safe_int(summary.get('errors_count'))}",
+            f"Warnings: {_safe_int(summary.get('warnings_count'))}",
+        ]
+    )
+
+    st.success("\n".join(lines))
 
 
 def _run_job(
@@ -226,7 +235,8 @@ def _run_job(
 
     summary_placeholder = st.empty()
     latest_summary = _load_latest_success_summary(pipeline_name) if pipeline_name else None
-    _render_summary(summary_placeholder, latest_summary)
+    with summary_placeholder.container():
+        _render_summary(latest_summary)
 
     if run:
         st.session_state[job_key] = True
@@ -251,9 +261,12 @@ def _run_job(
                 status.update(label="Execução finalizada.", state="complete")
 
             out = stdout_buf.getvalue().strip()
+            summary = (_extract_summary_from_stdout(out, pipeline_name=pipeline_name) if out else None) or (
+                _load_latest_success_summary(pipeline_name) if pipeline_name else None
+            )
 
-            summary = (_extract_summary_from_stdout(out) or _load_latest_success_summary(pipeline_name)) if pipeline_name else None
-            _render_summary(summary_placeholder, summary)
+            with summary_placeholder.container():
+                _render_summary(summary)
 
             st.success("Rotina concluída (sem exceções Python).")
 
@@ -266,8 +279,16 @@ def _run_job(
             st.error("Falha ao executar a rotina. Traceback completo:")
             st.code("".join(traceback.format_exception(type(e), e, e.__traceback__)), language="text")
 
-            latest_summary = _load_latest_success_summary(pipeline_name) if pipeline_name else None
-            _render_summary(summary_placeholder, latest_summary)
+            out = stdout_buf.getvalue().strip()
+            err = stderr_buf.getvalue().strip()
+            if out or err:
+                with st.expander("Detalhes do erro", expanded=False):
+                    if out:
+                        st.markdown("#### stdout")
+                        st.code(out, language="text")
+                    if err:
+                        st.markdown("#### stderr")
+                        st.code(err, language="text")
 
         finally:
             st.session_state[job_key] = False
