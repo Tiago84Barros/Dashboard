@@ -10,6 +10,11 @@ from psycopg2.extras import execute_values
 from sqlalchemy import create_engine, text
 
 try:
+    from core.db import get_engine
+except Exception:  # pragma: no cover
+    get_engine = None
+
+try:
     from auditoria_dados.ingestion_log import IngestionLog as _IngestionLog
     from auditoria_dados.ingestion_log import validate_required_columns
     from auditoria_dados.ingestion_log import validate_key_columns
@@ -74,7 +79,7 @@ def _assert_unique_key_ready(cur, table_name: str, key_columns: Tuple[str, ...])
           AND t.relname = %s
           AND i.indisunique
           AND (
-              SELECT array_agg(a.attname ORDER BY x.ord)
+              SELECT array_agg(a.attname::text ORDER BY x.ord)
               FROM unnest(i.indkey) WITH ORDINALITY AS x(attnum, ord)
               JOIN pg_attribute a
                 ON a.attrelid = t.oid
@@ -98,12 +103,18 @@ def carregar_demonstracoes() -> pd.DataFrame:
     if not SUPABASE_DB_URL:
         raise RuntimeError("Defina SUPABASE_DB_URL com a connection string Postgres do Supabase.")
 
-    engine = create_engine(SUPABASE_DB_URL)
+    engine = get_engine() if get_engine is not None else create_engine(SUPABASE_DB_URL)
 
     sql = text('SELECT * FROM public."Demonstracoes_Financeiras";')
 
     with engine.connect() as conn:
         df = pd.read_sql_query(sql, conn)
+
+    # No banco físico a coluna pode estar como `data` minúsculo; no pandas
+    # mantemos `Data` para compatibilidade com o restante do pipeline.
+    if "data" in df.columns and "Data" not in df.columns:
+        df = df.rename(columns={"data": "Data"})
+
     if validate_required_columns:
         validate_required_columns(
             df,
