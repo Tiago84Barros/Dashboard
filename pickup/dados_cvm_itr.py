@@ -9,8 +9,8 @@ from typing import Dict, Iterable, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 import requests
-import psycopg2
 from psycopg2.extras import execute_values
+from core.db import get_engine
 
 try:
     from auditoria_dados.ingestion_log import IngestionLog as _IngestionLog
@@ -29,16 +29,12 @@ except ImportError:
 # =========================
 URL_BASE_ITR = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/ITR/DADOS/"
 
-ANO_INICIAL = int(os.getenv("ANO_INICIAL", "2010"))
+ANO_INICIAL = int(os.getenv("ANO_INICIAL", "2011"))
 ULTIMO_ANO = int(os.getenv("ULTIMO_ANO", "0"))  # 0 => auto
 
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "240"))
 UPSERT_PAGE_SIZE = int(os.getenv("UPSERT_PAGE_SIZE", "5000"))
 
-SUPABASE_DB_URL = (
-    os.getenv("SUPABASE_DB_URL", "").strip()
-    or os.getenv("SUPABASE_DB_URL_PG", "").strip()
-)
 
 BASE_DIR = Path(__file__).resolve().parent
 TICKER_PATH = Path(os.getenv("TICKER_PATH", str(BASE_DIR / "cvm_to_ticker.csv")))
@@ -66,7 +62,7 @@ def _assert_unique_key_ready(cur, table_name: str, key_columns: Tuple[str, ...])
           AND t.relname = %s
           AND i.indisunique
           AND (
-              SELECT array_agg(a.attname ORDER BY x.ord)
+              SELECT array_agg(a.attname::text ORDER BY x.ord)
               FROM unnest(i.indkey) WITH ORDINALITY AS x(attnum, ord)
               JOIN pg_attribute a
                 ON a.attrelid = t.oid
@@ -488,12 +484,9 @@ def _upsert_supabase_tri(df_tick: pd.DataFrame) -> int:
     if df_tick is None or df_tick.empty:
         return 0
 
-    if not SUPABASE_DB_URL:
-        raise RuntimeError("Defina SUPABASE_DB_URL (Postgres connection string do Supabase).")
-
     df_db = pd.DataFrame({
         "Ticker": df_tick["Ticker"],
-        "Data": df_tick["Data"],
+        "data": df_tick["Data"],
         "Receita_Liquida": pd.to_numeric(df_tick["Receita Líquida"], errors="coerce").fillna(0).round(2),
         "EBIT": pd.to_numeric(df_tick["Ebit"], errors="coerce").fillna(0).round(2),
         "Lucro_Liquido": pd.to_numeric(df_tick["Lucro Líquido"], errors="coerce").fillna(0).round(2),
@@ -511,15 +504,15 @@ def _upsert_supabase_tri(df_tick: pd.DataFrame) -> int:
     if validate_key_columns:
         validate_key_columns(
             df_db,
-            ["Ticker", "Data"],
+            ["Ticker", "data"],
             context="ITR pré-upsert",
             logger=_RUN_LOG,
         )
 
     before_dedup = len(df_db)
     df_db = (
-        df_db.sort_values(["Ticker", "Data"])
-             .drop_duplicates(subset=["Ticker", "Data"], keep="last")
+        df_db.sort_values(["Ticker", "data"])
+             .drop_duplicates(subset=["Ticker", "data"], keep="last")
              .reset_index(drop=True)
     )
     if _RUN_LOG:
@@ -536,7 +529,7 @@ def _upsert_supabase_tri(df_tick: pd.DataFrame) -> int:
     if validate_unique_rows:
         validate_unique_rows(
             df_db,
-            ["Ticker", "Data"],
+            ["Ticker", "data"],
             context="ITR pré-upsert deduplicado",
             logger=_RUN_LOG,
         )
@@ -552,7 +545,7 @@ def _upsert_supabase_tri(df_tick: pd.DataFrame) -> int:
     INSERT INTO public."Demonstracoes_Financeiras_TRI"
     ({", ".join([f'"{c}"' for c in cols])})
     VALUES %s
-    ON CONFLICT ("Ticker","Data") DO UPDATE SET
+    ON CONFLICT ("Ticker",data) DO UPDATE SET
       "Receita_Liquida" = EXCLUDED."Receita_Liquida",
       "EBIT" = EXCLUDED."EBIT",
       "Lucro_Liquido" = EXCLUDED."Lucro_Liquido",
@@ -569,11 +562,18 @@ def _upsert_supabase_tri(df_tick: pd.DataFrame) -> int:
     ;
     """
 
-    with psycopg2.connect(SUPABASE_DB_URL) as conn:
-        with conn.cursor() as cur:
-            _assert_unique_key_ready(cur, "Demonstracoes_Financeiras_TRI", ("Ticker", "Data"))
+    engine = get_engine()
+    raw_conn = engine.raw_connection()
+    try:
+        with raw_conn.cursor() as cur:
+            _assert_unique_key_ready(cur, "Demonstracoes_Financeiras_TRI", ("Ticker", "data"))
             execute_values(cur, sql, values, page_size=UPSERT_PAGE_SIZE)
-        conn.commit()
+        raw_conn.commit()
+    except Exception:
+        raw_conn.rollback()
+        raise
+    finally:
+        raw_conn.close()
 
     return len(df_db)
 
@@ -645,9 +645,14 @@ def main():
                         stage="year_success",
                     )
                 except Exception as e:
-                    failed_years[ano] = str(e)
-                    run.add_error(f"ITR {ano}: {e}")
-                    log(f"ITR {ano}: falhou: {e}", level="ERROR", year=ano, stage="year_failed")
+                    msg = str(e)
+                    if ano == 2010 and "status=404" in msg:
+                        run.add_warning(f"ITR {ano}: indisponível na fonte (404), ano ignorado.")
+                        log(f"ITR {ano}: indisponível na fonte (404), ano ignorado.", level="WARN", year=ano, stage="year_skipped")
+                        continue
+                    failed_years[ano] = msg
+                    run.add_error(f"ITR {ano}: {msg}")
+                    log(f"ITR {ano}: falhou: {msg}", level="ERROR", year=ano, stage="year_failed")
 
             run.set_metric("total_upsertado", total)
             log(f"ITR concluído: total upsertado={total}")
@@ -680,8 +685,12 @@ def main():
                     raise RuntimeError(f"ITR {ano}: nenhum ticker após merge CVM->Ticker")
                 total += _upsert_supabase_tri(df_tick)
             except Exception as e:
-                failed_years[ano] = str(e)
-                log(f"ITR {ano}: falhou: {e}", level="ERROR", year=ano, stage="year_failed")
+                msg = str(e)
+                if ano == 2010 and "status=404" in msg:
+                    log(f"ITR {ano}: indisponível na fonte (404), ano ignorado.", level="WARN", year=ano, stage="year_skipped")
+                    continue
+                failed_years[ano] = msg
+                log(f"ITR {ano}: falhou: {msg}", level="ERROR", year=ano, stage="year_failed")
         log(f"ITR concluído: total upsertado={total}")
         if failed_years:
             raise RuntimeError(f"Falhas em {len(failed_years)} ano(s) ITR: {failed_years}")
