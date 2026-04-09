@@ -49,6 +49,7 @@ from core.ticker_utils import normalize_ticker
 # ──────────────────────────────────────────────────────────────
 
 _TEXT_COL_CACHE: Optional[str] = None
+_TABLE_COLS_CACHE: Dict[Tuple[str, str], set[str]] = {}
 _RUN_LOG = None
 _CHUNKING_VERSION = f"ipe::{DEFAULT_CHUNKING_VERSION}"
 _EXTRACTION_VERSION_PDF = "ipe_pdf_text_v1"
@@ -153,6 +154,32 @@ def _get_text_column(conn) -> str:
         return _TEXT_COL_CACHE
     raise RuntimeError("docs_corporativos não possui coluna raw_text nem texto.")
 
+
+
+def _get_table_columns(conn, schema: str, table: str) -> set[str]:
+    key = (schema, table)
+    cached = _TABLE_COLS_CACHE.get(key)
+    if cached is not None:
+        return cached
+    rows = conn.execute(
+        text("""
+            select column_name
+            from information_schema.columns
+            where table_schema = :schema
+              and table_name = :table
+        """),
+        {"schema": schema, "table": table},
+    ).fetchall()
+    cols = {str(r[0]) for r in rows}
+    _TABLE_COLS_CACHE[key] = cols
+    return cols
+
+
+def _first_existing(cols: set[str], *candidates: str) -> Optional[str]:
+    for cand in candidates:
+        if cand in cols:
+            return cand
+    return None
 # ──────────────────────────────────────────────────────────────
 # Sanitização de texto para Postgres
 # ──────────────────────────────────────────────────────────────
@@ -194,6 +221,7 @@ def _empty_ticker_stats(
         "stopped_reason": stopped_reason,
         "selection_deduped": 0,
         "duplicate_existing": 0,
+        "smart_skipped_complete": 0,
     }
 
 
@@ -437,6 +465,105 @@ def _get_doc_status_by_metadata(
         return {"exists": False, "id": None, "has_text": False}
     return {"exists": True, "id": int(row[0]), "has_text": bool(str(row[1] or "").strip())}
 
+
+
+def _get_existing_doc_text(conn, doc_id: int) -> str:
+    text_col = _get_text_column(conn)
+    row = conn.execute(
+        text(f"""
+            select coalesce({text_col}, '')
+            from public.docs_corporativos
+            where id = :id
+            limit 1
+        """),
+        {"id": int(doc_id)},
+    ).fetchone()
+    return str(row[0] or "") if row else ""
+
+
+def _get_doc_processing_state(
+    conn,
+    *,
+    doc_hash: str,
+    extraction_version_current: str,
+    chunking_version_current: str,
+) -> Dict[str, Any]:
+    text_col = _get_text_column(conn)
+    doc_cols = _get_table_columns(conn, "public", "docs_corporativos")
+    extraction_col = "extraction_version" if "extraction_version" in doc_cols else None
+
+    select_extra = f", {extraction_col} as extraction_version" if extraction_col else ""
+    row = conn.execute(
+        text(f"""
+            select
+                id,
+                coalesce(nullif(trim({text_col}), ''), '') as txt
+                {select_extra}
+            from public.docs_corporativos
+            where doc_hash = :h
+            limit 1
+        """),
+        {"h": doc_hash},
+    ).fetchone()
+
+    if not row:
+        return {
+            "exists": False,
+            "id": None,
+            "has_text": False,
+            "text": "",
+            "extraction_version": None,
+            "extraction_version_ok": False,
+            "has_chunks": False,
+            "chunk_count": 0,
+            "chunk_version_ok": False,
+            "is_complete": False,
+        }
+
+    doc_id = int(row[0])
+    txt = str(row[1] or "")
+    extraction_version = row[2] if extraction_col else None
+    extraction_ok = bool(txt.strip()) if extraction_col is None else (str(extraction_version or "").strip() == extraction_version_current and bool(txt.strip()))
+
+    chunk_cols = _get_table_columns(conn, "public", "docs_corporativos_chunks")
+    doc_ref_col = _first_existing(chunk_cols, "doc_id", "document_id", "docs_corporativos_id")
+    chunk_ver_col = "chunking_version" if "chunking_version" in chunk_cols else None
+
+    chunk_count = 0
+    has_chunks = False
+    chunk_version_ok = False
+    if doc_ref_col:
+        select_ver = (
+            f", max(case when {chunk_ver_col} = :chunking_version then 1 else 0 end) as version_ok"
+            if chunk_ver_col else
+            ""
+        )
+        row_chunk = conn.execute(
+            text(f"""
+                select count(*) as cnt
+                {select_ver}
+                from public.docs_corporativos_chunks
+                where {doc_ref_col} = :doc_id
+            """),
+            {"doc_id": doc_id, "chunking_version": chunking_version_current},
+        ).fetchone()
+        chunk_count = int((row_chunk[0] or 0) if row_chunk else 0)
+        has_chunks = chunk_count > 0
+        chunk_version_ok = bool(has_chunks) if chunk_ver_col is None else bool(row_chunk[1]) if row_chunk else False
+
+    is_complete = bool(txt.strip()) and extraction_ok and has_chunks and chunk_version_ok
+    return {
+        "exists": True,
+        "id": doc_id,
+        "has_text": bool(txt.strip()),
+        "text": txt,
+        "extraction_version": extraction_version,
+        "extraction_version_ok": extraction_ok,
+        "has_chunks": has_chunks,
+        "chunk_count": chunk_count,
+        "chunk_version_ok": chunk_version_ok,
+        "is_complete": is_complete,
+    }
 def _insert_doc(
     conn,
     *,
@@ -628,13 +755,15 @@ def ingest_ipe_for_tickers(
             return summary
 
         if validate_required_columns:
-            # Assunto pode vir nulo no IPE; tratamos com fallback mais adiante.
             validate_required_columns(
                 df,
                 [col_cvm, col_data, col_link],
                 context="CSV IPE normalizado",
                 logger=run,
             )
+
+        df[col_assunto] = df[col_assunto].fillna("").astype(str).map(_clean_text)
+        df.loc[df[col_assunto].eq(""), col_assunto] = "Sem assunto"
 
         df["_dt"] = df[col_data].apply(_parse_date)
         df = df[~df["_dt"].isna()].copy()
@@ -648,8 +777,6 @@ def ingest_ipe_for_tickers(
         )
         df = df[df["_dt_naive"] >= min_ts].copy()
 
-        # Assunto no IPE pode ser amplamente nulo; não deve bloquear a ingestão.
-        # Mantemos apenas os campos realmente bloqueantes.
         if validate_non_null_columns and not df.empty:
             valid_df = df[df["_url_norm"].astype(str).str.strip().ne("")].copy()
             if not valid_df.empty:
@@ -659,15 +786,6 @@ def ingest_ipe_for_tickers(
                     context="CSV IPE filtrado",
                     logger=run,
                 )
-
-        # Fallback de assunto/título para evitar docs sem título legível.
-        if col_assunto:
-            df[col_assunto] = (
-                df[col_assunto]
-                .fillna("")
-                .map(lambda x: _clean_text(str(x)))
-                .replace("", "Sem assunto")
-            )
 
         if strategic_only:
             df["_tipo"] = df[col_tipo].fillna("").map(_clean_text) if col_tipo else ""
@@ -792,6 +910,7 @@ def ingest_ipe_for_tickers(
                 pdf_used = 0
                 pdf_limit_hit = False
                 duplicate_existing = 0
+                smart_skipped_complete = 0
                 chunks_generated = 0
                 stubs = 0
                 failures = 0
@@ -816,10 +935,33 @@ def ingest_ipe_for_tickers(
                     dt_key = dt.date().isoformat() if isinstance(dt, pd.Timestamp) and not pd.isna(dt) else ""
                     doc_hash = _sha256(f"{tk}|{url}|{titulo}|{dt_key}")
 
+                    state = _get_doc_processing_state(
+                        conn,
+                        doc_hash=doc_hash,
+                        extraction_version_current=_EXTRACTION_VERSION_PDF,
+                        chunking_version_current=_CHUNKING_VERSION,
+                    )
+                    if state["is_complete"]:
+                        duplicate_existing += 1
+                        smart_skipped_complete += 1
+                        skipped += 1
+                        continue
+
                     texto = ""
                     extraction_version = _EXTRACTION_VERSION_STUB
                     is_stub = True
-                    if download_pdfs and pdf_used < int(max_pdfs_per_ticker):
+
+                    # Se o documento já existe com texto válido, reutiliza o texto salvo
+                    # e evita baixar/processar PDF novamente. Isso permite backfill de chunks
+                    # ou reprocessamento por mudança de versão sem custo extra de rede.
+                    if state["exists"] and state["has_text"]:
+                        texto = _sanitize_text(state["text"])
+                        is_stub = False
+                        extraction_version = (
+                            str(state.get("extraction_version") or "").strip()
+                            or _EXTRACTION_VERSION_PDF
+                        )
+                    elif download_pdfs and pdf_used < int(max_pdfs_per_ticker):
                         try:
                             pdf_bytes = _fetch_pdf_bytes(url, timeout=request_timeout)
                             if pdf_bytes:
@@ -897,6 +1039,7 @@ def ingest_ipe_for_tickers(
                     "pdf_limit_hit": pdf_limit_hit,
                     "selection_deduped": selection_deduped,
                     "duplicate_existing": duplicate_existing,
+                    "smart_skipped_complete": smart_skipped_complete,
                     "selected_strategic": selected_strategic if strategic_only else None,
                     "fallback_used": fallback_used if strategic_only else None,
                     "top_selected": audit_top,
@@ -911,6 +1054,7 @@ def ingest_ipe_for_tickers(
                         documents_inserted=inserted,
                         duplicates=duplicate_existing,
                         chunks_generated=chunks_generated,
+                        skipped=smart_skipped_complete,
                         stubs=stubs,
                         failures=failures,
                     )
@@ -931,6 +1075,7 @@ def ingest_ipe_for_tickers(
                     failures=failures,
                     selection_deduped=selection_deduped,
                     duplicate_existing=duplicate_existing,
+                    smart_skipped_complete=smart_skipped_complete,
                     fallback_used=fallback_used if strategic_only else None,
                 )
 
@@ -959,6 +1104,7 @@ def ingest_ipe_for_tickers(
             failures=sum(int(v.get("failures", 0)) for v in out_stats.values()),
             selection_deduped=sum(int(v.get("selection_deduped", 0)) for v in out_stats.values()),
             duplicate_existing=sum(int(v.get("duplicate_existing", 0)) for v in out_stats.values()),
+            smart_skipped_complete=sum(int(v.get("smart_skipped_complete", 0)) for v in out_stats.values()),
         )
         _RUN_LOG = None
         return result
