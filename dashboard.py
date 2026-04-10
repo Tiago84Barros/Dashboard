@@ -119,16 +119,14 @@ def _get_db_loader():
 
 def _load_page_renderer(page_key: str) -> Callable[[], None]:
     """
-    Carrega a função render() da página escolhida, com fallback de caminhos:
-    - page.basic / basic
-    - page.advanced / advanced
-    - page.criacao_portfolio / criacao_portfolio
+    Carrega a função render() da página escolhida, com fallback de caminhos.
     """
     mapping = {
         "Básica": ("page.basic", "basic"),
         "Avançada": ("page.advanced", "advanced"),
         "Criação de Portfólio": ("page.criacao_portfolio", "criacao_portfolio"),
         "Análises de Portfólio": ("page.analises_portfolio", "analises_portfolio"),
+        "Análises de Portfólio V2": ("page.analises_portfolio_v2", "analises_portfolio_v2"),
         "Configurações": ("page.configuracoes", "configuracoes"),
     }
     paths = mapping.get(page_key)
@@ -162,7 +160,14 @@ with st.sidebar:
     st.markdown("## Análises")
     pagina_escolhida = st.radio(
         "Escolha a seção:",
-        ["Básica", "Avançada", "Criação de Portfólio", "Análises de Portfólio", "Configurações"],
+        [
+            "Básica",
+            "Avançada",
+            "Criação de Portfólio",
+            "Análises de Portfólio",
+            "Análises de Portfólio V2",
+            "Configurações",
+        ],
         index=0,
     )
 
@@ -179,14 +184,3 @@ try:
 except Exception as e:
     st.error("Falha ao carregar a página selecionada.")
     st.exception(e)
-
-
-
-
-
-
-
-
-
-
-
