@@ -182,7 +182,7 @@ _P6_V2_CSS = """
 """
 
 
-def render_patch6_report_v2_real(
+def render_patch6_report_v2(
     tickers: List[str],
     period_ref: str,
     llm_factory: Optional[Any] = None,
