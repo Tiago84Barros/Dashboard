@@ -66,10 +66,6 @@ def _chip(label: str, kind: str = "neutral") -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _decision_for_company(c: CompanyAnalysis) -> Tuple[str, int, str]:
-    """
-    Motor interno de decisão.
-    Continua usando métricas técnicas, mas sem expô-las como mensagem principal.
-    """
     score = int(getattr(c, "score_qualitativo", 0) or 0)
     conf = float(getattr(c, "confianca", 0.0) or 0.0)
     forward = int(getattr(c, "forward_score", 0) or 0)
@@ -227,13 +223,14 @@ def _company_summary_reason(c: CompanyAnalysis) -> str:
         return "Caso equilibrado, mas com ponto de atenção relevante no cenário atual."
     return "Caso ainda neutro, sem gatilho forte para aumento ou redução."
 
+
 def _aggregate_status(analysis: PortfolioAnalysis) -> Dict[str, str]:
     companies = list(analysis.companies.values())
     if not companies:
         return {
             "carteira_hoje": "Sem dados",
             "postura": "Aguardando atualização",
-            "maior_ponto": "Sem leitura agregada",
+            "decisao_geral": "Sem leitura agregada",
             "monitoramento": "Sem base suficiente",
         }
 
@@ -245,21 +242,25 @@ def _aggregate_status(analysis: PortfolioAnalysis) -> Dict[str, str]:
     ])
 
     if decisions.count("Reduzir") >= max(1, len(companies) // 3):
-        carteira_hoje = "Boa, mas com fragilidades relevantes"
+        carteira_hoje = "Carteira boa, mas com fragilidades relevantes"
     elif decisions.count("Aumentar") >= decisions.count("Reduzir"):
-        carteira_hoje = "Construtiva e relativamente equilibrada"
+        carteira_hoje = "Carteira construtiva e relativamente equilibrada"
     else:
-        carteira_hoje = "Mista, com necessidade de seletividade"
+        carteira_hoje = "Carteira mista, com necessidade de seletividade"
 
     if high_risk >= 2:
-        postura = "Mais defensiva"
+        postura = "Postura mais defensiva"
     elif deteriorating >= 2:
-        postura = "Cautelosa"
+        postura = "Postura cautelosa"
     else:
-        postura = "Construtiva"
+        postura = "Postura construtiva"
 
-    major_risks = [_risco_principal(c) for c in companies if _risk_level(c) == "Alto"]
-    maior_ponto = major_risks[0] if major_risks else "Nenhum risco dominante isolado"
+    if decisions.count("Aumentar") > decisions.count("Reduzir"):
+        decisao_geral = "Há mais espaço para reforçar do que para cortar posições"
+    elif decisions.count("Aumentar") < decisions.count("Reduzir"):
+        decisao_geral = "O ciclo pede mais proteção do que aumento de risco"
+    else:
+        decisao_geral = "O ciclo ainda pede seletividade e pouca pressa"
 
     monitor_items = []
     for c in companies:
@@ -271,7 +272,7 @@ def _aggregate_status(analysis: PortfolioAnalysis) -> Dict[str, str]:
     return {
         "carteira_hoje": carteira_hoje,
         "postura": postura,
-        "maior_ponto": maior_ponto,
+        "decisao_geral": decisao_geral,
         "monitoramento": monitoramento,
     }
 
@@ -332,7 +333,7 @@ _P6_V2_CSS = """
     background:#f8fafc;
     border-radius:16px;
     padding:14px 16px;
-    min-height:110px;
+    min-height:120px;
 }
 .p6v2-kpi-label{
     font-size:12px;
@@ -407,10 +408,11 @@ _P6_V2_CSS = """
     color:#7f1d1d;
     font-weight:600;
 }
-.p6v2-table-note{
-    font-size:12px;
-    color:#64748b;
-    margin-top:4px;
+.p6v2-note{
+    font-size:13px;
+    color:#334155;
+    margin-top:12px;
+    line-height:1.55;
 }
 @media (max-width: 900px){
     .p6v2-grid{
@@ -471,15 +473,9 @@ def render_patch6_report_v2(
         unsafe_allow_html=True,
     )
 
-    # Decisão do ciclo
     st.markdown("### Decisão do ciclo")
     cols = st.columns(3)
-
-    for col, key, kind in zip(
-        cols,
-        ["Aumentar", "Manter", "Reduzir"],
-        ["buy", "hold", "sell"],
-    ):
+    for col, key, kind in zip(cols, ["Aumentar", "Manter", "Reduzir"], ["buy", "hold", "sell"]):
         items = decisions[key]
         lines = []
         for c, _, _reason in items:
@@ -487,7 +483,6 @@ def render_patch6_report_v2(
             resumo = leitura[:120] + "..." if len(leitura) > 120 else leitura
             lines.append(f"<b>{_esc(c.ticker)}</b> — {_esc(resumo)}")
         content = "<br/><br/>".join(lines) if lines else "<span style='color:#64748b'>Nenhum ativo nesta faixa.</span>"
-
         with col:
             st.markdown(
                 f"""
@@ -499,16 +494,15 @@ def render_patch6_report_v2(
                 unsafe_allow_html=True,
             )
 
-    # Visão rápida da carteira
     st.markdown("### Visão rápida da carteira")
-    k1, k2, k3, k4 = st.columns(4)
+    c1, c2, c3, c4 = st.columns(4)
     cards = [
-        ("Carteira hoje", status["carteira_hoje"], "Leitura sintética do momento da carteira."),
-        ("Postura sugerida", status["postura"], "Tom geral da alocação neste ciclo."),
-        ("Maior ponto de atenção", status["maior_ponto"], "Risco mais sensível na leitura atual."),
-        ("O que monitorar", status["monitoramento"], "Fato que pode mudar a decisão adiante."),
+        ("Como a carteira está hoje", status["carteira_hoje"], "Resumo do momento atual da carteira."),
+        ("Postura sugerida", status["postura"], "Tom geral mais adequado neste ciclo."),
+        ("Leitura para decisão", status["decisao_geral"], "Síntese do que a carteira pede agora."),
+        ("O que acompanhar", status["monitoramento"], "Fato que pode mudar a decisão adiante."),
     ]
-    for col, (label, value, sub) in zip([k1, k2, k3, k4], cards):
+    for col, (label, value, sub) in zip([c1, c2, c3, c4], cards):
         col.markdown(
             f"""
             <div class='p6v2-kpi'>
@@ -520,17 +514,12 @@ def render_patch6_report_v2(
             unsafe_allow_html=True,
         )
 
-    # Ranking de risco
     st.markdown("### Onde estão os principais riscos")
     for idx, (ticker, level, text) in enumerate(_risk_rows(analysis), start=1):
         kind = "risk_high" if level == "Alto" else "risk_med" if level == "Médio" else "risk_low"
-        st.markdown(
-            f"**{idx}. {ticker}** { _chip(level, kind) }",
-            unsafe_allow_html=True,
-        )
+        st.markdown(f"**{idx}. {ticker}** { _chip(level, kind) }", unsafe_allow_html=True)
         st.caption(text)
 
-    # Mapa de ação
     st.markdown("### Mapa de ação por ativo")
     action_rows = []
     for c in analysis.companies.values():
@@ -545,14 +534,9 @@ def render_patch6_report_v2(
         })
     st.dataframe(action_rows, use_container_width=True, hide_index=True)
 
-    # Resumo executivo da carteira
     if llm_report:
         st.markdown("### Resumo executivo")
-        diagnostico = (
-            llm_report.get("diagnostico_executivo")
-            or llm_report.get("insight_final")
-            or ""
-        )
+        diagnostico = llm_report.get("diagnostico_executivo") or llm_report.get("insight_final") or ""
         if strip_html(diagnostico):
             st.info(strip_html(diagnostico))
 
@@ -563,7 +547,6 @@ def render_patch6_report_v2(
             for item in plano_clean[:5]:
                 st.markdown(f"- {item}")
 
-    # Empresas
     if show_company_details:
         st.markdown("### Empresas")
         ordered = sorted(
@@ -574,61 +557,53 @@ def render_patch6_report_v2(
 
         for c in ordered:
             label, _, internal_reason = _decision_for_company(c)
-
-            chip_kind = {
-                "Aumentar": "buy",
-                "Manter": "hold",
-                "Reduzir": "sell",
-            }.get(label, "neutral")
-
+            chip_kind = {"Aumentar": "buy", "Manter": "hold", "Reduzir": "sell"}.get(label, "neutral")
             leitura_atual = _leitura_atual(c)
             risco_principal = _risco_principal(c)
             monitorar = _o_que_monitorar(c)
             papel = _papel_na_carteira(c)
             motivo_decisao = _company_summary_reason(c)
 
-            st.markdown(
-                f"""
-                <div class='p6v2-company'>
-                    <div class='p6v2-head'>
-                        <div>
-                            <div class='p6v2-ticker'>{_esc(c.ticker)}</div>
-                            <div class='p6v2-meta'>
-                                {_esc(getattr(c, 'period_ref', period_ref))} • Atualizado em: {_esc(getattr(c, 'created_at', '—'))}
-                            </div>
-                        </div>
-                        <div>{_chip(label, chip_kind)}</div>
-                    </div>
-
-                    <div class='p6v2-grid'>
-                        <div class='p6v2-panel'>
-                            <div class='p6v2-panel-label'>Leitura atual</div>
-                            <div class='p6v2-panel-body'>{_esc(leitura_atual)}</div>
-                        </div>
-
-                        <div class='p6v2-panel'>
-                            <div class='p6v2-panel-label'>Risco principal</div>
-                            <div class='p6v2-panel-body p6v2-panel-risk'>{_esc(risco_principal)}</div>
-                        </div>
-
-                        <div class='p6v2-panel'>
-                            <div class='p6v2-panel-label'>O que monitorar</div>
-                            <div class='p6v2-panel-body'>{_esc(monitorar)}</div>
-                        </div>
-
-                        <div class='p6v2-panel'>
-                            <div class='p6v2-panel-label'>Papel na carteira</div>
-                            <div class='p6v2-panel-body'>{_esc(papel)}</div>
+            company_html = f"""
+            <div class='p6v2-company'>
+                <div class='p6v2-head'>
+                    <div>
+                        <div class='p6v2-ticker'>{_esc(c.ticker)}</div>
+                        <div class='p6v2-meta'>
+                            {_esc(getattr(c, 'period_ref', period_ref))} • Atualizado em: {_esc(getattr(c, 'created_at', '—'))}
                         </div>
                     </div>
+                    <div>{_chip(label, chip_kind)}</div>
+                </div>
 
-                    <div class='p6v2-table-note' style='margin-top:12px;'>
-                        Motivo da decisão: {_esc(motivo_decisao)}
+                <div class='p6v2-grid'>
+                    <div class='p6v2-panel'>
+                        <div class='p6v2-panel-label'>Leitura atual</div>
+                        <div class='p6v2-panel-body'>{_esc(leitura_atual)}</div>
+                    </div>
+
+                    <div class='p6v2-panel'>
+                        <div class='p6v2-panel-label'>Risco principal</div>
+                        <div class='p6v2-panel-body p6v2-panel-risk'>{_esc(risco_principal)}</div>
+                    </div>
+
+                    <div class='p6v2-panel'>
+                        <div class='p6v2-panel-label'>O que monitorar</div>
+                        <div class='p6v2-panel-body'>{_esc(monitorar)}</div>
+                    </div>
+
+                    <div class='p6v2-panel'>
+                        <div class='p6v2-panel-label'>Papel na carteira</div>
+                        <div class='p6v2-panel-body'>{_esc(papel)}</div>
                     </div>
                 </div>
-                """,
-                unsafe_allow_html=True,
-            )
+
+                <div class='p6v2-note'>
+                    <b>Motivo da decisão:</b> {_esc(motivo_decisao)}
+                </div>
+            </div>
+            """
+            st.markdown(company_html, unsafe_allow_html=True)
 
             with st.expander(f"Ver análise completa — {c.ticker}", expanded=False):
                 pontos_chave = _as_list(getattr(c, "pontos_chave", None))
@@ -672,7 +647,6 @@ def render_patch6_report_v2(
                     st.markdown("**Considerações da LLM**")
                     st.write(consideracoes)
 
-                # camada técnica escondida
                 st.markdown("---")
                 st.markdown("**Detalhes técnicos**")
                 tech_rows = [{
@@ -688,5 +662,4 @@ def render_patch6_report_v2(
                 st.dataframe(tech_rows, use_container_width=True, hide_index=True)
 
 
-# Compatibilidade com nome antigo, caso algum import ainda use "_real"
 render_patch6_report_v2_real = render_patch6_report_v2
