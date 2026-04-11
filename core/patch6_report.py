@@ -250,22 +250,60 @@ def _render_decision_cycle(analysis: PortfolioAnalysis, stats: PortfolioStats) -
     for company in analysis.companies.values():
         groups.setdefault(_decision_from_company(company), []).append(company.ticker)
 
-    def _fmt_group(label: str, tickers: List[str], tone: str) -> str:
-        tickers_text = ", ".join(tickers[:6]) if tickers else "Nenhum ativo"
-        subtitle = "Abra o relatório por empresa para entender o motivo" if tickers else "Sem destaque relevante neste ciclo"
-        return _render_hero_stat(label, tickers_text, subtitle, tone)
+    def _group_card(label: str, tickers: List[str], tone: str, empty_label: str) -> str:
+        count = len(tickers)
+        names = ", ".join(tickers) if tickers else empty_label
+        subtitle = f"{count} ativo(s)" if count else "Sem destaque relevante neste ciclo"
+        return f"""
+        <div class="p6-hero-card {tone} p6-decision-card">
+          <div class="p6-hero-label">{_esc(label)}</div>
+          <div class="p6-decision-list">{_esc(names)}</div>
+          <div class="p6-hero-sub">{_esc(subtitle)}</div>
+        </div>
+        """
 
     st.markdown("## 🧭 Decisão do Ciclo")
-    cols = st.columns(3)
-    cols[0].markdown(_fmt_group("🟢 Oportunidade", groups.get("aumentar", []), "good"), unsafe_allow_html=True)
-    cols[1].markdown(_fmt_group("🔵 Neutralidade", groups.get("manter", []) + groups.get("revisar", []), "neutral"), unsafe_allow_html=True)
-    cols[2].markdown(_fmt_group("🔴 Perigo", groups.get("reduzir", []), "bad"), unsafe_allow_html=True)
+    left, right = st.columns([1.05, 0.95])
+    with left:
+        cols = st.columns(3)
+        cols[0].markdown(_group_card("🟢 Oportunidade", groups.get("aumentar", []), "good", "Nenhum ativo"), unsafe_allow_html=True)
+        cols[1].markdown(_group_card("🔵 Neutralidade", groups.get("manter", []) + groups.get("revisar", []), "neutral", "Nenhum ativo"), unsafe_allow_html=True)
+        cols[2].markdown(_group_card("🔴 Perigo", groups.get("reduzir", []), "bad", "Nenhum ativo"), unsafe_allow_html=True)
+
+    with right:
+        _render_risk_ranking(analysis, compact=True)
 
 
-def _render_risk_ranking(analysis: PortfolioAnalysis) -> None:
+def _render_risk_ranking(analysis: PortfolioAnalysis, compact: bool = False) -> None:
     ranking = sorted(analysis.companies.values(), key=lambda c: (c.attention_score, c.forward_score, c.score_qualitativo), reverse=True)
     st.markdown("## ⚠️ Ranking de Risco")
-    for idx, company in enumerate(ranking[:5], start=1):
+
+    topn = 5 if compact else 8
+    rows = ranking[:topn]
+    if compact:
+        for idx, company in enumerate(rows, start=1):
+            risk_label, tone = _risk_tone(company)
+            risk_text = _main_risk(company)
+            action = _decision_from_company(company)
+            st.markdown(
+                f"""
+                <div class="p6-risk-card {tone} compact">
+                  <div class="p6-risk-rank">{idx}</div>
+                  <div class="p6-risk-main">
+                    <div class="p6-risk-top compact">
+                      <span class="p6-risk-ticker compact">{_esc(company.ticker)}</span>
+                      <span class="p6-pill {tone}">{_esc(risk_label)}</span>
+                      <span class="p6-pill neutral">{_icon_from_action(action)} {_esc(_ACTION_VERBS.get(action, 'Manter'))}</span>
+                    </div>
+                    <div class="p6-risk-text compact">{_esc(risk_text)}</div>
+                  </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        return
+
+    for idx, company in enumerate(rows, start=1):
         risk_label, tone = _risk_tone(company)
         risk_text = _main_risk(company)
         action = _decision_from_company(company)
@@ -894,6 +932,8 @@ _P6_CSS = """
 .p6-hero-card.neutral{border-color:rgba(59,130,246,.35)}
 .p6-hero-label{font-size:12px;text-transform:uppercase;letter-spacing:.3px;color:var(--p6-muted);margin-bottom:10px}
 .p6-hero-value{font-size:28px;font-weight:900;line-height:1.15;margin-bottom:8px}
+.p6-decision-card{min-height:150px}
+.p6-decision-list{font-size:18px;font-weight:900;line-height:1.35;word-break:break-word;white-space:normal;margin-bottom:8px}
 .p6-hero-sub{font-size:13px;line-height:1.5;color:#cbd5e1}
 .p6-signal-row{display:grid;grid-template-columns:repeat(4, minmax(0, 1fr));gap:10px;margin:14px 0 8px}
 .p6-signal-chip{border-radius:14px;padding:12px 14px;background:rgba(255,255,255,.03);border:1px solid var(--p6-border);display:flex;flex-direction:column;gap:6px}
@@ -911,14 +951,18 @@ _P6_CSS = """
 .p6-banner-title{font-size:14px;font-weight:800;margin-bottom:4px}
 .p6-banner-body{font-size:14px;line-height:1.6;color:#dbe7f7}
 .p6-risk-card{display:flex;gap:14px;align-items:flex-start;background:linear-gradient(180deg, rgba(17,24,39,.95), rgba(15,23,42,.92));border-radius:16px;padding:14px 16px;margin:10px 0}
+.p6-risk-card.compact{padding:10px 12px;margin:8px 0;border-radius:14px}
 .p6-risk-card.good{border-color:rgba(34,197,94,.35)}
 .p6-risk-card.warn{border-color:rgba(245,158,11,.35)}
 .p6-risk-card.bad{border-color:rgba(239,68,68,.45)}
 .p6-risk-rank{width:34px;height:34px;border-radius:999px;background:rgba(255,255,255,.06);display:flex;align-items:center;justify-content:center;font-weight:900}
 .p6-risk-main{flex:1}
 .p6-risk-top{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+.p6-risk-top.compact{margin-bottom:5px}
 .p6-risk-ticker{font-size:18px;font-weight:900}
+.p6-risk-ticker.compact{font-size:16px}
 .p6-risk-text{font-size:14px;line-height:1.55;margin-bottom:6px;color:#dbe7f7}
+.p6-risk-text.compact{font-size:12px;line-height:1.4;margin-bottom:0}
 .p6-risk-meta{font-size:12px;color:var(--p6-muted)}
 .p6-pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;border:1px solid var(--p6-border);background:rgba(255,255,255,.03)}
 .p6-pill.good{border-color:rgba(34,197,94,.40);color:#bbf7d0}
@@ -969,7 +1013,6 @@ def render_patch6_report(
 
     # ── Camada principal orientada à decisão ─────────────────────────────────
     _render_decision_cycle(analysis, stats)
-    _render_risk_ranking(analysis)
 
     # ── LLM portfolio report (optional) ──────────────────────────────────────
     portfolio_report = run_portfolio_llm_report(llm_factory, analysis, analysis_mode)
