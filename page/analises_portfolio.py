@@ -769,411 +769,413 @@ def render() -> None:
     # ------------------------------------------------------------------
     # Ingest + Chunking com logs por ticker
     # ------------------------------------------------------------------
-    st.subheader("📦 Atualizar evidências")
+    def _render_update_evidencias_panel():
+        st.subheader("📦 Atualizar evidências")
 
-    col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
-    with col1:
-        st.markdown(
-            f"""
-            <div class="p6-mcard">
-              <div class="p6-mlabel">Janela de evidências</div>
-              <div class="p6-mvalue">{analysis_window_months} meses</div>
-              <div class="p6-mextra">Sincronizada automaticamente com o modo de análise qualitativa.</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with col2:
-        max_docs = st.number_input("Máx docs/ticker", min_value=5, max_value=300, value=80, step=5)
-    with col3:
-        max_pdfs = st.number_input("Máx PDFs/ticker", min_value=0, max_value=80, value=20, step=1)
-    with col4:
-        max_runtime_s = st.number_input("Tempo máx total (s)", min_value=5, max_value=180, value=60, step=5)
+        col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+        with col1:
+            st.markdown(
+                f"""
+                <div class="p6-mcard">
+                  <div class="p6-mlabel">Janela de evidências</div>
+                  <div class="p6-mvalue">{analysis_window_months} meses</div>
+                  <div class="p6-mextra">Sincronizada automaticamente com o modo de análise qualitativa.</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with col2:
+            max_docs = st.number_input("Máx docs/ticker", min_value=5, max_value=300, value=80, step=5)
+        with col3:
+            max_pdfs = st.number_input("Máx PDFs/ticker", min_value=0, max_value=80, value=20, step=1)
+        with col4:
+            max_runtime_s = st.number_input("Tempo máx total (s)", min_value=5, max_value=180, value=60, step=5)
 
-    st.caption(f"Atualizar documentos usará automaticamente 36 meses de histórico, que também serão usados na análise qualitativa.")
+        st.caption(f"Atualizar documentos usará automaticamente 36 meses de histórico, que também serão usados na análise qualitativa.")
 
-    only_missing_docs = False
-    force_reingest = False
-    show_traceback = False
+        only_missing_docs = False
+        force_reingest = False
+        show_traceback = False
 
-    # Diagnóstico sob demanda (não altera pipeline; apenas inspeciona presença de docs/chunks)
-    diag_btn = st.button("🩺 Diagnóstico (docs/chunks)", help="Mostra rapidamente se cada ticker tem docs e chunks no Supabase.")
-    health_btn = st.button("🧬 Saúde do corpus", help="Avalia a qualidade operacional do corpus por ticker e destaca possíveis gargalos de chunking.")
+        # Diagnóstico sob demanda (não altera pipeline; apenas inspeciona presença de docs/chunks)
+        diag_btn = st.button("🩺 Diagnóstico (docs/chunks)", help="Mostra rapidamente se cada ticker tem docs e chunks no Supabase.")
+        health_btn = st.button("🧬 Saúde do corpus", help="Avalia a qualidade operacional do corpus por ticker e destaca possíveis gargalos de chunking.")
 
-    if diag_btn:
-        diag_rows: List[Dict[str, Any]] = []
-        total_docs = 0
-        total_chunks = 0
-        missing_docs = 0
-        missing_chunks = 0
+        if diag_btn:
+            diag_rows: List[Dict[str, Any]] = []
+            total_docs = 0
+            total_chunks = 0
+            missing_docs = 0
+            missing_chunks = 0
 
-        for tk in tickers:
-            d = count_docs(tk)
-            c = count_chunks(tk)
-            total_docs += int(d or 0)
-            total_chunks += int(c or 0)
-            if (d or 0) == 0:
-                missing_docs += 1
-            if (c or 0) == 0:
-                missing_chunks += 1
+            for tk in tickers:
+                d = count_docs(tk)
+                c = count_chunks(tk)
+                total_docs += int(d or 0)
+                total_chunks += int(c or 0)
+                if (d or 0) == 0:
+                    missing_docs += 1
+                if (c or 0) == 0:
+                    missing_chunks += 1
 
-            diag_rows.append({
-                "ticker": tk,
-                "docs": d,
-                "chunks": c,
-                "status": ("OK" if (d or 0) > 0 and (c or 0) > 0 else
-                           "SEM_DOCS" if (d or 0) == 0 else
-                           "SEM_CHUNKS"),
-            })
+                diag_rows.append({
+                    "ticker": tk,
+                    "docs": d,
+                    "chunks": c,
+                    "status": ("OK" if (d or 0) > 0 and (c or 0) > 0 else
+                               "SEM_DOCS" if (d or 0) == 0 else
+                               "SEM_CHUNKS"),
+                })
 
-        st.markdown(
-            f"**Resumo diagnóstico:** docs={total_docs} | chunks={total_chunks} | tickers sem docs={missing_docs} | tickers sem chunks={missing_chunks}"
-        )
-        st.dataframe(pd.DataFrame(diag_rows).rename(columns={"ticker":"Ticker","docs":"Documentos","chunks":"Chunks","status":"Status"}), use_container_width=True)
+            st.markdown(
+                f"**Resumo diagnóstico:** docs={total_docs} | chunks={total_chunks} | tickers sem docs={missing_docs} | tickers sem chunks={missing_chunks}"
+            )
+            st.dataframe(pd.DataFrame(diag_rows).rename(columns={"ticker":"Ticker","docs":"Documentos","chunks":"Chunks","status":"Status"}), use_container_width=True)
 
-        if missing_docs > 0:
-            st.warning("Há tickers sem documentos. Use **Atualizar documentos** para tentar ingerir CVM/IPE.")
-        elif missing_chunks > 0:
-            st.warning("Há tickers com docs mas sem chunks. Use **Atualizar documentos** (ele também processa chunks faltantes).")
-        else:
-            st.success("Todos os tickers têm docs e chunks. Pode rodar o LLM com evidências completas.")
+            if missing_docs > 0:
+                st.warning("Há tickers sem documentos. Use **Atualizar documentos** para tentar ingerir CVM/IPE.")
+            elif missing_chunks > 0:
+                st.warning("Há tickers com docs mas sem chunks. Use **Atualizar documentos** (ele também processa chunks faltantes).")
+            else:
+                st.success("Todos os tickers têm docs e chunks. Pode rodar o LLM com evidências completas.")
 
 
-    if health_btn:
-        health_df = _make_corpus_health_df(tickers, weight_map)
-        summary = _summarize_health_df(health_df)
+        if health_btn:
+            health_df = _make_corpus_health_df(tickers, weight_map)
+            summary = _summarize_health_df(health_df)
 
-        st.markdown(
-            f"**Resumo saúde do corpus:** robusto={summary['forte']} | razoável={summary['razoavel']} | fraco={summary['fraco']} | anomalias de chunking={summary['anomalia']}"
-        )
+            st.markdown(
+                f"**Resumo saúde do corpus:** robusto={summary['forte']} | razoável={summary['razoavel']} | fraco={summary['fraco']} | anomalias de chunking={summary['anomalia']}"
+            )
 
-        if not health_df.empty:
-            st.dataframe(health_df, use_container_width=True)
+            if not health_df.empty:
+                st.dataframe(health_df, use_container_width=True)
 
-            anom_df = health_df[health_df["Diagnóstico"] == "Anomalia de chunking"]
-            if not anom_df.empty:
-                st.warning(
-                    "Foram detectados tickers com possível anomalia de chunking. "
-                    "Quando a razão chunks/documento fica muito próxima de 1, o sistema pode estar gerando apenas 1 chunk por documento "
-                    "ou extraindo texto curto demais do PDF."
-                )
-
-                if "PETR3" in anom_df["Ticker"].tolist():
-                    petr_row = anom_df[anom_df["Ticker"] == "PETR3"].iloc[0].to_dict()
-                    st.error(
-                        f"PETR3 exige revisão. Hoje ele aparece com {petr_row['Documentos']} documentos e {petr_row['Chunks']} chunks "
-                        f"(razão {petr_row['Chunks por documento']}). Isso não é normal para um emissor desse porte e sugere gargalo de chunking ou extração textual."
-                    )
-                    st.caption(
-                        "Hipóteses mais prováveis: chunk_size alto demais, chunk_overlap baixo ou extração de texto muito curta/ruim em PDFs da Petrobras."
+                anom_df = health_df[health_df["Diagnóstico"] == "Anomalia de chunking"]
+                if not anom_df.empty:
+                    st.warning(
+                        "Foram detectados tickers com possível anomalia de chunking. "
+                        "Quando a razão chunks/documento fica muito próxima de 1, o sistema pode estar gerando apenas 1 chunk por documento "
+                        "ou extraindo texto curto demais do PDF."
                     )
 
-    btn = st.button("Atualizar documentos", type="primary")
+                    if "PETR3" in anom_df["Ticker"].tolist():
+                        petr_row = anom_df[anom_df["Ticker"] == "PETR3"].iloc[0].to_dict()
+                        st.error(
+                            f"PETR3 exige revisão. Hoje ele aparece com {petr_row['Documentos']} documentos e {petr_row['Chunks']} chunks "
+                            f"(razão {petr_row['Chunks por documento']}). Isso não é normal para um emissor desse porte e sugere gargalo de chunking ou extração textual."
+                        )
+                        st.caption(
+                            "Hipóteses mais prováveis: chunk_size alto demais, chunk_overlap baixo ou extração de texto muito curta/ruim em PDFs da Petrobras."
+                        )
 
-    log_panel = st.empty()
-    table_panel = st.empty()
-    err_panel = st.empty()
+        btn = st.button("Atualizar documentos", type="primary")
 
-    if btn:
-        # carrega ingest uma vez
-        try:
-            ingest_fn = _import_ingest()
-        except Exception as e:
-            st.error("Não consegui importar o módulo de ingest do CVM/IPE no deploy.")
-            st.code(str(e))
-            st.stop()
+        log_panel = st.empty()
+        table_panel = st.empty()
+        err_panel = st.empty()
 
-        t0 = _now_ms()
-        results: List[Dict[str, Any]] = []
-        errors: Dict[str, str] = {}
-
-        progress = st.progress(0, text="Iniciando...")
-
-        for i, tk in enumerate(tickers, start=1):
-            start = _now_ms()
-            before_docs = count_docs(tk)
-            before_chunks = count_chunks(tk)
-
-            progress.progress(int((i - 1) / max(1, len(tickers)) * 100), text=f"Processando {i}/{len(tickers)} — {tk}")
-
-            with log_panel.container():
-                st.info(f"🔎 {tk} — início | docs={before_docs} | chunks={before_chunks}")
-
-            ingest_report: Optional[Dict[str, Any]] = None
-            ingest_ran = False
-
-            # ---- Ingest
-            # ---- Ingest
+        if btn:
+            # carrega ingest uma vez
             try:
-                ingest_ran = True
-                r = _safe_call(
-                    ingest_fn,
-                    tickers=[tk],
-                    window_months=int(analysis_window_months),
-                    max_docs_per_ticker=int(max_docs),
-                    max_runtime_s=float(max_runtime_s),
-                    max_pdfs_per_ticker=int(max_pdfs),
-                )
-                if isinstance(r, dict):
-                    ingest_report = r
-                else:
-                    ingest_report = {"result": str(r)}
+                ingest_fn = _import_ingest()
             except Exception as e:
-                tb = traceback.format_exc()
-                msg = f"Ingest {type(e).__name__}: {e}"
-                errors[f"{tk}::ingest"] = tb if show_traceback else msg
-                ingest_report = {"error": msg}
+                st.error("Não consegui importar o módulo de ingest do CVM/IPE no deploy.")
+                st.code(str(e))
+                st.stop()
+
+            t0 = _now_ms()
+            results: List[Dict[str, Any]] = []
+            errors: Dict[str, str] = {}
+
+            progress = st.progress(0, text="Iniciando...")
+
+            for i, tk in enumerate(tickers, start=1):
+                start = _now_ms()
+                before_docs = count_docs(tk)
+                before_chunks = count_chunks(tk)
+
+                progress.progress(int((i - 1) / max(1, len(tickers)) * 100), text=f"Processando {i}/{len(tickers)} — {tk}")
+
                 with log_panel.container():
-                    st.error(f"❌ {tk} — ingest falhou | {msg}")
+                    st.info(f"🔎 {tk} — início | docs={before_docs} | chunks={before_chunks}")
 
-            mid_docs = count_docs(tk)
-            mid_chunks = count_chunks(tk)
+                ingest_report: Optional[Dict[str, Any]] = None
+                ingest_ran = False
 
-            with log_panel.container():
-                st.write(f"📥 {tk} — ingest concluído | docs agora={mid_docs} | chunks={mid_chunks}")
-                if ingest_report:
-                    st.caption("Relatório ingest (resumo):")
-                    st.json({
-                        k: ingest_report[k]
-                        for k in ingest_report.keys()
-                        if k in {
-                            "matched",
-                            "inserted",
-                            "skipped",
-                            "pdf_fetched",
-                            "pdf_text_ok",
-                            "error",
-                            "result",
-                            "reason",
-                            "stats",
-                            "errors"
-                        }
+                # ---- Ingest
+                # ---- Ingest
+                try:
+                    ingest_ran = True
+                    r = _safe_call(
+                        ingest_fn,
+                        tickers=[tk],
+                        window_months=int(analysis_window_months),
+                        max_docs_per_ticker=int(max_docs),
+                        max_runtime_s=float(max_runtime_s),
+                        max_pdfs_per_ticker=int(max_pdfs),
+                    )
+                    if isinstance(r, dict):
+                        ingest_report = r
+                    else:
+                        ingest_report = {"result": str(r)}
+                except Exception as e:
+                    tb = traceback.format_exc()
+                    msg = f"Ingest {type(e).__name__}: {e}"
+                    errors[f"{tk}::ingest"] = tb if show_traceback else msg
+                    ingest_report = {"error": msg}
+                    with log_panel.container():
+                        st.error(f"❌ {tk} — ingest falhou | {msg}")
+
+                mid_docs = count_docs(tk)
+                mid_chunks = count_chunks(tk)
+
+                with log_panel.container():
+                    st.write(f"📥 {tk} — ingest concluído | docs agora={mid_docs} | chunks={mid_chunks}")
+                    if ingest_report:
+                        st.caption("Relatório ingest (resumo):")
+                        st.json({
+                            k: ingest_report[k]
+                            for k in ingest_report.keys()
+                            if k in {
+                                "matched",
+                                "inserted",
+                                "skipped",
+                                "pdf_fetched",
+                                "pdf_text_ok",
+                                "error",
+                                "result",
+                                "reason",
+                                "stats",
+                                "errors"
+                            }
+                        })
+
+                # Se ainda não tem docs, explique claramente e pule chunking
+                if mid_docs == 0:
+                    results.append({
+                        "ticker": tk,
+                        "status": "SEM_DOCS",
+                        "docs_before": before_docs,
+                        "chunks_before": before_chunks,
+                        "docs_after_ingest": mid_docs,
+                        "chunks_after_ingest": mid_chunks,
+                        "chunks_inseridos": 0,
+                        "chunks_after": mid_chunks,
+                        "tempo": _fmt_s(_now_ms() - start),
+                        "motivo": (ingest_report.get("reason") if isinstance(ingest_report, dict) else "") or "Sem documentos retornados para a janela/fonte atual.",
+                    })
+                    with log_panel.container():
+                        st.warning(
+                            f"⚠️ {tk} — sem docs após ingest. "
+                            f"Isso explica a execução rápida e ausência de chunks. "
+                            f"Verifique janela (meses), filtros do ingest e disponibilidade de documentos no CVM/IPE."
+                        )
+                    table_panel.dataframe(_make_ingest_results_df(results), use_container_width=True)
+                    continue
+
+                # ---- Chunking
+                try:
+                    chunk_report = process_missing_chunks_for_ticker(
+                        tk,
+                        limit_docs=int(max_docs),
+                        chunk_size=1500,
+                    )
+                    inserted = int(chunk_report.get("chunks_inserted", 0))
+                    after_docs = count_docs(tk)
+                    after_chunks = count_chunks(tk)
+
+                    results.append({
+                        "ticker": tk,
+                        "status": "OK",
+                        "docs_before": before_docs,
+                        "chunks_before": before_chunks,
+                        "docs_after_ingest": mid_docs,
+                        "chunks_after_ingest": mid_chunks,
+                        "chunks_inseridos": int(inserted),
+                        "chunks_after": after_chunks,
+                        "tempo": _fmt_s(_now_ms() - start),
+                        "motivo": "",
                     })
 
-            # Se ainda não tem docs, explique claramente e pule chunking
-            if mid_docs == 0:
-                results.append({
-                    "ticker": tk,
-                    "status": "SEM_DOCS",
-                    "docs_before": before_docs,
-                    "chunks_before": before_chunks,
-                    "docs_after_ingest": mid_docs,
-                    "chunks_after_ingest": mid_chunks,
-                    "chunks_inseridos": 0,
-                    "chunks_after": mid_chunks,
-                    "tempo": _fmt_s(_now_ms() - start),
-                    "motivo": (ingest_report.get("reason") if isinstance(ingest_report, dict) else "") or "Sem documentos retornados para a janela/fonte atual.",
-                })
-                with log_panel.container():
-                    st.warning(
-                        f"⚠️ {tk} — sem docs após ingest. "
-                        f"Isso explica a execução rápida e ausência de chunks. "
-                        f"Verifique janela (meses), filtros do ingest e disponibilidade de documentos no CVM/IPE."
-                    )
+                    with log_panel.container():
+                        st.success(f"✅ {tk} — chunking ok | +{inserted} chunks | chunks={after_chunks} | {_fmt_s(_now_ms()-start)}")
+
+                except Exception as e:
+                    tb = traceback.format_exc()
+                    msg = f"Chunking {type(e).__name__}: {e}"
+                    errors[f"{tk}::chunking"] = tb if show_traceback else msg
+
+                    results.append({
+                        "ticker": tk,
+                        "status": "FALHA_CHUNK",
+                        "docs_before": before_docs,
+                        "chunks_before": before_chunks,
+                        "docs_after_ingest": mid_docs,
+                        "chunks_after_ingest": mid_chunks,
+                        "chunks_inseridos": 0,
+                        "chunks_after": None,
+                        "tempo": _fmt_s(_now_ms() - start),
+                        "motivo": msg,
+                    })
+
+                    with log_panel.container():
+                        st.error(f"❌ {tk} — chunking falhou | {msg} | {_fmt_s(_now_ms()-start)}")
+
                 table_panel.dataframe(_make_ingest_results_df(results), use_container_width=True)
-                continue
 
-            # ---- Chunking
-            try:
-                chunk_report = process_missing_chunks_for_ticker(
-                    tk,
-                    limit_docs=int(max_docs),
-                    chunk_size=1500,
-                )
-                inserted = int(chunk_report.get("chunks_inserted", 0))
-                after_docs = count_docs(tk)
-                after_chunks = count_chunks(tk)
+            progress.progress(100, text="Concluído")
+            st.success(f"Fim. Tempo total: {_fmt_s(_now_ms() - t0)}")
 
-                results.append({
-                    "ticker": tk,
-                    "status": "OK",
-                    "docs_before": before_docs,
-                    "chunks_before": before_chunks,
-                    "docs_after_ingest": mid_docs,
-                    "chunks_after_ingest": mid_chunks,
-                    "chunks_inseridos": int(inserted),
-                    "chunks_after": after_chunks,
-                    "tempo": _fmt_s(_now_ms() - start),
-                    "motivo": "",
-                })
-
-                with log_panel.container():
-                    st.success(f"✅ {tk} — chunking ok | +{inserted} chunks | chunks={after_chunks} | {_fmt_s(_now_ms()-start)}")
-
-            except Exception as e:
-                tb = traceback.format_exc()
-                msg = f"Chunking {type(e).__name__}: {e}"
-                errors[f"{tk}::chunking"] = tb if show_traceback else msg
-
-                results.append({
-                    "ticker": tk,
-                    "status": "FALHA_CHUNK",
-                    "docs_before": before_docs,
-                    "chunks_before": before_chunks,
-                    "docs_after_ingest": mid_docs,
-                    "chunks_after_ingest": mid_chunks,
-                    "chunks_inseridos": 0,
-                    "chunks_after": None,
-                    "tempo": _fmt_s(_now_ms() - start),
-                    "motivo": msg,
-                })
-
-                with log_panel.container():
-                    st.error(f"❌ {tk} — chunking falhou | {msg} | {_fmt_s(_now_ms()-start)}")
-
-            table_panel.dataframe(_make_ingest_results_df(results), use_container_width=True)
-
-        progress.progress(100, text="Concluído")
-        st.success(f"Fim. Tempo total: {_fmt_s(_now_ms() - t0)}")
-
-        if errors:
-            with err_panel.container():
-                st.subheader("🧾 Logs de erro (por etapa)")
-                for key, tb in errors.items():
-                    with st.expander(key):
-                        st.code(tb)
+            if errors:
+                with err_panel.container():
+                    st.subheader("🧾 Logs de erro (por etapa)")
+                    for key, tb in errors.items():
+                        with st.expander(key):
+                            st.code(tb)
 
 
-    st.divider()
+        st.divider()
 
-    try:
-        macro_context = load_latest_macro_context()
-    except Exception:
-        macro_context = {}
+        try:
+            macro_context = load_latest_macro_context()
+        except Exception:
+            macro_context = {}
 
-    try:
-        market_context = build_market_context(macro_context)
-    except Exception:
-        market_context = {}
+        try:
+            market_context = build_market_context(macro_context)
+        except Exception:
+            market_context = {}
 
-    # ------------------------------------------------------------------
-    # LLM
-    # ------------------------------------------------------------------
+        # ------------------------------------------------------------------
+        # LLM
+        # ------------------------------------------------------------------
     
-    # ------------------------------------------------------------------
-    # LLM (RAG + julgamento qualitativo)
-    # ------------------------------------------------------------------
-    st.subheader("🤖 Análise qualitativa")
-    if not tickers:
-        st.info("Sem tickers no snapshot.")
-        return
-    def _pill_class(p: str) -> str:
-        p = (p or "").strip().lower()
-        if p == "forte":
-            return "p6-pill p6-pill-forte"
-        if p == "moderada":
-            return "p6-pill p6-pill-moderada"
-        return "p6-pill p6-pill-fraca"
+        # ------------------------------------------------------------------
+        # LLM (RAG + julgamento qualitativo)
+        # ------------------------------------------------------------------
+        st.subheader("🤖 Análise qualitativa")
+        if not tickers:
+            st.info("Sem tickers no snapshot.")
+            return
+        def _pill_class(p: str) -> str:
+            p = (p or "").strip().lower()
+            if p == "forte":
+                return "p6-pill p6-pill-forte"
+            if p == "moderada":
+                return "p6-pill p6-pill-moderada"
+            return "p6-pill p6-pill-fraca"
 
-    def _as_list(x: Any) -> List[str]:
-        if x is None:
-            return []
-        if isinstance(x, list):
-            return [str(i) for i in x if str(i).strip()]
-        if isinstance(x, str):
-            s = x.strip()
-            return [s] if s else []
-        return [str(x)]
+        def _as_list(x: Any) -> List[str]:
+            if x is None:
+                return []
+            if isinstance(x, list):
+                return [str(i) for i in x if str(i).strip()]
+            if isinstance(x, str):
+                s = x.strip()
+                return [s] if s else []
+            return [str(x)]
 
-    def _render_card(ticker: str, result: Dict[str, Any], top_k_used: int, period_ref: str) -> None:
-      def esc(x: Any) -> str:
-          return html.escape("" if x is None else str(x).strip())
+        def _render_card(ticker: str, result: Dict[str, Any], top_k_used: int, period_ref: str) -> None:
+          def esc(x: Any) -> str:
+              return html.escape("" if x is None else str(x).strip())
 
-      persp_raw = (result.get("perspectiva_compra", "") or "").strip()
-      resumo_raw = (result.get("resumo", "") or "").strip()
-      consider_raw = (
-          result.get("consideracoes_llm")
-          or result.get("consideracoes")
-          or result.get("observacoes")
-          or result.get("rationale")
-          or ""
-      )
-      confianca_raw = result.get("confianca", result.get("confidence", ""))
+          persp_raw = (result.get("perspectiva_compra", "") or "").strip()
+          resumo_raw = (result.get("resumo", "") or "").strip()
+          consider_raw = (
+              result.get("consideracoes_llm")
+              or result.get("consideracoes")
+              or result.get("observacoes")
+              or result.get("rationale")
+              or ""
+          )
+          confianca_raw = result.get("confianca", result.get("confidence", ""))
 
-      evolucao_raw = result.get("evolucao_estrategica", "") or ""
-      consistencia_raw = result.get("consistencia_do_discurso", "") or result.get("consistencia_entre_periodos", "") or ""
-      execucao_raw = result.get("execucao_vs_promessa", "") or ""
-      mudancas_raw = result.get("mudancas_estrategicas", "") or result.get("mudancas_capex_divida_dividendos_ma", "") or ""
-      tese_final_raw = result.get("tese_final", "") or ""
+          evolucao_raw = result.get("evolucao_estrategica", "") or ""
+          consistencia_raw = result.get("consistencia_do_discurso", "") or result.get("consistencia_entre_periodos", "") or ""
+          execucao_raw = result.get("execucao_vs_promessa", "") or ""
+          mudancas_raw = result.get("mudancas_estrategicas", "") or result.get("mudancas_capex_divida_dividendos_ma", "") or ""
+          tese_final_raw = result.get("tese_final", "") or ""
 
-      pontos = _as_list(result.get("pontos_chave") or result.get("pontos-chave") or result.get("pontos"))
-      riscos = _as_list(result.get("riscos"))
-      sinais = _as_list(result.get("sinais_recorrentes"))
-      evid = _as_list(result.get("evidencias") or result.get("evidence") or result.get("citacoes"))
+          pontos = _as_list(result.get("pontos_chave") or result.get("pontos-chave") or result.get("pontos"))
+          riscos = _as_list(result.get("riscos"))
+          sinais = _as_list(result.get("sinais_recorrentes"))
+          evid = _as_list(result.get("evidencias") or result.get("evidence") or result.get("citacoes"))
 
-      docs_usados = result.get("docs_usados") or result.get("docs_used") or result.get("documentos") or None
-      evid_usadas = result.get("evid_usadas") or result.get("chunks_used") or result.get("evidencias_usadas") or None
+          docs_usados = result.get("docs_usados") or result.get("docs_used") or result.get("documentos") or None
+          evid_usadas = result.get("evid_usadas") or result.get("chunks_used") or result.get("evidencias_usadas") or None
 
-      ticker_e = esc(ticker)
-      persp_e = esc(persp_raw)
-      resumo_e = esc(resumo_raw)
-      consider_e = esc(consider_raw)
-      confianca_e = esc(confianca_raw)
-      period_ref_e = esc(period_ref)
-      evolucao_e = esc(evolucao_raw)
-      consistencia_e = esc(consistencia_raw)
-      execucao_e = esc(execucao_raw)
-      mudancas_e = esc(mudancas_raw)
-      tese_final_e = esc(tese_final_raw)
+          ticker_e = esc(ticker)
+          persp_e = esc(persp_raw)
+          resumo_e = esc(resumo_raw)
+          consider_e = esc(consider_raw)
+          confianca_e = esc(confianca_raw)
+          period_ref_e = esc(period_ref)
+          evolucao_e = esc(evolucao_raw)
+          consistencia_e = esc(consistencia_raw)
+          execucao_e = esc(execucao_raw)
+          mudancas_e = esc(mudancas_raw)
+          tese_final_e = esc(tese_final_raw)
 
-      st.markdown(
-          f"""
-          <div class="p6-card">
-            <div class="p6-head">
-              <div class="p6-title-sm">{ticker_e}</div>
-              <div class="p6-badges">
-                <span class="{_pill_class(persp_raw)}">{(persp_e or "—").upper()}</span>
-                <span class="p6-pill p6-pill-info">Top-K: {int(top_k_used)}</span>
-                <span class="p6-pill p6-pill-info">Janela: {period_ref_e}</span>
-                {f'<span class="p6-pill p6-pill-info">Docs: {int(docs_usados)}</span>' if docs_usados is not None else ""}
-                {f'<span class="p6-pill p6-pill-info">Evidências: {int(evid_usadas)}</span>' if evid_usadas is not None else ""}
+          st.markdown(
+              f"""
+              <div class="p6-card">
+                <div class="p6-head">
+                  <div class="p6-title-sm">{ticker_e}</div>
+                  <div class="p6-badges">
+                    <span class="{_pill_class(persp_raw)}">{(persp_e or "—").upper()}</span>
+                    <span class="p6-pill p6-pill-info">Top-K: {int(top_k_used)}</span>
+                    <span class="p6-pill p6-pill-info">Janela: {period_ref_e}</span>
+                    {f'<span class="p6-pill p6-pill-info">Docs: {int(docs_usados)}</span>' if docs_usados is not None else ""}
+                    {f'<span class="p6-pill p6-pill-info">Evidências: {int(evid_usadas)}</span>' if evid_usadas is not None else ""}
+                  </div>
+                </div>
+
+                <div class="p6-grid">
+                  <div><span class="p6-k">Resumo:</span> <span class="p6-muted">{resumo_e or "—"}</span></div>
+                  {f'<div><span class="p6-k">Evolução estratégica:</span> <span class="p6-muted">{evolucao_e}</span></div>' if evolucao_raw else ''}
+                  {f'<div><span class="p6-k">Consistência do discurso:</span> <span class="p6-muted">{consistencia_e}</span></div>' if consistencia_raw else ''}
+                  {f'<div><span class="p6-k">Execução vs promessa:</span> <span class="p6-muted">{execucao_e}</span></div>' if execucao_raw else ''}
+                  {f'<div><span class="p6-k">Mudanças estratégicas:</span> <span class="p6-muted">{mudancas_e}</span></div>' if mudancas_raw else ''}
+                  {f'<div><span class="p6-k">Tese final:</span> <span class="p6-muted">{tese_final_e}</span></div>' if tese_final_raw else ''}
+                  {f'<div><span class="p6-k">Considerações da LLM:</span> <span class="p6-muted">{consider_e}</span></div>' if consider_raw else ''}
+                  {f'<div><span class="p6-k">Confiança:</span> <span class="p6-muted">{confianca_e}</span></div>' if confianca_raw else ''}
+                </div>
+
+                <hr class="p6-hr"/>
+
+                <div class="p6-grid">
+                  <div>
+                    <span class="p6-k">Pontos-chave</span>
+                    <ul class="p6-list">
+                      {''.join([f'<li>{html.escape(str(p))}</li>' for p in pontos]) if pontos else '<li class="p6-muted">—</li>'}
+                    </ul>
+                  </div>
+
+                  <div>
+                    <span class="p6-k">Riscos</span>
+                    <ul class="p6-list">
+                      {''.join([f'<li>{html.escape(str(r))}</li>' for r in riscos]) if riscos else '<li class="p6-muted">—</li>'}
+                    </ul>
+                  </div>
+
+                  <div>
+                    <span class="p6-k">Sinais recorrentes</span>
+                    <ul class="p6-list">
+                      {''.join([f'<li>{html.escape(str(s))}</li>' for s in sinais]) if sinais else '<li class="p6-muted">—</li>'}
+                    </ul>
+                  </div>
+                </div>
               </div>
-            </div>
+              """,
+              unsafe_allow_html=True,
+          )
 
-            <div class="p6-grid">
-              <div><span class="p6-k">Resumo:</span> <span class="p6-muted">{resumo_e or "—"}</span></div>
-              {f'<div><span class="p6-k">Evolução estratégica:</span> <span class="p6-muted">{evolucao_e}</span></div>' if evolucao_raw else ''}
-              {f'<div><span class="p6-k">Consistência do discurso:</span> <span class="p6-muted">{consistencia_e}</span></div>' if consistencia_raw else ''}
-              {f'<div><span class="p6-k">Execução vs promessa:</span> <span class="p6-muted">{execucao_e}</span></div>' if execucao_raw else ''}
-              {f'<div><span class="p6-k">Mudanças estratégicas:</span> <span class="p6-muted">{mudancas_e}</span></div>' if mudancas_raw else ''}
-              {f'<div><span class="p6-k">Tese final:</span> <span class="p6-muted">{tese_final_e}</span></div>' if tese_final_raw else ''}
-              {f'<div><span class="p6-k">Considerações da LLM:</span> <span class="p6-muted">{consider_e}</span></div>' if consider_raw else ''}
-              {f'<div><span class="p6-k">Confiança:</span> <span class="p6-muted">{confianca_e}</span></div>' if confianca_raw else ''}
-            </div>
+          if evid:
+              with st.expander(f"📌 Evidências (trechos) — {ticker}", expanded=False):
+                  for i, e in enumerate(evid[:15], start=1):
+                      st.markdown(f"**{i}.** {html.escape(str(e))}")
 
-            <hr class="p6-hr"/>
-
-            <div class="p6-grid">
-              <div>
-                <span class="p6-k">Pontos-chave</span>
-                <ul class="p6-list">
-                  {''.join([f'<li>{html.escape(str(p))}</li>' for p in pontos]) if pontos else '<li class="p6-muted">—</li>'}
-                </ul>
-              </div>
-
-              <div>
-                <span class="p6-k">Riscos</span>
-                <ul class="p6-list">
-                  {''.join([f'<li>{html.escape(str(r))}</li>' for r in riscos]) if riscos else '<li class="p6-muted">—</li>'}
-                </ul>
-              </div>
-
-              <div>
-                <span class="p6-k">Sinais recorrentes</span>
-                <ul class="p6-list">
-                  {''.join([f'<li>{html.escape(str(s))}</li>' for s in sinais]) if sinais else '<li class="p6-muted">—</li>'}
-                </ul>
-              </div>
-            </div>
-          </div>
-          """,
-          unsafe_allow_html=True,
-      )
-
-      if evid:
-          with st.expander(f"📌 Evidências (trechos) — {ticker}", expanded=False):
-              for i, e in enumerate(evid[:15], start=1):
-                  st.markdown(f"**{i}.** {html.escape(str(e))}")
 
     # Defaults fixos (sem UI)
     run_llm_all = True
@@ -1190,7 +1192,7 @@ def render() -> None:
         """
         <div class="p6-section-banner">
           <div class="ttl">Leitura rápida</div>
-          <div class="txt">Veja primeiro os blocos coloridos de oportunidade, neutralidade e perigo. Para entender o motivo, abra a análise detalhada da empresa.</div>
+          <div class="txt">Veja primeiro os blocos coloridos. Abra a análise detalhada apenas quando quiser aprofundar o motivo.</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1573,6 +1575,10 @@ Responda APENAS em JSON válido neste formato:
 CONTEXTO TEMPORAL:
 {contexto}
 """
+    st.divider()
+    st.subheader("🔄 Atualizações manuais")
+    _render_update_evidencias_panel()
+
     if st.button("🔄 Atualizar relatório com LLM agora"):
         client = llm_factory.get_llm_client()
 
