@@ -64,12 +64,11 @@ Você DEVE:
 
 📊 INTERPRETAÇÃO MACRO (OBRIGATÓRIO)
 
-Use o contexto macro fornecido, mas vá além:
-
-- relacione com cenário global
-- considere fluxo de capital
-- considere comportamento de juros internacionais
-- considere dólar, commodities e risco país
+Use macro_context, market_context e macro_company_map de forma explícita:
+- diferencie nível e tendência de Selic, câmbio, inflação, confiança e juros reais
+- conecte cada ticker às suas sensibilidades macro mapeadas
+- considere fluxo de capital, juros internacionais, dólar, commodities e risco país
+- explique quando o macro reforça ou enfraquece a tese qualitativa que vem dos documentos
 
 ---
 
