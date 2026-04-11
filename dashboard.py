@@ -126,7 +126,7 @@ def _load_page_renderer(page_key: str) -> Callable[[], None]:
         "Avançada": ("page.advanced", "advanced"),
         "Criação de Portfólio": ("page.criacao_portfolio", "criacao_portfolio"),
         "Análises de Portfólio": ("page.analises_portfolio", "analises_portfolio"),
-        "Análises de Portfólio V2": ("page.analises_portfolio_v2", "analises_portfolio_v2"),
+        #"Análises de Portfólio V2": ("page.analises_portfolio_v2", "analises_portfolio_v2"),
         "Configurações": ("page.configuracoes", "configuracoes"),
     }
     paths = mapping.get(page_key)
@@ -165,7 +165,7 @@ with st.sidebar:
             "Avançada",
             "Criação de Portfólio",
             "Análises de Portfólio",
-            "Análises de Portfólio V2",
+            #"Análises de Portfólio V2",
             "Configurações",
         ],
         index=0,
