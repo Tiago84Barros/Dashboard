@@ -1189,34 +1189,13 @@ def render() -> None:
     st.markdown(
         """
         <div class="p6-section-banner">
-          <div class="ttl">Leitura rápida para decidir</div>
-          <div class="txt">A ideia aqui é simples: mostrar primeiro os sinais de oportunidade, neutralidade e perigo, com pouca densidade. Quando você quiser entender o motivo, abra a análise detalhada por empresa logo abaixo.</div>
-        </div>
-        <div class="p6-signal-wrap">
-          <div class="p6-signal-grid">
-            <div class="p6-signal-card p6-signal-good">
-              <h4>🟢 Oportunidade</h4>
-              <div class="main">Aumentar / olhar com mais atenção</div>
-              <div class="sub">Procure ativos em leitura forte, com execução consistente e sinais construtivos no relatório por empresa.</div>
-            </div>
-            <div class="p6-signal-card p6-signal-neutral">
-              <h4>🔵 Neutralidade</h4>
-              <div class="main">Manter / acompanhar</div>
-              <div class="sub">Use este grupo quando a tese segue válida, mas ainda depende de confirmação de execução, macro ou alocação de capital.</div>
-            </div>
-            <div class="p6-signal-card p6-signal-bad">
-              <h4>🔴 Perigo</h4>
-              <div class="main">Reduzir / revisar defensivamente</div>
-              <div class="sub">Priorize aqui riscos regulatórios, dívida mal explicada, deterioração prospectiva e contradições entre discurso e entrega.</div>
-            </div>
-          </div>
-          <div class="p6-deepnote">Quando precisar aprofundar, abra <b>Ver análise detalhada</b> em cada empresa. Ali ficam tese, riscos, catalisadores, execução vs promessa, mudanças estratégicas e evidências documentais.</div>
+          <div class="ttl">Leitura rápida</div>
+          <div class="txt">Veja primeiro os blocos coloridos de oportunidade, neutralidade e perigo. Para entender o motivo, abra a análise detalhada da empresa.</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    st.caption("Montado a partir do que está salvo em patch6_runs. Ao rodar a LLM, este relatório é atualizado automaticamente.")
-    
+        
     report_box = st.empty()
     
     def _render_saved_report():
