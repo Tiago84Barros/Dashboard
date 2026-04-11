@@ -36,6 +36,15 @@ from core.patch6_schema import (
 )
 from core.patch6_service import run_portfolio_llm_report, safe_call_llm
 
+try:
+    from core.macro_context import load_latest_macro_context
+    from core.market_context import build_market_context
+    from core.asset_macro_profile import get_asset_macro_profile
+except Exception:  # pragma: no cover
+    load_latest_macro_context = None
+    build_market_context = None
+    get_asset_macro_profile = None
+
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Formatting helpers
@@ -178,7 +187,7 @@ def _main_strength(company: CompanyAnalysis) -> str:
 
 def _decision_from_company(company: CompanyAnalysis) -> str:
     action = _clean_action_label(company.recommended_action)
-    if action in {"aumentar", "reduzir", "revisar"}:
+    if action != "manter":
         return action
 
     forward = strip_html(company.forward_direction).strip().lower()
@@ -187,11 +196,11 @@ def _decision_from_company(company: CompanyAnalysis) -> str:
 
     if risk_level == "ALTO":
         return "reduzir"
-    if forward == "deteriorando":
-        return "revisar" if company.attention_score < 55 else "reduzir"
-    if perspectiva == "forte" and company.robustez_qualitativa >= 0.60 and company.confianca >= 0.65:
+    if perspectiva == "forte" and forward != "deteriorando" and company.robustez_qualitativa >= 0.70:
         return "aumentar"
-    if forward == "melhorando" and company.robustez_qualitativa >= 0.55:
+    if forward == "deteriorando" and company.attention_score >= 35:
+        return "revisar"
+    if forward == "melhorando" and company.robustez_qualitativa >= 0.65:
         return "aumentar"
     return "manter"
 
@@ -245,75 +254,51 @@ def _split_report_highlights(report: Dict[str, Any]) -> Dict[str, List[str]]:
     }
 
 
-def _render_decision_cycle(analysis: PortfolioAnalysis, stats: PortfolioStats, all_tickers: Optional[List[str]] = None) -> None:
+def _render_decision_cycle(analysis: PortfolioAnalysis, stats: PortfolioStats) -> None:
     groups = {"aumentar": [], "manter": [], "revisar": [], "reduzir": []}
-    covered = set()
     for company in analysis.companies.values():
         groups.setdefault(_decision_from_company(company), []).append(company.ticker)
-        covered.add(company.ticker)
 
-    missing = []
-    if all_tickers:
-        missing = [t for t in all_tickers if t not in covered]
-        if missing:
-            groups.setdefault("revisar", []).extend(missing)
+    forward_values = [c.forward_score for c in analysis.companies.values() if c.forward_score > 0]
+    avg_forward = round(mean(forward_values)) if forward_values else 0
+    if avg_forward >= max(55, analysis.score_medio):
+        exec_status, exec_tone = "Melhorando", "good"
+    elif avg_forward and avg_forward <= max(45, analysis.score_medio - 8):
+        exec_status, exec_tone = "Deteriorando", "bad"
+    else:
+        exec_status, exec_tone = "Estável", "warn"
 
-    def _group_card(label: str, tickers: List[str], tone: str, empty_label: str, note: str = "") -> str:
-        count = len(tickers)
-        names = ", ".join(tickers) if tickers else empty_label
-        subtitle = f"{count} ativo(s)" if count else "Sem destaque relevante neste ciclo"
-        extra = f'<div class="p6-hero-sub" style="margin-top:4px">{_esc(note)}</div>' if note else ""
-        return f"""
-        <div class="p6-hero-card {tone} p6-decision-card">
-          <div class="p6-hero-label">{_esc(label)}</div>
-          <div class="p6-decision-list">{_esc(names)}</div>
-          <div class="p6-hero-sub">{_esc(subtitle)}</div>
-          {extra}
-        </div>
-        """
+    high_attention = sum(1 for c in analysis.companies.values() if strip_html(c.attention_level).lower() == "alta")
+    risk_status = "Controlado" if high_attention == 0 else ("Elevado" if high_attention >= 2 else "Em alta")
+    risk_tone = "good" if high_attention == 0 else ("bad" if high_attention >= 2 else "warn")
 
     st.markdown("## 🧭 Decisão do Ciclo")
-    left, right = st.columns([1.15, 0.85])
-    with left:
-        _render_risk_ranking(analysis, compact=True)
+    cols = st.columns(3)
+    decision_specs = [
+        ("Aumentar", groups.get("aumentar", []), "good"),
+        ("Manter / Revisar", groups.get("manter", []) + groups.get("revisar", []), "warn"),
+        ("Reduzir", groups.get("reduzir", []), "bad"),
+    ]
+    for col, (label, tickers, tone) in zip(cols, decision_specs):
+        tickers_text = ", ".join(tickers) if tickers else "Nenhum ativo neste grupo"
+        subtitle = "Movimento sugerido para o próximo ciclo" if tickers else "Sem urgência identificada"
+        col.markdown(_render_hero_stat(label, tickers_text, subtitle, tone), unsafe_allow_html=True)
 
-    with right:
-        st.markdown(_group_card("🟢 Oportunidade", groups.get("aumentar", []), "good", "Nenhum ativo"), unsafe_allow_html=True)
-        note = f"Inclui {len(missing)} ativo(s) sem cobertura LLM no ciclo" if missing else ""
-        st.markdown(_group_card("🔵 Neutralidade", groups.get("manter", []) + groups.get("revisar", []), "neutral", "Nenhum ativo", note=note), unsafe_allow_html=True)
-        st.markdown(_group_card("🔴 Perigo", groups.get("reduzir", []), "bad", "Nenhum ativo"), unsafe_allow_html=True)
+    st.markdown(
+        "<div class='p6-signal-row'>"
+        + _render_signal_chip("Qualidade", stats.label_qualidade(), "good" if stats.label_qualidade() == "Alta" else "warn")
+        + _render_signal_chip("Execução", exec_status, exec_tone)
+        + _render_signal_chip("Risco agregado", risk_status, risk_tone)
+        + _render_signal_chip("Forward médio", f"{avg_forward}/100" if avg_forward else "—", "neutral")
+        + "</div>",
+        unsafe_allow_html=True,
+    )
 
 
-def _render_risk_ranking(analysis: PortfolioAnalysis, compact: bool = False) -> None:
+def _render_risk_ranking(analysis: PortfolioAnalysis) -> None:
     ranking = sorted(analysis.companies.values(), key=lambda c: (c.attention_score, c.forward_score, c.score_qualitativo), reverse=True)
     st.markdown("## ⚠️ Ranking de Risco")
-
-    topn = 5 if compact else 8
-    rows = ranking[:topn]
-    if compact:
-        for idx, company in enumerate(rows, start=1):
-            risk_label, tone = _risk_tone(company)
-            risk_text = _main_risk(company)
-            action = _decision_from_company(company)
-            st.markdown(
-                f"""
-                <div class="p6-risk-card {tone} compact">
-                  <div class="p6-risk-rank">{idx}</div>
-                  <div class="p6-risk-main">
-                    <div class="p6-risk-top compact">
-                      <span class="p6-risk-ticker compact">{_esc(company.ticker)}</span>
-                      <span class="p6-pill {tone}">{_esc(risk_label)}</span>
-                      <span class="p6-pill neutral">{_icon_from_action(action)} {_esc(_ACTION_VERBS.get(action, 'Manter'))}</span>
-                    </div>
-                    <div class="p6-risk-text compact">{_esc(risk_text)}</div>
-                  </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        return
-
-    for idx, company in enumerate(rows, start=1):
+    for idx, company in enumerate(ranking[:5], start=1):
         risk_label, tone = _risk_tone(company)
         risk_text = _main_risk(company)
         action = _decision_from_company(company)
@@ -328,7 +313,7 @@ def _render_risk_ranking(analysis: PortfolioAnalysis, compact: bool = False) -> 
                   <span class="p6-pill neutral">{_icon_from_action(action)} {_esc(_ACTION_VERBS.get(action, 'Manter'))}</span>
                 </div>
                 <div class="p6-risk-text">{_esc(risk_text)}</div>
-                <div class="p6-risk-meta">Ação sugerida: {_esc(_ACTION_VERBS.get(action, "Manter"))}</div>
+                <div class="p6-risk-meta">Score {_fmt_score(company.score_qualitativo)} • Conf. {_fmt_confidence(company.confianca)} • Atenção {company.attention_score:.0f}/100</div>
               </div>
             </div>
             """,
@@ -347,7 +332,7 @@ def _render_portfolio_dynamics(analysis: PortfolioAnalysis) -> None:
     cols[2].markdown(_render_hero_stat("Dispersão narrativa", f"{dispersion_high} ativo(s)", "Quanto maior, menor previsibilidade", "bad" if dispersion_high >= 2 else "warn"), unsafe_allow_html=True)
 
 
-def _render_company_executive_summary(company: CompanyAnalysis) -> None:
+def _render_company_executive_summary(company: CompanyAnalysis, macro_context: Optional[Dict[str, Any]] = None, market_context: Optional[Dict[str, Any]] = None) -> None:
     action = _decision_from_company(company)
     action_label = _ACTION_VERBS.get(action, "Manter")
     action_tone = _tone_from_action(action)
@@ -380,6 +365,154 @@ def _render_company_executive_summary(company: CompanyAnalysis) -> None:
         """,
         unsafe_allow_html=True,
     )
+
+
+
+
+def _fmt_num(value: Any, decimals: int = 2, suffix: str = "") -> str:
+    num = safe_float(value, default=float("nan"))
+    try:
+        if num != num:  # NaN
+            return "—"
+    except Exception:
+        return "—"
+    return f"{num:.{decimals}f}{suffix}"
+
+
+def _fmt_pct(value: Any, decimals: int = 2) -> str:
+    return _fmt_num(value, decimals=decimals, suffix="%")
+
+
+def _regime_pt(value: str) -> str:
+    raw = strip_html(value).strip().lower()
+    mapping = {
+        "muito_alta": "muito alta",
+        "alta": "alta",
+        "moderada": "moderada",
+        "baixa": "baixa",
+        "muito_restritivo": "muito restritivo",
+        "restritivo": "restritivo",
+        "neutro_a_restritivo": "neutro a restritivo",
+        "baixo": "baixo",
+        "pressionado": "pressionada",
+        "acima_da_meta": "acima da meta",
+        "controlado": "controlada",
+        "muito_depreciado": "muito depreciado",
+        "depreciado": "depreciado",
+        "intermediario": "intermediário",
+        "apreciado": "apreciado",
+        "melhora_relevante": "melhora relevante",
+        "leve_melhora": "leve melhora",
+        "deterioracao_relevante": "deterioração relevante",
+        "leve_deterioracao": "leve deterioração",
+        "indefinido": "indefinido",
+    }
+    return mapping.get(raw, raw or "indefinido")
+
+
+def _load_macro_bundle() -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    macro_context: Dict[str, Any] = {}
+    market_context: Dict[str, Any] = {}
+    if load_latest_macro_context is None:
+        return macro_context, market_context
+    try:
+        macro_context = load_latest_macro_context() or {}
+        if build_market_context is not None:
+            market_context = build_market_context(macro_context) or {}
+    except Exception:
+        macro_context = {}
+        market_context = {}
+    return macro_context, market_context
+
+
+def _render_macro_snapshot(macro_context: Dict[str, Any], market_context: Dict[str, Any]) -> None:
+    mensal = macro_context.get("mensal", {}) or {}
+    anual = macro_context.get("anual", {}) or {}
+    if not mensal and not anual:
+        return
+
+    st.markdown("## 🌍 Macro em números")
+    cols = st.columns(6)
+    cards = [
+        ("Selic", _fmt_pct(mensal.get("selic_final") if mensal.get("selic_final") is not None else anual.get("selic")), _regime_pt(market_context.get("selic_regime", "")), "warn"),
+        ("Dólar", _fmt_num(mensal.get("cambio_final") if mensal.get("cambio_final") is not None else anual.get("cambio")), _regime_pt(market_context.get("fx_regime", "")), "good"),
+        ("IPCA 12m", _fmt_pct(mensal.get("ipca_12m") if mensal.get("ipca_12m") is not None else anual.get("ipca")), _regime_pt(market_context.get("inflation_regime", "")), "neutral"),
+        ("PIB", _fmt_pct(anual.get("pib")), "atividade", "neutral"),
+        ("Confiança", _fmt_num(mensal.get("icc_final") if mensal.get("icc_final") is not None else anual.get("icc")), _regime_pt(market_context.get("confidence_regime", "")), "neutral"),
+        ("Juro real", _fmt_pct(mensal.get("juros_real_ex_ante_12m") if mensal.get("juros_real_ex_ante_12m") is not None else anual.get("juros_real_ex_ante")), _regime_pt(market_context.get("real_rate_regime", "")), "bad"),
+    ]
+    for col, (title, value, subtitle, tone) in zip(cols, cards):
+        col.markdown(_render_hero_stat(title, value, subtitle or "—", tone), unsafe_allow_html=True)
+
+
+def _company_macro_lines(company: CompanyAnalysis, macro_context: Dict[str, Any], market_context: Dict[str, Any]) -> List[str]:
+    mensal = macro_context.get("mensal", {}) or {}
+    anual = macro_context.get("anual", {}) or {}
+    ticker = company.ticker.upper()
+    sens = [strip_html(s).lower() for s in (company.sensibilidades_macro or []) if strip_html(s)]
+    if get_asset_macro_profile is not None:
+        try:
+            prof = get_asset_macro_profile(ticker) or {}
+            sens.extend([str(x).lower() for x in (prof.get("macro_sensitivities") or []) if str(x).strip()])
+        except Exception:
+            pass
+    sens = list(dict.fromkeys(sens))
+
+    selic = mensal.get("selic_final") if mensal.get("selic_final") is not None else anual.get("selic")
+    cambio = mensal.get("cambio_final") if mensal.get("cambio_final") is not None else anual.get("cambio")
+    ipca = mensal.get("ipca_12m") if mensal.get("ipca_12m") is not None else anual.get("ipca")
+    pib = anual.get("pib")
+    icc = mensal.get("icc_final") if mensal.get("icc_final") is not None else anual.get("icc")
+    juros_real = mensal.get("juros_real_ex_ante_12m") if mensal.get("juros_real_ex_ante_12m") is not None else anual.get("juros_real_ex_ante")
+
+    lines: List[str] = []
+
+    if any(k in sens for k in ["juros", "credito", "atividade_domestica", "consumo", "investimento", "mercado_de_capitais"]):
+        lines.append(
+            f"Selic em {_fmt_pct(selic)} e juro real em {_fmt_pct(juros_real)} mantêm o custo de capital em regime "
+            f"{_regime_pt(market_context.get('selic_regime', ''))}, o que pesa mais sobre teses dependentes de expansão, crédito ou re-rating."
+        )
+
+    if any(k in sens for k in ["cambio", "demanda_externa", "atividade_global"]):
+        lines.append(
+            f"Dólar em {_fmt_num(cambio)}, classificado como {_regime_pt(market_context.get('fx_regime', ''))}, "
+            f"altera a assimetria de receita e margem para ativos com exposição externa."
+        )
+
+    if any(k in sens for k in ["inflacao", "regulacao"]):
+        lines.append(
+            f"IPCA em {_fmt_pct(ipca)} no recorte disponível ajuda a ler repasse tarifário, indexação contratual e pressão de custos no regime atual."
+        )
+
+    if any(k in sens for k in ["atividade_domestica", "consumo", "credito", "atividade_industrial", "vacancia"]):
+        lines.append(
+            f"PIB em {_fmt_pct(pib)} e confiança em {_fmt_num(icc)} sugerem uma leitura de demanda doméstica que pode reforçar ou enfraquecer a execução operacional."
+        )
+
+    if any(k in sens for k in ["petroleo", "minerio", "china", "commodities"]):
+        lines.append(
+            f"No mapa macro desta empresa, o câmbio em {_fmt_num(cambio)} é o dado quantitativo doméstico mais útil para a leitura atual; "
+            f"o restante da tese segue dependente de variáveis externas e setoriais não capturadas diretamente em info_economica."
+        )
+
+    if not lines:
+        lines.append(
+            f"O recorte macro disponível mostra Selic em {_fmt_pct(selic)}, dólar em {_fmt_num(cambio)} e IPCA em {_fmt_pct(ipca)}; "
+            "nesta empresa, o impacto aparece mais como pano de fundo do que como driver dominante explícito."
+        )
+
+    return lines[:3]
+
+
+def _render_company_macro_context(company: CompanyAnalysis, macro_context: Dict[str, Any], market_context: Dict[str, Any]) -> None:
+    if not macro_context:
+        return
+    st.markdown("**Impacto Macro Atual**")
+    for line in _company_macro_lines(company, macro_context, market_context):
+        st.markdown(
+            f"<div style='font-size:15px;line-height:1.6;margin:4px 0;'>• {_esc(line)}</div>",
+            unsafe_allow_html=True,
+        )
 
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -670,86 +803,85 @@ def _render_allocation_section(allocation_rows: List[AllocationRow]) -> None:
 
 
 def _render_structured_portfolio_report(report: Dict[str, Any], mode_label: str, analysis: PortfolioAnalysis) -> None:
-    with st.expander("🧠 Ver relatório estratégico completo", expanded=False):
-        st.markdown("## 🧠 Relatório Estratégico do Portfólio")
-        st.caption(f"Modo utilizado: {mode_label}")
+    st.markdown("## 🧠 Relatório Estratégico do Portfólio")
+    st.caption(f"Modo utilizado: {mode_label}")
 
-        highlights = _split_report_highlights(report)
+    highlights = _split_report_highlights(report)
 
-        _render_banner(
-            "Leitura executiva",
-            strip_html(report.get("executive_summary", "")) or "Sem diagnóstico executivo consolidado.",
-            "neutral",
-            "🧠",
-        )
+    _render_banner(
+        "Leitura executiva",
+        strip_html(report.get("executive_summary", "")) or "Sem diagnóstico executivo consolidado.",
+        "neutral",
+        "🧠",
+    )
 
-        col1, col2 = st.columns([1.2, 1.0])
-        with col1:
-            _render_section_text("Base analítica", report.get("analytical_basis", ""))
-            _render_section_text("Identidade da carteira", report.get("portfolio_identity", ""))
-            _render_section_text("Impacto macro dominante", report.get("macro_reading", ""))
-        with col2:
-            if highlights["strengths"]:
-                _render_section_list("🟢 Forças principais", highlights["strengths"], limit=3)
-            if highlights["weaknesses"]:
-                _render_section_list("🟠 Fragilidades principais", highlights["weaknesses"], limit=3)
-            if highlights["hidden"]:
-                _render_section_list("🔴 Riscos invisíveis", highlights["hidden"], limit=3)
+    col1, col2 = st.columns([1.2, 1.0])
+    with col1:
+        _render_section_text("Base analítica", report.get("analytical_basis", ""))
+        _render_section_text("Identidade da carteira", report.get("portfolio_identity", ""))
+        _render_section_text("Impacto macro dominante", report.get("macro_reading", ""))
+    with col2:
+        if highlights["strengths"]:
+            _render_section_list("🟢 Forças principais", highlights["strengths"], limit=3)
+        if highlights["weaknesses"]:
+            _render_section_list("🟠 Fragilidades principais", highlights["weaknesses"], limit=3)
+        if highlights["hidden"]:
+            _render_section_list("🔴 Riscos invisíveis", highlights["hidden"], limit=3)
 
-        macro_deps = report.get("macro_scenario_dependencies", []) or []
-        if macro_deps:
-            _render_section_list("Dependências de cenário", macro_deps, limit=4)
+    macro_deps = report.get("macro_scenario_dependencies", []) or []
+    if macro_deps:
+        _render_section_list("Dependências de cenário", macro_deps, limit=4)
 
-        misalign = highlights["misalign"]
-        if misalign:
-            _render_banner("Desalinhamentos identificados", " • ".join(misalign), "warn", "⚠️")
+    misalign = highlights["misalign"]
+    if misalign:
+        _render_banner("Desalinhamentos identificados", " • ".join(misalign), "warn", "⚠️")
 
-        action_plan = highlights["action"]
-        if action_plan:
-            with st.expander("Ver plano de ação", expanded=False):
-                for item in action_plan:
-                    st.markdown(f"<div class='p6-action-line'>✅ {_esc(item)}</div>", unsafe_allow_html=True)
+    action_plan = highlights["action"]
+    if action_plan:
+        st.markdown("### 🎯 Plano de ação")
+        for item in action_plan:
+            st.markdown(f"<div class='p6-action-line'>✅ {_esc(item)}</div>", unsafe_allow_html=True)
 
-        roles = report.get("asset_roles", []) or []
-        if roles:
-            with st.expander("Ver papel estratégico dos ativos", expanded=False):
-                for item in roles[: min(6, len(analysis.companies))]:
-                    if not isinstance(item, dict):
-                        continue
-                    ticker = strip_html(item.get("ticker") or "—")
-                    role = strip_html(item.get("role") or "")
-                    rationale = strip_html(item.get("rationale") or "")
-                    st.markdown(
-                        f"<div class='p6-role-card'><strong>{_esc(ticker)}</strong>"
-                        f"<span>{_esc(role)}</span><p>{_esc(rationale or '—')}</p></div>",
-                        unsafe_allow_html=True,
-                    )
+    roles = report.get("asset_roles", []) or []
+    if roles:
+        st.markdown("### 🧩 Papel estratégico dos ativos")
+        for item in roles[: min(6, len(analysis.companies))]:
+            if not isinstance(item, dict):
+                continue
+            ticker = strip_html(item.get("ticker") or "—")
+            role = strip_html(item.get("role") or "")
+            rationale = strip_html(item.get("rationale") or "")
+            st.markdown(
+                f"<div class='p6-role-card'><strong>{_esc(ticker)}</strong>"
+                f"<span>{_esc(role)}</span><p>{_esc(rationale or '—')}</p></div>",
+                unsafe_allow_html=True,
+            )
 
-        suggested_allocations = report.get("suggested_allocations", []) or []
-        if suggested_allocations:
-            with st.expander("Ver faixas de alocação", expanded=False):
-                for item in suggested_allocations[: min(8, len(analysis.companies))]:
-                    if not isinstance(item, dict):
-                        continue
-                    ticker = strip_html(item.get("ticker") or "—")
-                    suggested_range = strip_html(item.get("suggested_range") or "")
-                    rationale = strip_html(item.get("rationale") or "")
-                    st.markdown(
-                        f"<div class='p6-allocation-line'><strong>{_esc(ticker)}</strong>"
-                        f"<span>{_esc(suggested_range or '—')}</span><p>{_esc(rationale or '—')}</p></div>",
-                        unsafe_allow_html=True,
-                    )
+    suggested_allocations = report.get("suggested_allocations", []) or []
+    if suggested_allocations:
+        st.markdown("### 📌 Faixas de alocação sugeridas")
+        for item in suggested_allocations[: min(8, len(analysis.companies))]:
+            if not isinstance(item, dict):
+                continue
+            ticker = strip_html(item.get("ticker") or "—")
+            suggested_range = strip_html(item.get("suggested_range") or "")
+            rationale = strip_html(item.get("rationale") or "")
+            st.markdown(
+                f"<div class='p6-allocation-line'><strong>{_esc(ticker)}</strong>"
+                f"<span>{_esc(suggested_range or '—')}</span><p>{_esc(rationale or '—')}</p></div>",
+                unsafe_allow_html=True,
+            )
 
-        final_insight = strip_html(report.get("final_insight", ""))
-        if final_insight:
-            _render_banner("Insight final", final_insight, "good", "🚀")
+    final_insight = strip_html(report.get("final_insight", ""))
+    if final_insight:
+        _render_banner("Insight final", final_insight, "good", "🚀")
 
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Company detail section
 # ────────────────────────────────────────────────────────────────────────────────
 
-def _render_company_expander(company: CompanyAnalysis) -> None:
+def _render_company_expander(company: CompanyAnalysis, macro_context: Optional[Dict[str, Any]] = None, market_context: Optional[Dict[str, Any]] = None) -> None:
     tk = company.ticker
     p = company.perspectiva_compra.strip().lower()
     badge = _badge((p or "—").upper(), _tone_from_perspectiva(p))
@@ -760,7 +892,7 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
     )
 
     with st.expander(tk, expanded=False):
-        _render_company_executive_summary(company)
+        _render_company_executive_summary(company, macro_context=macro_context, market_context=market_context)
         st.markdown(f"### {tk}  {badge}{heuristic_badge}", unsafe_allow_html=True)
         st.caption(
             f"Período analisado: {company.period_ref} • Atualizado em: {company.created_at}"
@@ -780,6 +912,7 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
 
         _render_metric_cards(metric_items, columns_per_row=2)
         _render_score_explanations(company)
+        _render_company_macro_context(company, macro_context or {}, market_context or {})
 
         with st.expander("Ver análise detalhada", expanded=False):
             _render_section_text("Tese (síntese)", company.tese or "—")
@@ -942,8 +1075,6 @@ _P6_CSS = """
 .p6-hero-card.neutral{border-color:rgba(59,130,246,.35)}
 .p6-hero-label{font-size:12px;text-transform:uppercase;letter-spacing:.3px;color:var(--p6-muted);margin-bottom:10px}
 .p6-hero-value{font-size:28px;font-weight:900;line-height:1.15;margin-bottom:8px}
-.p6-decision-card{min-height:150px}
-.p6-decision-list{font-size:18px;font-weight:900;line-height:1.35;word-break:break-word;white-space:normal;margin-bottom:8px}
 .p6-hero-sub{font-size:13px;line-height:1.5;color:#cbd5e1}
 .p6-signal-row{display:grid;grid-template-columns:repeat(4, minmax(0, 1fr));gap:10px;margin:14px 0 8px}
 .p6-signal-chip{border-radius:14px;padding:12px 14px;background:rgba(255,255,255,.03);border:1px solid var(--p6-border);display:flex;flex-direction:column;gap:6px}
@@ -961,18 +1092,14 @@ _P6_CSS = """
 .p6-banner-title{font-size:14px;font-weight:800;margin-bottom:4px}
 .p6-banner-body{font-size:14px;line-height:1.6;color:#dbe7f7}
 .p6-risk-card{display:flex;gap:14px;align-items:flex-start;background:linear-gradient(180deg, rgba(17,24,39,.95), rgba(15,23,42,.92));border-radius:16px;padding:14px 16px;margin:10px 0}
-.p6-risk-card.compact{padding:8px 10px;margin:6px 0;border-radius:12px}
 .p6-risk-card.good{border-color:rgba(34,197,94,.35)}
 .p6-risk-card.warn{border-color:rgba(245,158,11,.35)}
 .p6-risk-card.bad{border-color:rgba(239,68,68,.45)}
-.p6-risk-rank{width:30px;height:30px;border-radius:999px;background:rgba(255,255,255,.06);display:flex;align-items:center;justify-content:center;font-weight:900;flex:0 0 30px}
+.p6-risk-rank{width:34px;height:34px;border-radius:999px;background:rgba(255,255,255,.06);display:flex;align-items:center;justify-content:center;font-weight:900}
 .p6-risk-main{flex:1}
 .p6-risk-top{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
-.p6-risk-top.compact{margin-bottom:5px}
 .p6-risk-ticker{font-size:18px;font-weight:900}
-.p6-risk-ticker.compact{font-size:15px}
 .p6-risk-text{font-size:14px;line-height:1.55;margin-bottom:6px;color:#dbe7f7}
-.p6-risk-text.compact{font-size:11px;line-height:1.35;margin-bottom:0}
 .p6-risk-meta{font-size:12px;color:var(--p6-muted)}
 .p6-pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;border:1px solid var(--p6-border);background:rgba(255,255,255,.03)}
 .p6-pill.good{border-color:rgba(34,197,94,.40);color:#bbf7d0}
@@ -1009,6 +1136,7 @@ def render_patch6_report(
     analysis_mode: str = "rigid",
 ) -> None:
     st.markdown(_P6_CSS, unsafe_allow_html=True)
+    macro_context, market_context = _load_macro_bundle()
 
     # ── Data + computation (pure, no Streamlit) ──────────────────────────────
     analysis = build_portfolio_analysis(tickers, period_ref)
@@ -1021,8 +1149,66 @@ def render_patch6_report(
 
     stats = analysis.stats
 
-    # ── Camada principal orientada à decisão ─────────────────────────────────
-    _render_decision_cycle(analysis, stats, tickers)
+    # ── Portfolio summary cards ───────────────────────────────────────────────
+    top_cols = st.columns(5)
+    top_cols[0].markdown(_render_hero_stat("Qualidade", stats.label_qualidade(), "Leitura qualitativa agregada da carteira.", "good" if stats.label_qualidade() == "Alta" else "warn"), unsafe_allow_html=True)
+    top_cols[1].markdown(_render_hero_stat("Perspectiva 12m", stats.label_perspectiva(), "Direcionalidade consolidada do conjunto.", "neutral"), unsafe_allow_html=True)
+    top_cols[2].markdown(_render_hero_stat("Cobertura", analysis.cobertura, "Ativos cobertos com evidência suficiente.", "neutral"), unsafe_allow_html=True)
+    top_cols[3].markdown(_render_hero_stat("Confiança média", _fmt_confidence(analysis.confianca_media), "Robustez média das leituras individuais.", "neutral"), unsafe_allow_html=True)
+    top_cols[4].markdown(_render_hero_stat("Score médio", _fmt_score(analysis.score_medio), "Média qualitativa consolidada do portfólio.", "neutral"), unsafe_allow_html=True)
+    st.caption(
+        "🛈 A leitura abaixo prioriza decisão, risco e direção antes do detalhe. "
+        f"Cobertura temporal do detector estratégico presente em {analysis.temporal_covered} ativo(s)."
+    )
+
+    _render_decision_cycle(analysis, stats)
+    _render_risk_ranking(analysis)
+    _render_portfolio_dynamics(analysis)
+
+    # ── v3 portfolio signals ──────────────────────────────────────────────────
+    v3_items = []
+    if analysis.alta_prioridade_count > 0:
+        v3_items.append(
+            _badge(f"{analysis.alta_prioridade_count} ativo(s) em alta prioridade", "bad")
+        )
+    if analysis.forward_score_medio > 0:
+        fdir_overall = "—"
+        fscores = [c.forward_score for c in analysis.companies.values() if c.forward_score > 0]
+        if fscores and analysis.score_medio > 0:
+            avg_delta = sum(fscores) / len(fscores) - analysis.score_medio
+            fdir_overall = "melhorando" if avg_delta > 5 else ("deteriorando" if avg_delta < -5 else "estável")
+        v3_items.append(
+            _badge(f"Forward score médio: {analysis.forward_score_medio}/100 ({fdir_overall})", "neutral")
+        )
+    if analysis.regime_summary:
+        v3_items.append(_badge("Mudanças de regime detectadas", "warn"))
+
+    if v3_items:
+        st.markdown("&nbsp;&nbsp;".join(v3_items) + (
+            f"<br/><span style='font-size:11px;opacity:0.6'>{_esc(analysis.regime_summary)}</span>"
+            if analysis.regime_summary else ""
+        ), unsafe_allow_html=True)
+        st.markdown("")  # spacing
+
+    # ── v3 priority ranking (compact) ────────────────────────────────────────
+    if analysis.priority_ranking:
+        alta = [tk for tk in analysis.priority_ranking if analysis.companies[tk].attention_level == "alta"]
+        media = [tk for tk in analysis.priority_ranking if analysis.companies[tk].attention_level == "média"]
+        if alta or media:
+            with st.expander("📋 Fila de Atenção do Portfólio", expanded=False):
+                if alta:
+                    st.markdown("**Alta prioridade**")
+                    for tk in alta:
+                        c = analysis.companies[tk]
+                        st.markdown(
+                            f"- **{tk}** — score {c.attention_score:.0f} | {c.recommended_action}"
+                            + (f" | drivers: {', '.join(c.attention_drivers[:3])}" if c.attention_drivers else ""),
+                        )
+                if media:
+                    st.markdown("**Média prioridade**")
+                    for tk in media:
+                        c = analysis.companies[tk]
+                        st.markdown(f"- **{tk}** — score {c.attention_score:.0f} | {c.recommended_action}")
 
     # ── LLM portfolio report (optional) ──────────────────────────────────────
     portfolio_report = run_portfolio_llm_report(llm_factory, analysis, analysis_mode)
@@ -1033,19 +1219,19 @@ def render_patch6_report(
     else:
         st.markdown("## 🧠 Resumo Executivo")
         st.write(
-            f"O portfólio apresenta distribuição de leituras em **{stats.fortes}** ativo(s) forte, "
-            f"**{stats.moderadas}** moderado(s) e **{stats.fracas}** fraco(s). "
-            "Use a decisão do ciclo, os riscos principais e a alocação sugerida como eixo da tomada de decisão."
+            f"O portfólio apresenta leitura **{stats.label_perspectiva().lower()}** para 12 meses, com distribuição: "
+            f"**{stats.fortes}** forte, **{stats.moderadas}** moderada e **{stats.fracas}** fraca. "
+            f"Cobertura: **{analysis.cobertura}** ativos, confiança média **{_fmt_confidence(analysis.confianca_media)}**, "
+            f"score qualitativo médio **{_fmt_score(analysis.score_medio)}**."
         )
 
-    with st.expander("📌 Ver faixas de alocação", expanded=False):
-        _render_allocation_section(analysis.allocation_rows)
+    _render_allocation_section(analysis.allocation_rows)
 
     # ── Per-company detail ────────────────────────────────────────────────────
     if show_company_details:
         st.markdown("## 🏢 Relatórios por Empresa")
         for company in analysis.companies.values():
-            _render_company_expander(company)
+            _render_company_expander(company, macro_context=macro_context, market_context=market_context)
 
     # ── Conclusão estratégica ─────────────────────────────────────────────────
     st.markdown("## 🔎 Conclusão Estratégica")
