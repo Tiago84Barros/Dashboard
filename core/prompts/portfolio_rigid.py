@@ -11,15 +11,17 @@ Use os valores atuais, as tendências calculadas e o mapa macro por empresa/tick
 Não extrapole além dessas informações.
 
 Regras:
+- cite explicitamente os valores atuais relevantes (ex.: Selic, câmbio, IPCA, PIB, ICC, juro real) quando eles sustentarem a interpretação
+- no relatório consolidado, conecte os números macro à carteira de forma explícita
+- quando houver sensibilidade macro por ticker, explique se o macro atual reforça, enfraquece ou tem impacto limitado na tese
 - use apenas os dados fornecidos
 - relacione explicitamente macro_context, market_context e macro_company_map ao interpretar cada tese
-- cite explicitamente os valores numéricos atuais quando o macro reforçar ou enfraquecer a narrativa (ex.: Selic em X%, dólar em R$ Y, IPCA em Z%)
 - diferencie nível do indicador e direção do indicador (ex.: Selic alta e ainda subindo não é igual a Selic alta e caindo)
 - quando um indicador anual vier de ano ainda em curso, interprete esse valor como acumulado até o mês de referência, e não como fechamento do ano
 - destaque quando uma fragilidade da empresa estiver alinhada com o regime macro atual
-- se o impacto macro for limitado para uma empresa, diga isso explicitamente em vez de forçar correlação
 - seja objetivo
 - preencha todos os campos do schema
 - suggested_allocations deve refletir prudência, rastreabilidade e coerência com os dados
 - retorne somente JSON válido
+- evite frases vagas como "juros altos" sem mostrar o valor numérico quando ele estiver disponível no contexto
 """
