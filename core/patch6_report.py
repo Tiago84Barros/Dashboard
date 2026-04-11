@@ -178,7 +178,7 @@ def _main_strength(company: CompanyAnalysis) -> str:
 
 def _decision_from_company(company: CompanyAnalysis) -> str:
     action = _clean_action_label(company.recommended_action)
-    if action != "manter":
+    if action in {"aumentar", "reduzir", "revisar"}:
         return action
 
     forward = strip_html(company.forward_direction).strip().lower()
@@ -187,11 +187,11 @@ def _decision_from_company(company: CompanyAnalysis) -> str:
 
     if risk_level == "ALTO":
         return "reduzir"
-    if perspectiva == "forte" and forward != "deteriorando" and company.robustez_qualitativa >= 0.70:
+    if forward == "deteriorando":
+        return "revisar" if company.attention_score < 55 else "reduzir"
+    if perspectiva == "forte" and company.robustez_qualitativa >= 0.60 and company.confianca >= 0.65:
         return "aumentar"
-    if forward == "deteriorando" and company.attention_score >= 35:
-        return "revisar"
-    if forward == "melhorando" and company.robustez_qualitativa >= 0.65:
+    if forward == "melhorando" and company.robustez_qualitativa >= 0.55:
         return "aumentar"
     return "manter"
 
@@ -250,40 +250,16 @@ def _render_decision_cycle(analysis: PortfolioAnalysis, stats: PortfolioStats) -
     for company in analysis.companies.values():
         groups.setdefault(_decision_from_company(company), []).append(company.ticker)
 
-    forward_values = [c.forward_score for c in analysis.companies.values() if c.forward_score > 0]
-    avg_forward = round(mean(forward_values)) if forward_values else 0
-    if avg_forward >= max(55, analysis.score_medio):
-        exec_status, exec_tone = "Melhorando", "good"
-    elif avg_forward and avg_forward <= max(45, analysis.score_medio - 8):
-        exec_status, exec_tone = "Deteriorando", "bad"
-    else:
-        exec_status, exec_tone = "Estável", "warn"
-
-    high_attention = sum(1 for c in analysis.companies.values() if strip_html(c.attention_level).lower() == "alta")
-    risk_status = "Controlado" if high_attention == 0 else ("Elevado" if high_attention >= 2 else "Em alta")
-    risk_tone = "good" if high_attention == 0 else ("bad" if high_attention >= 2 else "warn")
+    def _fmt_group(label: str, tickers: List[str], tone: str) -> str:
+        tickers_text = ", ".join(tickers[:6]) if tickers else "Nenhum ativo"
+        subtitle = "Abra o relatório por empresa para entender o motivo" if tickers else "Sem destaque relevante neste ciclo"
+        return _render_hero_stat(label, tickers_text, subtitle, tone)
 
     st.markdown("## 🧭 Decisão do Ciclo")
     cols = st.columns(3)
-    decision_specs = [
-        ("Aumentar", groups.get("aumentar", []), "good"),
-        ("Manter / Revisar", groups.get("manter", []) + groups.get("revisar", []), "warn"),
-        ("Reduzir", groups.get("reduzir", []), "bad"),
-    ]
-    for col, (label, tickers, tone) in zip(cols, decision_specs):
-        tickers_text = ", ".join(tickers) if tickers else "Nenhum ativo neste grupo"
-        subtitle = "Movimento sugerido para o próximo ciclo" if tickers else "Sem urgência identificada"
-        col.markdown(_render_hero_stat(label, tickers_text, subtitle, tone), unsafe_allow_html=True)
-
-    st.markdown(
-        "<div class='p6-signal-row'>"
-        + _render_signal_chip("Qualidade", stats.label_qualidade(), "good" if stats.label_qualidade() == "Alta" else "warn")
-        + _render_signal_chip("Execução", exec_status, exec_tone)
-        + _render_signal_chip("Risco agregado", risk_status, risk_tone)
-        + _render_signal_chip("Forward médio", f"{avg_forward}/100" if avg_forward else "—", "neutral")
-        + "</div>",
-        unsafe_allow_html=True,
-    )
+    cols[0].markdown(_fmt_group("🟢 Oportunidade", groups.get("aumentar", []), "good"), unsafe_allow_html=True)
+    cols[1].markdown(_fmt_group("🔵 Neutralidade", groups.get("manter", []) + groups.get("revisar", []), "neutral"), unsafe_allow_html=True)
+    cols[2].markdown(_fmt_group("🔴 Perigo", groups.get("reduzir", []), "bad"), unsafe_allow_html=True)
 
 
 def _render_risk_ranking(analysis: PortfolioAnalysis) -> None:
@@ -304,7 +280,7 @@ def _render_risk_ranking(analysis: PortfolioAnalysis) -> None:
                   <span class="p6-pill neutral">{_icon_from_action(action)} {_esc(_ACTION_VERBS.get(action, 'Manter'))}</span>
                 </div>
                 <div class="p6-risk-text">{_esc(risk_text)}</div>
-                <div class="p6-risk-meta">Score {_fmt_score(company.score_qualitativo)} • Conf. {_fmt_confidence(company.confianca)} • Atenção {company.attention_score:.0f}/100</div>
+                <div class="p6-risk-meta">Ação sugerida: {_esc(_ACTION_VERBS.get(action, "Manter"))}</div>
               </div>
             </div>
             """,
@@ -646,78 +622,79 @@ def _render_allocation_section(allocation_rows: List[AllocationRow]) -> None:
 
 
 def _render_structured_portfolio_report(report: Dict[str, Any], mode_label: str, analysis: PortfolioAnalysis) -> None:
-    st.markdown("## 🧠 Relatório Estratégico do Portfólio")
-    st.caption(f"Modo utilizado: {mode_label}")
+    with st.expander("🧠 Ver relatório estratégico completo", expanded=False):
+        st.markdown("## 🧠 Relatório Estratégico do Portfólio")
+        st.caption(f"Modo utilizado: {mode_label}")
 
-    highlights = _split_report_highlights(report)
+        highlights = _split_report_highlights(report)
 
-    _render_banner(
-        "Leitura executiva",
-        strip_html(report.get("executive_summary", "")) or "Sem diagnóstico executivo consolidado.",
-        "neutral",
-        "🧠",
-    )
+        _render_banner(
+            "Leitura executiva",
+            strip_html(report.get("executive_summary", "")) or "Sem diagnóstico executivo consolidado.",
+            "neutral",
+            "🧠",
+        )
 
-    col1, col2 = st.columns([1.2, 1.0])
-    with col1:
-        _render_section_text("Base analítica", report.get("analytical_basis", ""))
-        _render_section_text("Identidade da carteira", report.get("portfolio_identity", ""))
-        _render_section_text("Impacto macro dominante", report.get("macro_reading", ""))
-    with col2:
-        if highlights["strengths"]:
-            _render_section_list("🟢 Forças principais", highlights["strengths"], limit=3)
-        if highlights["weaknesses"]:
-            _render_section_list("🟠 Fragilidades principais", highlights["weaknesses"], limit=3)
-        if highlights["hidden"]:
-            _render_section_list("🔴 Riscos invisíveis", highlights["hidden"], limit=3)
+        col1, col2 = st.columns([1.2, 1.0])
+        with col1:
+            _render_section_text("Base analítica", report.get("analytical_basis", ""))
+            _render_section_text("Identidade da carteira", report.get("portfolio_identity", ""))
+            _render_section_text("Impacto macro dominante", report.get("macro_reading", ""))
+        with col2:
+            if highlights["strengths"]:
+                _render_section_list("🟢 Forças principais", highlights["strengths"], limit=3)
+            if highlights["weaknesses"]:
+                _render_section_list("🟠 Fragilidades principais", highlights["weaknesses"], limit=3)
+            if highlights["hidden"]:
+                _render_section_list("🔴 Riscos invisíveis", highlights["hidden"], limit=3)
 
-    macro_deps = report.get("macro_scenario_dependencies", []) or []
-    if macro_deps:
-        _render_section_list("Dependências de cenário", macro_deps, limit=4)
+        macro_deps = report.get("macro_scenario_dependencies", []) or []
+        if macro_deps:
+            _render_section_list("Dependências de cenário", macro_deps, limit=4)
 
-    misalign = highlights["misalign"]
-    if misalign:
-        _render_banner("Desalinhamentos identificados", " • ".join(misalign), "warn", "⚠️")
+        misalign = highlights["misalign"]
+        if misalign:
+            _render_banner("Desalinhamentos identificados", " • ".join(misalign), "warn", "⚠️")
 
-    action_plan = highlights["action"]
-    if action_plan:
-        st.markdown("### 🎯 Plano de ação")
-        for item in action_plan:
-            st.markdown(f"<div class='p6-action-line'>✅ {_esc(item)}</div>", unsafe_allow_html=True)
+        action_plan = highlights["action"]
+        if action_plan:
+            with st.expander("Ver plano de ação", expanded=False):
+                for item in action_plan:
+                    st.markdown(f"<div class='p6-action-line'>✅ {_esc(item)}</div>", unsafe_allow_html=True)
 
-    roles = report.get("asset_roles", []) or []
-    if roles:
-        st.markdown("### 🧩 Papel estratégico dos ativos")
-        for item in roles[: min(6, len(analysis.companies))]:
-            if not isinstance(item, dict):
-                continue
-            ticker = strip_html(item.get("ticker") or "—")
-            role = strip_html(item.get("role") or "")
-            rationale = strip_html(item.get("rationale") or "")
-            st.markdown(
-                f"<div class='p6-role-card'><strong>{_esc(ticker)}</strong>"
-                f"<span>{_esc(role)}</span><p>{_esc(rationale or '—')}</p></div>",
-                unsafe_allow_html=True,
-            )
+        roles = report.get("asset_roles", []) or []
+        if roles:
+            with st.expander("Ver papel estratégico dos ativos", expanded=False):
+                for item in roles[: min(6, len(analysis.companies))]:
+                    if not isinstance(item, dict):
+                        continue
+                    ticker = strip_html(item.get("ticker") or "—")
+                    role = strip_html(item.get("role") or "")
+                    rationale = strip_html(item.get("rationale") or "")
+                    st.markdown(
+                        f"<div class='p6-role-card'><strong>{_esc(ticker)}</strong>"
+                        f"<span>{_esc(role)}</span><p>{_esc(rationale or '—')}</p></div>",
+                        unsafe_allow_html=True,
+                    )
 
-    suggested_allocations = report.get("suggested_allocations", []) or []
-    if suggested_allocations:
-        st.markdown("### 📌 Faixas de alocação sugeridas")
-        for item in suggested_allocations[: min(8, len(analysis.companies))]:
-            if not isinstance(item, dict):
-                continue
-            ticker = strip_html(item.get("ticker") or "—")
-            suggested_range = strip_html(item.get("suggested_range") or "")
-            rationale = strip_html(item.get("rationale") or "")
-            st.markdown(
-                f"<div class='p6-allocation-line'><strong>{_esc(ticker)}</strong>"
-                f"<span>{_esc(suggested_range or '—')}</span><p>{_esc(rationale or '—')}</p></div>",
-                unsafe_allow_html=True,
-            )
+        suggested_allocations = report.get("suggested_allocations", []) or []
+        if suggested_allocations:
+            with st.expander("Ver faixas de alocação", expanded=False):
+                for item in suggested_allocations[: min(8, len(analysis.companies))]:
+                    if not isinstance(item, dict):
+                        continue
+                    ticker = strip_html(item.get("ticker") or "—")
+                    suggested_range = strip_html(item.get("suggested_range") or "")
+                    rationale = strip_html(item.get("rationale") or "")
+                    st.markdown(
+                        f"<div class='p6-allocation-line'><strong>{_esc(ticker)}</strong>"
+                        f"<span>{_esc(suggested_range or '—')}</span><p>{_esc(rationale or '—')}</p></div>",
+                        unsafe_allow_html=True,
+                    )
 
-    final_insight = strip_html(report.get("final_insight", ""))
-    if final_insight:
-        _render_banner("Insight final", final_insight, "good", "🚀")
+        final_insight = strip_html(report.get("final_insight", ""))
+        if final_insight:
+            _render_banner("Insight final", final_insight, "good", "🚀")
 
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -991,11 +968,6 @@ def render_patch6_report(
     stats = analysis.stats
 
     # ── Camada principal orientada à decisão ─────────────────────────────────
-    st.caption(
-        "🛈 Esta leitura foi simplificada para priorizar decisão de compra, redução e monitoramento. "
-        "Os blocos abaixo mostram apenas o que ajuda diretamente na tomada de decisão."
-    )
-
     _render_decision_cycle(analysis, stats)
     _render_risk_ranking(analysis)
 
@@ -1013,7 +985,8 @@ def render_patch6_report(
             "Use a decisão do ciclo, os riscos principais e a alocação sugerida como eixo da tomada de decisão."
         )
 
-    _render_allocation_section(analysis.allocation_rows)
+    with st.expander("📌 Ver faixas de alocação", expanded=False):
+        _render_allocation_section(analysis.allocation_rows)
 
     # ── Per-company detail ────────────────────────────────────────────────────
     if show_company_details:
