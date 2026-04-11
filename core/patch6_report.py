@@ -262,7 +262,7 @@ def _render_decision_cycle(analysis: PortfolioAnalysis, stats: PortfolioStats, a
         count = len(tickers)
         names = ", ".join(tickers) if tickers else empty_label
         subtitle = f"{count} ativo(s)" if count else "Sem destaque relevante neste ciclo"
-        extra = f"<div class="p6-hero-sub" style="margin-top:4px">{_esc(note)}</div>" if note else ""
+        extra = f'<div class="p6-hero-sub" style="margin-top:4px">{_esc(note)}</div>' if note else ""
         return f"""
         <div class="p6-hero-card {tone} p6-decision-card">
           <div class="p6-hero-label">{_esc(label)}</div>
