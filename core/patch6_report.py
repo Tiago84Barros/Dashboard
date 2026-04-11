@@ -990,66 +990,14 @@ def render_patch6_report(
 
     stats = analysis.stats
 
-    # ── Portfolio summary cards ───────────────────────────────────────────────
-    top_cols = st.columns(5)
-    top_cols[0].markdown(_render_hero_stat("Qualidade", stats.label_qualidade(), "Leitura qualitativa agregada da carteira.", "good" if stats.label_qualidade() == "Alta" else "warn"), unsafe_allow_html=True)
-    top_cols[1].markdown(_render_hero_stat("Perspectiva 12m", stats.label_perspectiva(), "Direcionalidade consolidada do conjunto.", "neutral"), unsafe_allow_html=True)
-    top_cols[2].markdown(_render_hero_stat("Cobertura", analysis.cobertura, "Ativos cobertos com evidência suficiente.", "neutral"), unsafe_allow_html=True)
-    top_cols[3].markdown(_render_hero_stat("Confiança média", _fmt_confidence(analysis.confianca_media), "Robustez média das leituras individuais.", "neutral"), unsafe_allow_html=True)
-    top_cols[4].markdown(_render_hero_stat("Score médio", _fmt_score(analysis.score_medio), "Média qualitativa consolidada do portfólio.", "neutral"), unsafe_allow_html=True)
+    # ── Camada principal orientada à decisão ─────────────────────────────────
     st.caption(
-        "🛈 A leitura abaixo prioriza decisão, risco e direção antes do detalhe. "
-        f"Cobertura temporal do detector estratégico presente em {analysis.temporal_covered} ativo(s)."
+        "🛈 Esta leitura foi simplificada para priorizar decisão de compra, redução e monitoramento. "
+        "Os blocos abaixo mostram apenas o que ajuda diretamente na tomada de decisão."
     )
 
     _render_decision_cycle(analysis, stats)
     _render_risk_ranking(analysis)
-    _render_portfolio_dynamics(analysis)
-
-    # ── v3 portfolio signals ──────────────────────────────────────────────────
-    v3_items = []
-    if analysis.alta_prioridade_count > 0:
-        v3_items.append(
-            _badge(f"{analysis.alta_prioridade_count} ativo(s) em alta prioridade", "bad")
-        )
-    if analysis.forward_score_medio > 0:
-        fdir_overall = "—"
-        fscores = [c.forward_score for c in analysis.companies.values() if c.forward_score > 0]
-        if fscores and analysis.score_medio > 0:
-            avg_delta = sum(fscores) / len(fscores) - analysis.score_medio
-            fdir_overall = "melhorando" if avg_delta > 5 else ("deteriorando" if avg_delta < -5 else "estável")
-        v3_items.append(
-            _badge(f"Forward score médio: {analysis.forward_score_medio}/100 ({fdir_overall})", "neutral")
-        )
-    if analysis.regime_summary:
-        v3_items.append(_badge("Mudanças de regime detectadas", "warn"))
-
-    if v3_items:
-        st.markdown("&nbsp;&nbsp;".join(v3_items) + (
-            f"<br/><span style='font-size:11px;opacity:0.6'>{_esc(analysis.regime_summary)}</span>"
-            if analysis.regime_summary else ""
-        ), unsafe_allow_html=True)
-        st.markdown("")  # spacing
-
-    # ── v3 priority ranking (compact) ────────────────────────────────────────
-    if analysis.priority_ranking:
-        alta = [tk for tk in analysis.priority_ranking if analysis.companies[tk].attention_level == "alta"]
-        media = [tk for tk in analysis.priority_ranking if analysis.companies[tk].attention_level == "média"]
-        if alta or media:
-            with st.expander("📋 Fila de Atenção do Portfólio", expanded=False):
-                if alta:
-                    st.markdown("**Alta prioridade**")
-                    for tk in alta:
-                        c = analysis.companies[tk]
-                        st.markdown(
-                            f"- **{tk}** — score {c.attention_score:.0f} | {c.recommended_action}"
-                            + (f" | drivers: {', '.join(c.attention_drivers[:3])}" if c.attention_drivers else ""),
-                        )
-                if media:
-                    st.markdown("**Média prioridade**")
-                    for tk in media:
-                        c = analysis.companies[tk]
-                        st.markdown(f"- **{tk}** — score {c.attention_score:.0f} | {c.recommended_action}")
 
     # ── LLM portfolio report (optional) ──────────────────────────────────────
     portfolio_report = run_portfolio_llm_report(llm_factory, analysis, analysis_mode)
@@ -1060,10 +1008,9 @@ def render_patch6_report(
     else:
         st.markdown("## 🧠 Resumo Executivo")
         st.write(
-            f"O portfólio apresenta leitura **{stats.label_perspectiva().lower()}** para 12 meses, com distribuição: "
-            f"**{stats.fortes}** forte, **{stats.moderadas}** moderada e **{stats.fracas}** fraca. "
-            f"Cobertura: **{analysis.cobertura}** ativos, confiança média **{_fmt_confidence(analysis.confianca_media)}**, "
-            f"score qualitativo médio **{_fmt_score(analysis.score_medio)}**."
+            f"O portfólio apresenta distribuição de leituras em **{stats.fortes}** ativo(s) forte, "
+            f"**{stats.moderadas}** moderado(s) e **{stats.fracas}** fraco(s). "
+            "Use a decisão do ciclo, os riscos principais e a alocação sugerida como eixo da tomada de decisão."
         )
 
     _render_allocation_section(analysis.allocation_rows)
