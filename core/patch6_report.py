@@ -35,10 +35,6 @@ from core.patch6_schema import (
     PortfolioStats,
 )
 from core.patch6_service import run_portfolio_llm_report, safe_call_llm
-from core.portfolio_snapshot_store import get_latest_snapshot
-from core.portfolio_snapshot_analysis_store import load_snapshot_analysis
-from core.macro_context import load_latest_macro_context
-from core.market_context import build_market_context
 
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -249,224 +245,6 @@ def _split_report_highlights(report: Dict[str, Any]) -> Dict[str, List[str]]:
     }
 
 
-
-
-def _safe_float_num(value: Any) -> float:
-    try:
-        if value in (None, ""):
-            return 0.0
-        return float(value)
-    except Exception:
-        return 0.0
-
-
-def _safe_load_selection_context(tickers: List[str]) -> Dict[str, Dict[str, Any]]:
-    try:
-        snapshot = get_latest_snapshot()
-        if not snapshot:
-            return {}
-        snapshot_id = str(snapshot.get("id") or "").strip()
-        if not snapshot_id:
-            return {}
-        df = load_snapshot_analysis(snapshot_id)
-        if df is None or df.empty:
-            return {}
-        wanted = {str(t).strip().upper() for t in (tickers or []) if str(t).strip()}
-        out: Dict[str, Dict[str, Any]] = {}
-        for row in df.to_dict(orient="records"):
-            tk = str(row.get("ticker") or "").strip().upper()
-            if tk and (not wanted or tk in wanted):
-                out[tk] = row
-        return out
-    except Exception:
-        return {}
-
-
-def _fmt_decimal(value: Any, digits: int = 2, suffix: str = "") -> str:
-    try:
-        if value in (None, ""):
-            return "—"
-        return f"{float(value):.{digits}f}{suffix}"
-    except Exception:
-        return "—"
-
-
-def _fmt_pct_mixed(value: Any, digits: int = 1) -> str:
-    try:
-        if value in (None, ""):
-            return "—"
-        v = float(value)
-        if abs(v) <= 1.5:
-            v *= 100.0
-        return f"{v:.{digits}f}%"
-    except Exception:
-        return "—"
-
-
-def _render_selection_context_summary(selection_context: Dict[str, Dict[str, Any]]) -> None:
-    if not selection_context:
-        return
-
-    rows = list(selection_context.values())
-    scores = [_safe_float_num(r.get("score_final")) for r in rows if _safe_float_num(r.get("score_final")) > 0]
-    penalties = [_safe_float_num(r.get("penal_total")) for r in rows if r.get("penal_total") is not None]
-    leaders = sum(1 for r in rows if str(r.get("rank_segmento") or "") == "1")
-
-    top_reasons: List[str] = []
-    for r in rows:
-        motivos = r.get("motivos_selecao") or []
-        if isinstance(motivos, list):
-            for item in motivos:
-                txt = strip_html(item)
-                if txt and txt not in top_reasons:
-                    top_reasons.append(txt)
-                if len(top_reasons) >= 4:
-                    break
-        if len(top_reasons) >= 4:
-            break
-
-    st.markdown("## 🧮 Contexto Quantitativo da Seleção")
-    cols = st.columns(4)
-    cols[0].markdown(_render_hero_stat("Score quant. médio", _fmt_decimal(mean(scores), 1) if scores else "—", "Fotografia do momento de seleção.", "neutral"), unsafe_allow_html=True)
-    cols[1].markdown(_render_hero_stat("Líderes setoriais", str(leaders), "Ativos que entraram como nº 1 do segmento.", "good" if leaders else "neutral"), unsafe_allow_html=True)
-    cols[2].markdown(_render_hero_stat("Penalização média", _fmt_decimal(mean(penalties), 1) if penalties else "0.0", "Descontos por crowding, liderança e platô.", "warn"), unsafe_allow_html=True)
-    cols[3].markdown(_render_hero_stat("Cobertura quantitativa", f"{len(rows)} ativo(s)", "Contexto salvo junto ao snapshot da criação.", "neutral"), unsafe_allow_html=True)
-
-    if top_reasons:
-        _render_banner("O que mais pesou na seleção", " • ".join(top_reasons[:4]), "neutral", "📊")
-
-
-def _render_selection_context_detail(quant_row: Optional[Dict[str, Any]]) -> None:
-    if not quant_row:
-        return
-
-    st.markdown("**Contexto quantitativo da seleção**")
-    metric_items = [
-        ("Score final da seleção", _fmt_decimal(quant_row.get("score_final"), 1)),
-        ("Rank no segmento", str(quant_row.get("rank_segmento") or "—")),
-        ("Rank geral", str(quant_row.get("rank_geral") or "—")),
-        ("Classe de força", str(quant_row.get("classe_forca") or "—")),
-        ("Penalização total", _fmt_decimal(quant_row.get("penal_total"), 1)),
-        ("P/VP", _fmt_decimal(quant_row.get("p_vp"), 2)),
-        ("Dividend Yield", _fmt_pct_mixed(quant_row.get("dividend_yield"))),
-        ("Slope de receita", _fmt_decimal(quant_row.get("slope_receita"), 3)),
-    ]
-    _render_metric_cards(metric_items, columns_per_row=4)
-
-    breakdown_items = [
-        ("Qualidade", _fmt_decimal(quant_row.get("score_qualidade"), 1)),
-        ("Valuation", _fmt_decimal(quant_row.get("score_valuation"), 1)),
-        ("Dividendos", _fmt_decimal(quant_row.get("score_dividendos"), 1)),
-        ("Crescimento", _fmt_decimal(quant_row.get("score_crescimento"), 1)),
-        ("Consistência", _fmt_decimal(quant_row.get("score_consistencia"), 1)),
-        ("Crowding", _fmt_decimal(quant_row.get("penal_crowding"), 1)),
-        ("Liderança recorrente", _fmt_decimal(quant_row.get("penal_lideranca"), 1)),
-        ("Platô", _fmt_decimal(quant_row.get("penal_plato"), 1)),
-    ]
-    _render_metric_cards(breakdown_items, columns_per_row=4)
-
-    _render_section_list("Motivos de seleção", quant_row.get("motivos_selecao") or [], limit=6)
-    _render_section_list("Drivers positivos", quant_row.get("drivers_positivos") or [], limit=6)
-    _render_section_list("Drivers negativos", quant_row.get("drivers_negativos") or [], limit=6)
-
-
-
-def _safe_load_macro_and_market_context() -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    try:
-        macro_context = load_latest_macro_context() or {}
-    except Exception:
-        macro_context = {}
-    try:
-        market_context = build_market_context(macro_context) if macro_context else {}
-    except Exception:
-        market_context = {}
-    return macro_context, market_context
-
-
-def _macro_value(macro_context: Dict[str, Any], section: str, key: str) -> Any:
-    try:
-        return (macro_context.get(section) or {}).get(key)
-    except Exception:
-        return None
-
-
-def _fmt_macro_number(value: Any, digits: int = 2, suffix: str = '') -> str:
-    try:
-        if value in (None, ''):
-            return '—'
-        return f"{float(value):.{digits}f}{suffix}"
-    except Exception:
-        return '—'
-
-
-def _build_macro_reading_from_context(macro_context: Dict[str, Any], market_context: Dict[str, Any]) -> str:
-    mensal = macro_context.get('mensal') or {}
-    anual = macro_context.get('anual') or {}
-
-    selic = mensal.get('selic_final') if mensal.get('selic_final') is not None else anual.get('selic')
-    cambio = mensal.get('cambio_final') if mensal.get('cambio_final') is not None else anual.get('cambio')
-    ipca_12m = mensal.get('ipca_12m')
-    juros_real = mensal.get('juros_real_ex_ante_12m') if mensal.get('juros_real_ex_ante_12m') is not None else anual.get('juros_real_ex_ante')
-    icc_delta = mensal.get('icc_delta_12m') if mensal.get('icc_delta_12m') is not None else anual.get('icc_delta')
-
-    parts = []
-    if selic is not None:
-        parts.append(f"Selic em {_fmt_macro_number(selic, 2, '%')}, mantendo custo de capital pressionado")
-    if juros_real is not None:
-        parts.append(f"juro real em {_fmt_macro_number(juros_real, 2, '%')}, reforçando o caráter restritivo do ambiente")
-    if ipca_12m is not None:
-        parts.append(f"IPCA em 12 meses em {_fmt_macro_number(ipca_12m, 2, '%')}")
-    if cambio is not None:
-        parts.append(f"câmbio em {_fmt_macro_number(cambio, 4)}, com efeito relevante sobre exportadoras e insumos importados")
-    if icc_delta is not None:
-        direction = 'melhora' if float(icc_delta) > 0 else 'deterioração' if float(icc_delta) < 0 else 'estabilidade'
-        parts.append(f"confiança do consumidor em {direction} no horizonte de 12 meses")
-
-    summary = market_context.get('regime_summary')
-    if summary:
-        return strip_html(summary) + '. ' + '; '.join(parts) + '.' if parts else strip_html(summary)
-    return '; '.join(parts) + '.' if parts else ''
-
-
-def _build_macro_dependencies_from_context(market_context: Dict[str, Any]) -> List[str]:
-    deps: List[str] = []
-    for key in ('domestic_risk_factors', 'portfolio_tailwinds', 'portfolio_headwinds', 'international_links'):
-        values = market_context.get(key) or []
-        if isinstance(values, list):
-            for item in values:
-                txt = strip_html(item)
-                if txt and txt not in deps:
-                    deps.append(txt)
-    return deps[:6]
-
-
-def _render_macro_context_summary(macro_context: Dict[str, Any], market_context: Dict[str, Any]) -> None:
-    if not macro_context and not market_context:
-        return
-
-    mensal = macro_context.get('mensal') or {}
-    anual = macro_context.get('anual') or {}
-    selic = mensal.get('selic_final') if mensal.get('selic_final') is not None else anual.get('selic')
-    ipca_12m = mensal.get('ipca_12m')
-    cambio = mensal.get('cambio_final') if mensal.get('cambio_final') is not None else anual.get('cambio')
-    juros_real = mensal.get('juros_real_ex_ante_12m') if mensal.get('juros_real_ex_ante_12m') is not None else anual.get('juros_real_ex_ante')
-    data_ref = mensal.get('data') or anual.get('data') or '—'
-
-    st.markdown('## 🌍 Cenário macro real do banco')
-    cols = st.columns(4)
-    cols[0].markdown(_render_hero_stat('Selic', _fmt_macro_number(selic, 2, '%'), f'Referência: {data_ref}', 'bad' if safe_float(selic, 0) >= 12 else 'warn'), unsafe_allow_html=True)
-    cols[1].markdown(_render_hero_stat('IPCA 12m', _fmt_macro_number(ipca_12m, 2, '%'), 'Inflação corrente do sistema.', 'warn'), unsafe_allow_html=True)
-    cols[2].markdown(_render_hero_stat('Câmbio', _fmt_macro_number(cambio, 4), 'USD/BRL salvo na base macro.', 'neutral'), unsafe_allow_html=True)
-    cols[3].markdown(_render_hero_stat('Juro real ex-ante', _fmt_macro_number(juros_real, 2, '%'), 'Pressão de custo de capital.', 'bad' if safe_float(juros_real, 0) >= 4 else 'warn'), unsafe_allow_html=True)
-
-    reading = _build_macro_reading_from_context(macro_context, market_context)
-    if reading:
-        _render_banner('Leitura macro aplicada à carteira', reading, 'warn', '🌐')
-
-    deps = _build_macro_dependencies_from_context(market_context)
-    if deps:
-        _render_section_list('Vetores macro e de mercado monitorados', deps, limit=6)
-
 def _render_decision_cycle(analysis: PortfolioAnalysis, stats: PortfolioStats) -> None:
     groups = {"aumentar": [], "manter": [], "revisar": [], "reduzir": []}
     for company in analysis.companies.values():
@@ -545,7 +323,7 @@ def _render_portfolio_dynamics(analysis: PortfolioAnalysis) -> None:
     cols[2].markdown(_render_hero_stat("Dispersão narrativa", f"{dispersion_high} ativo(s)", "Quanto maior, menor previsibilidade", "bad" if dispersion_high >= 2 else "warn"), unsafe_allow_html=True)
 
 
-def _render_company_executive_summary(company: CompanyAnalysis, quant_row: Optional[Dict[str, Any]] = None) -> None:
+def _render_company_executive_summary(company: CompanyAnalysis) -> None:
     action = _decision_from_company(company)
     action_label = _ACTION_VERBS.get(action, "Manter")
     action_tone = _tone_from_action(action)
@@ -553,13 +331,6 @@ def _render_company_executive_summary(company: CompanyAnalysis, quant_row: Optio
     strength = _main_strength(company)
     risk_text = _main_risk(company)
     signal = strip_html(company.forward_direction).capitalize() if strip_html(company.forward_direction) else "Estável"
-    quant_badges = ""
-    if quant_row:
-        quant_badges += f'<span class="p6-pill neutral">Quant {_esc(_fmt_decimal(quant_row.get("score_final"), 1))}</span>'
-        if quant_row.get("rank_segmento") not in (None, ""):
-            quant_badges += f'<span class="p6-pill neutral">Rank seg. {_esc(quant_row.get("rank_segmento"))}</span>'
-        if quant_row.get("penal_total") not in (None, ""):
-            quant_badges += f'<span class="p6-pill warn">Penal {_esc(_fmt_decimal(quant_row.get("penal_total"), 1))}</span>'
 
     st.markdown(
         f"""
@@ -572,7 +343,7 @@ def _render_company_executive_summary(company: CompanyAnalysis, quant_row: Optio
             <div class="p6-pill-stack">
               <span class="p6-pill {action_tone}">{_icon_from_action(action)} {_esc(action_label)}</span>
               <span class="p6-pill {risk_tone}">Risco {risk_label}</span>
-              <span class="p6-pill neutral">Sinal { _esc(signal) }</span>{quant_badges}
+              <span class="p6-pill neutral">Sinal { _esc(signal) }</span>
             </div>
           </div>
           <div class="p6-exec-grid">
@@ -874,7 +645,7 @@ def _render_allocation_section(allocation_rows: List[AllocationRow]) -> None:
             )
 
 
-def _render_structured_portfolio_report(report: Dict[str, Any], mode_label: str, analysis: PortfolioAnalysis, macro_context: Dict[str, Any], market_context: Dict[str, Any]) -> None:
+def _render_structured_portfolio_report(report: Dict[str, Any], mode_label: str, analysis: PortfolioAnalysis) -> None:
     st.markdown("## 🧠 Relatório Estratégico do Portfólio")
     st.caption(f"Modo utilizado: {mode_label}")
 
@@ -887,14 +658,11 @@ def _render_structured_portfolio_report(report: Dict[str, Any], mode_label: str,
         "🧠",
     )
 
-    macro_reading = report.get("macro_reading", "") or _build_macro_reading_from_context(macro_context, market_context)
-    macro_deps = report.get("macro_scenario_dependencies", []) or _build_macro_dependencies_from_context(market_context)
-
     col1, col2 = st.columns([1.2, 1.0])
     with col1:
         _render_section_text("Base analítica", report.get("analytical_basis", ""))
         _render_section_text("Identidade da carteira", report.get("portfolio_identity", ""))
-        _render_section_text("Impacto macro dominante", macro_reading)
+        _render_section_text("Impacto macro dominante", report.get("macro_reading", ""))
     with col2:
         if highlights["strengths"]:
             _render_section_list("🟢 Forças principais", highlights["strengths"], limit=3)
@@ -903,6 +671,7 @@ def _render_structured_portfolio_report(report: Dict[str, Any], mode_label: str,
         if highlights["hidden"]:
             _render_section_list("🔴 Riscos invisíveis", highlights["hidden"], limit=3)
 
+    macro_deps = report.get("macro_scenario_dependencies", []) or []
     if macro_deps:
         _render_section_list("Dependências de cenário", macro_deps, limit=4)
 
@@ -955,7 +724,7 @@ def _render_structured_portfolio_report(report: Dict[str, Any], mode_label: str,
 # Company detail section
 # ────────────────────────────────────────────────────────────────────────────────
 
-def _render_company_expander(company: CompanyAnalysis, quant_row: Optional[Dict[str, Any]] = None) -> None:
+def _render_company_expander(company: CompanyAnalysis) -> None:
     tk = company.ticker
     p = company.perspectiva_compra.strip().lower()
     badge = _badge((p or "—").upper(), _tone_from_perspectiva(p))
@@ -966,7 +735,7 @@ def _render_company_expander(company: CompanyAnalysis, quant_row: Optional[Dict[
     )
 
     with st.expander(tk, expanded=False):
-        _render_company_executive_summary(company, quant_row)
+        _render_company_executive_summary(company)
         st.markdown(f"### {tk}  {badge}{heuristic_badge}", unsafe_allow_html=True)
         st.caption(
             f"Período analisado: {company.period_ref} • Atualizado em: {company.created_at}"
@@ -1220,8 +989,6 @@ def render_patch6_report(
         return
 
     stats = analysis.stats
-    selection_context = _safe_load_selection_context(list(analysis.companies.keys()))
-    macro_context, market_context = _safe_load_macro_and_market_context()
 
     # ── Portfolio summary cards ───────────────────────────────────────────────
     top_cols = st.columns(5)
@@ -1236,8 +1003,6 @@ def render_patch6_report(
     )
 
     _render_decision_cycle(analysis, stats)
-    _render_macro_context_summary(macro_context, market_context)
-    _render_selection_context_summary(selection_context)
     _render_risk_ranking(analysis)
     _render_portfolio_dynamics(analysis)
 
@@ -1291,7 +1056,7 @@ def render_patch6_report(
 
     if portfolio_report:
         mode_label = "Análise Rígida" if analysis_mode == "rigid" else "Análise Flexível"
-        _render_structured_portfolio_report(portfolio_report, mode_label, analysis, macro_context, market_context)
+        _render_structured_portfolio_report(portfolio_report, mode_label, analysis)
     else:
         st.markdown("## 🧠 Resumo Executivo")
         st.write(
@@ -1307,7 +1072,7 @@ def render_patch6_report(
     if show_company_details:
         st.markdown("## 🏢 Relatórios por Empresa")
         for company in analysis.companies.values():
-            _render_company_expander(company, selection_context.get(company.ticker))
+            _render_company_expander(company)
 
     # ── Conclusão estratégica ─────────────────────────────────────────────────
     st.markdown("## 🔎 Conclusão Estratégica")
