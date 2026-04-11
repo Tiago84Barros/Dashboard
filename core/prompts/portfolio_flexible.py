@@ -69,6 +69,8 @@ Use macro_context, market_context e macro_company_map de forma explícita:
 - conecte cada ticker às suas sensibilidades macro mapeadas
 - considere fluxo de capital, juros internacionais, dólar, commodities e risco país
 - explique quando o macro reforça ou enfraquece a tese qualitativa que vem dos documentos
+- cite os valores numéricos atuais das variáveis relevantes (Selic, dólar, IPCA, PIB, confiança, juros reais) sempre que elas forem usadas na narrativa
+- quando não houver variável quantitativa adequada para explicar a tese (ex.: petróleo, minério, China), declare essa limitação explicitamente
 
 ---
 

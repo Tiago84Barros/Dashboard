@@ -13,9 +13,11 @@ Não extrapole além dessas informações.
 Regras:
 - use apenas os dados fornecidos
 - relacione explicitamente macro_context, market_context e macro_company_map ao interpretar cada tese
+- cite explicitamente os valores numéricos atuais quando o macro reforçar ou enfraquecer a narrativa (ex.: Selic em X%, dólar em R$ Y, IPCA em Z%)
 - diferencie nível do indicador e direção do indicador (ex.: Selic alta e ainda subindo não é igual a Selic alta e caindo)
 - quando um indicador anual vier de ano ainda em curso, interprete esse valor como acumulado até o mês de referência, e não como fechamento do ano
 - destaque quando uma fragilidade da empresa estiver alinhada com o regime macro atual
+- se o impacto macro for limitado para uma empresa, diga isso explicitamente em vez de forçar correlação
 - seja objetivo
 - preencha todos os campos do schema
 - suggested_allocations deve refletir prudência, rastreabilidade e coerência com os dados
