@@ -21,6 +21,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
 
+try:
+    from core.macro_context import load_latest_macro_context
+except Exception:
+    load_latest_macro_context = None  # type: ignore
+
 from core.patch6_analysis import (
     build_portfolio_analysis,
     pick_text,
@@ -35,15 +40,6 @@ from core.patch6_schema import (
     PortfolioStats,
 )
 from core.patch6_service import run_portfolio_llm_report, safe_call_llm
-
-try:
-    from core.macro_context import load_latest_macro_context
-    from core.market_context import build_market_context
-    from core.asset_macro_profile import get_asset_macro_profile
-except Exception:  # pragma: no cover
-    load_latest_macro_context = None
-    build_market_context = None
-    get_asset_macro_profile = None
 
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -332,7 +328,7 @@ def _render_portfolio_dynamics(analysis: PortfolioAnalysis) -> None:
     cols[2].markdown(_render_hero_stat("Dispersão narrativa", f"{dispersion_high} ativo(s)", "Quanto maior, menor previsibilidade", "bad" if dispersion_high >= 2 else "warn"), unsafe_allow_html=True)
 
 
-def _render_company_executive_summary(company: CompanyAnalysis, macro_context: Optional[Dict[str, Any]] = None, market_context: Optional[Dict[str, Any]] = None) -> None:
+def _render_company_executive_summary(company: CompanyAnalysis) -> None:
     action = _decision_from_company(company)
     action_label = _ACTION_VERBS.get(action, "Manter")
     action_tone = _tone_from_action(action)
@@ -367,152 +363,137 @@ def _render_company_executive_summary(company: CompanyAnalysis, macro_context: O
     )
 
 
-
-
-def _fmt_num(value: Any, decimals: int = 2, suffix: str = "") -> str:
-    num = safe_float(value, default=float("nan"))
-    try:
-        if num != num:  # NaN
-            return "—"
-    except Exception:
-        return "—"
-    return f"{num:.{decimals}f}{suffix}"
-
-
-def _fmt_pct(value: Any, decimals: int = 2) -> str:
-    return _fmt_num(value, decimals=decimals, suffix="%")
-
-
-def _regime_pt(value: str) -> str:
-    raw = strip_html(value).strip().lower()
-    mapping = {
-        "muito_alta": "muito alta",
-        "alta": "alta",
-        "moderada": "moderada",
-        "baixa": "baixa",
-        "muito_restritivo": "muito restritivo",
-        "restritivo": "restritivo",
-        "neutro_a_restritivo": "neutro a restritivo",
-        "baixo": "baixo",
-        "pressionado": "pressionada",
-        "acima_da_meta": "acima da meta",
-        "controlado": "controlada",
-        "muito_depreciado": "muito depreciado",
-        "depreciado": "depreciado",
-        "intermediario": "intermediário",
-        "apreciado": "apreciado",
-        "melhora_relevante": "melhora relevante",
-        "leve_melhora": "leve melhora",
-        "deterioracao_relevante": "deterioração relevante",
-        "leve_deterioracao": "leve deterioração",
-        "indefinido": "indefinido",
-    }
-    return mapping.get(raw, raw or "indefinido")
-
-
-def _load_macro_bundle() -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    macro_context: Dict[str, Any] = {}
-    market_context: Dict[str, Any] = {}
+def _load_macro_context_safe() -> Dict[str, Any]:
     if load_latest_macro_context is None:
-        return macro_context, market_context
+        return {}
     try:
-        macro_context = load_latest_macro_context() or {}
-        if build_market_context is not None:
-            market_context = build_market_context(macro_context) or {}
+        return load_latest_macro_context() or {}
     except Exception:
-        macro_context = {}
-        market_context = {}
-    return macro_context, market_context
+        return {}
 
 
-def _render_macro_snapshot(macro_context: Dict[str, Any], market_context: Dict[str, Any]) -> None:
-    mensal = macro_context.get("mensal", {}) or {}
-    anual = macro_context.get("anual", {}) or {}
+def _macro_point(context: Dict[str, Any], block: str, key: str) -> Optional[float]:
+    section = context.get(block) if isinstance(context, dict) else None
+    if not isinstance(section, dict):
+        return None
+    return safe_float(section.get(key), None)
+
+
+def _macro_trend(curr: Optional[float], prev: Optional[float], flat_tol: float = 0.02) -> Tuple[str, str]:
+    if curr is None or prev is None:
+        return 'sem histórico', 'neutral'
+    if abs(curr - prev) <= flat_tol:
+        return 'estável', 'neutral'
+    if curr > prev:
+        return 'em alta', 'warn'
+    return 'em queda', 'good'
+
+
+def _fmt_macro(value: Optional[float], suffix: str = '', decimals: int = 2) -> str:
+    if value is None:
+        return '—'
+    return f"{value:.{decimals}f}{suffix}"
+
+
+def _render_macro_snapshot(macro_context: Dict[str, Any]) -> None:
+    mensal = macro_context.get('mensal') if isinstance(macro_context, dict) else {}
+    anual = macro_context.get('anual') if isinstance(macro_context, dict) else {}
+    mensal = mensal if isinstance(mensal, dict) else {}
+    anual = anual if isinstance(anual, dict) else {}
+
     if not mensal and not anual:
         return
 
-    st.markdown("## 🌍 Macro em números")
-    cols = st.columns(6)
-    cards = [
-        ("Selic", _fmt_pct(mensal.get("selic_final") if mensal.get("selic_final") is not None else anual.get("selic")), _regime_pt(market_context.get("selic_regime", "")), "warn"),
-        ("Dólar", _fmt_num(mensal.get("cambio_final") if mensal.get("cambio_final") is not None else anual.get("cambio")), _regime_pt(market_context.get("fx_regime", "")), "good"),
-        ("IPCA 12m", _fmt_pct(mensal.get("ipca_12m") if mensal.get("ipca_12m") is not None else anual.get("ipca")), _regime_pt(market_context.get("inflation_regime", "")), "neutral"),
-        ("PIB", _fmt_pct(anual.get("pib")), "atividade", "neutral"),
-        ("Confiança", _fmt_num(mensal.get("icc_final") if mensal.get("icc_final") is not None else anual.get("icc")), _regime_pt(market_context.get("confidence_regime", "")), "neutral"),
-        ("Juro real", _fmt_pct(mensal.get("juros_real_ex_ante_12m") if mensal.get("juros_real_ex_ante_12m") is not None else anual.get("juros_real_ex_ante")), _regime_pt(market_context.get("real_rate_regime", "")), "bad"),
-    ]
-    for col, (title, value, subtitle, tone) in zip(cols, cards):
-        col.markdown(_render_hero_stat(title, value, subtitle or "—", tone), unsafe_allow_html=True)
+    selic = _macro_point(macro_context, 'mensal', 'selic_final') or _macro_point(macro_context, 'anual', 'selic')
+    selic_prev = _macro_point(macro_context, 'mensal', 'selic_media')
+    ipca = _macro_point(macro_context, 'mensal', 'ipca_12m') or _macro_point(macro_context, 'anual', 'ipca')
+    ipca_prev = _macro_point(macro_context, 'mensal', 'ipca_mom')
+    dolar = _macro_point(macro_context, 'mensal', 'cambio_final') or _macro_point(macro_context, 'anual', 'cambio')
+    dolar_prev = _macro_point(macro_context, 'anual', 'cambio')
+    pib = _macro_point(macro_context, 'anual', 'pib')
+    icc = _macro_point(macro_context, 'mensal', 'icc_final') or _macro_point(macro_context, 'anual', 'icc')
+    juros_real = _macro_point(macro_context, 'mensal', 'juros_real_ex_ante_12m') or _macro_point(macro_context, 'anual', 'juros_real_ex_ante')
+
+    selic_trend, selic_tone = _macro_trend(selic, selic_prev, flat_tol=0.05)
+    ipca_trend, ipca_tone = _macro_trend(ipca, ipca_prev, flat_tol=0.05)
+    dolar_trend, dolar_tone = _macro_trend(dolar, dolar_prev, flat_tol=0.03)
+
+    st.markdown('## 🌍 Cenário Macro Atual')
+    st.markdown(
+        "<div class='p6-signal-row'>"
+        + _render_signal_chip('Selic', f"{_fmt_macro(selic, '%')} • {selic_trend}", selic_tone)
+        + _render_signal_chip('IPCA 12m', f"{_fmt_macro(ipca, '%')} • {ipca_trend}", ipca_tone)
+        + _render_signal_chip('Câmbio', f"R$ {_fmt_macro(dolar)} • {dolar_trend}", dolar_tone)
+        + _render_signal_chip('PIB / Confiança', f"PIB {_fmt_macro(pib, '%', 1)} • ICC {_fmt_macro(icc, '', 1)}", 'neutral')
+        + "</div>"
+        ,
+        unsafe_allow_html=True,
+    )
+    if juros_real is not None:
+        st.caption(f"Juro real ex-ante: {_fmt_macro(juros_real, '%')} • referência mensal: {strip_html(str(mensal.get('data') or anual.get('data') or '—'))}")
 
 
-def _company_macro_lines(company: CompanyAnalysis, macro_context: Dict[str, Any], market_context: Dict[str, Any]) -> List[str]:
-    mensal = macro_context.get("mensal", {}) or {}
-    anual = macro_context.get("anual", {}) or {}
+def _company_macro_tags(company: CompanyAnalysis) -> List[str]:
+    tags = []
+    sources = [company.sensibilidades_macro, company.riscos, company.pontos_chave, company.monitorar]
+    blob = ' '.join(strip_html(x).lower() for src in sources for x in (src or []))
+    tese_blob = ' '.join([strip_html(company.tese).lower(), strip_html(company.papel_estrategico).lower(), strip_html(company.fragilidade_regime_atual).lower(), strip_html(company.leitura).lower()])
+    blob = f"{blob} {tese_blob}"
     ticker = company.ticker.upper()
-    sens = [strip_html(s).lower() for s in (company.sensibilidades_macro or []) if strip_html(s)]
-    if get_asset_macro_profile is not None:
-        try:
-            prof = get_asset_macro_profile(ticker) or {}
-            sens.extend([str(x).lower() for x in (prof.get("macro_sensitivities") or []) if str(x).strip()])
-        except Exception:
-            pass
-    sens = list(dict.fromkeys(sens))
 
-    selic = mensal.get("selic_final") if mensal.get("selic_final") is not None else anual.get("selic")
-    cambio = mensal.get("cambio_final") if mensal.get("cambio_final") is not None else anual.get("cambio")
-    ipca = mensal.get("ipca_12m") if mensal.get("ipca_12m") is not None else anual.get("ipca")
-    pib = anual.get("pib")
-    icc = mensal.get("icc_final") if mensal.get("icc_final") is not None else anual.get("icc")
-    juros_real = mensal.get("juros_real_ex_ante_12m") if mensal.get("juros_real_ex_ante_12m") is not None else anual.get("juros_real_ex_ante")
+    def add(tag: str) -> None:
+        if tag not in tags:
+            tags.append(tag)
 
-    lines: List[str] = []
-
-    if any(k in sens for k in ["juros", "credito", "atividade_domestica", "consumo", "investimento", "mercado_de_capitais"]):
-        lines.append(
-            f"Selic em {_fmt_pct(selic)} e juro real em {_fmt_pct(juros_real)} mantêm o custo de capital em regime "
-            f"{_regime_pt(market_context.get('selic_regime', ''))}, o que pesa mais sobre teses dependentes de expansão, crédito ou re-rating."
-        )
-
-    if any(k in sens for k in ["cambio", "demanda_externa", "atividade_global"]):
-        lines.append(
-            f"Dólar em {_fmt_num(cambio)}, classificado como {_regime_pt(market_context.get('fx_regime', ''))}, "
-            f"altera a assimetria de receita e margem para ativos com exposição externa."
-        )
-
-    if any(k in sens for k in ["inflacao", "regulacao"]):
-        lines.append(
-            f"IPCA em {_fmt_pct(ipca)} no recorte disponível ajuda a ler repasse tarifário, indexação contratual e pressão de custos no regime atual."
-        )
-
-    if any(k in sens for k in ["atividade_domestica", "consumo", "credito", "atividade_industrial", "vacancia"]):
-        lines.append(
-            f"PIB em {_fmt_pct(pib)} e confiança em {_fmt_num(icc)} sugerem uma leitura de demanda doméstica que pode reforçar ou enfraquecer a execução operacional."
-        )
-
-    if any(k in sens for k in ["petroleo", "minerio", "china", "commodities"]):
-        lines.append(
-            f"No mapa macro desta empresa, o câmbio em {_fmt_num(cambio)} é o dado quantitativo doméstico mais útil para a leitura atual; "
-            f"o restante da tese segue dependente de variáveis externas e setoriais não capturadas diretamente em info_economica."
-        )
-
-    if not lines:
-        lines.append(
-            f"O recorte macro disponível mostra Selic em {_fmt_pct(selic)}, dólar em {_fmt_num(cambio)} e IPCA em {_fmt_pct(ipca)}; "
-            "nesta empresa, o impacto aparece mais como pano de fundo do que como driver dominante explícito."
-        )
-
-    return lines[:3]
+    if any(k in blob for k in ['câmbio', 'cambio', 'dólar', 'dolar', 'export', 'commodity']) or ticker.startswith(('PETR', 'VALE', 'SUZB', 'WEGE')):
+        add('cambio')
+    if any(k in blob for k in ['selic', 'juros', 'dívida', 'divida', 'alavanc', 'custo de capital', 'debênture', 'debenture', 'crédito', 'credito']) or ticker.startswith(('TAEE', 'CSMG', 'CEBR', 'UGPA')):
+        add('juros')
+    if any(k in blob for k in ['inflação', 'inflacao', 'ipca', 'custo', 'repasse']) or ticker.startswith(('UGPA', 'LEVE')):
+        add('inflacao')
+    if any(k in blob for k in ['consumo', 'demanda', 'atividade', 'doméstic', 'domestic', 'confiança', 'confianca', 'volume']) or ticker.startswith(('UGPA', 'LEVE', 'CEBR', 'CSMG')):
+        add('atividade')
+    return tags
 
 
-def _render_company_macro_context(company: CompanyAnalysis, macro_context: Dict[str, Any], market_context: Dict[str, Any]) -> None:
+def _render_company_macro_section(company: CompanyAnalysis, macro_context: Dict[str, Any]) -> None:
     if not macro_context:
         return
-    st.markdown("**Impacto Macro Atual**")
-    for line in _company_macro_lines(company, macro_context, market_context):
-        st.markdown(
-            f"<div style='font-size:15px;line-height:1.6;margin:4px 0;'>• {_esc(line)}</div>",
-            unsafe_allow_html=True,
-        )
+
+    mensal = macro_context.get('mensal') if isinstance(macro_context, dict) else {}
+    anual = macro_context.get('anual') if isinstance(macro_context, dict) else {}
+    mensal = mensal if isinstance(mensal, dict) else {}
+    anual = anual if isinstance(anual, dict) else {}
+
+    selic = _macro_point(macro_context, 'mensal', 'selic_final') or _macro_point(macro_context, 'anual', 'selic')
+    dolar = _macro_point(macro_context, 'mensal', 'cambio_final') or _macro_point(macro_context, 'anual', 'cambio')
+    ipca = _macro_point(macro_context, 'mensal', 'ipca_12m') or _macro_point(macro_context, 'anual', 'ipca')
+    pib = _macro_point(macro_context, 'anual', 'pib')
+    icc = _macro_point(macro_context, 'mensal', 'icc_final') or _macro_point(macro_context, 'anual', 'icc')
+    juros_real = _macro_point(macro_context, 'mensal', 'juros_real_ex_ante_12m') or _macro_point(macro_context, 'anual', 'juros_real_ex_ante')
+
+    tags = _company_macro_tags(company)
+    lines: List[str] = []
+
+    if 'cambio' in tags and dolar is not None:
+        tone = '🟢' if company.ticker.upper().startswith(('PETR', 'VALE', 'SUZB')) else '🟡'
+        lines.append(f"{tone} Câmbio em R$ {_fmt_macro(dolar)} entra na tese por exposição a exportação, commodities ou receita indexada em dólar.")
+    if 'juros' in tags and selic is not None:
+        extra = f" Juro real ex-ante em {_fmt_macro(juros_real, '%')}" if juros_real is not None else ''
+        lines.append(f"🔴 Selic em {_fmt_macro(selic, '%')} mantém custo de capital e exigência de execução mais altos.{extra}")
+    if 'inflacao' in tags and ipca is not None:
+        lines.append(f"🟡 IPCA em {_fmt_macro(ipca, '%')} afeta repasse de preços, custos e previsibilidade de margens.")
+    if 'atividade' in tags and (pib is not None or icc is not None):
+        pib_txt = _fmt_macro(pib, '%', 1) if pib is not None else '—'
+        icc_txt = _fmt_macro(icc, '', 1) if icc is not None else '—'
+        lines.append(f"🟠 Atividade doméstica exige leitura conjunta de PIB ({pib_txt}) e confiança ({icc_txt}) para calibrar demanda e volume.")
+
+    if not lines:
+        return
+
+    st.markdown('**Impacto Macro Atual**')
+    for line in lines:
+        st.markdown(f"<div class='p6-action-line'>{_esc(line)}</div>", unsafe_allow_html=True)
 
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -881,7 +862,7 @@ def _render_structured_portfolio_report(report: Dict[str, Any], mode_label: str,
 # Company detail section
 # ────────────────────────────────────────────────────────────────────────────────
 
-def _render_company_expander(company: CompanyAnalysis, macro_context: Optional[Dict[str, Any]] = None, market_context: Optional[Dict[str, Any]] = None) -> None:
+def _render_company_expander(company: CompanyAnalysis) -> None:
     tk = company.ticker
     p = company.perspectiva_compra.strip().lower()
     badge = _badge((p or "—").upper(), _tone_from_perspectiva(p))
@@ -892,7 +873,7 @@ def _render_company_expander(company: CompanyAnalysis, macro_context: Optional[D
     )
 
     with st.expander(tk, expanded=False):
-        _render_company_executive_summary(company, macro_context=macro_context, market_context=market_context)
+        _render_company_executive_summary(company)
         st.markdown(f"### {tk}  {badge}{heuristic_badge}", unsafe_allow_html=True)
         st.caption(
             f"Período analisado: {company.period_ref} • Atualizado em: {company.created_at}"
@@ -912,7 +893,6 @@ def _render_company_expander(company: CompanyAnalysis, macro_context: Optional[D
 
         _render_metric_cards(metric_items, columns_per_row=2)
         _render_score_explanations(company)
-        _render_company_macro_context(company, macro_context or {}, market_context or {})
 
         with st.expander("Ver análise detalhada", expanded=False):
             _render_section_text("Tese (síntese)", company.tese or "—")
@@ -936,6 +916,7 @@ def _render_company_expander(company: CompanyAnalysis, macro_context: Optional[D
                 )
 
             _render_section_text("Papel estratégico", company.papel_estrategico)
+            _render_company_macro_section(company, _load_macro_context_safe())
             _render_section_list("Sensibilidades macro", company.sensibilidades_macro, limit=8)
             _render_section_text("Fragilidade sob o regime atual", company.fragilidade_regime_atual)
             _render_section_list("Dependências de cenário", company.dependencias_cenario, limit=6)
@@ -1136,7 +1117,7 @@ def render_patch6_report(
     analysis_mode: str = "rigid",
 ) -> None:
     st.markdown(_P6_CSS, unsafe_allow_html=True)
-    macro_context, market_context = _load_macro_bundle()
+    macro_context_ui = _load_macro_context_safe()
 
     # ── Data + computation (pure, no Streamlit) ──────────────────────────────
     analysis = build_portfolio_analysis(tickers, period_ref)
@@ -1231,7 +1212,7 @@ def render_patch6_report(
     if show_company_details:
         st.markdown("## 🏢 Relatórios por Empresa")
         for company in analysis.companies.values():
-            _render_company_expander(company, macro_context=macro_context, market_context=market_context)
+            _render_company_expander(company)
 
     # ── Conclusão estratégica ─────────────────────────────────────────────────
     st.markdown("## 🔎 Conclusão Estratégica")
