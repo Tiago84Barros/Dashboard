@@ -1,15 +1,5 @@
 # core/patch6_service.py
 # LLM orchestration layer for Patch6 portfolio reports.
-#
-# Responsibilities:
-#   - Assemble LLM context payload from a PortfolioAnalysis
-#   - Call LLM via generic multi-client adapter (_safe_call_llm)
-#   - Coordinate macro/market context loading
-#   - Return structured portfolio_report dict (or None on failure)
-#
-# Rules:
-#   - No Streamlit imports
-#   - No DB access — receives PortfolioAnalysis, not raw data
 from __future__ import annotations
 
 import logging
@@ -21,10 +11,6 @@ from core.patch6_schema import PortfolioAnalysis
 logger = logging.getLogger(__name__)
 
 
-# ────────────────────────────────────────────────────────────────────────────────
-# Generic LLM call adapter
-# ────────────────────────────────────────────────────────────────────────────────
-
 def safe_call_llm(llm_client: Any, prompt: str) -> Optional[str]:
     """Calls any supported LLM client interface. Returns None on failure."""
     try:
@@ -33,8 +19,7 @@ def safe_call_llm(llm_client: Any, prompt: str) -> Optional[str]:
 
         model = AIConfig().model
 
-        if hasattr(llm_client, "responses") and hasattr(llm_client.responses, "create") \
-                and callable(llm_client.responses.create):
+        if hasattr(llm_client, "responses") and hasattr(llm_client.responses, "create") and callable(llm_client.responses.create):
             resp = llm_client.responses.create(model=model, input=prompt)
             txt = getattr(resp, "output_text", None)
             if txt:
@@ -44,8 +29,7 @@ def safe_call_llm(llm_client: Any, prompt: str) -> Optional[str]:
             except Exception:
                 return str(resp)
 
-        if hasattr(llm_client, "chat") and hasattr(llm_client.chat, "completions") \
-                and hasattr(llm_client.chat.completions, "create"):
+        if hasattr(llm_client, "chat") and hasattr(llm_client.chat, "completions") and hasattr(llm_client.chat.completions, "create"):
             resp = llm_client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
@@ -69,9 +53,54 @@ def safe_call_llm(llm_client: Any, prompt: str) -> Optional[str]:
         return None
 
 
-# ────────────────────────────────────────────────────────────────────────────────
-# Context payload builder (used by generate_portfolio_report)
-# ────────────────────────────────────────────────────────────────────────────────
+def _build_company_macro_map(companies: Dict[str, Any], macro_context: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    try:
+        from core.asset_macro_profile import get_asset_macro_profile
+    except Exception:
+        return {}
+
+    trends = macro_context.get("trends", {}) or {}
+    market_summary = (macro_context.get("macro_summary") or {}).copy()
+    output: Dict[str, Dict[str, Any]] = {}
+
+    for ticker, company in companies.items():
+        profile = get_asset_macro_profile(ticker)
+        sensitivities = list(profile.get("macro_sensitivities") or [])
+        company_sensitivities = list(getattr(company, "sensibilidades_macro", []) or [])
+        merged_sensitivities = []
+        for item in sensitivities + company_sensitivities:
+            key = str(item).strip()
+            if key and key not in merged_sensitivities:
+                merged_sensitivities.append(key)
+
+        macro_flags: List[str] = []
+        if "juros" in merged_sensitivities:
+            macro_flags.append(f"selic_{(trends.get('selic') or {}).get('trend', 'indefinido')}")
+        if "cambio" in merged_sensitivities:
+            macro_flags.append(f"cambio_{(trends.get('cambio') or {}).get('trend', 'indefinido')}")
+        if "inflacao" in merged_sensitivities:
+            macro_flags.append(f"ipca_{(trends.get('ipca_12m') or {}).get('trend', 'indefinido')}")
+        if "atividade_domestica" in merged_sensitivities or "consumo" in merged_sensitivities:
+            macro_flags.append(f"icc_{(trends.get('icc') or {}).get('trend', 'indefinido')}")
+        if any(k in merged_sensitivities for k in ("minerio", "petroleo", "commodities")):
+            macro_flags.append("commodity_global_sensivel")
+
+        output[ticker] = {
+            "role_hint": profile.get("role_hint"),
+            "style": profile.get("style"),
+            "risk_bucket": profile.get("risk_bucket"),
+            "macro_sensitivities": merged_sensitivities,
+            "macro_flags": macro_flags,
+            "company_specific_notes": [
+                f"Ativo com sensibilidade a: {', '.join(merged_sensitivities)}" if merged_sensitivities else "Sensibilidades macro não mapeadas",
+                f"Fragilidade sob regime atual: {getattr(company, 'fragilidade_regime_atual', '')}" if getattr(company, 'fragilidade_regime_atual', '') else "",
+                f"Dependências de cenário: {', '.join(getattr(company, 'dependencias_cenario', []) or [])}" if getattr(company, 'dependencias_cenario', []) else "",
+            ],
+            "macro_summary_snapshot": market_summary,
+        }
+        output[ticker]["company_specific_notes"] = [x for x in output[ticker]["company_specific_notes"] if x]
+    return output
+
 
 def build_portfolio_context_payload(
     analysis: PortfolioAnalysis,
@@ -81,6 +110,7 @@ def build_portfolio_context_payload(
 ) -> Dict[str, Any]:
     stats = analysis.stats
     ticker_rows: List[Dict[str, Any]] = []
+    company_macro_map = _build_company_macro_map(analysis.companies, macro_context)
     for company in analysis.companies.values():
         ticker_rows.append(
             {
@@ -88,7 +118,6 @@ def build_portfolio_context_payload(
                 "perspectiva_compra": company.perspectiva_compra,
                 "score_qualitativo": company.score_qualitativo,
                 "confianca": company.confianca,
-                # v2 robustness signals for LLM context
                 "robustez_qualitativa": company.robustez_qualitativa,
                 "execution_trend": company.execution_trend,
                 "narrative_shift": company.narrative_shift,
@@ -106,6 +135,7 @@ def build_portfolio_context_payload(
                 "pontos_chave": company.pontos_chave,
                 "monitorar": company.monitorar,
                 "mudancas": company.mudancas,
+                "macro_profile": company_macro_map.get(company.ticker, {}),
             }
         )
 
@@ -125,23 +155,16 @@ def build_portfolio_context_payload(
         "tickers": ticker_rows,
         "macro_context": macro_context,
         "market_context": market_context,
+        "macro_company_map": company_macro_map,
         "current_allocations": allocation_rows_dicts,
     }
 
-
-# ────────────────────────────────────────────────────────────────────────────────
-# Main orchestrator
-# ────────────────────────────────────────────────────────────────────────────────
 
 def run_portfolio_llm_report(
     llm_factory: Any,
     analysis: PortfolioAnalysis,
     analysis_mode: str = "rigid",
 ) -> Optional[Dict[str, Any]]:
-    """
-    Loads macro/market context, builds the LLM payload, calls generate_portfolio_report.
-    Returns a structured report dict, or None if LLM is unavailable or fails.
-    """
     if llm_factory is None:
         return None
 
@@ -160,8 +183,8 @@ def run_portfolio_llm_report(
         from core.market_context import build_market_context
         macro_context = load_latest_macro_context()
         market_context = build_market_context(macro_context)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Falha ao carregar contexto macro para Patch6 [%s]: %s", type(exc).__name__, exc)
 
     allocation_rows_dicts = [
         {
@@ -176,7 +199,6 @@ def run_portfolio_llm_report(
         for r in analysis.allocation_rows
     ]
 
-    # v2: enrich context with topic-distributed RAG evidence (best-effort)
     rag_context_by_ticker: Dict[str, str] = {}
     try:
         from core.patch6_rag import build_rag_context

@@ -79,9 +79,20 @@ def _classify_confidence(icc_delta_12m: Optional[float]) -> str:
     return "leve_deterioracao"
 
 
+def _trend_text(label: str) -> str:
+    mapping = {
+        "alta": "em alta",
+        "queda": "em queda",
+        "estavel": "estável",
+        "indefinido": "sem tendência clara",
+    }
+    return mapping.get(label or "", "sem tendência clara")
+
+
 def build_market_context(macro_context: Dict[str, Any]) -> Dict[str, Any]:
     mensal = macro_context.get("mensal", {}) or {}
     anual = macro_context.get("anual", {}) or {}
+    trends = macro_context.get("trends", {}) or {}
 
     selic_final = _to_float(_safe_get(mensal, "selic_final"))
     ipca_12m = _to_float(_safe_get(mensal, "ipca_12m"))
@@ -137,10 +148,15 @@ def build_market_context(macro_context: Dict[str, Any]) -> Dict[str, Any]:
         "commodities internacionais influenciam diretamente exportadoras e empresas ligadas a petróleo e minério",
     ]
 
+    selic_trend = _trend_text((trends.get("selic") or {}).get("trend", "indefinido"))
+    cambio_trend = _trend_text((trends.get("cambio") or {}).get("trend", "indefinido"))
+    ipca_trend = _trend_text((trends.get("ipca_12m") or {}).get("trend", "indefinido"))
+    icc_trend = _trend_text((trends.get("icc") or {}).get("trend", "indefinido"))
+
     regime_summary = (
-        f"O regime doméstico atual combina juros {selic_regime.replace('_', ' ')}, "
-        f"juro real {real_rate_regime.replace('_', ' ')}, inflação {inflation_regime.replace('_', ' ')}, "
-        f"câmbio {fx_regime.replace('_', ' ')} e confiança {confidence_regime.replace('_', ' ')}."
+        f"O regime doméstico atual combina Selic em {selic_final if selic_final is not None else '—'}% ({selic_trend}), "
+        f"juro real {real_rate_regime.replace('_', ' ')}, inflação de 12 meses em {ipca_12m if ipca_12m is not None else '—'}% ({ipca_trend}), "
+        f"câmbio em {cambio_final if cambio_final is not None else '—'} ({cambio_trend}) e confiança {icc_trend}."
     )
 
     return {
@@ -150,10 +166,19 @@ def build_market_context(macro_context: Dict[str, Any]) -> Dict[str, Any]:
         "inflation_regime": inflation_regime,
         "fx_regime": fx_regime,
         "confidence_regime": confidence_regime,
+        "macro_trends": {
+            "selic": (trends.get("selic") or {}).get("trend", "indefinido"),
+            "cambio": (trends.get("cambio") or {}).get("trend", "indefinido"),
+            "ipca_12m": (trends.get("ipca_12m") or {}).get("trend", "indefinido"),
+            "icc": (trends.get("icc") or {}).get("trend", "indefinido"),
+            "juros_real": (trends.get("juros_real") or {}).get("trend", "indefinido"),
+            "pib": (trends.get("pib") or {}).get("trend", "indefinido"),
+        },
         "pib": pib,
         "divida_publica": divida_publica,
         "domestic_risk_factors": domestic_risk_factors,
         "portfolio_tailwinds": portfolio_tailwinds,
         "portfolio_headwinds": portfolio_headwinds,
         "international_links": international_links,
+        "macro_interpretation": macro_context.get("macro_interpretation", []),
     }
