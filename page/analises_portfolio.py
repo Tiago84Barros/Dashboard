@@ -614,8 +614,18 @@ def render() -> None:
           .p6-section-banner{border:1px solid rgba(255,255,255,.10);border-radius:18px;padding:14px 16px;background:linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));margin:6px 0 12px 0;box-shadow:0 10px 24px rgba(0,0,0,.18)}
           .p6-section-banner .ttl{font-size:18px;font-weight:900;margin:0 0 4px 0}
           .p6-section-banner .txt{font-size:13px;opacity:.82;line-height:1.4}
-          @media (max-width: 900px){.p6-focus-grid{grid-template-columns:1fr 1fr}}
-          @media (max-width: 640px){.p6-focus-grid{grid-template-columns:1fr}}
+          .p6-signal-wrap{margin:8px 0 14px 0}
+          .p6-signal-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+          .p6-signal-card{border-radius:18px;padding:14px 16px;border:1px solid rgba(255,255,255,.12);box-shadow:0 10px 24px rgba(0,0,0,.16)}
+          .p6-signal-card h4{margin:0 0 6px 0;font-size:12px;letter-spacing:.3px;opacity:.84;text-transform:uppercase}
+          .p6-signal-card .main{font-size:22px;font-weight:900;line-height:1.1;margin-bottom:6px}
+          .p6-signal-card .sub{font-size:12px;opacity:.78;line-height:1.35}
+          .p6-signal-good{background:linear-gradient(180deg, rgba(34,197,94,.16), rgba(34,197,94,.06));border-color:rgba(34,197,94,.34)}
+          .p6-signal-neutral{background:linear-gradient(180deg, rgba(59,130,246,.15), rgba(59,130,246,.05));border-color:rgba(59,130,246,.32)}
+          .p6-signal-bad{background:linear-gradient(180deg, rgba(239,68,68,.16), rgba(239,68,68,.06));border-color:rgba(239,68,68,.34)}
+          .p6-deepnote{margin-top:8px;border:1px dashed rgba(255,255,255,.12);border-radius:14px;padding:10px 12px;font-size:12px;opacity:.8}
+          @media (max-width: 900px){.p6-focus-grid{grid-template-columns:1fr 1fr}.p6-signal-grid{grid-template-columns:1fr}}
+          @media (max-width: 640px){.p6-focus-grid{grid-template-columns:1fr}.p6-signal-grid{grid-template-columns:1fr}}
         </style>
         """,
         unsafe_allow_html=True,
@@ -1179,32 +1189,28 @@ def render() -> None:
     st.markdown(
         """
         <div class="p6-section-banner">
-          <div class="ttl">Leitura orientada à decisão</div>
-          <div class="txt">Comece pelo diagnóstico executivo, pela alocação sugerida e pelos relatórios por empresa. O objetivo desta seção é reduzir ruído e destacar o que merece aumentar, manter, reduzir ou monitorar com mais atenção.</div>
+          <div class="ttl">Leitura rápida para decidir</div>
+          <div class="txt">A ideia aqui é simples: mostrar primeiro os sinais de oportunidade, neutralidade e perigo, com pouca densidade. Quando você quiser entender o motivo, abra a análise detalhada por empresa logo abaixo.</div>
         </div>
-        <div class="p6-focus-wrap">
-          <div class="p6-focus-grid">
-            <div class="p6-focus-card p6-focus-good">
-              <h4>1. Onde agir primeiro</h4>
-              <div class="main">Decisão do ciclo</div>
-              <div class="sub">Leia primeiro os blocos de ajuste de alocação e plano de ação.</div>
+        <div class="p6-signal-wrap">
+          <div class="p6-signal-grid">
+            <div class="p6-signal-card p6-signal-good">
+              <h4>🟢 Oportunidade</h4>
+              <div class="main">Aumentar / olhar com mais atenção</div>
+              <div class="sub">Procure ativos em leitura forte, com execução consistente e sinais construtivos no relatório por empresa.</div>
             </div>
-            <div class="p6-focus-card p6-focus-neutral">
-              <h4>2. O pano de fundo</h4>
-              <div class="main">Macro + concentração</div>
-              <div class="sub">Entenda o regime macro e o risco agregado da carteira.</div>
+            <div class="p6-signal-card p6-signal-neutral">
+              <h4>🔵 Neutralidade</h4>
+              <div class="main">Manter / acompanhar</div>
+              <div class="sub">Use este grupo quando a tese segue válida, mas ainda depende de confirmação de execução, macro ou alocação de capital.</div>
             </div>
-            <div class="p6-focus-card p6-focus-warn">
-              <h4>3. Onde monitorar</h4>
-              <div class="main">Riscos e desalinhamentos</div>
-              <div class="sub">Priorize ativos com ruído narrativo, dívida ou execução inconsistente.</div>
-            </div>
-            <div class="p6-focus-card p6-focus-bad">
-              <h4>4. Antes de decidir</h4>
-              <div class="main">Valide evidências</div>
-              <div class="sub">Abra os detalhes por empresa quando precisar confirmar tese, sinais e trechos documentais.</div>
+            <div class="p6-signal-card p6-signal-bad">
+              <h4>🔴 Perigo</h4>
+              <div class="main">Reduzir / revisar defensivamente</div>
+              <div class="sub">Priorize aqui riscos regulatórios, dívida mal explicada, deterioração prospectiva e contradições entre discurso e entrega.</div>
             </div>
           </div>
+          <div class="p6-deepnote">Quando precisar aprofundar, abra <b>Ver análise detalhada</b> em cada empresa. Ali ficam tese, riscos, catalisadores, execução vs promessa, mudanças estratégicas e evidências documentais.</div>
         </div>
         """,
         unsafe_allow_html=True,
