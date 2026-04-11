@@ -32,6 +32,7 @@ import pandas as pd
 from core.helpers import get_logo_url
 
 from core.portfolio_snapshot_store import get_latest_snapshot
+from core.portfolio_snapshot_analysis_store import load_snapshot_analysis
 from core.docs_corporativos_store import (
     count_docs,
     count_chunks,
@@ -410,6 +411,66 @@ def _clip(s: str, max_chars: int) -> str:
         return s
     return s[:max_chars].rstrip() + " …"
 
+
+
+def _fmt_num(x: Any, digits: int = 2, default: str = "—") -> str:
+    try:
+        if x is None or (isinstance(x, float) and math.isnan(x)):
+            return default
+        return f"{float(x):.{digits}f}"
+    except Exception:
+        return default
+
+
+def _render_selection_context(selection_df: pd.DataFrame) -> None:
+    if selection_df is None or selection_df.empty:
+        return
+
+    st.subheader("🧩 Contexto quantitativo da seleção")
+    st.caption("Fotografia do racional quantitativo salvo na Criação de Portfólio. Ajuda a explicar por que cada ativo entrou e quais penalizações afetaram o score.")
+
+    cols = st.columns(4)
+    cols[0].markdown(f"<div class='p6-mcard'><div class='p6-mlabel'>Ativos com contexto salvo</div><div class='p6-mvalue'>{len(selection_df)}</div><div class='p6-mextra'>Base quantitativa disponível para cruzamento com Patch 6.</div></div>", unsafe_allow_html=True)
+    avg_score = pd.to_numeric(selection_df.get('score_final'), errors='coerce').dropna()
+    cols[1].markdown(f"<div class='p6-mcard'><div class='p6-mlabel'>Score médio de seleção</div><div class='p6-mvalue'>{_fmt_num(avg_score.mean() if not avg_score.empty else None)}</div><div class='p6-mextra'>Score final salvo no snapshot.</div></div>", unsafe_allow_html=True)
+    penal = pd.to_numeric(selection_df.get('penal_total'), errors='coerce').dropna()
+    cols[2].markdown(f"<div class='p6-mcard'><div class='p6-mlabel'>Penalização média</div><div class='p6-mvalue'>{_fmt_num(penal.mean() if not penal.empty else None)}</div><div class='p6-mextra'>Soma das penalizações identificadas.</div></div>", unsafe_allow_html=True)
+    leaders = selection_df['motivos_selecao'].apply(lambda x: isinstance(x, list) and any('LÍDER' in str(v).upper() for v in x)).sum() if 'motivos_selecao' in selection_df.columns else 0
+    cols[3].markdown(f"<div class='p6-mcard'><div class='p6-mlabel'>Ativos líderes no score</div><div class='p6-mvalue'>{int(leaders)}</div><div class='p6-mextra'>Selecionados por liderança no último recorte anual.</div></div>", unsafe_allow_html=True)
+
+    view = selection_df.copy()
+    if 'motivos_selecao' in view.columns:
+        view['Motivos'] = view['motivos_selecao'].apply(lambda x: ' • '.join(x[:3]) if isinstance(x, list) else '—')
+    if 'drivers_positivos' in view.columns:
+        view['Drivers positivos'] = view['drivers_positivos'].apply(lambda x: ' • '.join(x[:3]) if isinstance(x, list) else '—')
+    if 'drivers_negativos' in view.columns:
+        view['Drivers negativos'] = view['drivers_negativos'].apply(lambda x: ' • '.join(x[:3]) if isinstance(x, list) else '—')
+
+    rename_map = {
+        'ticker': 'Ticker',
+        'segmento': 'Segmento',
+        'rank_geral': 'Rank geral',
+        'rank_segmento': 'Rank segmento',
+        'score_final': 'Score final',
+        'classe_forca': 'Classe de força',
+        'penal_total': 'Penal total',
+        'p_vp': 'P/VP',
+        'dividend_yield': 'DY',
+        'roe': 'ROE',
+        'roic': 'ROIC',
+        'margem_liquida': 'Margem líquida',
+        'slope_receita': 'Slope receita',
+    }
+    view = view.rename(columns=rename_map)
+    wanted = [
+        'Ticker', 'Segmento', 'Rank geral', 'Rank segmento', 'Score final', 'Classe de força',
+        'Penal total', 'ROE', 'ROIC', 'Margem líquida', 'DY', 'P/VP', 'Slope receita',
+        'Motivos', 'Drivers positivos', 'Drivers negativos'
+    ]
+    wanted = [c for c in wanted if c in view.columns]
+    if wanted:
+        st.dataframe(view[wanted], use_container_width=True)
+
 def _build_context_limited(chunks: List[str], per_chunk_chars: int = 1200, total_chars: int = 12000) -> str:
     parts: List[str] = []
     used = 0
@@ -614,6 +675,7 @@ def render() -> None:
 
     
     snapshot_id = str(snapshot.get("id") or "")
+    selection_context_df = load_snapshot_analysis(snapshot_id)
 
     # Dados salvos (sem expor o hash)
     selic_used = snapshot.get("selic") or snapshot.get("selic_ref") or snapshot.get("selic_aa")
@@ -728,6 +790,8 @@ def render() -> None:
     unsafe_allow_html=True,
 )
     st.markdown(_render_ticker_chips_html(tickers), unsafe_allow_html=True)
+
+    _render_selection_context(selection_context_df)
 
     st.divider()
 

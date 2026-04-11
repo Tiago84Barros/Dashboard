@@ -42,6 +42,7 @@ from core.yf_data import (
 # Snapshot (Supabase) — precisa estar no seu projeto
 # (compatível com suas tabelas portfolio_snapshots / portfolio_snapshot_items)
 from core.portfolio_snapshot_store import compute_plan_hash, save_snapshot
+from core.portfolio_snapshot_analysis_store import save_snapshot_analysis
 
 logger = logging.getLogger(__name__)
 
@@ -257,6 +258,183 @@ def _merge_empresa_final(
     if not cur.get("logo_url") and item.get("logo_url"):
         cur["logo_url"] = item.get("logo_url")
 
+
+
+
+def _safe_num(value, default=None):
+    try:
+        v = float(value)
+        if pd.isna(v):
+            return default
+        return v
+    except Exception:
+        return default
+
+
+def _first_existing(row: pd.Series, candidates: list[str], default=None):
+    for col in candidates:
+        if col in row.index:
+            val = row.get(col)
+            if val is not None and str(val) != 'nan':
+                return val
+    return default
+
+
+def _classe_forca(score: float | None) -> str:
+    try:
+        s = float(score)
+    except Exception:
+        return 'Indefinida'
+    if s >= 2.0:
+        return 'Muito forte'
+    if s >= 1.0:
+        return 'Forte'
+    if s >= 0.0:
+        return 'Moderada'
+    if s >= -1.0:
+        return 'Fraca'
+    return 'Muito fraca'
+
+
+def _build_selection_analysis_rows(score_global: pd.DataFrame, empresas_lideres_finais: list[dict]) -> list[dict]:
+    if score_global is None or score_global.empty or not empresas_lideres_finais:
+        return []
+
+    df = score_global.copy()
+    if 'ticker' not in df.columns:
+        return []
+
+    df['ticker'] = df['ticker'].astype(str).str.upper().str.replace('.SA', '', regex=False).str.strip()
+    if 'Ano' in df.columns:
+        df['Ano'] = pd.to_numeric(df['Ano'], errors='coerce')
+
+    selected = {str(e.get('ticker','')).strip().upper(): e for e in empresas_lideres_finais if str(e.get('ticker','')).strip()}
+    rows: list[dict] = []
+
+    latest_year_global = None
+    if 'Ano' in df.columns and df['Ano'].notna().any():
+        latest_year_global = int(df['Ano'].dropna().max())
+
+    for ticker, emp in selected.items():
+        sub = df[df['ticker'] == ticker].copy()
+        if sub.empty:
+            continue
+
+        if 'Ano' in sub.columns and sub['Ano'].notna().any():
+            latest_year = int(sub['Ano'].dropna().max())
+            sub_latest = sub[sub['Ano'] == latest_year].copy()
+        else:
+            latest_year = latest_year_global
+            sub_latest = sub.tail(1).copy()
+
+        if sub_latest.empty:
+            continue
+
+        row = sub_latest.iloc[0]
+        segmento = str(emp.get('segmento') or row.get('SEGMENTO') or '').strip()
+        subsetor = str(emp.get('subsetor') or row.get('SUBSETOR') or '').strip()
+        setor = str(emp.get('setor') or row.get('SETOR') or '').strip()
+
+        rank_geral = None
+        rank_segmento = None
+        if latest_year_global is not None and 'Score_Ajustado' in df.columns:
+            universe_year = df[df['Ano'] == latest_year_global].copy() if 'Ano' in df.columns else df.copy()
+            if not universe_year.empty:
+                universe_year = universe_year.sort_values('Score_Ajustado', ascending=False).reset_index(drop=True)
+                pos = universe_year.index[universe_year['ticker'] == ticker]
+                if len(pos) > 0:
+                    rank_geral = int(pos[0]) + 1
+                if segmento and 'SEGMENTO' in universe_year.columns:
+                    seg_df = universe_year[universe_year['SEGMENTO'].astype(str) == segmento].sort_values('Score_Ajustado', ascending=False).reset_index(drop=True)
+                    pos2 = seg_df.index[seg_df['ticker'] == ticker]
+                    if len(pos2) > 0:
+                        rank_segmento = int(pos2[0]) + 1
+
+        penal_crowding = _safe_num(_first_existing(row, ['Penalty_Crowd_Capped', 'Penalty_Crowd']))
+        if penal_crowding is not None and penal_crowding > 0 and penal_crowding <= 2:
+            penal_crowding = 1.0 - penal_crowding
+        penal_lideranca = _safe_num(_first_existing(row, ['Penalty_Decay']))
+        if penal_lideranca is not None and penal_lideranca > 0 and penal_lideranca <= 2:
+            penal_lideranca = 1.0 - penal_lideranca
+        penal_plato = _safe_num(_first_existing(row, ['Penalty_Plato']))
+        if penal_plato is not None and penal_plato > 0 and penal_plato <= 2:
+            penal_plato = 1.0 - penal_plato
+
+        penalties = [x for x in [penal_crowding, penal_lideranca, penal_plato] if x is not None]
+        penal_total = sum(penalties) if penalties else None
+
+        score_final = _safe_num(_first_existing(row, ['Score_Ajustado']))
+        score_qualidade = _safe_num(_first_existing(row, ['ROE_mean_norm', 'ROIC_mean_norm', 'Margem_Liquida_mean_norm']))
+        score_valuation = _safe_num(_first_existing(row, ['P/VP_mean_norm']))
+        score_dividendos = _safe_num(_first_existing(row, ['DY_mean_norm']))
+        score_crescimento = _safe_num(_first_existing(row, ['Receita_Liquida_growth_approx_norm', 'Lucro_Liquido_growth_approx_norm']))
+        score_consistencia = _safe_num(_first_existing(row, ['InstabilityPenalty']))
+
+        drivers_positivos = []
+        drivers_negativos = []
+        if _safe_num(_first_existing(row, ['ROE_mean']), None) not in (None, 0):
+            drivers_positivos.append('ROE histórico presente no racional')
+        if _safe_num(_first_existing(row, ['ROIC_mean']), None) not in (None, 0):
+            drivers_positivos.append('ROIC histórico reforça qualidade')
+        if _safe_num(_first_existing(row, ['DY_mean']), None) not in (None, 0):
+            drivers_positivos.append('Dividend yield entrou na composição')
+        if _safe_num(_first_existing(row, ['Receita_Liquida_growth_approx']), None) not in (None, 0):
+            drivers_positivos.append('Crescimento histórico de receita participou do score')
+
+        if penal_crowding and penal_crowding > 0:
+            drivers_negativos.append('Penalização de crowding setorial')
+        if penal_lideranca and penal_lideranca > 0:
+            drivers_negativos.append('Penalização por liderança recorrente')
+        if penal_plato and penal_plato > 0:
+            drivers_negativos.append('Penalização por platô de desempenho')
+        instab = _safe_num(_first_existing(row, ['InstabilityPenalty']))
+        if instab and instab > 0:
+            drivers_negativos.append('Penalização por instabilidade histórica')
+
+        motivos = list(emp.get('motivos') or [])
+
+        analysis_json = {
+            'ano_referencia': latest_year,
+            'ano_compra': emp.get('ano_compra'),
+            'is_lider_ultimo': bool(emp.get('is_lider_ultimo')),
+            'is_maior_part': bool(emp.get('is_maior_part')),
+            'peso_sugerido': _safe_num(emp.get('peso') or emp.get('peso_sugerido')),
+            'score_columns_available': sorted([c for c in sub_latest.columns.tolist() if c not in {'ticker'}]),
+        }
+
+        rows.append({
+            'ticker': ticker,
+            'rank_geral': rank_geral,
+            'rank_segmento': rank_segmento,
+            'setor': setor or None,
+            'subsetor': subsetor or None,
+            'segmento': segmento or None,
+            'score_final': score_final,
+            'classe_forca': _classe_forca(score_final),
+            'score_qualidade': score_qualidade,
+            'score_valuation': score_valuation,
+            'score_dividendos': score_dividendos,
+            'score_crescimento': score_crescimento,
+            'score_consistencia': score_consistencia,
+            'penal_crowding': penal_crowding,
+            'penal_lideranca': penal_lideranca,
+            'penal_plato': penal_plato,
+            'penal_total': penal_total,
+            'roe': _safe_num(_first_existing(row, ['ROE_mean'])),
+            'roic': _safe_num(_first_existing(row, ['ROIC_mean'])),
+            'margem_bruta': _safe_num(_first_existing(row, ['Margem_Bruta_mean'])),
+            'margem_ebitda': _safe_num(_first_existing(row, ['Margem_EBITDA_mean', 'Margem_Operacional_mean'])),
+            'margem_liquida': _safe_num(_first_existing(row, ['Margem_Liquida_mean'])),
+            'dividend_yield': _safe_num(_first_existing(row, ['DY_mean'])),
+            'p_vp': _safe_num(_first_existing(row, ['P/VP_mean'])),
+            'slope_receita': _safe_num(_first_existing(row, ['Receita_Liquida_slope_log', 'Receita_Liquida_growth_approx'])),
+            'drivers_positivos': list(dict.fromkeys(drivers_positivos))[:5],
+            'drivers_negativos': list(dict.fromkeys(drivers_negativos))[:5],
+            'motivos_selecao': motivos[:5],
+            'analysis_json': analysis_json,
+        })
+
+    return rows
 
 # ─────────────────────────────────────────────────────────────
 # Render Streamlit
@@ -863,7 +1041,14 @@ def render():
                     status="active",
                     plan_hash=plan_hash,
                 )
+
+                analysis_rows = _build_selection_analysis_rows(score_global, empresas_lideres_finais)
+                if analysis_rows:
+                    save_snapshot_analysis(snapshot_id, analysis_rows)
+
                 st.success(f"Snapshot salvo no Supabase ✅ id={snapshot_id}")
+                if analysis_rows:
+                    st.caption(f"Contexto quantitativo salvo para {len(analysis_rows)} ativo(s).")
             except Exception as e:
                 st.error(f"Falha ao salvar snapshot no Supabase: {type(e).__name__}: {e}")
 
