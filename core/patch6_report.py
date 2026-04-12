@@ -88,6 +88,30 @@ def _tone_from_perspectiva(p: str) -> str:
     return "neutral"
 
 
+def _tone_from_decision(label: str) -> str:
+    """Ton semântico para decision_label."""
+    return {
+        "aumentar": "good",
+        "manter":   "neutral",
+        "revisar":  "warn",
+        "reduzir":  "bad",
+    }.get((label or "").strip().lower(), "neutral")
+
+
+def _tone_from_trend(value: str) -> str:
+    """Ton semântico para campos de tendência (portfolio_trend)."""
+    v = (value or "").strip().lower()
+    if v in ("favorável", "melhorando", "alta"):
+        return "good"
+    if v in ("estável", "neutro", "moderada"):
+        return "neutral"
+    if v in ("atenção", "cauteloso"):
+        return "warn"
+    if v in ("deteriorando", "baixa"):
+        return "bad"
+    return "neutral"
+
+
 def _box_html(text: str) -> str:
     return (
         "<div style=\"border:1px solid rgba(255,255,255,0.08);"
@@ -547,6 +571,17 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
 
     heuristic_badge = _badge("Score heurístico", "warn") if company.score_source == "heuristic" else ""
 
+    # ── v4 decision badge ──────────────────────────────────────────────────────
+    decision_badge = ""
+    dl = (company.decision_label or "").strip().lower()
+    if dl not in ("—", ""):
+        ds = company.decision_score
+        score_str = f" ({'+' if ds > 0 else ''}{ds})" if ds != 0 else ""
+        decision_badge = _badge(
+            f"→ {dl.upper()}{score_str}",
+            _tone_from_decision(dl),
+        )
+
     ec_class = {
         "forte":    "p6-ec p6-ec-forte",
         "moderada": "p6-ec p6-ec-moderada",
@@ -556,6 +591,7 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
     badges_html = " ".join(
         [x for x in [
             _badge((p or "—").upper(), _tone_from_perspectiva(p)),
+            decision_badge,
             attn_badge,
             heuristic_badge,
         ] if x]
@@ -658,7 +694,11 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
         _render_section_list("Mudanças Estratégicas", company.mudancas, limit=6)
         _render_section_list("Pontos-chave", company.pontos_chave, limit=8)
         _render_section_list("Catalisadores", company.catalisadores, limit=6)
-        _render_section_list("Riscos", company.riscos, limit=6)
+        # v4: risk_rank (prioritized) takes precedence over raw riscos list
+        if company.risk_rank:
+            _render_section_list("Riscos (prioritários)", company.risk_rank, limit=6)
+        else:
+            _render_section_list("Riscos", company.riscos, limit=6)
         _render_section_list("O que monitorar", company.monitorar, limit=6)
         _render_section_list("Ruídos e Contradições", company.contradicoes + company.sinais_ruido, limit=6)
         _render_key_value_section(
@@ -908,6 +948,27 @@ def render_patch6_report(
     )
 
     _render_macro_panel()
+
+    # ── v4 portfolio_trend strip ──────────────────────────────────────────────
+    if analysis.portfolio_trend:
+        _TREND_DISPLAY = [
+            ("qualidade",  "📊 Qualidade"),
+            ("execucao",   "⚙️ Execução"),
+            ("governanca", "🏛️ Governança"),
+            ("capital",    "💰 Capital"),
+        ]
+        trend_badges = []
+        for key, label in _TREND_DISPLAY:
+            val = analysis.portfolio_trend.get(key, "")
+            if val:
+                trend_badges.append(_badge(f"{label}: {val}", _tone_from_trend(val)))
+        if trend_badges:
+            st.markdown(
+                "<div style='margin:10px 0 4px;'>"
+                + "&nbsp;&nbsp;".join(trend_badges)
+                + "</div>",
+                unsafe_allow_html=True,
+            )
 
     # ── v3 portfolio signals ──────────────────────────────────────────────────
     v3_items = []
