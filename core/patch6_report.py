@@ -500,17 +500,65 @@ def _render_structured_portfolio_report(report: Dict[str, Any], mode_label: str)
 # ────────────────────────────────────────────────────────────────────────────────
 
 def _render_company_expander(company: CompanyAnalysis) -> None:
+    """Card executivo por empresa.
+
+    Hierarquia de informação:
+      1. Decisão   — badge de perspectiva (FORTE / MODERADA / FRACA)
+      2. Risco     — risco principal em destaque
+      3. Síntese   — primeira frase da tese (sempre visível)
+      4. Detalhe   — tudo mais dentro de st.expander (escondido por padrão)
+    """
     tk = company.ticker
     p = company.perspectiva_compra.strip().lower()
-    badge = _badge((p or "—").upper(), _tone_from_perspectiva(p))
+    badge_decisao = _badge((p or "—").upper(), _tone_from_perspectiva(p))
     heuristic_badge = (
         "  " + _badge("Score heurístico", "warn")
         if company.score_source == "heuristic"
         else ""
     )
 
-    with st.expander(tk, expanded=False):
-        st.markdown(f"### {tk}  {badge}{heuristic_badge}", unsafe_allow_html=True)
+    # ── Síntese curta: primeira frase da tese (máx 220 chars) ────────────────
+    _sintese_src = (company.tese or company.leitura or "").strip()
+    if _sintese_src:
+        _primeiro = _sintese_src.split(".")[0].strip()
+        _sintese = (_primeiro + ".") if _primeiro else _sintese_src[:220]
+        if len(_sintese) > 220:
+            _sintese = _sintese[:217] + "…"
+    else:
+        _sintese = "—"
+
+    # ── Risco principal: primeiro da lista ou fragilidade (máx 160 chars) ────
+    _risco_src = (
+        company.riscos[0] if company.riscos
+        else company.fragilidade_regime_atual or ""
+    ).strip()
+    _risco_html = (
+        f'<div style="font-size:11px;opacity:.6;margin-top:5px">'
+        f'⚠️ {html.escape(_risco_src[:160])}{"…" if len(_risco_src) > 160 else ""}'
+        f'</div>'
+    ) if _risco_src else ""
+
+    # ── Badge de atenção v3 (só se relevante) ────────────────────────────────
+    _attn_badge = ""
+    if company.attention_level in ("alta", "média"):
+        _attn_tone = "bad" if company.attention_level == "alta" else "warn"
+        _attn_badge = "  " + _badge(f"⚡ {company.attention_level.upper()}", _attn_tone)
+
+    # ── Card header: sempre visível ───────────────────────────────────────────
+    st.markdown(
+        f"""<div class="p6-card" style="margin-bottom:6px">
+          <div class="p6-head" style="margin-bottom:8px">
+            <div class="p6-title-sm">{html.escape(tk)}</div>
+            <div class="p6-badges">{badge_decisao}{_attn_badge}{heuristic_badge}</div>
+          </div>
+          <div style="font-size:13px;opacity:.85;line-height:1.45">{html.escape(_sintese)}</div>
+          {_risco_html}
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+    # ── Detalhes: escondidos por padrão ──────────────────────────────────────
+    with st.expander(f"Ver análise completa — {tk}", expanded=False):
         st.caption(
             f"Período analisado: {company.period_ref} • Atualizado em: {company.created_at}"
             + (f" • Confiança: {_fmt_confidence(company.confianca)}" if company.confianca > 0 else "")
