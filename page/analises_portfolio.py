@@ -730,15 +730,13 @@ def render() -> None:
 
     snapshot_id = str(snapshot.get("id") or "")
 
-    # Macro: carregado uma vez por sessão para não bater no banco a cada rerenderização.
-    # As chamadas dentro de _render_update_evidencias_panel e do botão LLM permanecem
-    # independentes e não são afetadas por este cache.
-    if "macro_ctx_page" not in st.session_state:
-        try:
-            st.session_state["macro_ctx_page"] = load_latest_macro_context()
-        except Exception:
-            st.session_state["macro_ctx_page"] = {}
-    macro_ctx_page: Dict[str, Any] = st.session_state.get("macro_ctx_page") or {}
+    # Macro: recarregado a cada renderização para evitar que um valor vazio de
+    # IPCA 12m fique congelado em session_state após mudanças no backend macro.
+    try:
+        macro_ctx_page: Dict[str, Any] = load_latest_macro_context() or {}
+    except Exception:
+        macro_ctx_page = {}
+    st.session_state["macro_ctx_page"] = macro_ctx_page
 
     # Dados salvos (sem expor o hash)
     selic_used = snapshot.get("selic") or snapshot.get("selic_ref") or snapshot.get("selic_aa")
