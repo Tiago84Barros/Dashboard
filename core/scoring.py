@@ -198,27 +198,26 @@ def calcular_score_ajustado(df: pd.DataFrame, pesos_utilizados: Mapping[str, Map
         return df
 
     out = df.copy()
-
-    for col, cfg in pesos_utilizados.items():
-        if col not in out.columns:
-            continue
-
-        vol_col = col.replace("_mean", "_volatility_penalty")
-        if vol_col in out.columns:
-            out[col] = _to_numeric_series(out[col]).fillna(0.0) * (1.0 - _to_numeric_series(out[vol_col]).fillna(0.0))
-
-        if "historico_bonus" in out.columns:
-            hb = _to_numeric_series(out["historico_bonus"]).fillna(1.0).clip(lower=0.0)
-            out[col] = _to_numeric_series(out[col]).fillna(0.0) * (hb**10)
-
     out["Score_Ajustado"] = 0.0
+
     for col, cfg in pesos_utilizados.items():
         if col not in out.columns:
             continue
+
         peso = float(cfg.get("peso", 0.0))
         melhor_alto = bool(cfg.get("melhor_alto", True))
         norm_col = f"{col}_norm"
+
+        # Z-score normaliza o indicador bruto (ranking relativo entre empresas).
         out[norm_col] = z_score_normalize(out[col], melhor_alto=melhor_alto)
+
+        # Penalidade de volatilidade aplicada APÓS normalização para não ser
+        # cancelada pela relativização do z-score.
+        vol_col = col.replace("_mean", "_volatility_penalty")
+        if vol_col in out.columns:
+            vol_pen = _to_numeric_series(out[vol_col]).fillna(0.0).clip(0.0, 1.0)
+            out[norm_col] = out[norm_col] * (1.0 - vol_pen)
+
         out["Score_Ajustado"] += out[norm_col] * peso
 
     return out

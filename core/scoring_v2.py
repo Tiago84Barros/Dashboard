@@ -233,7 +233,7 @@ def calcular_score_ajustado_v2(
         # percentil intra-grupo
         pct_col = f"{col}_pct"
         out[pct_col] = out.groupby(group_col, dropna=False)[col].transform(
-            lambda s: percentile_score(s, melhor_alto=melhor_alto)
+            lambda s, m=melhor_alto: percentile_score(s, melhor_alto=m)
         )
 
         out["Score_Ajustado"] += out[pct_col] * peso
