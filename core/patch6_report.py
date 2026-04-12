@@ -144,18 +144,33 @@ def _fmt_number(value: Any, digits: int = 2, prefix: str = "") -> str:
 
 def _extract_macro_snapshot() -> Dict[str, Any]:
     macro_context = st.session_state.get("macro_context_run") or st.session_state.get("macro_context") or {}
-    if not isinstance(macro_context, dict):
+
+    if not isinstance(macro_context, dict) or not macro_context:
+        try:
+            from core.macro_context import load_latest_macro_context
+            macro_context = load_latest_macro_context() or {}
+        except Exception:
+            macro_context = {}
+
+    if not isinstance(macro_context, dict) or not macro_context:
         return {}
 
     mensal = macro_context.get("mensal") if isinstance(macro_context.get("mensal"), dict) else {}
     anual = macro_context.get("anual") if isinstance(macro_context.get("anual"), dict) else {}
+
+    def _pick(d: Dict[str, Any], *keys: str) -> Any:
+        for key in keys:
+            if key in d and d.get(key) is not None:
+                return d.get(key)
+        return None
+
     return {
-        "data_mensal": mensal.get("data") or "",
-        "selic": mensal.get("selic_final") if mensal.get("selic_final") is not None else anual.get("selic"),
-        "dolar": mensal.get("cambio_final") if mensal.get("cambio_final") is not None else anual.get("cambio"),
-        "ipca_12m": mensal.get("ipca_12m"),
-        "ipca_anual": anual.get("ipca"),
-        "juros_real": mensal.get("juros_real_ex_ante_12m") if mensal.get("juros_real_ex_ante_12m") is not None else anual.get("juros_real_ex_ante"),
+        "data_mensal": _pick(mensal, "data") or _pick(anual, "data") or "",
+        "selic": _pick(mensal, "selic_final", "Selic_Final") if _pick(mensal, "selic_final", "Selic_Final") is not None else _pick(anual, "selic", "Selic"),
+        "dolar": _pick(mensal, "cambio_final", "Cambio_Final") if _pick(mensal, "cambio_final", "Cambio_Final") is not None else _pick(anual, "cambio", "Cambio"),
+        "ipca_12m": _pick(mensal, "ipca_12m", "IPCA_12m"),
+        "ipca_anual": _pick(anual, "ipca", "IPCA"),
+        "juros_real": _pick(mensal, "juros_real_ex_ante_12m", "Juros_Real_ExAnte_12m") if _pick(mensal, "juros_real_ex_ante_12m", "Juros_Real_ExAnte_12m") is not None else _pick(anual, "juros_real_ex_ante", "Juros_Real_ExAnte"),
     }
 
 
