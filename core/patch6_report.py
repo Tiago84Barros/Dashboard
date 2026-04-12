@@ -6,6 +6,87 @@ import streamlit as st
 import math
 import html
 
+
+_P6_CSS = """
+<style>
+body {
+    color: #ecf3ff;
+}
+
+/* Títulos */
+h1, h2, h3 {
+    font-weight: 800;
+}
+
+/* Cards básicos */
+.p6-card, .p6-exec-card, .p6-risk-card {
+    border: 1px solid rgba(148,163,184,.18);
+    border-radius: 16px;
+    padding: 14px;
+    background: linear-gradient(180deg, #111827, #0f172a);
+    margin-bottom: 10px;
+}
+
+/* Cards executivos */
+.p6-exec-card {
+    border-radius: 20px;
+    padding: 18px;
+}
+
+/* Grid */
+.p6-exec-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+}
+
+/* Boxes */
+.p6-exec-box {
+    background: rgba(255,255,255,.03);
+    border-radius: 12px;
+    padding: 10px;
+}
+
+.p6-exec-box span {
+    font-size: 11px;
+    color: #9fb0c9;
+}
+
+.p6-exec-box strong {
+    font-size: 14px;
+}
+
+/* Ranking */
+.p6-risk-card {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+}
+
+/* Histórico */
+.p6-history-card {
+    border: 1px solid rgba(148,163,184,.18);
+    border-radius: 14px;
+    padding: 12px;
+    background: rgba(255,255,255,.02);
+}
+
+/* Pills */
+.p6-pill {
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    background: rgba(255,255,255,.05);
+}
+
+/* Expander */
+.stExpander {
+    border-radius: 14px !important;
+}
+</style>
+"""
+
 # ==========================================
 # 🔹 UTILITÁRIOS
 # ==========================================
