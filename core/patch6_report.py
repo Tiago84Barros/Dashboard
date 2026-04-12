@@ -185,17 +185,72 @@ def _render_empresa(c, macro):
 # ==========================================
 # 🔹 MAIN
 # ==========================================
+def render_patch6_report(
+    tickers,
+    period_ref,
+    llm_factory=None,
+    show_company_details=True,
+    analysis_mode="rigid",
+):
+    st.markdown(_P6_CSS, unsafe_allow_html=True)
 
-def render_patch6_report(data):
+    analysis = build_portfolio_analysis(tickers, period_ref)
+    if analysis is None or not analysis.companies:
+        st.warning(
+            "Não há execuções salvas em patch6_runs para este period_ref e tickers do portfólio. "
+            "Rode a LLM e salve os resultados primeiro."
+        )
+        return
 
-    macro = data["macro"]
-    companies = data["companies"]
+    stats = analysis.stats
+    macro_context = (
+        st.session_state.get("macro_context_run")
+        or st.session_state.get("macro_context")
+        or {}
+    )
 
-    _render_macro(macro)
-    _render_decisao(companies, macro)
-    _render_risco(companies, macro)
+    _render_macro_strip(macro_context)
+    _render_decision_cycle(analysis, stats, macro_context=macro_context)
+    _render_risk_ranking(analysis, macro_context=macro_context)
 
-    st.markdown("## 🏢 Empresas")
+    portfolio_report = run_portfolio_llm_report(llm_factory, analysis, analysis_mode)
+    if portfolio_report:
+        mode_label = "Análise Rígida" if analysis_mode == "rigid" else "Análise Flexível"
+        _render_structured_portfolio_report(portfolio_report, mode_label, analysis)
+    else:
+        _render_banner(
+            "Leitura executiva",
+            f"O portfólio concentra {stats.fortes} ativo(s) forte, {stats.moderadas} moderado(s) e {stats.fracas} fraco(s). "
+            "Use decisão do ciclo, ranking de risco e bloco macro como eixo principal.",
+            "neutral",
+            "🧠",
+        )
 
-    for c in companies:
-        _render_empresa(c, macro)
+    with st.expander("📌 Ver faixas de alocação", expanded=False):
+        _render_allocation_section(analysis.allocation_rows)
+
+    if show_company_details:
+        st.markdown("## 🏢 Relatórios por Empresa")
+        for company in analysis.companies.values():
+            _render_company_expander(company, macro_context=macro_context)
+
+    with st.expander("🔎 Ver conclusão estratégica", expanded=False):
+        llm_client = None
+        if llm_factory is not None:
+            try:
+                llm_client = llm_factory.get_llm_client()
+            except Exception:
+                pass
+
+        prompt_conc = (
+            "Escreva uma conclusão estratégica para o portfólio, em até 8 linhas, com foco em:\n"
+            "- coerência do conjunto do portfólio\n"
+            "- principais alavancas para melhora ou deterioração\n"
+            "- recomendação de acompanhamento nos próximos trimestres\n\n"
+            f"Use SOMENTE os bullets abaixo.\n\nBULLETS:\n{analysis.contexto_portfolio}"
+        )
+        llm_conc = safe_call_llm(llm_client, prompt_conc)
+        st.write(
+            llm_conc
+            or "Acompanhe principalmente execução, custo de capital, narrativa corporativa e manutenção dos catalisadores mais relevantes do ciclo."
+        )
