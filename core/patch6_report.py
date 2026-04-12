@@ -81,121 +81,6 @@ def _tone_from_perspectiva(p: str) -> str:
     return "neutral"
 
 
-def _decision_tone(texto: str) -> str:
-    t = (texto or "").strip().lower()
-    if any(x in t for x in ["aumentar", "comprar", "reforçar", "reforcar"]):
-        return "good"
-    if any(x in t for x in ["reduzir", "diminuir", "vender", "cortar"]):
-        return "bad"
-    if any(x in t for x in ["revisar", "monitorar", "atenção", "atencao"]):
-        return "warn"
-    return "neutral"
-
-
-def _decision_from_company(company: CompanyAnalysis) -> str:
-    decision = strip_html(getattr(company, "recommended_action", "") or "")
-    if decision:
-        return decision
-
-    p = (getattr(company, "perspectiva_compra", "") or "").strip().lower()
-    if p == "forte":
-        return "Aumentar"
-    if p == "moderada":
-        return "Manter"
-    if p == "fraca":
-        return "Revisar"
-    return "Monitorar"
-
-
-def _risk_bucket(company: CompanyAnalysis) -> str:
-    level = (getattr(company, "attention_level", "") or "").strip().lower()
-    if level == "alta":
-        return "Alto"
-    if level == "média" or level == "media":
-        return "Médio"
-    if level == "baixa":
-        return "Baixo"
-
-    score = float(getattr(company, "attention_score", 0) or 0)
-    if score >= 70:
-        return "Alto"
-    if score >= 40:
-        return "Médio"
-    return "Baixo"
-
-
-def _fmt_pct_number(value: Any, digits: int = 2) -> str:
-    try:
-        if value is None:
-            return "—"
-        return f"{float(value):.{digits}f}%"
-    except Exception:
-        return "—"
-
-
-def _fmt_number(value: Any, digits: int = 2, prefix: str = "") -> str:
-    try:
-        if value is None:
-            return "—"
-        return f"{prefix}{float(value):.{digits}f}"
-    except Exception:
-        return "—"
-
-
-def _extract_macro_snapshot() -> Dict[str, Any]:
-    macro_context = st.session_state.get("macro_context_run") or st.session_state.get("macro_context") or {}
-
-    if not isinstance(macro_context, dict) or not macro_context:
-        try:
-            from core.macro_context import load_latest_macro_context
-            macro_context = load_latest_macro_context() or {}
-        except Exception:
-            macro_context = {}
-
-    if not isinstance(macro_context, dict) or not macro_context:
-        return {}
-
-    mensal = macro_context.get("mensal") if isinstance(macro_context.get("mensal"), dict) else {}
-    anual = macro_context.get("anual") if isinstance(macro_context.get("anual"), dict) else {}
-
-    def _pick(d: Dict[str, Any], *keys: str) -> Any:
-        for key in keys:
-            if key in d and d.get(key) is not None:
-                return d.get(key)
-        return None
-
-    return {
-        "data_mensal": _pick(mensal, "data") or _pick(anual, "data") or "",
-        "selic": _pick(mensal, "selic_final", "Selic_Final") if _pick(mensal, "selic_final", "Selic_Final") is not None else _pick(anual, "selic", "Selic"),
-        "dolar": _pick(mensal, "cambio_final", "Cambio_Final") if _pick(mensal, "cambio_final", "Cambio_Final") is not None else _pick(anual, "cambio", "Cambio"),
-        "ipca_12m": _pick(mensal, "ipca_12m", "IPCA_12m"),
-        "ipca_anual": _pick(anual, "ipca", "IPCA"),
-        "juros_real": _pick(mensal, "juros_real_ex_ante_12m", "Juros_Real_ExAnte_12m") if _pick(mensal, "juros_real_ex_ante_12m", "Juros_Real_ExAnte_12m") is not None else _pick(anual, "juros_real_ex_ante", "Juros_Real_ExAnte"),
-    }
-
-
-def _render_macro_snapshot() -> None:
-    macro = _extract_macro_snapshot()
-    if not macro:
-        return
-
-    st.markdown("## 🌎 Painel Macro")
-    items = [
-        ("Selic atual", _fmt_pct_number(macro.get("selic"))),
-        ("Dólar atual", _fmt_number(macro.get("dolar"), prefix="R$ ")),
-        ("IPCA 12m", _fmt_pct_number(macro.get("ipca_12m"))),
-        ("IPCA anual", _fmt_pct_number(macro.get("ipca_anual"))),
-    ]
-    _render_metric_cards(items, columns_per_row=4)
-
-    extras = []
-    if macro.get("juros_real") is not None:
-        extras.append(f"Juro real ex-ante: {_fmt_pct_number(macro.get('juros_real'))}")
-    if macro.get("data_mensal"):
-        extras.append(f"Referência macro: {macro.get('data_mensal')}")
-    if extras:
-        st.caption(" • ".join(extras))
-
 def _box_html(text: str) -> str:
     return (
         "<div style=\"border:1px solid rgba(255,255,255,0.08);"
@@ -412,6 +297,46 @@ def _render_strategy_detector(detector: Dict[str, Any]) -> None:
             )
 
 
+
+
+def _fmt_macro_value(value: Any, suffix: str = "", decimals: int = 2) -> str:
+    try:
+        if value is None or value == "":
+            return "—"
+        num = float(value)
+        return f"{num:.{decimals}f}{suffix}"
+    except Exception:
+        return "—"
+
+
+def _extract_macro_panel_data(macro: Dict[str, Any]) -> List[tuple]:
+    summary = macro.get("macro_summary", {}) if isinstance(macro, dict) else {}
+    anual = macro.get("anual", {}) if isinstance(macro, dict) else {}
+    return [
+        ("Selic atual", _fmt_macro_value(summary.get("selic_current"), "%")),
+        ("Dólar atual", _fmt_macro_value(summary.get("cambio_current"))),
+        ("IPCA 12m", _fmt_macro_value(summary.get("ipca_12m_current"), "%")),
+        ("IPCA anual", _fmt_macro_value(anual.get("ipca"), "%")),
+    ]
+
+
+def _render_macro_panel() -> None:
+    macro = st.session_state.get("macro_context_run") or st.session_state.get("macro_context") or {}
+    if not isinstance(macro, dict) or not macro:
+        return
+
+    cards = _extract_macro_panel_data(macro)
+    if not any(value != "—" for _, value in cards):
+        return
+
+    st.markdown("## 🌎 Painel Macro")
+    _render_metric_cards(cards, columns_per_row=4)
+
+    interpretation = macro.get("macro_interpretation") if isinstance(macro.get("macro_interpretation"), list) else []
+    clean_interp = [strip_html(x) for x in interpretation if strip_html(x)]
+    if clean_interp:
+        _render_section_list("Leitura macro", clean_interp, limit=6)
+
 def _render_score_explanations(company: CompanyAnalysis) -> None:
     score = company.score_qualitativo
     conf = company.confianca
@@ -573,27 +498,6 @@ def _render_structured_portfolio_report(report: Dict[str, Any], mode_label: str)
 # ────────────────────────────────────────────────────────────────────────────────
 # Company detail section
 # ────────────────────────────────────────────────────────────────────────────────
-
-def _render_company_header_summary(company: CompanyAnalysis) -> None:
-    decision = _decision_from_company(company)
-    decision_badge = _badge(f"Decisão do ciclo: {decision}", _decision_tone(decision))
-    risk_badge = _badge(f"Risco objetivo: {_risk_bucket(company)}", "bad" if _risk_bucket(company) == "Alto" else "warn" if _risk_bucket(company) == "Médio" else "neutral")
-    perspective = (company.perspectiva_compra or "—").upper()
-    perspective_badge = _badge(f"Perspectiva 12m: {perspective}", _tone_from_perspectiva(company.perspectiva_compra))
-    st.markdown(decision_badge + "  " + risk_badge + "  " + perspective_badge, unsafe_allow_html=True)
-
-    metric_items = [
-        ("Decisão", decision),
-        ("Prioridade", (company.attention_level or "baixa").title()),
-        ("Score qualitativo", _fmt_score(company.score_qualitativo)),
-        ("Confiança", _fmt_confidence(company.confianca)),
-    ]
-    _render_metric_cards(metric_items, columns_per_row=4)
-
-    quick_take = strip_html(company.leitura) or strip_html(company.tese)
-    if quick_take:
-        st.markdown("**Leitura rápida**")
-        st.markdown(_box_html(quick_take), unsafe_allow_html=True)
 
 def _render_company_expander(company: CompanyAnalysis) -> None:
     tk = company.ticker
@@ -850,7 +754,7 @@ def render_patch6_report(
         f"A cobertura temporal do detector estratégico está presente em {analysis.temporal_covered} ativo(s)."
     )
 
-    _render_macro_snapshot()
+    _render_macro_panel()
 
     # ── v3 portfolio signals ──────────────────────────────────────────────────
     v3_items = []
