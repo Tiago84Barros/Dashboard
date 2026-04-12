@@ -70,9 +70,10 @@ def _badge(texto: str, tone: str = "neutral") -> str:
         "neutral": "#64748b",
     }
     color = tone_map.get(tone, "#64748b")
+    texto_safe = _esc(texto)
     return (
         f"<span style='display:inline-block;padding:2px 10px;border-radius:999px;"
-        f"border:1px solid {color};color:{color};font-weight:600;font-size:12px'>{texto}</span>"
+        f"border:1px solid {color};color:{color};font-weight:600;font-size:12px'>{texto_safe}</span>"
     )
 
 
@@ -514,72 +515,70 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
       3. Síntese   — primeira frase da tese (sempre visível)
       4. Detalhe   — tudo mais dentro de st.expander (escondido por padrão)
     """
-    tk = company.ticker
-    p = company.perspectiva_compra.strip().lower()
-    badge_decisao = _badge((p or "—").upper(), _tone_from_perspectiva(p))
-    heuristic_badge = (
-        "  " + _badge("Score heurístico", "warn")
-        if company.score_source == "heuristic"
-        else ""
-    )
+    tk = (company.ticker or "").strip() or "—"
+    p = (company.perspectiva_compra or "").strip().lower()
 
     # ── Síntese curta: primeira frase da tese (máx 220 chars) ────────────────
-    _sintese_src = (company.tese or company.leitura or "").strip()
-    if _sintese_src:
-        _primeiro = _sintese_src.split(".")[0].strip()
-        _sintese = (_primeiro + ".") if _primeiro else _sintese_src[:220]
-        if len(_sintese) > 220:
-            _sintese = _sintese[:217] + "…"
+    sintese_src = (company.tese or company.leitura or "").strip()
+    if sintese_src:
+        primeiro = sintese_src.split(".")[0].strip()
+        sintese = (primeiro + ".") if primeiro else sintese_src[:220]
+        if len(sintese) > 220:
+            sintese = sintese[:217] + "…"
     else:
-        _sintese = "—"
+        sintese = "—"
 
-    # ── Risco principal: primeiro da lista ou fragilidade ────────────────────
-    _risco_src = (
+    # ── Risco principal e ação recomendada ────────────────────────────────────
+    risco_src = (
         company.riscos[0] if company.riscos
         else company.fragilidade_regime_atual or ""
     ).strip()
-    _risco_pill = (
-        f'<span class="p6-risk-pill">⚠ {html.escape(_risco_src[:140])}{"…" if len(_risco_src) > 140 else ""}</span>'
-    ) if _risco_src else ""
+    if risco_src and len(risco_src) > 140:
+        risco_src = risco_src[:140] + "…"
 
-    # ── Ação recomendada v3 (informativa, tom neutro) ─────────────────────────
-    _action_src = (company.recommended_action or "").strip()
-    _action_pill = (
-        f'<span class="p6-action-pill">→ {html.escape(_action_src[:80])}{"…" if len(_action_src) > 80 else ""}</span>'
-    ) if _action_src else ""
+    action_src = (company.recommended_action or "").strip()
+    if action_src and len(action_src) > 80:
+        action_src = action_src[:80] + "…"
 
-    # ── Badge de atenção v3 (só se relevante) ────────────────────────────────
-    _attn_badge = ""
+    attn_badge = ""
     if company.attention_level in ("alta", "média"):
-        _attn_tone = "bad" if company.attention_level == "alta" else "warn"
-        _attn_badge = _badge(f"⚡ {company.attention_level.upper()}", _attn_tone)
+        attn_tone = "bad" if company.attention_level == "alta" else "warn"
+        attn_badge = _badge(f"⚡ {company.attention_level.upper()}", attn_tone)
 
-    # ── Classe de acento pelo nível de decisão ────────────────────────────────
-    _ec_class = {
+    heuristic_badge = _badge("Score heurístico", "warn") if company.score_source == "heuristic" else ""
+
+    ec_class = {
         "forte":    "p6-ec p6-ec-forte",
         "moderada": "p6-ec p6-ec-moderada",
         "fraca":    "p6-ec p6-ec-fraca",
     }.get(p, "p6-ec p6-ec-unknown")
 
-    # ── Card header: sempre visível ───────────────────────────────────────────
-    st.markdown(
-        f"""<div class="{_ec_class}">
-          <div class="p6-ec-head">
-            <div class="p6-ec-ticker">{html.escape(tk)}</div>
-            <div class="p6-ec-badges">
-              {badge_decisao}
-              {_attn_badge}
-              {heuristic_badge}
-            </div>
-          </div>
-          <div class="p6-ec-sintese">{html.escape(_sintese)}</div>
-          <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
-            {_risco_pill}
-            {_action_pill}
-          </div>
-        </div>""",
-        unsafe_allow_html=True,
+    badges_html = " ".join(
+        [x for x in [
+            _badge((p or "—").upper(), _tone_from_perspectiva(p)),
+            attn_badge,
+            heuristic_badge,
+        ] if x]
     )
+
+    extra_pills = []
+    if risco_src:
+        extra_pills.append(f'<span class="p6-risk-pill">⚠ {_esc(risco_src)}</span>')
+    if action_src:
+        extra_pills.append(f'<span class="p6-action-pill">→ {_esc(action_src)}</span>')
+    extra_pills_html = "".join(extra_pills)
+
+    card_html = (
+        f'<div class="{ec_class}">'
+        f'  <div class="p6-ec-head">'
+        f'    <div class="p6-ec-ticker">{_esc(tk)}</div>'
+        f'    <div class="p6-ec-badges">{badges_html}</div>'
+        f'  </div>'
+        f'  <div class="p6-ec-sintese">{_esc(sintese)}</div>'
+        f'  <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">{extra_pills_html}</div>'
+        f'</div>'
+    )
+    st.markdown(card_html, unsafe_allow_html=True)
 
     # ── Detalhes: escondidos por padrão ──────────────────────────────────────
     with st.expander(f"Ver análise completa — {tk}", expanded=False):
@@ -669,7 +668,6 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
         _render_evidence_section(company.evidencias, limit=10)
         _render_section_text("Considerações da LLM", company.consideracoes)
 
-        # ── v3: Estabilidade e Robustez ───────────────────────────────────────
         _render_metric_cards([
             ("Score qualitativo (híbrido)", _fmt_score(company.score_qualitativo)),
             ("Robustez qualitativa", f"{round(company.robustez_qualitativa * 100)}%"),
@@ -677,7 +675,6 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
             ("Schema score", f"{company.schema_score}/100"),
         ], columns_per_row=4)
 
-        # ── v3: Evolução da Tese ──────────────────────────────────────────────
         evol_items = [
             ("Trend de execução", company.execution_trend),
             ("Mudança de narrativa", company.narrative_shift),
@@ -693,7 +690,6 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
         _render_section_list("Riscos persistentes entre períodos", company.persistent_risks, limit=5)
         _render_section_list("Catalisadores persistentes", company.persistent_catalysts, limit=5)
 
-        # ── v3: Mudança de Regime ─────────────────────────────────────────────
         if company.current_regime not in ("—", "indefinido", ""):
             st.markdown("**Mudança de Regime Qualitativo**")
             regime_tone = (
@@ -711,7 +707,6 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
             if company.regime_change_explanation:
                 st.markdown(_box_html(company.regime_change_explanation), unsafe_allow_html=True)
 
-        # ── v3: Prioridade de Acompanhamento ──────────────────────────────────
         if company.attention_score > 0:
             attn_tone = (
                 "bad" if company.attention_level == "alta"
@@ -729,7 +724,6 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
             )
             _render_section_list("Drivers da prioridade", company.attention_drivers, limit=6)
 
-        # ── v3: Sinal Prospectivo ─────────────────────────────────────────────
         if company.forward_score > 0:
             fwd_tone = (
                 "good" if company.forward_direction == "melhorando"
