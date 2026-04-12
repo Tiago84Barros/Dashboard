@@ -24,6 +24,7 @@ import math
 import traceback
 import importlib
 import inspect
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Callable, Tuple
 
 import streamlit as st
@@ -764,7 +765,7 @@ def render() -> None:
     # A atualização documental e a análise qualitativa operam sempre com o
     # maior histórico-alvo disponível no fluxo padrão: 36 meses.
     analysis_window_months = 36
-    analysis_period_ref = "36M"
+    analysis_period_ref = st.session_state.get("patch6_period_ref") or "36M"
 
     # ------------------------------------------------------------------
     # Ingest + Chunking com logs por ticker
@@ -1204,9 +1205,10 @@ def render() -> None:
         with report_box.container():
             try:
                 from core.patch6_report import render_patch6_report
+                period_ref_to_render = st.session_state.get("patch6_period_ref") or analysis_period_ref
                 render_patch6_report(
                     tickers=tickers,
-                    period_ref=analysis_period_ref,
+                    period_ref=period_ref_to_render,
                     llm_factory=llm_factory,
                     show_company_details=True,
                     analysis_mode=analysis_mode,
@@ -1582,6 +1584,22 @@ CONTEXTO TEMPORAL:
     if st.button("🔄 Atualizar relatório com LLM agora"):
         client = llm_factory.get_llm_client()
 
+        run_period_ref = datetime.now().strftime("%Y%m%d_%H%M%S")
+        st.session_state["patch6_period_ref"] = run_period_ref
+
+        try:
+            macro_context_run = load_latest_macro_context()
+        except Exception:
+            macro_context_run = {}
+
+        try:
+            market_context_run = build_market_context(macro_context_run)
+        except Exception:
+            market_context_run = {}
+
+        st.session_state["macro_context_run"] = macro_context_run
+        st.session_state["market_context_run"] = market_context_run
+
         tickers_run = tickers
         total = len(tickers_run)
 
@@ -1635,8 +1653,8 @@ CONTEXTO TEMPORAL:
                             contexto,
                             analysis_mode=analysis_mode,
                             ticker=t,
-                            macro_context=macro_context,
-                            market_context=market_context,
+                            macro_context=macro_context_run,
+                            market_context=market_context_run,
                         ),
                     )
                 except Exception as e_call:
@@ -1652,8 +1670,8 @@ CONTEXTO TEMPORAL:
                             contexto,
                             analysis_mode=analysis_mode,
                             ticker=t,
-                            macro_context=macro_context,
-                            market_context=market_context,
+                            macro_context=macro_context_run,
+                            market_context=market_context_run,
                         ),
                     )
                     else:
@@ -1707,7 +1725,7 @@ CONTEXTO TEMPORAL:
                 save_patch6_run(
                     snapshot_id=str(snapshot_id),
                     ticker=t,
-                    period_ref=analysis_period_ref,
+                    period_ref=run_period_ref,
                     result=result,
                 )
 
@@ -1762,6 +1780,5 @@ CONTEXTO TEMPORAL:
         else:
             st.caption("Execução concluída sem erros. O relatório consolidado acima foi atualizado.")
 
-        # Atualiza o relatório no MESMO lugar (sem duplicar seção)
-        report_box.empty()
-        _render_saved_report()
+        # Atualiza o relatório com o novo period_ref salvo nesta execução
+        st.rerun()
