@@ -83,6 +83,20 @@ def _fmt_pp(x: Any, default: str = "—") -> str:
         return default
 
 
+def _fmt_macro_pct(x: Any, default: str = "—") -> str:
+    """Formata valor que já está em percentual direto (ex: 1.03 → '1.03%', 15.0 → '15.00%').
+    NÃO aplica multiplicação por 100 — os campos macro do banco já vêm em percentual."""
+    try:
+        if x is None:
+            return default
+        v = float(x)
+        if v != v:  # NaN
+            return default
+        return f"{v:.2f}%"
+    except Exception:
+        return default
+
+
 def _calc_budget_topk(num_chunks: int, peso: float, cap_max: int) -> dict:
     """Define budget adaptativo de Top-K.
 
@@ -554,7 +568,7 @@ def _render_macro_strip(macro_ctx: Dict[str, Any]) -> str:
       <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px">
         <div class="p6-mcard">
           <div class="p6-mlabel">Selic (a.a.)</div>
-          <div class="p6-mvalue">{_fmt_pct(selic)}
+          <div class="p6-mvalue">{_fmt_macro_pct(selic)}
             <span style="font-size:15px;opacity:.75">{_trend_icon(selic_trend)}</span>
           </div>
           <div class="p6-mextra">Tendência: {html.escape(selic_trend) or "—"}</div>
@@ -568,14 +582,14 @@ def _render_macro_strip(macro_ctx: Dict[str, Any]) -> str:
         </div>
         <div class="p6-mcard">
           <div class="p6-mlabel">IPCA 12m</div>
-          <div class="p6-mvalue">{_fmt_pct(ipca_12m)}
+          <div class="p6-mvalue">{_fmt_macro_pct(ipca_12m)}
             <span style="font-size:15px;opacity:.75">{_trend_icon(ipca_12m_trend)}</span>
           </div>
           <div class="p6-mextra">Tendência: {html.escape(ipca_12m_trend) or "—"}</div>
         </div>
         <div class="p6-mcard">
           <div class="p6-mlabel">{html.escape(ipca_anual_label)}</div>
-          <div class="p6-mvalue">{_fmt_pct(ipca_anual)}</div>
+          <div class="p6-mvalue">{_fmt_macro_pct(ipca_anual)}</div>
           <div class="p6-mextra">{html.escape(ipca_anual_extra)}</div>
         </div>
       </div>
