@@ -10,10 +10,14 @@ from core.db_loader import get_supabase_engine
 
 
 def _to_float(value: Any) -> Optional[float]:
+    """Converte para float, retornando None para NULL do banco (pandas converte NULL → NaN)."""
     try:
         if value is None:
             return None
-        return float(value)
+        f = float(value)
+        if f != f:  # NaN != NaN é True — único teste portável sem import math
+            return None
+        return f
     except Exception:
         return None
 
@@ -195,13 +199,19 @@ def build_macro_context(
     anual_data = _to_date(anual.get("data"))
     ipca_annual_meta = _classify_annual_indicator(anual_data, "ipca")
 
+    # IPCA 12m: meses recentes podem vir NULL no banco enquanto o dado ainda não é publicado.
+    # Fallback: usa o valor mais recente não-nulo (linha anterior) para não exibir vazio.
+    _ipca_12m = _to_float(mensal.get("IPCA_12m"))
+    if _ipca_12m is None:
+        _ipca_12m = _to_float(mensal_prev.get("IPCA_12m"))
+
     mensal_payload = {
         "data": str(mensal.get("data") or ""),
         "selic_final": _to_float(mensal.get("Selic_Final")),
         "selic_media": _to_float(mensal.get("Selic_Media")),
         "cambio_final": _to_float(mensal.get("Cambio_Final")),
         "ipca_mom": _to_float(mensal.get("IPCA_MoM")),
-        "ipca_12m": _to_float(mensal.get("IPCA_12m")),
+        "ipca_12m": _ipca_12m,
         "icc_final": _to_float(mensal.get("ICC_Final")),
         "icc_media": _to_float(mensal.get("ICC_Media")),
         "icc_delta_12m": _to_float(mensal.get("ICC_delta_12m")),
