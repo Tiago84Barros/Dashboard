@@ -57,13 +57,19 @@ def _fmt_score(value: int) -> str:
 
 
 def _badge(texto: str, tone: str = "neutral") -> str:
+    """Badge com semântica de cor padronizada:
+      good    → verde  (#22c55e) — favorável / aumentar / forte
+      warn    → âmbar  (#f59e0b) — neutro / manter / observar
+      bad     → vermelho (#ef4444) — reduzir / revisar / risco
+      neutral → cinza  (#64748b) — informativo
+    """
     tone_map = {
-        "good": "#0ea5e9",
-        "warn": "#f59e0b",
-        "bad": "#ef4444",
-        "neutral": "#94a3b8",
+        "good":    "#22c55e",
+        "warn":    "#f59e0b",
+        "bad":     "#ef4444",
+        "neutral": "#64748b",
     }
-    color = tone_map.get(tone, "#94a3b8")
+    color = tone_map.get(tone, "#64748b")
     return (
         f"<span style='display:inline-block;padding:2px 10px;border-radius:999px;"
         f"border:1px solid {color};color:{color};font-weight:600;font-size:12px'>{texto}</span>"
@@ -527,32 +533,50 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
     else:
         _sintese = "—"
 
-    # ── Risco principal: primeiro da lista ou fragilidade (máx 160 chars) ────
+    # ── Risco principal: primeiro da lista ou fragilidade ────────────────────
     _risco_src = (
         company.riscos[0] if company.riscos
         else company.fragilidade_regime_atual or ""
     ).strip()
-    _risco_html = (
-        f'<div style="font-size:11px;opacity:.6;margin-top:5px">'
-        f'⚠️ {html.escape(_risco_src[:160])}{"…" if len(_risco_src) > 160 else ""}'
-        f'</div>'
+    _risco_pill = (
+        f'<span class="p6-risk-pill">⚠ {html.escape(_risco_src[:140])}{"…" if len(_risco_src) > 140 else ""}</span>'
     ) if _risco_src else ""
+
+    # ── Ação recomendada v3 (informativa, tom neutro) ─────────────────────────
+    _action_src = (company.recommended_action or "").strip()
+    _action_pill = (
+        f'<span class="p6-action-pill">→ {html.escape(_action_src[:80])}{"…" if len(_action_src) > 80 else ""}</span>'
+    ) if _action_src else ""
 
     # ── Badge de atenção v3 (só se relevante) ────────────────────────────────
     _attn_badge = ""
     if company.attention_level in ("alta", "média"):
         _attn_tone = "bad" if company.attention_level == "alta" else "warn"
-        _attn_badge = "  " + _badge(f"⚡ {company.attention_level.upper()}", _attn_tone)
+        _attn_badge = _badge(f"⚡ {company.attention_level.upper()}", _attn_tone)
+
+    # ── Classe de acento pelo nível de decisão ────────────────────────────────
+    _ec_class = {
+        "forte":    "p6-ec p6-ec-forte",
+        "moderada": "p6-ec p6-ec-moderada",
+        "fraca":    "p6-ec p6-ec-fraca",
+    }.get(p, "p6-ec p6-ec-unknown")
 
     # ── Card header: sempre visível ───────────────────────────────────────────
     st.markdown(
-        f"""<div class="p6-card" style="margin-bottom:6px">
-          <div class="p6-head" style="margin-bottom:8px">
-            <div class="p6-title-sm">{html.escape(tk)}</div>
-            <div class="p6-badges">{badge_decisao}{_attn_badge}{heuristic_badge}</div>
+        f"""<div class="{_ec_class}">
+          <div class="p6-ec-head">
+            <div class="p6-ec-ticker">{html.escape(tk)}</div>
+            <div class="p6-ec-badges">
+              {badge_decisao}
+              {_attn_badge}
+              {heuristic_badge}
+            </div>
           </div>
-          <div style="font-size:13px;opacity:.85;line-height:1.45">{html.escape(_sintese)}</div>
-          {_risco_html}
+          <div class="p6-ec-sintese">{html.escape(_sintese)}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+            {_risco_pill}
+            {_action_pill}
+          </div>
         </div>""",
         unsafe_allow_html=True,
     )
@@ -730,6 +754,7 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
 
 _P6_CSS = """
 <style>
+/* ── Cards base ── */
 .p6-card{
   border:1px solid rgba(255,255,255,0.08);
   background:rgba(255,255,255,0.03);
@@ -741,6 +766,60 @@ _P6_CSS = """
 .p6-card-label{font-size:12px;opacity:0.7;margin-bottom:6px;letter-spacing:0.3px;}
 .p6-card-value{font-size:28px;font-weight:900;margin-bottom:6px;}
 .p6-card-extra{font-size:12px;opacity:0.65;}
+
+/* ── Cards executivos por empresa: acento de cor pela decisão ── */
+.p6-ec{
+  border:1px solid rgba(255,255,255,0.08);
+  border-radius:16px;
+  padding:16px 18px;
+  box-shadow:0 8px 20px rgba(0,0,0,0.22);
+  margin-bottom:8px;
+  border-left-width:4px;
+  border-left-style:solid;
+}
+.p6-ec-forte   { border-left-color:#22c55e;
+                  background:linear-gradient(135deg,rgba(34,197,94,.07) 0%,rgba(255,255,255,.02) 100%); }
+.p6-ec-moderada{ border-left-color:#f59e0b;
+                  background:linear-gradient(135deg,rgba(245,158,11,.07) 0%,rgba(255,255,255,.02) 100%); }
+.p6-ec-fraca   { border-left-color:#ef4444;
+                  background:linear-gradient(135deg,rgba(239,68,68,.07) 0%,rgba(255,255,255,.02) 100%); }
+.p6-ec-unknown { border-left-color:#64748b;
+                  background:rgba(255,255,255,0.02); }
+
+/* ── Row: ticker + badges ── */
+.p6-ec-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+.p6-ec-ticker{font-size:17px;font-weight:900;letter-spacing:.3px}
+.p6-ec-badges{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+
+/* ── Síntese ── */
+.p6-ec-sintese{font-size:13px;opacity:.85;line-height:1.5;margin-bottom:4px}
+
+/* ── Pill de risco ── */
+.p6-risk-pill{
+  display:inline-block;
+  padding:2px 9px;
+  border-radius:999px;
+  border:1px solid rgba(239,68,68,.40);
+  background:rgba(239,68,68,.08);
+  color:#ef4444;
+  font-size:11px;
+  font-weight:500;
+  margin-top:5px;
+}
+
+/* ── Pill de ação recomendada ── */
+.p6-action-pill{
+  display:inline-block;
+  padding:2px 9px;
+  border-radius:999px;
+  border:1px solid rgba(100,116,139,.35);
+  background:rgba(100,116,139,.08);
+  color:#94a3b8;
+  font-size:11px;
+  font-weight:500;
+  margin-top:4px;
+  margin-left:2px;
+}
 </style>
 """
 
@@ -765,17 +844,49 @@ def render_patch6_report(
 
     stats = analysis.stats
 
+    # ── Cor semântica para os cards de resumo ─────────────────────────────────
+    def _summary_color(label: str) -> str:
+        """Verde=favorável, âmbar=neutro, vermelho=cauteloso."""
+        l = label.strip().lower()
+        if l in ("alta", "construtiva", "forte"):
+            return "#22c55e"
+        if l in ("moderada", "neutra", "média"):
+            return "#f59e0b"
+        if l in ("baixa", "cautelosa", "fraca"):
+            return "#ef4444"
+        return "inherit"
+
+    _q_lbl   = stats.label_qualidade()
+    _p_lbl   = stats.label_perspectiva()
+    _conf_lbl = _fmt_confidence(analysis.confianca_media)
+    _sc_lbl   = _fmt_score(analysis.score_medio)
+
+    # cor da confiança por faixa numérica
+    _conf_color = (
+        "#22c55e" if analysis.confianca_media >= 0.75
+        else "#f59e0b" if analysis.confianca_media >= 0.55
+        else "#ef4444" if analysis.confianca_media > 0
+        else "inherit"
+    )
+    # cor do score médio por faixa
+    _sc_color = (
+        "#22c55e" if analysis.score_medio >= 70
+        else "#f59e0b" if analysis.score_medio >= 50
+        else "#ef4444" if analysis.score_medio > 0
+        else "inherit"
+    )
+
     # ── Portfolio summary cards ───────────────────────────────────────────────
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.markdown(
         f'<div class="p6-card"><div class="p6-card-label">Qualidade (heurística)</div>'
-        f'<div class="p6-card-value">{stats.label_qualidade()}</div>'
+        f'<div class="p6-card-value" style="color:{_summary_color(_q_lbl)}">{_q_lbl}</div>'
         f'<div class="p6-card-extra">Heurística agregada a partir dos sinais do RAG.</div></div>',
         unsafe_allow_html=True,
     )
     col2.markdown(
         f'<div class="p6-card"><div class="p6-card-label">Perspectiva 12m</div>'
-        f'<div class="p6-card-value">{stats.label_perspectiva()}</div>'
+        f'<div class="p6-card-value" style="color:{_summary_color(_p_lbl)}">{_p_lbl}</div>'
         f'<div class="p6-card-extra">Direcionalidade consolidada para os próximos 12 meses.</div></div>',
         unsafe_allow_html=True,
     )
@@ -787,13 +898,13 @@ def render_patch6_report(
     )
     col4.markdown(
         f'<div class="p6-card"><div class="p6-card-label">Confiança média</div>'
-        f'<div class="p6-card-value">{_fmt_confidence(analysis.confianca_media)}</div>'
+        f'<div class="p6-card-value" style="color:{_conf_color}">{_conf_lbl}</div>'
         f'<div class="p6-card-extra">Média do campo confianca_analise nas leituras individuais.</div></div>',
         unsafe_allow_html=True,
     )
     col5.markdown(
         f'<div class="p6-card"><div class="p6-card-label">Score qualitativo médio</div>'
-        f'<div class="p6-card-value">{_fmt_score(analysis.score_medio)}</div>'
+        f'<div class="p6-card-value" style="color:{_sc_color}">{_sc_lbl}</div>'
         f'<div class="p6-card-extra">Média do score_qualitativo salvo pela LLM.</div></div>',
         unsafe_allow_html=True,
     )
