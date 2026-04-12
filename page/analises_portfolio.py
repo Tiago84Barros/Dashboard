@@ -507,6 +507,82 @@ def _parse_json_loose(text: str) -> Dict[str, Any]:
     return json.loads(m.group(0))
 
 
+def _trend_icon(trend: str) -> str:
+    return {"alta": "↑", "queda": "↓", "estavel": "→"}.get(str(trend or ""), "—")
+
+
+def _render_macro_strip(macro_ctx: Dict[str, Any]) -> str:
+    """Gera HTML da faixa macro compacta: Selic, Câmbio, IPCA 12m e IPCA anual."""
+    ms = macro_ctx.get("macro_summary") or {}
+    anual = macro_ctx.get("anual") or {}
+
+    selic = ms.get("selic_current")
+    selic_trend = str(ms.get("selic_trend") or "")
+    cambio = ms.get("cambio_current")
+    cambio_trend = str(ms.get("cambio_trend") or "")
+    ipca_12m = ms.get("ipca_12m_current")
+    ipca_12m_trend = str(ms.get("ipca_12m_trend") or "")
+    ipca_anual = anual.get("ipca")
+    ipca_ref_year = anual.get("ipca_reference_year")
+    ipca_ref_month = anual.get("ipca_reference_month")
+    ipca_interp = str(anual.get("ipca_interpretation") or "")
+    ref_date = str(ms.get("reference_date") or "")
+    ref_short = ref_date[:7] if len(ref_date) >= 7 else ref_date
+
+    def _cambio_fmt(v: Any) -> str:
+        if v is None:
+            return "—"
+        try:
+            return f"R$ {float(v):.4f}"
+        except Exception:
+            return "—"
+
+    if ipca_interp == "anual_fechado":
+        ipca_anual_label = f"IPCA {ipca_ref_year or 'anual'}"
+        ipca_anual_extra = "Ano fechado"
+    else:
+        ipca_anual_label = f"IPCA acum. {ipca_ref_year or ''}"
+        mes_str = str(ipca_ref_month) if ipca_ref_month else "?"
+        ipca_anual_extra = f"Jan–{mes_str}/{ipca_ref_year or ''}"
+
+    return f"""
+    <div style="margin:14px 0 4px 0">
+      <div style="font-size:12px;opacity:.65;margin-bottom:8px;font-weight:700;
+                  letter-spacing:.4px;text-transform:uppercase">
+        Cenário Macro Atual &nbsp;·&nbsp; ref. {html.escape(ref_short)}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px">
+        <div class="p6-mcard">
+          <div class="p6-mlabel">Selic (a.a.)</div>
+          <div class="p6-mvalue">{_fmt_pct(selic)}
+            <span style="font-size:15px;opacity:.75">{_trend_icon(selic_trend)}</span>
+          </div>
+          <div class="p6-mextra">Tendência: {html.escape(selic_trend) or "—"}</div>
+        </div>
+        <div class="p6-mcard">
+          <div class="p6-mlabel">Câmbio (R$/USD)</div>
+          <div class="p6-mvalue">{_cambio_fmt(cambio)}
+            <span style="font-size:15px;opacity:.75">{_trend_icon(cambio_trend)}</span>
+          </div>
+          <div class="p6-mextra">Tendência: {html.escape(cambio_trend) or "—"}</div>
+        </div>
+        <div class="p6-mcard">
+          <div class="p6-mlabel">IPCA 12m</div>
+          <div class="p6-mvalue">{_fmt_pct(ipca_12m)}
+            <span style="font-size:15px;opacity:.75">{_trend_icon(ipca_12m_trend)}</span>
+          </div>
+          <div class="p6-mextra">Tendência: {html.escape(ipca_12m_trend) or "—"}</div>
+        </div>
+        <div class="p6-mcard">
+          <div class="p6-mlabel">{html.escape(ipca_anual_label)}</div>
+          <div class="p6-mvalue">{_fmt_pct(ipca_anual)}</div>
+          <div class="p6-mextra">{html.escape(ipca_anual_extra)}</div>
+        </div>
+      </div>
+    </div>
+    """
+
+
 def render() -> None:
     st.title("🧠 Análises de Portfólio")
 
@@ -638,8 +714,17 @@ def render() -> None:
         st.warning("Nenhum snapshot ativo encontrado. Execute primeiro a Criação de Portfólio.")
         st.stop()
 
-    
     snapshot_id = str(snapshot.get("id") or "")
+
+    # Macro: carregado uma vez por sessão para não bater no banco a cada rerenderização.
+    # As chamadas dentro de _render_update_evidencias_panel e do botão LLM permanecem
+    # independentes e não são afetadas por este cache.
+    if "macro_ctx_page" not in st.session_state:
+        try:
+            st.session_state["macro_ctx_page"] = load_latest_macro_context()
+        except Exception:
+            st.session_state["macro_ctx_page"] = {}
+    macro_ctx_page: Dict[str, Any] = st.session_state.get("macro_ctx_page") or {}
 
     # Dados salvos (sem expor o hash)
     selic_used = snapshot.get("selic") or snapshot.get("selic_ref") or snapshot.get("selic_aa")
@@ -756,6 +841,13 @@ def render() -> None:
     st.markdown(_render_ticker_chips_html(tickers), unsafe_allow_html=True)
 
     st.divider()
+
+    # ------------------------------------------------------------------
+    # Faixa macro — valores atuais visíveis no topo da página
+    # ------------------------------------------------------------------
+    if macro_ctx_page:
+        st.markdown(_render_macro_strip(macro_ctx_page), unsafe_allow_html=True)
+        st.divider()
 
     # ------------------------------------------------------------------
     # Estado (sanidade)
