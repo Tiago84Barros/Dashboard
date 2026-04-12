@@ -573,9 +573,9 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
 
     # ── v4 decision badge ──────────────────────────────────────────────────────
     decision_badge = ""
-    dl = (company.decision_label or "").strip().lower()
+    dl = (getattr(company, "decision_label", "") or "").strip().lower()
     if dl not in ("—", ""):
-        ds = company.decision_score
+        ds = getattr(company, "decision_score", 0) or 0
         score_str = f" ({'+' if ds > 0 else ''}{ds})" if ds != 0 else ""
         decision_badge = _badge(
             f"→ {dl.upper()}{score_str}",
@@ -695,8 +695,9 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
         _render_section_list("Pontos-chave", company.pontos_chave, limit=8)
         _render_section_list("Catalisadores", company.catalisadores, limit=6)
         # v4: risk_rank (prioritized) takes precedence over raw riscos list
-        if company.risk_rank:
-            _render_section_list("Riscos (prioritários)", company.risk_rank, limit=6)
+        risk_rank = getattr(company, "risk_rank", None) or []
+        if risk_rank:
+            _render_section_list("Riscos (prioritários)", risk_rank, limit=6)
         else:
             _render_section_list("Riscos", company.riscos, limit=6)
         _render_section_list("O que monitorar", company.monitorar, limit=6)
@@ -950,7 +951,8 @@ def render_patch6_report(
     _render_macro_panel()
 
     # ── v4 portfolio_trend strip ──────────────────────────────────────────────
-    if analysis.portfolio_trend:
+    portfolio_trend = getattr(analysis, "portfolio_trend", {}) or {}
+    if portfolio_trend:
         _TREND_DISPLAY = [
             ("qualidade",  "📊 Qualidade"),
             ("execucao",   "⚙️ Execução"),
@@ -959,7 +961,7 @@ def render_patch6_report(
         ]
         trend_badges = []
         for key, label in _TREND_DISPLAY:
-            val = analysis.portfolio_trend.get(key, "")
+            val = portfolio_trend.get(key, "")
             if val:
                 trend_badges.append(_badge(f"{label}: {val}", _tone_from_trend(val)))
         if trend_badges:
