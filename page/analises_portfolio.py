@@ -553,11 +553,11 @@ def _render_macro_strip(macro_ctx: Dict[str, Any]) -> str:
 
     if ipca_interp == "anual_fechado":
         ipca_anual_label = f"IPCA {ipca_ref_year or 'anual'}"
-        ipca_anual_extra = "Ano fechado"
+        ipca_anual_extra = "Fechamento anual"
     else:
-        ipca_anual_label = f"IPCA acum. {ipca_ref_year or ''}"
-        mes_str = str(ipca_ref_month) if ipca_ref_month else "?"
-        ipca_anual_extra = f"Jan–{mes_str}/{ipca_ref_year or ''}"
+        ipca_anual_label = f"IPCA {ipca_ref_year or ''}"
+        mes_str = f"{int(ipca_ref_month):02d}" if ipca_ref_month else "?"
+        ipca_anual_extra = f"Acumulado até {mes_str}/{ipca_ref_year or ''}"
 
     return f"""
     <div style="margin:14px 0 4px 0">
