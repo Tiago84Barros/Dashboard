@@ -285,7 +285,16 @@ def _resolve_company(row: Any, temporal: Optional[TemporalData] = None) -> Compa
     except Exception:
         pass
 
-    return CompanyAnalysis(
+    # ── v4: derived decision fields (runtime, no DB) ───────────────────────────
+    _dec_score = _compute_decision_score(
+        perspectiva=perspectiva,
+        forward_direction=forward.direction,
+        execution_trend=exec_trend,
+    )
+
+    # CompanyAnalysis é construído incompleto por um instante para poder chamar
+    # _compute_risk_rank, que precisa do objeto com riscos e persistent_risks.
+    _company = CompanyAnalysis(
         ticker=ticker,
         period_ref=str(getattr(row, "period_ref", "")),
         created_at=getattr(row, "created_at", None),
@@ -345,7 +354,13 @@ def _resolve_company(row: Any, temporal: Optional[TemporalData] = None) -> Compa
         forward_direction=forward.direction,
         forward_confidence=forward.confidence_forward,
         forward_drivers=forward.key_drivers,
+        # v4 — derived decision fields
+        decision_score=_dec_score,
+        decision_label=_DECISION_LABELS.get(_dec_score, "—"),
+        risk_rank=[],   # preenchido abaixo após objeto criado
     )
+    _company.risk_rank = _compute_risk_rank(_company)
+    return _company
 
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -470,6 +485,127 @@ def _company_context_line(company: CompanyAnalysis) -> str:
 
 
 # ────────────────────────────────────────────────────────────────────────────────
+# v4 — Derived decision fields (runtime, no DB dependency)
+# ────────────────────────────────────────────────────────────────────────────────
+
+def _compute_decision_score(
+    perspectiva: str,
+    forward_direction: str,
+    execution_trend: str,
+) -> int:
+    """Escala discreta [-2, +2] derivada de três sinais qualitativos.
+
+    base:     forte=+1 | moderada=0 | fraca=-1
+    fwd_adj:  melhorando=+1 | deteriorando=-1
+    exec_adj: reforço quando exec_trend aponta na mesma direção que base (±1)
+    resultado: clamped em [-2, +2]
+    """
+    p = (perspectiva or "").strip().lower()
+    base = {"forte": 1, "moderada": 0, "fraca": -1}.get(p, 0)
+
+    fwd = (forward_direction or "—").strip().lower()
+    fwd_adj = 1 if fwd == "melhorando" else (-1 if fwd == "deteriorando" else 0)
+
+    exec_t = (execution_trend or "—").strip().lower()
+    # exec_trend só reforça quando alinha com base (evita dupla penalidade cruzada)
+    exec_adj = 0
+    if exec_t == "melhorando" and base >= 0:
+        exec_adj = 1
+    elif exec_t == "deteriorando" and base <= 0:
+        exec_adj = -1
+
+    return max(-2, min(2, base + fwd_adj + exec_adj))
+
+
+_DECISION_LABELS = {
+    2:  "aumentar",
+    1:  "aumentar",
+    0:  "manter",
+    -1: "revisar",
+    -2: "reduzir",
+}
+
+
+def _compute_risk_rank(company: "CompanyAnalysis") -> List[str]:
+    """Lista ordenada por prioridade: persistent_risks → riscos → fragilidade.
+
+    Sem duplicatas, limitado a 5 itens.
+    """
+    seen: set = set()
+    ranked: List[str] = []
+
+    for src in (company.persistent_risks, company.riscos):
+        for r in src:
+            r_c = r.strip()
+            if r_c and r_c not in seen:
+                seen.add(r_c)
+                ranked.append(r_c)
+
+    if company.fragilidade_regime_atual:
+        f = company.fragilidade_regime_atual.strip()
+        if f and f not in seen:
+            ranked.append(f)
+
+    return ranked[:5]
+
+
+def _compute_portfolio_trend(
+    companies: Dict[str, "CompanyAnalysis"],
+    stats: "PortfolioStats",
+) -> Dict[str, str]:
+    """Dict curto com tendências do portfólio por dimensão.
+
+    Derivado inteiramente dos campos já computados em CompanyAnalysis.
+    Chaves: qualidade | execucao | governanca | capital
+    """
+    total = max(stats.total, 1)
+    n = max(len(companies), 1)
+
+    # qualidade — via PortfolioStats
+    qualidade = stats.label_qualidade().lower()   # "alta" | "moderada" | "baixa"
+
+    # execucao — proporção de execution_trend
+    exec_mel = sum(1 for c in companies.values() if c.execution_trend == "melhorando")
+    exec_det = sum(1 for c in companies.values() if c.execution_trend == "deteriorando")
+    if exec_mel > exec_det and exec_mel >= n * 0.35:
+        execucao = "melhorando"
+    elif exec_det > exec_mel and exec_det >= n * 0.35:
+        execucao = "deteriorando"
+    else:
+        execucao = "estável"
+
+    # governança — baseado em narrative_shift + regime_change_intensity
+    gov_issues = sum(
+        1 for c in companies.values()
+        if c.narrative_shift == "significativo"
+        or c.regime_change_intensity == "significativo"
+    )
+    if gov_issues == 0:
+        governanca = "estável"
+    elif gov_issues <= max(1, round(n * 0.25)):
+        governanca = "atenção"
+    else:
+        governanca = "deteriorando"
+
+    # capital — baseado em forward_direction do portfólio
+    fwd_mel = sum(1 for c in companies.values() if c.forward_direction == "melhorando")
+    fwd_det = sum(1 for c in companies.values() if c.forward_direction == "deteriorando")
+    if fwd_mel >= n * 0.50:
+        capital = "favorável"
+    elif fwd_det >= n * 0.40:
+        capital = "cauteloso"
+    else:
+        capital = "neutro"
+
+    return {
+        "qualidade":   qualidade,
+        "execucao":    execucao,
+        "governanca":  governanca,
+        "capital":     capital,
+    }
+
+
+# ────────────────────────────────────────────────────────────────────────────────
 # Main entry point
 # ────────────────────────────────────────────────────────────────────────────────
 
@@ -542,6 +678,9 @@ def build_portfolio_analysis(
     ]
     regime_summary = "; ".join(regime_changes) if regime_changes else ""
 
+    # v4: portfolio_trend derivado dos companies já computados
+    _ptx = _compute_portfolio_trend(companies, stats)
+
     return PortfolioAnalysis(
         period_ref=period_ref,
         tickers_requested=tickers,
@@ -558,4 +697,258 @@ def build_portfolio_analysis(
         alta_prioridade_count=len(alta_prioridade),
         forward_score_medio=forward_score_medio,
         regime_summary=regime_summary,
+        # v4
+        portfolio_trend=_ptx,
     )
+
+
+# ────────────────────────────────────────────────────────────────────────────────
+# v5 — Macro-impact enrichment (runtime, never stored)
+# ────────────────────────────────────────────────────────────────────────────────
+#
+# Regras de impacto macro por role_hint × tendência.
+# Chave: (role_hint, macro_factor, trend_direction)  →  impact (+1 / -1)
+# +1 = favorecido, -1 = pressionado.
+# Fatores ausentes ou sem regra → impacto zero (neutro).
+#
+_MACRO_IMPACT_RULES: Dict[tuple, int] = {
+    # ── Selic subindo ────────────────────────────────────────────────────────
+    ("nucleo_renda",          "selic", "subindo"):  +1,   # banco: spread ↑
+    ("qualidade_financeira",  "selic", "subindo"):  +1,
+    ("defensivo_renda",       "selic", "subindo"):  +1,   # seguradora: float ↑
+    ("fii_papel",             "selic", "subindo"):  +1,   # CRI indexado CDI
+    ("fii_logistica",         "selic", "subindo"):  -1,   # valuation ↓
+    ("fii_shopping",          "selic", "subindo"):  -1,
+    ("fii_lajes",             "selic", "subindo"):  -1,
+    ("smallcap_domestica",    "selic", "subindo"):  -1,   # custo capital ↑
+    ("industria_ciclica",     "selic", "subindo"):  -1,
+    ("growth_domestico",      "selic", "subindo"):  -1,
+    ("utility_defensiva",     "selic", "subindo"):  -1,   # dívida mais cara
+    ("infra_mercado_capitais","selic", "subindo"):  -1,   # atividade mkt ↓
+    # ── Selic caindo ─────────────────────────────────────────────────────────
+    ("nucleo_renda",          "selic", "caindo"):   -1,
+    ("qualidade_financeira",  "selic", "caindo"):   -1,
+    ("fii_logistica",         "selic", "caindo"):   +1,
+    ("fii_shopping",          "selic", "caindo"):   +1,
+    ("fii_lajes",             "selic", "caindo"):   +1,
+    ("smallcap_domestica",    "selic", "caindo"):   +1,
+    ("industria_ciclica",     "selic", "caindo"):   +1,
+    ("infra_mercado_capitais","selic", "caindo"):   +1,
+    # ── Câmbio subindo (BRL depreciando) ─────────────────────────────────────
+    ("exportadora_commodity", "cambio", "subindo"):  +1,
+    ("holding_commodity",     "cambio", "subindo"):  +1,
+    ("ciclico_renda",         "cambio", "subindo"):  +1,  # Petro
+    ("exportadora_alimentos", "cambio", "subindo"):  +1,
+    ("industria_exportadora", "cambio", "subindo"):  +1,
+    ("qualidade_crescimento", "cambio", "subindo"):  +1,  # WEG mix export
+    # ── Câmbio caindo (BRL apreciando) ───────────────────────────────────────
+    ("exportadora_commodity", "cambio", "caindo"):   -1,
+    ("holding_commodity",     "cambio", "caindo"):   -1,
+    ("ciclico_renda",         "cambio", "caindo"):   -1,
+    ("exportadora_alimentos", "cambio", "caindo"):   -1,
+    ("industria_exportadora", "cambio", "caindo"):   -1,
+}
+
+# Rótulos amigáveis para os fatores macro
+_FACTOR_LABELS: Dict[str, Dict[str, str]] = {
+    "selic":  {"subindo": "Selic ↑",  "caindo": "Selic ↓",  "estavel": "Selic →"},
+    "cambio": {"subindo": "R$ ↓",     "caindo": "R$ ↑",     "estavel": "R$ →"},
+    "ipca":   {"subindo": "IPCA ↑",   "caindo": "IPCA ↓",   "estavel": "IPCA →"},
+}
+
+# Rótulos de impacto por role_hint quando o impacto é conhecido
+_IMPACT_DETAIL: Dict[tuple, str] = {
+    ("nucleo_renda",          "selic", +1): "spread bancário favorecido",
+    ("qualidade_financeira",  "selic", +1): "spread bancário favorecido",
+    ("defensivo_renda",       "selic", +1): "float de prêmios valorizado",
+    ("fii_papel",             "selic", +1): "indexação a CDI favorece rendimentos",
+    ("fii_logistica",         "selic", -1): "valuation pressionado por juros altos",
+    ("fii_shopping",          "selic", -1): "custo de capital ↑, demanda consumo ↓",
+    ("fii_lajes",             "selic", -1): "valuation pressionado, vacância sensível",
+    ("smallcap_domestica",    "selic", -1): "custo de capital mais alto",
+    ("industria_ciclica",     "selic", -1): "investimento e crédito retraídos",
+    ("utility_defensiva",     "selic", -1): "dívida indexada mais cara",
+    ("infra_mercado_capitais","selic", -1): "volume de mercado tende a cair",
+    ("exportadora_commodity", "cambio", +1): "receita em USD convertida a BRL ↑",
+    ("holding_commodity",     "cambio", +1): "exposição indireta a exportadoras",
+    ("ciclico_renda",         "cambio", +1): "receita dolarizada de petróleo ↑",
+    ("exportadora_alimentos", "cambio", +1): "proteína e grãos em USD ↑",
+    ("industria_exportadora", "cambio", +1): "receita exportadora ampliada",
+    ("qualidade_crescimento", "cambio", +1): "mix internacional valorizado",
+    ("exportadora_commodity", "cambio", -1): "receita dolarizada comprimida",
+    ("ciclico_renda",         "cambio", -1): "receita petróleo em BRL ↓",
+    ("exportadora_alimentos", "cambio", -1): "preço de exportação comprimido",
+}
+
+
+def _classify_macro_exposure(
+    company: "CompanyAnalysis",
+    trends: Dict[str, Any],
+    summary: Dict[str, Any],
+) -> tuple:
+    """Retorna (label, tone, detail) para macro_exposure de uma empresa.
+
+    Usa role_hint do asset_macro_profile + tendências macro reais.
+    Fallback: sensibilidades_macro do LLM + fragilidade_regime_atual.
+    """
+    try:
+        from core.asset_macro_profile import get_asset_macro_profile
+        profile = get_asset_macro_profile(company.ticker)
+    except Exception:
+        profile = {}
+
+    role = (profile.get("role_hint") or "indefinido").strip().lower()
+    sensitivities_profile = list(profile.get("macro_sensitivities") or [])
+    sensitivities_llm = list(company.sensibilidades_macro or [])
+
+    # Merge sensitivities (profile takes priority)
+    merged = []
+    for s in sensitivities_profile + sensitivities_llm:
+        k = s.strip().lower()
+        if k and k not in merged:
+            merged.append(k)
+
+    # Extract trends
+    selic_trend = ((trends.get("selic") or {}).get("trend") or "").strip().lower()
+    cambio_trend = ((trends.get("cambio") or {}).get("trend") or "").strip().lower()
+
+    # Collect impacts
+    positive: List[str] = []
+    negative: List[str] = []
+
+    # Check selic
+    if any(s in merged for s in ("juros", "credito")):
+        impact = _MACRO_IMPACT_RULES.get((role, "selic", selic_trend), 0)
+        if impact != 0:
+            factor_lbl = _FACTOR_LABELS.get("selic", {}).get(selic_trend, "Selic")
+            detail_key = (role, "selic", impact)
+            detail = _IMPACT_DETAIL.get(detail_key, factor_lbl)
+            selic_val = summary.get("selic_current")
+            val_str = f" ({selic_val}%)" if selic_val else ""
+            entry = f"{factor_lbl}{val_str}: {detail}"
+            (positive if impact > 0 else negative).append(entry)
+
+    # Check câmbio
+    if any(s in merged for s in ("cambio",)):
+        impact = _MACRO_IMPACT_RULES.get((role, "cambio", cambio_trend), 0)
+        if impact != 0:
+            factor_lbl = _FACTOR_LABELS.get("cambio", {}).get(cambio_trend, "Câmbio")
+            detail_key = (role, "cambio", impact)
+            detail = _IMPACT_DETAIL.get(detail_key, factor_lbl)
+            cambio_val = summary.get("cambio_current")
+            val_str = f" (R$ {cambio_val})" if cambio_val else ""
+            entry = f"{factor_lbl}{val_str}: {detail}"
+            (positive if impact > 0 else negative).append(entry)
+
+    # Fallback: usar fragilidade_regime_atual como sinal negativo se nada foi detectado
+    if not positive and not negative:
+        frag = (company.fragilidade_regime_atual or "").strip()
+        if frag:
+            frag_lower = frag.lower()
+            neg_kws = ("endividamento", "alavancagem", "custo financeiro", "pressionad",
+                       "vulnerável", "deteriora", "risco fiscal", "exposição negativa")
+            if any(kw in frag_lower for kw in neg_kws):
+                negative.append(frag[:120] if len(frag) > 120 else frag)
+            else:
+                # fragilidade exists but not clearly negative — treat as attention
+                pass
+
+    # Classify
+    if positive and not negative:
+        return ("Favorecido", "good", "; ".join(positive))
+    elif negative and not positive:
+        return ("Pressionado", "bad", "; ".join(negative))
+    elif positive and negative:
+        return ("Misto", "warn", f"{positive[0]}. Porém: {negative[0]}")
+    else:
+        return ("Neutro", "neutral", "")
+
+
+def _build_macro_narrative(
+    analysis: "PortfolioAnalysis",
+    trends: Dict[str, Any],
+    summary: Dict[str, Any],
+) -> str:
+    """Gera narrativa macro-portfólio conectando números reais aos ativos.
+
+    Exemplo: "Ambiente restritivo (Selic 14.75% ↑, IPCA 5.10% ↑).
+              Favorecidos: BBAS3, ITUB4. Pressionados: DIRR3, VISC11."
+    """
+    # Classificar ambiente
+    selic_val = summary.get("selic_current")
+    selic_trend = ((trends.get("selic") or {}).get("trend") or "").strip().lower()
+    ipca_val = summary.get("ipca_12m_current")
+    ipca_trend = ((trends.get("ipca_12m") or {}).get("trend") or "").strip().lower()
+    cambio_val = summary.get("cambio_current")
+    cambio_trend = ((trends.get("cambio") or {}).get("trend") or "").strip().lower()
+
+    # Determinar rótulo do ambiente
+    restrictive = (selic_trend == "subindo") or (selic_val and float(selic_val) > 12.0)
+    parts = []
+    if selic_val:
+        arrow = {"subindo": "↑", "caindo": "↓"}.get(selic_trend, "→")
+        parts.append(f"Selic {selic_val}% {arrow}")
+    if ipca_val:
+        arrow = {"subindo": "↑", "caindo": "↓"}.get(ipca_trend, "→")
+        parts.append(f"IPCA 12m {ipca_val}% {arrow}")
+    if cambio_val:
+        arrow = {"subindo": "↑", "caindo": "↓"}.get(cambio_trend, "→")
+        parts.append(f"Câmbio R$ {cambio_val} {arrow}")
+
+    env_label = "restritivo" if restrictive else "expansivo" if selic_trend == "caindo" else "neutro"
+    header = f"Ambiente {env_label}"
+    if parts:
+        header += f" ({', '.join(parts)})"
+
+    # Agrupar ativos por exposição
+    favorecidos = [
+        c.ticker for c in analysis.companies.values()
+        if c.macro_exposure == "Favorecido"
+    ]
+    pressionados = [
+        c.ticker for c in analysis.companies.values()
+        if c.macro_exposure == "Pressionado"
+    ]
+    mistos = [
+        c.ticker for c in analysis.companies.values()
+        if c.macro_exposure == "Misto"
+    ]
+
+    segments = [header + "."]
+    if favorecidos:
+        segments.append(f"Favorecidos: {', '.join(sorted(favorecidos))}.")
+    if pressionados:
+        segments.append(f"Pressionados: {', '.join(sorted(pressionados))}.")
+    if mistos:
+        segments.append(f"Exposição mista: {', '.join(sorted(mistos))}.")
+
+    return " ".join(segments)
+
+
+def enrich_macro_impact(
+    analysis: "PortfolioAnalysis",
+    macro_context: Dict[str, Any],
+) -> None:
+    """v5 — enriquece PortfolioAnalysis com campos de impacto macro.
+
+    Muta o objeto in-place (padrão v4).
+    Seguro para chamar com macro_context vazio — nada será alterado.
+    """
+    if not macro_context:
+        return
+
+    trends = macro_context.get("trends", {}) or {}
+    summary = macro_context.get("macro_summary", {}) or {}
+
+    if not trends and not summary:
+        return
+
+    # Enriquecer cada empresa
+    for company in analysis.companies.values():
+        label, tone, detail = _classify_macro_exposure(company, trends, summary)
+        company.macro_exposure = label
+        company.macro_exposure_tone = tone
+        company.macro_exposure_detail = detail
+
+    # Narrativa macro consolidada do portfólio
+    analysis.macro_narrative = _build_macro_narrative(analysis, trends, summary)

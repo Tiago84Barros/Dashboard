@@ -21,6 +21,7 @@ import streamlit as st
 
 from core.patch6_analysis import (
     build_portfolio_analysis,
+    enrich_macro_impact,
     pick_text,
     safe_float,
     safe_int,
@@ -588,10 +589,20 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
         "fraca":    "p6-ec p6-ec-fraca",
     }.get(p, "p6-ec p6-ec-unknown")
 
+    # ── v5 macro exposure badge ────────────────────────────────────────────────
+    macro_badge = ""
+    _mx = (company.macro_exposure or "").strip()
+    if _mx and _mx != "Neutro":
+        macro_badge = _badge(
+            f"🌎 {_mx}",
+            company.macro_exposure_tone or "neutral",
+        )
+
     badges_html = " ".join(
         [x for x in [
             _badge((p or "—").upper(), _tone_from_perspectiva(p)),
             decision_badge,
+            macro_badge,
             attn_badge,
             heuristic_badge,
         ] if x]
@@ -636,6 +647,23 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
 
         _render_metric_cards(metric_items, columns_per_row=2)
         _render_score_explanations(company)
+
+        # ── v5 macro impact section (visível no topo do detalhe) ─────────
+        _mx_detail = (company.macro_exposure_detail or "").strip()
+        _mx_label = (company.macro_exposure or "").strip()
+        if _mx_detail and _mx_label:
+            _mx_tone_color = {
+                "good": "#22c55e", "bad": "#ef4444",
+                "warn": "#f59e0b", "neutral": "#64748b",
+            }.get(company.macro_exposure_tone, "#64748b")
+            st.markdown(
+                f"<div style='border:1px solid {_mx_tone_color}33;border-left:4px solid {_mx_tone_color};"
+                f"background:{_mx_tone_color}0a;border-radius:12px;padding:10px 14px;"
+                f"margin:6px 0 10px;font-size:13px;line-height:1.5'>"
+                f"🌎 <strong>Impacto macro: {_esc(_mx_label)}</strong>"
+                f"<br/>{_esc(_mx_detail)}</div>",
+                unsafe_allow_html=True,
+            )
 
         _render_section_text("Tese (síntese)", company.tese or "—")
 
@@ -877,6 +905,22 @@ def render_patch6_report(
         )
         return
 
+    # v5 — enriquecer com impacto macro (seguro: degrada silenciosamente)
+    try:
+        from core.macro_context import load_latest_macro_context
+        _macro_for_enrich = (
+            st.session_state.get("macro_ctx_page")
+            or st.session_state.get("macro_context")
+            or load_latest_macro_context()
+        )
+    except Exception:
+        _macro_for_enrich = {}
+    if _macro_for_enrich:
+        try:
+            enrich_macro_impact(analysis, _macro_for_enrich)
+        except Exception:
+            pass  # v5 enrichment is optional — never breaks the report
+
     stats = analysis.stats
 
     # ── Cor semântica para os cards de resumo ─────────────────────────────────
@@ -971,6 +1015,23 @@ def render_patch6_report(
                 + "</div>",
                 unsafe_allow_html=True,
             )
+
+    # ── v5 macro narrative strip ─────────────────────────────────────────────
+    _macro_narr = getattr(analysis, "macro_narrative", "") or ""
+    if _macro_narr:
+        # Classify environment tone from the narrative
+        _env_tone = "bad" if "restritivo" in _macro_narr.lower() else (
+            "good" if "expansivo" in _macro_narr.lower() else "neutral"
+        )
+        _env_tone_colors = {"good": "#22c55e", "bad": "#ef4444", "neutral": "#64748b"}
+        _env_border = _env_tone_colors.get(_env_tone, "#64748b")
+        st.markdown(
+            f"<div style='border:1px solid {_env_border}33;border-left:4px solid {_env_border};"
+            f"background:{_env_border}0a;border-radius:12px;padding:12px 16px;"
+            f"margin:8px 0 12px;font-size:14px;line-height:1.6'>"
+            f"🌎 <strong>{_esc(_macro_narr)}</strong></div>",
+            unsafe_allow_html=True,
+        )
 
     # ── v3 portfolio signals ──────────────────────────────────────────────────
     v3_items = []

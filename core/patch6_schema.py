@@ -115,6 +115,17 @@ class CompanyAnalysis:
     forward_confidence: float = 0.0
     forward_drivers: List[str] = field(default_factory=list)
 
+    # v4 — derived decision fields (runtime computed, never stored in DB)
+    # Derivados de perspectiva_compra + forward_direction + execution_trend.
+    decision_score: int = 0                    # -2 | -1 | 0 | +1 | +2
+    decision_label: str = "—"                 # reduzir | revisar | manter | aumentar
+    risk_rank: List[str] = field(default_factory=list)  # riscos ordenados por prioridade
+
+    # v5 — macro exposure (runtime derived from asset_macro_profile + macro trends)
+    macro_exposure: str = ""                   # "Favorecido" | "Pressionado" | "Misto" | "Neutro"
+    macro_exposure_tone: str = "neutral"       # good | warn | bad | neutral
+    macro_exposure_detail: str = ""            # e.g. "Selic ↑ favorece spread bancário"
+
 
 @dataclass
 class AllocationRow:
@@ -147,3 +158,11 @@ class PortfolioAnalysis:
     alta_prioridade_count: int = 0
     forward_score_medio: int = 0
     regime_summary: str = ""                    # short summary of regime changes across portfolio
+
+    # v4 — portfolio trend (runtime derived, never stored)
+    # Keys: qualidade | execucao | governanca | capital
+    # Values: "favorável" | "estável" | "atenção" | "deteriorando" | "neutro" | "cauteloso"
+    portfolio_trend: Dict[str, str] = field(default_factory=dict)
+
+    # v5 — macro narrative (runtime derived)
+    macro_narrative: str = ""                  # "Ambiente restritivo. Favorece: BBAS3, ITUB4. Pressiona: DIRR3."
