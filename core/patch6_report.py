@@ -1,7 +1,8 @@
-# patch6_report_fixed_v2.py
+# patch6_report_final_fixed.py
 
 import streamlit as st
 from html import escape
+from core.patch6_analysis import build_portfolio_analysis
 
 def _fmt_pct(v):
     try:
@@ -31,7 +32,13 @@ def render_patch6_report(
 ):
     st.markdown("## 📘 Relatório consolidado do portfólio")
 
-    analysis = st.session_state.get("portfolio_analysis")
+    # ✅ CORREÇÃO PRINCIPAL: reconstruir análise corretamente
+    analysis = build_portfolio_analysis(
+        tickers=tickers,
+        period_ref=period_ref,
+        llm_factory=llm_factory,
+        analysis_mode=analysis_mode,
+    )
 
     if not analysis:
         st.warning("Relatório indisponível.")
