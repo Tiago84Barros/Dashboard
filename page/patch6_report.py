@@ -15,7 +15,7 @@ NÃO faz:
 from __future__ import annotations
 
 import html
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import streamlit as st
 
@@ -33,146 +33,6 @@ from core.patch6_schema import (
     PortfolioStats,
 )
 from core.patch6_service import run_portfolio_llm_report, safe_call_llm
-
-
-try:
-    from core.macro_context import load_latest_macro_context
-except Exception:  # pragma: no cover
-    load_latest_macro_context = None
-
-
-def _fmt_num(value: Any, suffix: str = "", digits: int = 2) -> str:
-    try:
-        if value is None:
-            return "—"
-        num = float(value)
-        if digits == 0:
-            return f"{num:.0f}{suffix}"
-        return f"{num:.{digits}f}{suffix}"
-    except Exception:
-        return "—"
-
-
-def _fmt_trend_arrow(trend: str) -> str:
-    trend = (trend or "").lower()
-    if trend == "alta":
-        return "↑"
-    if trend == "queda":
-        return "↓"
-    if trend == "estavel":
-        return "→"
-    return "•"
-
-
-def _fmt_metric_with_trend(value: Any, trend: str, suffix: str = "", digits: int = 2) -> str:
-    base = _fmt_num(value, suffix=suffix, digits=digits)
-    if base == "—":
-        return base
-    return f"{base} {_fmt_trend_arrow(trend)}"
-
-
-def _load_macro_snapshot() -> Dict[str, Any]:
-    if load_latest_macro_context is None:
-        return {}
-    try:
-        return load_latest_macro_context() or {}
-    except Exception:
-        return {}
-
-
-def _macro_kpis(macro: Dict[str, Any]) -> List[Tuple[str, str, str]]:
-    summary = macro.get("macro_summary") or {}
-    return [
-        ("Selic", _fmt_metric_with_trend(summary.get("selic_current"), summary.get("selic_trend"), "%", 2), "Custo de capital"),
-        ("Dólar", _fmt_metric_with_trend(summary.get("cambio_current"), summary.get("cambio_trend"), "", 2), "Receitas/custos externos"),
-        ("IPCA 12m", _fmt_metric_with_trend(summary.get("ipca_12m_current"), summary.get("ipca_12m_trend"), "%", 2), "Inflação corrente"),
-        ("PIB", _fmt_metric_with_trend(summary.get("pib_current"), summary.get("pib_trend"), "%", 2), "Atividade econômica"),
-        ("Confiança", _fmt_metric_with_trend(summary.get("icc_current"), summary.get("icc_trend"), "", 1), "Demanda doméstica"),
-        ("Juro real", _fmt_metric_with_trend(summary.get("juros_real_current"), summary.get("juros_real_trend"), "%", 2), "Aperto monetário"),
-    ]
-
-
-def _macro_driver_lines_for_company(company: CompanyAnalysis, macro: Dict[str, Any]) -> List[str]:
-    summary = macro.get("macro_summary") or {}
-    sensitivities = {str(x).strip().lower() for x in (company.sensibilidades_macro or []) if str(x).strip()}
-    ticker = (company.ticker or "").upper()
-    lines: List[str] = []
-
-    selic = summary.get("selic_current")
-    selic_trend = summary.get("selic_trend")
-    cambio = summary.get("cambio_current")
-    cambio_trend = summary.get("cambio_trend")
-    ipca = summary.get("ipca_12m_current")
-    ipca_trend = summary.get("ipca_12m_trend")
-    pib = summary.get("pib_current")
-    pib_trend = summary.get("pib_trend")
-    icc = summary.get("icc_current")
-    icc_trend = summary.get("icc_trend")
-
-    if sensitivities & {"juros", "credito", "mercado_de_capitais", "atividade_domestica", "consumo", "investimento", "vacancia"}:
-        lines.append(
-            f"Selic em {_fmt_num(selic, '%', 2)} ({selic_trend}) mantém custo de capital mais pressionado para teses sensíveis a juros e crédito."
-        )
-    if sensitivities & {"atividade_domestica", "consumo", "credito", "investimento", "atividade_industrial", "vacancia"}:
-        lines.append(
-            f"PIB em {_fmt_num(pib, '%', 2)} ({pib_trend}) e confiança em {_fmt_num(icc, '', 1)} ({icc_trend}) ajudam a calibrar a força da demanda doméstica para {ticker}."
-        )
-    if sensitivities & {"cambio", "demanda_externa", "atividade_global", "commodities", "petroleo", "minerio", "china"}:
-        lines.append(
-            f"Dólar em {_fmt_num(cambio, '', 2)} ({cambio_trend}) altera a assimetria para receitas dolarizadas, exportação e custos externos ligados a {ticker}."
-        )
-    if sensitivities & {"inflacao", "regulacao"}:
-        lines.append(
-            f"IPCA em {_fmt_num(ipca, '%', 2)} ({ipca_trend}) influencia repasse tarifário, contratos indexados e pressão regulatória em negócios mais defensivos."
-        )
-
-    if not lines and ticker.startswith("PETR"):
-        lines.append(
-            f"Dólar em {_fmt_num(cambio, '', 2)} ({cambio_trend}) segue relevante para a geração de caixa e a leitura de valor de {ticker}, mesmo com drivers setoriais próprios."
-        )
-        lines.append(
-            f"Selic em {_fmt_num(selic, '%', 2)} ({selic_trend}) pesa mais no desconto de valuation do que na operação direta de {ticker}."
-        )
-
-    out: List[str] = []
-    seen = set()
-    for line in lines:
-        if line and line not in seen and "—" not in line:
-            seen.add(line)
-            out.append(line)
-    return out[:3]
-
-
-def _render_macro_dashboard(macro: Dict[str, Any]) -> None:
-    if not macro:
-        return
-    st.markdown("## 📊 Cenário Macro Atual")
-    kpis = _macro_kpis(macro)
-    for i in range(0, len(kpis), 3):
-        row = kpis[i:i+3]
-        cols = st.columns(len(row))
-        for col, (label, value, extra) in zip(cols, row):
-            col.markdown(
-                f"<div class='p6-card'><div class='p6-card-label'>{_esc(label)}</div><div class='p6-card-value' style='font-size:26px'>{_esc(value)}</div><div class='p6-card-extra'>{_esc(extra)}</div></div>",
-                unsafe_allow_html=True,
-            )
-    bullets = [strip_html(x) for x in (macro.get("macro_interpretation") or []) if strip_html(x)]
-    if bullets:
-        st.caption("Leitura macro com valores atuais da base info_economica / info_economica_mensal.")
-        _render_section_list("Como o macro reforça a narrativa", bullets[:4], limit=4)
-
-
-def _render_company_macro_block(company: CompanyAnalysis, macro: Dict[str, Any]) -> None:
-    lines = _macro_driver_lines_for_company(company, macro)
-    if not lines:
-        return
-    st.markdown("**Impacto Macro Atual**")
-    st.markdown(
-        "<div style='border:1px solid rgba(59,130,246,0.25);background:rgba(37,99,235,0.08);border-radius:14px;padding:14px 16px;margin-top:8px;'>"
-        + "".join([f"<div style='margin:6px 0;line-height:1.55;'>• {_esc(line)}</div>" for line in lines])
-        + "</div>",
-        unsafe_allow_html=True,
-    )
 
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -197,13 +57,19 @@ def _fmt_score(value: int) -> str:
 
 
 def _badge(texto: str, tone: str = "neutral") -> str:
+    """Badge com semântica de cor padronizada:
+      good    → verde  (#22c55e) — favorável / aumentar / forte
+      warn    → âmbar  (#f59e0b) — neutro / manter / observar
+      bad     → vermelho (#ef4444) — reduzir / revisar / risco
+      neutral → cinza  (#64748b) — informativo
+    """
     tone_map = {
-        "good": "#0ea5e9",
-        "warn": "#f59e0b",
-        "bad": "#ef4444",
-        "neutral": "#94a3b8",
+        "good":    "#22c55e",
+        "warn":    "#f59e0b",
+        "bad":     "#ef4444",
+        "neutral": "#64748b",
     }
-    color = tone_map.get(tone, "#94a3b8")
+    color = tone_map.get(tone, "#64748b")
     return (
         f"<span style='display:inline-block;padding:2px 10px;border-radius:999px;"
         f"border:1px solid {color};color:{color};font-weight:600;font-size:12px'>{texto}</span>"
@@ -437,6 +303,46 @@ def _render_strategy_detector(detector: Dict[str, Any]) -> None:
             )
 
 
+
+
+def _fmt_macro_value(value: Any, suffix: str = "", decimals: int = 2) -> str:
+    try:
+        if value is None or value == "":
+            return "—"
+        num = float(value)
+        return f"{num:.{decimals}f}{suffix}"
+    except Exception:
+        return "—"
+
+
+def _extract_macro_panel_data(macro: Dict[str, Any]) -> List[tuple]:
+    summary = macro.get("macro_summary", {}) if isinstance(macro, dict) else {}
+    anual = macro.get("anual", {}) if isinstance(macro, dict) else {}
+    return [
+        ("Selic atual", _fmt_macro_value(summary.get("selic_current"), "%")),
+        ("Dólar atual", _fmt_macro_value(summary.get("cambio_current"))),
+        ("IPCA 12m", _fmt_macro_value(summary.get("ipca_12m_current"), "%")),
+        ("IPCA anual", _fmt_macro_value(anual.get("ipca"), "%")),
+    ]
+
+
+def _render_macro_panel() -> None:
+    macro = st.session_state.get("macro_context_run") or st.session_state.get("macro_context") or {}
+    if not isinstance(macro, dict) or not macro:
+        return
+
+    cards = _extract_macro_panel_data(macro)
+    if not any(value != "—" for _, value in cards):
+        return
+
+    st.markdown("## 🌎 Painel Macro")
+    _render_metric_cards(cards, columns_per_row=4)
+
+    interpretation = macro.get("macro_interpretation") if isinstance(macro.get("macro_interpretation"), list) else []
+    clean_interp = [strip_html(x) for x in interpretation if strip_html(x)]
+    if clean_interp:
+        _render_section_list("Leitura macro", clean_interp, limit=6)
+
 def _render_score_explanations(company: CompanyAnalysis) -> None:
     score = company.score_qualitativo
     conf = company.confianca
@@ -600,41 +506,101 @@ def _render_structured_portfolio_report(report: Dict[str, Any], mode_label: str)
 # ────────────────────────────────────────────────────────────────────────────────
 
 def _render_company_expander(company: CompanyAnalysis) -> None:
-    tk = company.ticker
-    p = company.perspectiva_compra.strip().lower()
-    badge = _badge((p or "—").upper(), _tone_from_perspectiva(p))
-    heuristic_badge = (
-        "  " + _badge("Score heurístico", "warn")
-        if company.score_source == "heuristic"
-        else ""
-    )
+    """Card executivo por empresa sem HTML frágil.
 
-    with st.expander(tk, expanded=False):
-        st.markdown(f"### {tk}  {badge}{heuristic_badge}", unsafe_allow_html=True)
+    Hierarquia:
+      1. Decisão / atenção
+      2. Síntese curta
+      3. Risco principal / ação
+      4. Detalhes em expander
+    """
+    tk = (getattr(company, "ticker", "") or "").strip() or "—"
+    p = (getattr(company, "perspectiva_compra", "") or "").strip().lower()
+
+    sintese_src = (getattr(company, "tese", "") or getattr(company, "leitura", "") or "").strip()
+    if sintese_src:
+        primeiro = sintese_src.split(".")[0].strip()
+        sintese = (primeiro + ".") if primeiro else sintese_src[:220]
+        if len(sintese) > 220:
+            sintese = sintese[:217] + "…"
+    else:
+        sintese = "—"
+
+    risco_src = (
+        (getattr(company, "riscos", []) or [None])[0]
+        or getattr(company, "fragilidade_regime_atual", "")
+        or ""
+    )
+    risco_src = str(risco_src).strip()
+    if risco_src and len(risco_src) > 140:
+        risco_src = risco_src[:140] + "…"
+
+    action_src = str(getattr(company, "recommended_action", "") or "").strip()
+    if action_src and len(action_src) > 80:
+        action_src = action_src[:80] + "…"
+
+    decision_label = str(getattr(company, "decision_label", "") or "").strip().lower()
+    decision_score = int(getattr(company, "decision_score", 0) or 0)
+    attention_level = str(getattr(company, "attention_level", "") or "").strip()
+
+    tone = _tone_from_perspectiva(p)
+    badge_html = _badge((p or "—").upper(), tone)
+
+    extra_badges = []
+    if decision_label:
+        score_str = f" ({'+' if decision_score > 0 else ''}{decision_score})" if decision_score != 0 else ""
+        extra_badges.append(_badge(f"→ {decision_label.upper()}{score_str}", _tone_from_decision(decision_label)))
+
+    if attention_level in ("alta", "média"):
+        attn_tone = "bad" if attention_level == "alta" else "warn"
+        extra_badges.append(_badge(f"⚡ {attention_level.upper()}", attn_tone))
+
+    if getattr(company, "score_source", "") == "heuristic":
+        extra_badges.append(_badge("Score heurístico", "warn"))
+
+    # contêiner seguro com componentes nativos
+    with st.container(border=True):
+        top_left, top_right = st.columns([1.1, 2.4])
+        with top_left:
+            st.markdown(f"### {tk}")
+        with top_right:
+            badges_line = "  ".join([badge_html] + extra_badges)
+            st.markdown(badges_line, unsafe_allow_html=True)
+
+        st.caption(sintese)
+
+        info_cols = st.columns(2)
+        with info_cols[0]:
+            if risco_src:
+                st.warning(risco_src, icon="⚠️")
+        with info_cols[1]:
+            if action_src:
+                st.info(action_src, icon="➡️")
+
+    with st.expander(f"Ver análise completa — {tk}", expanded=False):
         st.caption(
-            f"Período analisado: {company.period_ref} • Atualizado em: {company.created_at}"
-            + (f" • Confiança: {_fmt_confidence(company.confianca)}" if company.confianca > 0 else "")
-            + (f" • Score: {_fmt_score(company.score_qualitativo)}" if company.score_qualitativo > 0 else "")
-            + (" • ⚠️ Score calculado sem LLM" if company.score_source == "heuristic" else "")
+            f"Período analisado: {getattr(company, 'period_ref', '—')} • Atualizado em: {getattr(company, 'created_at', '—')}"
+            + (f" • Confiança: {_fmt_confidence(getattr(company, 'confianca', 0))}" if getattr(company, "confianca", 0) > 0 else "")
+            + (f" • Score: {_fmt_score(getattr(company, 'score_qualitativo', 0))}" if getattr(company, "score_qualitativo", 0) > 0 else "")
+            + (" • ⚠️ Score calculado sem LLM" if getattr(company, "score_source", "") == "heuristic" else "")
         )
 
         metric_items = [
             ("Score qualitativo", _explicar_score(company)),
             ("Confiança", _explicar_confianca(company)),
         ]
-        years = company.strategy_detector.get("coverage_years", []) \
-            if isinstance(company.strategy_detector.get("coverage_years"), list) else []
+        years = getattr(company, "strategy_detector", {}).get("coverage_years", [])             if isinstance(getattr(company, "strategy_detector", {}), dict) else []
         if years:
             metric_items.append(("Cobertura temporal", ", ".join([str(y) for y in years[:4]])))
 
         _render_metric_cards(metric_items, columns_per_row=2)
         _render_score_explanations(company)
 
-        _render_section_text("Tese (síntese)", company.tese or "—")
-        _render_company_macro_block(company, macro_snapshot if "macro_snapshot" in locals() else _load_macro_snapshot())
+        _render_section_text("Tese (síntese)", getattr(company, "tese", "") or "—")
 
-        if company.leitura:
-            _render_section_text("Leitura / Direcionalidade", company.leitura)
+        leitura = getattr(company, "leitura", "")
+        if leitura:
+            _render_section_text("Leitura / Direcionalidade", leitura)
         elif p == "forte":
             _render_section_text(
                 "Leitura / Direcionalidade",
@@ -654,20 +620,20 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
                 "Recomenda postura defensiva e foco em mitigação de risco.",
             )
 
-        _render_section_text("Papel estratégico", company.papel_estrategico)
-        _render_section_list("Sensibilidades macro", company.sensibilidades_macro, limit=8)
-        _render_section_text("Fragilidade sob o regime atual", company.fragilidade_regime_atual)
-        _render_section_list("Dependências de cenário", company.dependencias_cenario, limit=8)
-        _render_section_text("Faixa de alocação sugerida", company.alocacao_sugerida_faixa)
-        _render_section_text("Racional de alocação", company.racional_alocacao)
+        _render_section_text("Papel estratégico", getattr(company, "papel_estrategico", ""))
+        _render_section_list("Sensibilidades macro", getattr(company, "sensibilidades_macro", []), limit=8)
+        _render_section_text("Fragilidade sob o regime atual", getattr(company, "fragilidade_regime_atual", ""))
+        _render_section_list("Dependências de cenário", getattr(company, "dependencias_cenario", []), limit=8)
+        _render_section_text("Faixa de alocação sugerida", getattr(company, "alocacao_sugerida_faixa", ""))
+        _render_section_text("Racional de alocação", getattr(company, "racional_alocacao", ""))
 
         _render_key_value_section(
-            "Evolução Estratégica", company.evolucao,
+            "Evolução Estratégica", getattr(company, "evolucao", {}),
             [("historico", "Histórico"), ("fase_atual", "Fase atual"), ("tendencia", "Tendência")],
         )
-        _render_strategy_detector(company.strategy_detector)
+        _render_strategy_detector(getattr(company, "strategy_detector", {}))
         _render_key_value_section(
-            "Consistência do Discurso", company.consistencia,
+            "Consistência do Discurso", getattr(company, "consistencia", {}),
             [
                 ("analise", "Análise"),
                 ("grau_consistencia", "Grau"),
@@ -676,7 +642,7 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
             ],
         )
         _render_key_value_section(
-            "Execução vs Promessa", company.execucao,
+            "Execução vs Promessa", getattr(company, "execucao", {}),
             [
                 ("analise", "Análise"),
                 ("avaliacao_execucao", "Avaliação"),
@@ -685,96 +651,103 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
                 ("entregas_pendentes", "Entregas pendentes"),
             ],
         )
-        _render_section_list("Mudanças Estratégicas", company.mudancas, limit=6)
-        _render_section_list("Pontos-chave", company.pontos_chave, limit=8)
-        _render_section_list("Catalisadores", company.catalisadores, limit=6)
-        _render_section_list("Riscos", company.riscos, limit=6)
-        _render_section_list("O que monitorar", company.monitorar, limit=6)
-        _render_section_list("Ruídos e Contradições", company.contradicoes + company.sinais_ruido, limit=6)
+        _render_section_list("Mudanças Estratégicas", getattr(company, "mudancas", []), limit=6)
+        _render_section_list("Pontos-chave", getattr(company, "pontos_chave", []), limit=8)
+        _render_section_list("Catalisadores", getattr(company, "catalisadores", []), limit=6)
+        risk_rank = getattr(company, "risk_rank", [])
+        if risk_rank:
+            _render_section_list("Riscos (prioritários)", risk_rank, limit=6)
+        else:
+            _render_section_list("Riscos", getattr(company, "riscos", []), limit=6)
+        _render_section_list("O que monitorar", getattr(company, "monitorar", []), limit=6)
+        _render_section_list(
+            "Ruídos e Contradições",
+            (getattr(company, "contradicoes", []) or []) + (getattr(company, "sinais_ruido", []) or []),
+            limit=6,
+        )
         _render_key_value_section(
-            "Qualidade Narrativa", company.qualidade_narrativa,
+            "Qualidade Narrativa", getattr(company, "qualidade_narrativa", {}),
             [("clareza", "Clareza"), ("coerencia", "Coerência"), ("sinais_de_ruido", "Sinais de ruído")],
         )
-        _render_evidence_section(company.evidencias, limit=10)
-        _render_section_text("Considerações da LLM", company.consideracoes)
+        _render_evidence_section(getattr(company, "evidencias", []), limit=10)
+        _render_section_text("Considerações da LLM", getattr(company, "consideracoes", ""))
 
-        # ── v3: Estabilidade e Robustez ───────────────────────────────────────
         _render_metric_cards([
-            ("Score qualitativo (híbrido)", _fmt_score(company.score_qualitativo)),
-            ("Robustez qualitativa", f"{round(company.robustez_qualitativa * 100)}%"),
-            ("Dispersão narrativa", f"{round(company.narrative_dispersion_score * 100)}%"),
-            ("Schema score", f"{company.schema_score}/100"),
+            ("Score qualitativo (híbrido)", _fmt_score(getattr(company, "score_qualitativo", 0))),
+            ("Robustez qualitativa", f"{round((getattr(company, 'robustez_qualitativa', 0) or 0) * 100)}%"),
+            ("Dispersão narrativa", f"{round((getattr(company, 'narrative_dispersion_score', 0) or 0) * 100)}%"),
+            ("Schema score", f"{getattr(company, 'schema_score', 0)}/100"),
         ], columns_per_row=4)
 
-        # ── v3: Evolução da Tese ──────────────────────────────────────────────
         evol_items = [
-            ("Trend de execução", company.execution_trend),
-            ("Mudança de narrativa", company.narrative_shift),
+            ("Trend de execução", getattr(company, "execution_trend", "—")),
+            ("Mudança de narrativa", getattr(company, "narrative_shift", "—")),
         ]
-        if company.forward_score > 0:
-            evol_items.append(("Sinal prospectivo", f"{company.forward_score}/100 ({company.forward_direction})"))
+        if getattr(company, "forward_score", 0) > 0:
+            evol_items.append(("Sinal prospectivo", f"{getattr(company, 'forward_score', 0)}/100 ({getattr(company, 'forward_direction', '—')})"))
         _render_metric_cards(evol_items, columns_per_row=3)
 
-        if company.memory_summary:
-            _render_section_text("Memória histórica da tese", company.memory_summary)
-        _render_section_list("Promessas recorrentes", company.recurring_promises, limit=5)
-        _render_section_list("Entregas confirmadas (recorrentes)", company.delivered_promises, limit=5)
-        _render_section_list("Riscos persistentes entre períodos", company.persistent_risks, limit=5)
-        _render_section_list("Catalisadores persistentes", company.persistent_catalysts, limit=5)
+        if getattr(company, "memory_summary", ""):
+            _render_section_text("Memória histórica da tese", getattr(company, "memory_summary", ""))
+        _render_section_list("Promessas recorrentes", getattr(company, "recurring_promises", []), limit=5)
+        _render_section_list("Entregas confirmadas (recorrentes)", getattr(company, "delivered_promises", []), limit=5)
+        _render_section_list("Riscos persistentes entre períodos", getattr(company, "persistent_risks", []), limit=5)
+        _render_section_list("Catalisadores persistentes", getattr(company, "persistent_catalysts", []), limit=5)
 
-        # ── v3: Mudança de Regime ─────────────────────────────────────────────
-        if company.current_regime not in ("—", "indefinido", ""):
+        current_regime = getattr(company, "current_regime", "")
+        previous_regime = getattr(company, "previous_regime", "")
+        regime_change_intensity = getattr(company, "regime_change_intensity", "")
+        regime_change_explanation = getattr(company, "regime_change_explanation", "")
+        if current_regime not in ("—", "indefinido", ""):
             st.markdown("**Mudança de Regime Qualitativo**")
             regime_tone = (
-                "bad" if company.regime_change_intensity == "significativo"
-                else "warn" if company.regime_change_intensity == "moderado"
+                "bad" if regime_change_intensity == "significativo"
+                else "warn" if regime_change_intensity == "moderado"
                 else "neutral"
             )
-            badges = _badge(f"Atual: {company.current_regime}", "neutral")
-            if company.previous_regime not in ("—", "indefinido", ""):
-                badges += "  " + _badge(f"Anterior: {company.previous_regime}", "neutral")
-            badges += "  " + _badge(
-                f"Intensidade: {company.regime_change_intensity}", regime_tone
-            )
+            badges = _badge(f"Atual: {current_regime}", "neutral")
+            if previous_regime not in ("—", "indefinido", ""):
+                badges += "  " + _badge(f"Anterior: {previous_regime}", "neutral")
+            badges += "  " + _badge(f"Intensidade: {regime_change_intensity}", regime_tone)
             st.markdown(badges, unsafe_allow_html=True)
-            if company.regime_change_explanation:
-                st.markdown(_box_html(company.regime_change_explanation), unsafe_allow_html=True)
+            if regime_change_explanation:
+                st.markdown(_box_html(regime_change_explanation), unsafe_allow_html=True)
 
-        # ── v3: Prioridade de Acompanhamento ──────────────────────────────────
-        if company.attention_score > 0:
+        attention_score = getattr(company, "attention_score", 0)
+        if attention_score > 0:
             attn_tone = (
-                "bad" if company.attention_level == "alta"
-                else "warn" if company.attention_level == "média"
+                "bad" if attention_level == "alta"
+                else "warn" if attention_level == "média"
                 else "neutral"
             )
             st.markdown("**Prioridade de Acompanhamento**")
             st.markdown(
-                _badge(f"Nível: {company.attention_level.upper()}", attn_tone)
+                _badge(f"Nível: {attention_level.upper()}", attn_tone)
                 + "  "
-                + _badge(f"Score: {company.attention_score:.0f}/100", attn_tone)
+                + _badge(f"Score: {attention_score:.0f}/100", attn_tone)
                 + "  "
-                + _badge(company.recommended_action, attn_tone),
+                + _badge(getattr(company, "recommended_action", ""), attn_tone),
                 unsafe_allow_html=True,
             )
-            _render_section_list("Drivers da prioridade", company.attention_drivers, limit=6)
+            _render_section_list("Drivers da prioridade", getattr(company, "attention_drivers", []), limit=6)
 
-        # ── v3: Sinal Prospectivo ─────────────────────────────────────────────
-        if company.forward_score > 0:
+        if getattr(company, "forward_score", 0) > 0:
+            fwd_direction = getattr(company, "forward_direction", "")
             fwd_tone = (
-                "good" if company.forward_direction == "melhorando"
-                else "bad" if company.forward_direction == "deteriorando"
+                "good" if fwd_direction == "melhorando"
+                else "bad" if fwd_direction == "deteriorando"
                 else "neutral"
             )
             st.markdown("**Sinal Prospectivo**")
             st.markdown(
-                _badge(f"Forward score: {_fmt_score(company.forward_score)}", fwd_tone)
+                _badge(f"Forward score: {_fmt_score(getattr(company, 'forward_score', 0))}", fwd_tone)
                 + "  "
-                + _badge(f"Direção: {company.forward_direction}", fwd_tone)
+                + _badge(f"Direção: {fwd_direction}", fwd_tone)
                 + "  "
-                + _badge(f"Confiança: {_fmt_confidence(company.forward_confidence)}", "neutral"),
+                + _badge(f"Confiança: {_fmt_confidence(getattr(company, 'forward_confidence', 0))}", "neutral"),
                 unsafe_allow_html=True,
             )
-            _render_section_list("Fatores prospectivos", company.forward_drivers, limit=6)
+            _render_section_list("Fatores prospectivos", getattr(company, "forward_drivers", []), limit=6)
 
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -783,6 +756,7 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
 
 _P6_CSS = """
 <style>
+/* ── Cards base ── */
 .p6-card{
   border:1px solid rgba(255,255,255,0.08);
   background:rgba(255,255,255,0.03);
@@ -794,6 +768,60 @@ _P6_CSS = """
 .p6-card-label{font-size:12px;opacity:0.7;margin-bottom:6px;letter-spacing:0.3px;}
 .p6-card-value{font-size:28px;font-weight:900;margin-bottom:6px;}
 .p6-card-extra{font-size:12px;opacity:0.65;}
+
+/* ── Cards executivos por empresa: acento de cor pela decisão ── */
+.p6-ec{
+  border:1px solid rgba(255,255,255,0.08);
+  border-radius:16px;
+  padding:16px 18px;
+  box-shadow:0 8px 20px rgba(0,0,0,0.22);
+  margin-bottom:8px;
+  border-left-width:4px;
+  border-left-style:solid;
+}
+.p6-ec-forte   { border-left-color:#22c55e;
+                  background:linear-gradient(135deg,rgba(34,197,94,.07) 0%,rgba(255,255,255,.02) 100%); }
+.p6-ec-moderada{ border-left-color:#f59e0b;
+                  background:linear-gradient(135deg,rgba(245,158,11,.07) 0%,rgba(255,255,255,.02) 100%); }
+.p6-ec-fraca   { border-left-color:#ef4444;
+                  background:linear-gradient(135deg,rgba(239,68,68,.07) 0%,rgba(255,255,255,.02) 100%); }
+.p6-ec-unknown { border-left-color:#64748b;
+                  background:rgba(255,255,255,0.02); }
+
+/* ── Row: ticker + badges ── */
+.p6-ec-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+.p6-ec-ticker{font-size:17px;font-weight:900;letter-spacing:.3px}
+.p6-ec-badges{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+
+/* ── Síntese ── */
+.p6-ec-sintese{font-size:13px;opacity:.85;line-height:1.5;margin-bottom:4px}
+
+/* ── Pill de risco ── */
+.p6-risk-pill{
+  display:inline-block;
+  padding:2px 9px;
+  border-radius:999px;
+  border:1px solid rgba(239,68,68,.40);
+  background:rgba(239,68,68,.08);
+  color:#ef4444;
+  font-size:11px;
+  font-weight:500;
+  margin-top:5px;
+}
+
+/* ── Pill de ação recomendada ── */
+.p6-action-pill{
+  display:inline-block;
+  padding:2px 9px;
+  border-radius:999px;
+  border:1px solid rgba(100,116,139,.35);
+  background:rgba(100,116,139,.08);
+  color:#94a3b8;
+  font-size:11px;
+  font-weight:500;
+  margin-top:4px;
+  margin-left:2px;
+}
 </style>
 """
 
@@ -817,20 +845,50 @@ def render_patch6_report(
         return
 
     stats = analysis.stats
-    macro_snapshot = _load_macro_snapshot()
-    _render_macro_dashboard(macro_snapshot)
+
+    # ── Cor semântica para os cards de resumo ─────────────────────────────────
+    def _summary_color(label: str) -> str:
+        """Verde=favorável, âmbar=neutro, vermelho=cauteloso."""
+        l = label.strip().lower()
+        if l in ("alta", "construtiva", "forte"):
+            return "#22c55e"
+        if l in ("moderada", "neutra", "média"):
+            return "#f59e0b"
+        if l in ("baixa", "cautelosa", "fraca"):
+            return "#ef4444"
+        return "inherit"
+
+    _q_lbl   = stats.label_qualidade()
+    _p_lbl   = stats.label_perspectiva()
+    _conf_lbl = _fmt_confidence(analysis.confianca_media)
+    _sc_lbl   = _fmt_score(analysis.score_medio)
+
+    # cor da confiança por faixa numérica
+    _conf_color = (
+        "#22c55e" if analysis.confianca_media >= 0.75
+        else "#f59e0b" if analysis.confianca_media >= 0.55
+        else "#ef4444" if analysis.confianca_media > 0
+        else "inherit"
+    )
+    # cor do score médio por faixa
+    _sc_color = (
+        "#22c55e" if analysis.score_medio >= 70
+        else "#f59e0b" if analysis.score_medio >= 50
+        else "#ef4444" if analysis.score_medio > 0
+        else "inherit"
+    )
 
     # ── Portfolio summary cards ───────────────────────────────────────────────
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.markdown(
         f'<div class="p6-card"><div class="p6-card-label">Qualidade (heurística)</div>'
-        f'<div class="p6-card-value">{stats.label_qualidade()}</div>'
+        f'<div class="p6-card-value" style="color:{_summary_color(_q_lbl)}">{_q_lbl}</div>'
         f'<div class="p6-card-extra">Heurística agregada a partir dos sinais do RAG.</div></div>',
         unsafe_allow_html=True,
     )
     col2.markdown(
         f'<div class="p6-card"><div class="p6-card-label">Perspectiva 12m</div>'
-        f'<div class="p6-card-value">{stats.label_perspectiva()}</div>'
+        f'<div class="p6-card-value" style="color:{_summary_color(_p_lbl)}">{_p_lbl}</div>'
         f'<div class="p6-card-extra">Direcionalidade consolidada para os próximos 12 meses.</div></div>',
         unsafe_allow_html=True,
     )
@@ -842,13 +900,13 @@ def render_patch6_report(
     )
     col4.markdown(
         f'<div class="p6-card"><div class="p6-card-label">Confiança média</div>'
-        f'<div class="p6-card-value">{_fmt_confidence(analysis.confianca_media)}</div>'
+        f'<div class="p6-card-value" style="color:{_conf_color}">{_conf_lbl}</div>'
         f'<div class="p6-card-extra">Média do campo confianca_analise nas leituras individuais.</div></div>',
         unsafe_allow_html=True,
     )
     col5.markdown(
         f'<div class="p6-card"><div class="p6-card-label">Score qualitativo médio</div>'
-        f'<div class="p6-card-value">{_fmt_score(analysis.score_medio)}</div>'
+        f'<div class="p6-card-value" style="color:{_sc_color}">{_sc_lbl}</div>'
         f'<div class="p6-card-extra">Média do score_qualitativo salvo pela LLM.</div></div>',
         unsafe_allow_html=True,
     )
@@ -856,6 +914,8 @@ def render_patch6_report(
         "🛈 Como a qualidade é estimada: combinação de cobertura do portfólio, perspectiva 12m agregada e distribuição de sinais. "
         f"A cobertura temporal do detector estratégico está presente em {analysis.temporal_covered} ativo(s)."
     )
+
+    _render_macro_panel()
 
     # ── v3 portfolio signals ──────────────────────────────────────────────────
     v3_items = []
