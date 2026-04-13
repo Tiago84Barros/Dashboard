@@ -15,7 +15,6 @@ NÃO faz:
 from __future__ import annotations
 
 import html
-import re
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
@@ -55,15 +54,6 @@ def _fmt_score(value: int) -> str:
     if value <= 0:
         return "—"
     return f"{max(0, min(100, value))}/100"
-
-
-def _fmt_macro_narrative_text(text: str) -> str:
-    txt = strip_html(text)
-    if not txt:
-        return ""
-    txt = re.sub(r"(\d+\.\d{2})\d+(%)", r"\1\2", txt)
-    txt = re.sub(r"(R\$\s*\d+\.\d{2})\d+", r"\1", txt)
-    return txt
 
 
 def _badge(texto: str, tone: str = "neutral") -> str:
@@ -131,6 +121,57 @@ def _box_html(text: str) -> str:
         + _esc(text).replace("\n", "<br/>")
         + "</div>"
     )
+
+_SPECIAL_PORTFOLIO_TITLES = {
+    "Riscos internacionais relevantes": "bad",
+    "Dependências de cenário macro": "warn",
+    "Vulnerabilidades da carteira sob o regime atual": "bad",
+    "O que a carteira está apostando implicitamente": "good",
+    "Análise de concentração econômica": "warn",
+    "Racional de ajuste de alocação": "good",
+    "Forças principais": "good",
+    "Fragilidades principais": "bad",
+    "Riscos invisíveis": "bad",
+    "Papel estratégico dos ativos": "neutral",
+}
+
+def _render_spotlight_section(title: str, body_html: str, tone: str = "neutral") -> None:
+    tone_map = {
+        "good": ("rgba(34,197,94,.16)", "rgba(34,197,94,.34)", "#86efac"),
+        "warn": ("rgba(245,158,11,.16)", "rgba(245,158,11,.34)", "#fcd34d"),
+        "bad": ("rgba(239,68,68,.16)", "rgba(239,68,68,.34)", "#fca5a5"),
+        "neutral": ("rgba(59,130,246,.15)", "rgba(59,130,246,.30)", "#93c5fd"),
+    }
+    bg, border, title_color = tone_map.get(tone, tone_map["neutral"])
+    st.markdown(
+        f"""
+        <div style="margin:14px 0 10px 0; border:1px solid {border}; border-radius:18px;
+                    background:linear-gradient(180deg,{bg}, rgba(255,255,255,.03));
+                    box-shadow:0 10px 24px rgba(0,0,0,.18); overflow:hidden;">
+          <div style="padding:12px 16px 10px 16px; border-bottom:1px solid rgba(255,255,255,.08);">
+            <div style="font-size:20px; font-weight:900; color:{title_color}; letter-spacing:.2px;">{_esc(title)}</div>
+          </div>
+          <div style="padding:14px 16px 16px 16px;">{body_html}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+def _render_text_spotlight(title: str, text_value: str) -> None:
+    tone = _SPECIAL_PORTFOLIO_TITLES.get(title, "neutral")
+    body = f"<div style='font-size:15px;line-height:1.65;opacity:.96'>{_esc(text_value).replace(chr(10), '<br/>')}</div>"
+    _render_spotlight_section(title, body, tone)
+
+def _render_list_spotlight(title: str, values: List[str], limit: Optional[int] = None) -> None:
+    clean = [strip_html(v) for v in values if strip_html(v)]
+    if limit is not None:
+        clean = clean[:limit]
+    if not clean:
+        return
+    tone = _SPECIAL_PORTFOLIO_TITLES.get(title, "neutral")
+    items = ''.join([f"<div style='font-size:15px;line-height:1.65;margin:7px 0;'>• {_esc(item)}</div>" for item in clean])
+    _render_spotlight_section(title, items, tone)
+
 
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -201,6 +242,9 @@ def _render_metric_cards(items: List[tuple], columns_per_row: int = 3) -> None:
 def _render_section_text(title: str, text_value: str) -> None:
     if not strip_html(text_value):
         return
+    if title in _SPECIAL_PORTFOLIO_TITLES:
+        _render_text_spotlight(title, text_value)
+        return
     st.markdown(f"**{title}**")
     st.markdown(_box_html(text_value), unsafe_allow_html=True)
 
@@ -210,6 +254,9 @@ def _render_section_list(title: str, values: List[str], limit: Optional[int] = N
     if limit is not None:
         clean = clean[:limit]
     if not clean:
+        return
+    if title in _SPECIAL_PORTFOLIO_TITLES:
+        _render_list_spotlight(title, clean, limit=None)
         return
     st.markdown(f"**{title}**")
     for item in clean:
@@ -489,7 +536,7 @@ def _render_structured_portfolio_report(report: Dict[str, Any], mode_label: str)
 
     asset_roles = report.get("asset_roles", []) or []
     if asset_roles:
-        st.markdown("**Papel estratégico dos ativos**")
+        _render_spotlight_section("Papel estratégico dos ativos", "<div style='font-size:13px;opacity:.82'>Leitura do papel de cada posição dentro da carteira, com foco em função estratégica e sensibilidade ao cenário.</div>", _SPECIAL_PORTFOLIO_TITLES.get("Papel estratégico dos ativos", "neutral"))
         for item in asset_roles[:12]:
             if not isinstance(item, dict):
                 continue
@@ -960,13 +1007,6 @@ def render_patch6_report(
 
     _render_macro_panel()
 
-    macro_narrative = _fmt_macro_narrative_text(getattr(analysis, "macro_narrative", "") or "")
-    if macro_narrative:
-        st.markdown(
-            f"<div style='margin:10px 0 6px 0;padding:12px 14px;border:1px solid rgba(255,255,255,0.08);border-radius:14px;background:rgba(255,255,255,0.025);font-size:14px;line-height:1.45;'>🌎 <b>{_esc(macro_narrative)}</b></div>",
-            unsafe_allow_html=True,
-        )
-
     # ── v4 portfolio_trend strip ──────────────────────────────────────────────
     portfolio_trend = getattr(analysis, "portfolio_trend", {}) or {}
     if portfolio_trend:
@@ -1008,9 +1048,10 @@ def render_patch6_report(
         v3_items.append(_badge("Mudanças de regime detectadas", "warn"))
 
     if v3_items:
-        st.markdown("&nbsp;&nbsp;".join(v3_items), unsafe_allow_html=True)
-        if analysis.regime_summary:
-            st.caption(f"Mudanças de regime: {analysis.regime_summary}")
+        st.markdown("&nbsp;&nbsp;".join(v3_items) + (
+            f"<br/><span style='font-size:11px;opacity:0.6'>{_esc(analysis.regime_summary)}</span>"
+            if analysis.regime_summary else ""
+        ), unsafe_allow_html=True)
         st.markdown("")  # spacing
 
     # ── v3 priority ranking (compact) ────────────────────────────────────────
