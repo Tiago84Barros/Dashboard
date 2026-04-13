@@ -146,7 +146,7 @@ def load_latest_macro_context() -> Dict[str, Any]:
         select *
         from public.info_economica_mensal
         order by data desc
-        limit 12
+        limit 2
         """
     )
 
@@ -173,17 +173,6 @@ def load_latest_macro_context() -> Dict[str, Any]:
         if len(df_m) > 1:
             mensal_anterior = df_m.iloc[1].to_dict()
 
-    # Busca o último IPCA_12m não nulo entre os meses mais recentes para evitar
-    # exibição vazia quando o mês corrente e o imediatamente anterior ainda não
-    # tiverem sido publicados.
-    ultimo_ipca_12m_valido = None
-    if not df_m.empty and "IPCA_12m" in df_m.columns:
-        for _, row in df_m.iterrows():
-            val = _to_float(row.get("IPCA_12m"))
-            if val is not None:
-                ultimo_ipca_12m_valido = val
-                break
-
     if not df_a.empty:
         anual_atual = df_a.iloc[0].to_dict()
         if len(df_a) > 1:
@@ -194,7 +183,6 @@ def load_latest_macro_context() -> Dict[str, Any]:
         anual=anual_atual,
         mensal_prev=mensal_anterior,
         anual_prev=anual_anterior,
-        ultimo_ipca_12m_valido=ultimo_ipca_12m_valido,
     )
 
 
@@ -204,21 +192,36 @@ def build_macro_context(
     anual: Dict[str, Any],
     mensal_prev: Optional[Dict[str, Any]] = None,
     anual_prev: Optional[Dict[str, Any]] = None,
-    ultimo_ipca_12m_valido: Optional[float] = None,
 ) -> Dict[str, Any]:
     mensal_prev = mensal_prev or {}
     anual_prev = anual_prev or {}
 
     anual_data = _to_date(anual.get("data"))
+    mensal_data = _to_date(mensal.get("data"))
     ipca_annual_meta = _classify_annual_indicator(anual_data, "ipca")
+
+    # A tabela anual pode usar uma data sintética em dezembro do próprio ano corrente
+    # mesmo quando o dado é apenas acumulado até o mês mais recente da tabela mensal.
+    # Nessa situação, o correto é comunicar acumulado no ano até o mês da referência mensal.
+    if (
+        mensal_data is not None
+        and anual_data is not None
+        and mensal_data.year == anual_data.year
+        and mensal_data.month < 12
+    ):
+        ipca_annual_meta = {
+            "indicator": "ipca",
+            "reference_year": mensal_data.year,
+            "reference_month": mensal_data.month,
+            "interpretation": "acumulado_no_ano_ate_mes",
+            "label": "ipca_acumulado_ate_mes",
+        }
 
     # IPCA 12m: meses recentes podem vir NULL no banco enquanto o dado ainda não é publicado.
     # Fallback: usa o valor mais recente não-nulo (linha anterior) para não exibir vazio.
     _ipca_12m = _to_float(mensal.get("IPCA_12m"))
     if _ipca_12m is None:
         _ipca_12m = _to_float(mensal_prev.get("IPCA_12m"))
-    if _ipca_12m is None:
-        _ipca_12m = _to_float(ultimo_ipca_12m_valido)
 
     mensal_payload = {
         "data": str(mensal.get("data") or ""),

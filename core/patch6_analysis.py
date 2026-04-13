@@ -781,6 +781,26 @@ _IMPACT_DETAIL: Dict[tuple, str] = {
 }
 
 
+def _normalize_macro_trend(value: str) -> str:
+    v = (value or "").strip().lower()
+    if v in ("alta", "subindo"):
+        return "subindo"
+    if v in ("queda", "caindo"):
+        return "caindo"
+    if v in ("estavel", "estável", "neutro"):
+        return "estavel"
+    return v
+
+
+def _fmt_macro_num(value: Any, prefix: str = "", suffix: str = "") -> str:
+    try:
+        if value is None:
+            return ""
+        return f"{prefix}{float(value):.2f}{suffix}"
+    except Exception:
+        return ""
+
+
 def _classify_macro_exposure(
     company: "CompanyAnalysis",
     trends: Dict[str, Any],
@@ -809,8 +829,8 @@ def _classify_macro_exposure(
             merged.append(k)
 
     # Extract trends
-    selic_trend = ((trends.get("selic") or {}).get("trend") or "").strip().lower()
-    cambio_trend = ((trends.get("cambio") or {}).get("trend") or "").strip().lower()
+    selic_trend = _normalize_macro_trend((trends.get("selic") or {}).get("trend") or "")
+    cambio_trend = _normalize_macro_trend((trends.get("cambio") or {}).get("trend") or "")
 
     # Collect impacts
     positive: List[str] = []
@@ -869,38 +889,30 @@ def _build_macro_narrative(
     trends: Dict[str, Any],
     summary: Dict[str, Any],
 ) -> str:
-    """Gera narrativa macro-portfólio conectando números reais aos ativos.
-
-    Exemplo: "Ambiente restritivo (Selic 14.75% ↑, IPCA 5.10% ↑).
-              Favorecidos: BBAS3, ITUB4. Pressionados: DIRR3, VISC11."
-    """
-    # Classificar ambiente
+    """Gera narrativa macro-portfólio conectando números reais aos ativos."""
     selic_val = summary.get("selic_current")
-    selic_trend = ((trends.get("selic") or {}).get("trend") or "").strip().lower()
+    selic_trend = _normalize_macro_trend((trends.get("selic") or {}).get("trend") or "")
     ipca_val = summary.get("ipca_12m_current")
-    ipca_trend = ((trends.get("ipca_12m") or {}).get("trend") or "").strip().lower()
+    ipca_trend = _normalize_macro_trend((trends.get("ipca_12m") or {}).get("trend") or "")
     cambio_val = summary.get("cambio_current")
-    cambio_trend = ((trends.get("cambio") or {}).get("trend") or "").strip().lower()
+    cambio_trend = _normalize_macro_trend((trends.get("cambio") or {}).get("trend") or "")
 
-    # Determinar rótulo do ambiente
-    restrictive = (selic_trend == "subindo") or (selic_val and float(selic_val) > 12.0)
+    restrictive = (selic_trend == "subindo") or (selic_val is not None and float(selic_val) > 12.0)
+
+    arrow_map = {"subindo": "↑", "caindo": "↓", "estavel": "→"}
     parts = []
-    if selic_val:
-        arrow = {"subindo": "↑", "caindo": "↓"}.get(selic_trend, "→")
-        parts.append(f"Selic {selic_val}% {arrow}")
-    if ipca_val:
-        arrow = {"subindo": "↑", "caindo": "↓"}.get(ipca_trend, "→")
-        parts.append(f"IPCA 12m {ipca_val}% {arrow}")
-    if cambio_val:
-        arrow = {"subindo": "↑", "caindo": "↓"}.get(cambio_trend, "→")
-        parts.append(f"Câmbio R$ {cambio_val} {arrow}")
+    if selic_val is not None:
+        parts.append(f"Selic {_fmt_macro_num(selic_val, suffix='%')} {arrow_map.get(selic_trend, '→')}")
+    if ipca_val is not None:
+        parts.append(f"IPCA 12m {_fmt_macro_num(ipca_val, suffix='%')} {arrow_map.get(ipca_trend, '→')}")
+    if cambio_val is not None:
+        parts.append(f"Câmbio R$ {_fmt_macro_num(cambio_val)} {arrow_map.get(cambio_trend, '→')}")
 
-    env_label = "restritivo" if restrictive else "expansivo" if selic_trend == "caindo" else "neutro"
+    env_label = "restritivo" if restrictive else ("expansivo" if selic_trend == "caindo" else "neutro")
     header = f"Ambiente {env_label}"
     if parts:
         header += f" ({', '.join(parts)})"
 
-    # Agrupar ativos por exposição
     favorecidos = [
         c.ticker for c in analysis.companies.values()
         if c.macro_exposure == "Favorecido"
