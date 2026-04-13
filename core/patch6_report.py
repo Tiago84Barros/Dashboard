@@ -15,6 +15,7 @@ NÃO faz:
 from __future__ import annotations
 
 import html
+import re
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
@@ -70,10 +71,9 @@ def _badge(texto: str, tone: str = "neutral") -> str:
         "neutral": "#64748b",
     }
     color = tone_map.get(tone, "#64748b")
-    texto_safe = _esc(texto)
     return (
         f"<span style='display:inline-block;padding:2px 10px;border-radius:999px;"
-        f"border:1px solid {color};color:{color};font-weight:600;font-size:12px'>{texto_safe}</span>"
+        f"border:1px solid {color};color:{color};font-weight:600;font-size:12px'>{texto}</span>"
     )
 
 
@@ -88,30 +88,6 @@ def _tone_from_perspectiva(p: str) -> str:
     return "neutral"
 
 
-def _tone_from_decision(label: str) -> str:
-    """Ton semântico para decision_label."""
-    return {
-        "aumentar": "good",
-        "manter":   "neutral",
-        "revisar":  "warn",
-        "reduzir":  "bad",
-    }.get((label or "").strip().lower(), "neutral")
-
-
-def _tone_from_trend(value: str) -> str:
-    """Ton semântico para campos de tendência (portfolio_trend)."""
-    v = (value or "").strip().lower()
-    if v in ("favorável", "melhorando", "alta"):
-        return "good"
-    if v in ("estável", "neutro", "moderada"):
-        return "neutral"
-    if v in ("atenção", "cauteloso"):
-        return "warn"
-    if v in ("deteriorando", "baixa"):
-        return "bad"
-    return "neutral"
-
-
 def _box_html(text: str) -> str:
     return (
         "<div style=\"border:1px solid rgba(255,255,255,0.08);"
@@ -121,6 +97,17 @@ def _box_html(text: str) -> str:
         + _esc(text).replace("\n", "<br/>")
         + "</div>"
     )
+
+
+def _format_regime_summary(text: str) -> str:
+    raw = strip_html(text)
+    if not raw:
+        return ""
+    raw = re.sub(r"(\d+\.\d{2})\d+(%)", r"\1\2", raw)
+    raw = re.sub(r"(R\$\s*\d+\.\d{4})\d+", r"\1", raw)
+    raw = raw.replace("Mudanças de regime detectadas", "Mudanças de regime detectadas • ")
+    raw = raw.replace("; ", " • ")
+    return raw
 
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -531,256 +518,155 @@ def _render_structured_portfolio_report(report: Dict[str, Any], mode_label: str)
 # ────────────────────────────────────────────────────────────────────────────────
 
 def _render_company_expander(company: CompanyAnalysis) -> None:
-    """Card executivo por empresa.
+    """Card executivo por empresa sem HTML frágil nos blocos dinâmicos."""
+    tk = (getattr(company, "ticker", "") or "").strip() or "—"
+    p = (getattr(company, "perspectiva_compra", "") or "").strip().lower()
 
-    Hierarquia de informação:
-      1. Decisão   — badge de perspectiva (FORTE / MODERADA / FRACA)
-      2. Risco     — risco principal em destaque
-      3. Síntese   — primeira frase da tese (sempre visível)
-      4. Detalhe   — tudo mais dentro de st.expander (escondido por padrão)
-    """
-    tk = (company.ticker or "").strip() or "—"
-    p = (company.perspectiva_compra or "").strip().lower()
-
-    # ── Síntese curta: primeira frase da tese (máx 220 chars) ────────────────
-    sintese_src = (company.tese or company.leitura or "").strip()
+    sintese_src = (getattr(company, "tese", "") or getattr(company, "leitura", "") or "").strip()
     if sintese_src:
         primeiro = sintese_src.split(".")[0].strip()
-        sintese = (primeiro + ".") if primeiro else sintese_src[:220]
+        sintese = (primeiro + \".\") if primeiro else sintese_src[:220]
         if len(sintese) > 220:
             sintese = sintese[:217] + "…"
     else:
         sintese = "—"
 
-    # ── Risco principal e ação recomendada ────────────────────────────────────
-    risco_src = (
-        company.riscos[0] if company.riscos
-        else company.fragilidade_regime_atual or ""
-    ).strip()
+    riscos_lista = getattr(company, "risk_rank", None) or getattr(company, "riscos", []) or []
+    risco_src = str(riscos_lista[0]).strip() if riscos_lista else str(getattr(company, "fragilidade_regime_atual", "") or "").strip()
     if risco_src and len(risco_src) > 140:
         risco_src = risco_src[:140] + "…"
 
-    action_src = (company.recommended_action or "").strip()
+    action_src = str(getattr(company, "recommended_action", "") or "").strip()
     if action_src and len(action_src) > 80:
         action_src = action_src[:80] + "…"
 
-    attn_badge = ""
-    if company.attention_level in ("alta", "média"):
-        attn_tone = "bad" if company.attention_level == "alta" else "warn"
-        attn_badge = _badge(f"⚡ {company.attention_level.upper()}", attn_tone)
+    decision_label = str(getattr(company, "decision_label", "") or "").strip().lower()
+    decision_score = int(getattr(company, "decision_score", 0) or 0)
+    attention_level = str(getattr(company, "attention_level", "") or "").strip()
 
-    heuristic_badge = _badge("Score heurístico", "warn") if company.score_source == "heuristic" else ""
+    badges = [_badge((p or "—").upper(), _tone_from_perspectiva(p))]
+    if decision_label:
+        score_str = f" ({'+' if decision_score > 0 else ''}{decision_score})" if decision_score != 0 else ""
+        badges.append(_badge(f"→ {decision_label.upper()}{score_str}", _tone_from_decision(decision_label)))
+    if attention_level in ("alta", "média"):
+        attn_tone = "bad" if attention_level == "alta" else "warn"
+        badges.append(_badge(f"⚡ {attention_level.upper()}", attn_tone))
+    if getattr(company, "score_source", "") == "heuristic":
+        badges.append(_badge("Score heurístico", "warn"))
 
-    # ── v4 decision badge ──────────────────────────────────────────────────────
-    decision_badge = ""
-    dl = (getattr(company, "decision_label", "") or "").strip().lower()
-    if dl not in ("—", ""):
-        ds = getattr(company, "decision_score", 0) or 0
-        score_str = f" ({'+' if ds > 0 else ''}{ds})" if ds != 0 else ""
-        decision_badge = _badge(
-            f"→ {dl.upper()}{score_str}",
-            _tone_from_decision(dl),
-        )
+    with st.container(border=True):
+        top_left, top_right = st.columns([1.1, 2.4])
+        with top_left:
+            st.markdown(f"### {tk}")
+        with top_right:
+            st.markdown("  ".join(badges), unsafe_allow_html=True)
 
-    ec_class = {
-        "forte":    "p6-ec p6-ec-forte",
-        "moderada": "p6-ec p6-ec-moderada",
-        "fraca":    "p6-ec p6-ec-fraca",
-    }.get(p, "p6-ec p6-ec-unknown")
+        st.caption(sintese)
 
-    badges_html = " ".join(
-        [x for x in [
-            _badge((p or "—").upper(), _tone_from_perspectiva(p)),
-            decision_badge,
-            attn_badge,
-            heuristic_badge,
-        ] if x]
-    )
+        info_cols = st.columns(2)
+        with info_cols[0]:
+            if risco_src:
+                st.warning(risco_src, icon="⚠️")
+        with info_cols[1]:
+            if action_src:
+                st.info(action_src, icon="➡️")
 
-    extra_pills = []
-    if risco_src:
-        extra_pills.append(f'<span class="p6-risk-pill">⚠ {_esc(risco_src)}</span>')
-    if action_src:
-        extra_pills.append(f'<span class="p6-action-pill">→ {_esc(action_src)}</span>')
-    extra_pills_html = "".join(extra_pills)
-
-    card_html = (
-        f'<div class="{ec_class}">'
-        f'  <div class="p6-ec-head">'
-        f'    <div class="p6-ec-ticker">{_esc(tk)}</div>'
-        f'    <div class="p6-ec-badges">{badges_html}</div>'
-        f'  </div>'
-        f'  <div class="p6-ec-sintese">{_esc(sintese)}</div>'
-        f'  <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">{extra_pills_html}</div>'
-        f'</div>'
-    )
-    st.markdown(card_html, unsafe_allow_html=True)
-
-    # ── Detalhes: escondidos por padrão ──────────────────────────────────────
     with st.expander(f"Ver análise completa — {tk}", expanded=False):
         st.caption(
-            f"Período analisado: {company.period_ref} • Atualizado em: {company.created_at}"
-            + (f" • Confiança: {_fmt_confidence(company.confianca)}" if company.confianca > 0 else "")
-            + (f" • Score: {_fmt_score(company.score_qualitativo)}" if company.score_qualitativo > 0 else "")
-            + (" • ⚠️ Score calculado sem LLM" if company.score_source == "heuristic" else "")
+            f"Período analisado: {getattr(company, 'period_ref', '—')} • Atualizado em: {getattr(company, 'created_at', '—')}"
+            + (f" • Confiança: {_fmt_confidence(getattr(company, 'confianca', 0))}" if getattr(company, "confianca", 0) > 0 else "")
+            + (f" • Score: {_fmt_score(getattr(company, 'score_qualitativo', 0))}" if getattr(company, "score_qualitativo", 0) > 0 else "")
+            + (" • ⚠️ Score calculado sem LLM" if getattr(company, "score_source", "") == "heuristic" else "")
         )
 
-        metric_items = [
-            ("Score qualitativo", _explicar_score(company)),
-            ("Confiança", _explicar_confianca(company)),
-        ]
-        years = company.strategy_detector.get("coverage_years", []) \
-            if isinstance(company.strategy_detector.get("coverage_years"), list) else []
+        metric_items = [("Score qualitativo", _explicar_score(company)), ("Confiança", _explicar_confianca(company))]
+        years = getattr(company, "strategy_detector", {}).get("coverage_years", []) if isinstance(getattr(company, "strategy_detector", {}), dict) else []
         if years:
-            metric_items.append(("Cobertura temporal", ", ".join([str(y) for y in years[:4]])))
+            metric_items.append(("Cobertura temporal", ", \".join([str(y) for y in years[:4]])))
 
         _render_metric_cards(metric_items, columns_per_row=2)
         _render_score_explanations(company)
 
-        _render_section_text("Tese (síntese)", company.tese or "—")
+        _render_section_text("Tese (síntese)", getattr(company, "tese", "") or "—")
 
-        if company.leitura:
-            _render_section_text("Leitura / Direcionalidade", company.leitura)
+        leitura = getattr(company, "leitura", "")
+        if leitura:
+            _render_section_text("Leitura / Direcionalidade", leitura)
         elif p == "forte":
-            _render_section_text(
-                "Leitura / Direcionalidade",
-                "Viés construtivo, com sinais qualitativos favoráveis no recorte analisado. "
-                "Mantém assimetria positiva, com monitoramento de riscos.",
-            )
+            _render_section_text("Leitura / Direcionalidade", "Viés construtivo, com sinais qualitativos favoráveis no recorte analisado. Mantém assimetria positiva, com monitoramento de riscos.")
         elif p == "moderada":
-            _render_section_text(
-                "Leitura / Direcionalidade",
-                "Leitura equilibrada, com pontos positivos e ressalvas. "
-                "Indica acompanhamento de gatilhos de execução, guidance e alocação de capital.",
-            )
+            _render_section_text("Leitura / Direcionalidade", "Leitura equilibrada, com pontos positivos e ressalvas. Indica acompanhamento de gatilhos de execução, guidance e alocação de capital.")
         elif p == "fraca":
-            _render_section_text(
-                "Leitura / Direcionalidade",
-                "Leitura cautelosa, com sinais qualitativos desfavoráveis no recorte analisado. "
-                "Recomenda postura defensiva e foco em mitigação de risco.",
-            )
+            _render_section_text("Leitura / Direcionalidade", "Leitura cautelosa, com sinais qualitativos desfavoráveis no recorte analisado. Recomenda postura defensiva e foco em mitigação de risco.")
 
-        _render_section_text("Papel estratégico", company.papel_estrategico)
-        _render_section_list("Sensibilidades macro", company.sensibilidades_macro, limit=8)
-        _render_section_text("Fragilidade sob o regime atual", company.fragilidade_regime_atual)
-        _render_section_list("Dependências de cenário", company.dependencias_cenario, limit=8)
-        _render_section_text("Faixa de alocação sugerida", company.alocacao_sugerida_faixa)
-        _render_section_text("Racional de alocação", company.racional_alocacao)
+        _render_section_text("Papel estratégico", getattr(company, "papel_estrategico", ""))
+        _render_section_list("Sensibilidades macro", getattr(company, "sensibilidades_macro", []), limit=8)
+        _render_section_text("Fragilidade sob o regime atual", getattr(company, "fragilidade_regime_atual", ""))
+        _render_section_list("Dependências de cenário", getattr(company, "dependencias_cenario", []), limit=8)
+        _render_section_text("Faixa de alocação sugerida", getattr(company, "alocacao_sugerida_faixa", ""))
+        _render_section_text("Racional de alocação", getattr(company, "racional_alocacao", ""))
 
-        _render_key_value_section(
-            "Evolução Estratégica", company.evolucao,
-            [("historico", "Histórico"), ("fase_atual", "Fase atual"), ("tendencia", "Tendência")],
-        )
-        _render_strategy_detector(company.strategy_detector)
-        _render_key_value_section(
-            "Consistência do Discurso", company.consistencia,
-            [
-                ("analise", "Análise"),
-                ("grau_consistencia", "Grau"),
-                ("contradicoes", "Contradições"),
-                ("sinais_positivos", "Sinais positivos"),
-            ],
-        )
-        _render_key_value_section(
-            "Execução vs Promessa", company.execucao,
-            [
-                ("analise", "Análise"),
-                ("avaliacao_execucao", "Avaliação"),
-                ("entregas_confirmadas", "Entregas confirmadas"),
-                ("entregas_pendentes_ou_incertas", "Entregas pendentes ou incertas"),
-                ("entregas_pendentes", "Entregas pendentes"),
-            ],
-        )
-        _render_section_list("Mudanças Estratégicas", company.mudancas, limit=6)
-        _render_section_list("Pontos-chave", company.pontos_chave, limit=8)
-        _render_section_list("Catalisadores", company.catalisadores, limit=6)
-        # v4: risk_rank (prioritized) takes precedence over raw riscos list
+        _render_key_value_section("Evolução Estratégica", getattr(company, "evolucao", {}), [("historico", "Histórico"), ("fase_atual", "Fase atual"), ("tendencia", "Tendência")])
+        _render_strategy_detector(getattr(company, "strategy_detector", {}))
+        _render_key_value_section("Consistência do Discurso", getattr(company, "consistencia", {}), [("analise", "Análise"), ("grau_consistencia", "Grau"), ("contradicoes", "Contradições"), ("sinais_positivos", "Sinais positivos")])
+        _render_key_value_section("Execução vs Promessa", getattr(company, "execucao", {}), [("analise", "Análise"), ("avaliacao_execucao", "Avaliação"), ("entregas_confirmadas", "Entregas confirmadas"), ("entregas_pendentes_ou_incertas", "Entregas pendentes ou incertas"), ("entregas_pendentes", "Entregas pendentes")])
+        _render_section_list("Mudanças Estratégicas", getattr(company, "mudancas", []), limit=6)
+        _render_section_list("Pontos-chave", getattr(company, "pontos_chave", []), limit=8)
+        _render_section_list("Catalisadores", getattr(company, "catalisadores", []), limit=6)
         risk_rank = getattr(company, "risk_rank", None) or []
         if risk_rank:
             _render_section_list("Riscos (prioritários)", risk_rank, limit=6)
         else:
-            _render_section_list("Riscos", company.riscos, limit=6)
-        _render_section_list("O que monitorar", company.monitorar, limit=6)
-        _render_section_list("Ruídos e Contradições", company.contradicoes + company.sinais_ruido, limit=6)
-        _render_key_value_section(
-            "Qualidade Narrativa", company.qualidade_narrativa,
-            [("clareza", "Clareza"), ("coerencia", "Coerência"), ("sinais_de_ruido", "Sinais de ruído")],
-        )
-        _render_evidence_section(company.evidencias, limit=10)
-        _render_section_text("Considerações da LLM", company.consideracoes)
+            _render_section_list("Riscos", getattr(company, "riscos", []), limit=6)
+        _render_section_list("O que monitorar", getattr(company, "monitorar", []), limit=6)
+        _render_section_list("Ruídos e Contradições", (getattr(company, "contradicoes", []) or []) + (getattr(company, "sinais_ruido", []) or []), limit=6)
+        _render_key_value_section("Qualidade Narrativa", getattr(company, "qualidade_narrativa", {}), [("clareza", "Clareza"), ("coerencia", "Coerência"), ("sinais_de_ruido", "Sinais de ruído")])
+        _render_evidence_section(getattr(company, "evidencias", []), limit=10)
+        _render_section_text("Considerações da LLM", getattr(company, "consideracoes", ""))
 
-        _render_metric_cards([
-            ("Score qualitativo (híbrido)", _fmt_score(company.score_qualitativo)),
-            ("Robustez qualitativa", f"{round(company.robustez_qualitativa * 100)}%"),
-            ("Dispersão narrativa", f"{round(company.narrative_dispersion_score * 100)}%"),
-            ("Schema score", f"{company.schema_score}/100"),
-        ], columns_per_row=4)
+        _render_metric_cards([("Score qualitativo (híbrido)", _fmt_score(getattr(company, "score_qualitativo", 0))), ("Robustez qualitativa", f"{round((getattr(company, 'robustez_qualitativa', 0) or 0) * 100)}%"), ("Dispersão narrativa", f"{round((getattr(company, 'narrative_dispersion_score', 0) or 0) * 100)}%"), ("Schema score", f"{getattr(company, 'schema_score', 0)}/100")], columns_per_row=4)
 
-        evol_items = [
-            ("Trend de execução", company.execution_trend),
-            ("Mudança de narrativa", company.narrative_shift),
-        ]
-        if company.forward_score > 0:
-            evol_items.append(("Sinal prospectivo", f"{company.forward_score}/100 ({company.forward_direction})"))
+        evol_items = [("Trend de execução", getattr(company, "execution_trend", "—")), ("Mudança de narrativa", getattr(company, "narrative_shift", "—"))]
+        if getattr(company, "forward_score", 0) > 0:
+            evol_items.append(("Sinal prospectivo", f"{getattr(company, 'forward_score', 0)}/100 ({getattr(company, 'forward_direction', '—')})"))
         _render_metric_cards(evol_items, columns_per_row=3)
 
-        if company.memory_summary:
-            _render_section_text("Memória histórica da tese", company.memory_summary)
-        _render_section_list("Promessas recorrentes", company.recurring_promises, limit=5)
-        _render_section_list("Entregas confirmadas (recorrentes)", company.delivered_promises, limit=5)
-        _render_section_list("Riscos persistentes entre períodos", company.persistent_risks, limit=5)
-        _render_section_list("Catalisadores persistentes", company.persistent_catalysts, limit=5)
+        if getattr(company, "memory_summary", ""):
+            _render_section_text("Memória histórica da tese", getattr(company, "memory_summary", ""))
+        _render_section_list("Promessas recorrentes", getattr(company, "recurring_promises", []), limit=5)
+        _render_section_list("Entregas confirmadas (recorrentes)", getattr(company, "delivered_promises", []), limit=5)
+        _render_section_list("Riscos persistentes entre períodos", getattr(company, "persistent_risks", []), limit=5)
+        _render_section_list("Catalisadores persistentes", getattr(company, "persistent_catalysts", []), limit=5)
 
-        if company.current_regime not in ("—", "indefinido", ""):
+        current_regime = getattr(company, "current_regime", "")
+        previous_regime = getattr(company, "previous_regime", "")
+        regime_change_intensity = getattr(company, "regime_change_intensity", "")
+        regime_change_explanation = getattr(company, "regime_change_explanation", "")
+        if current_regime not in ("—", "indefinido", ""):
             st.markdown("**Mudança de Regime Qualitativo**")
-            regime_tone = (
-                "bad" if company.regime_change_intensity == "significativo"
-                else "warn" if company.regime_change_intensity == "moderado"
-                else "neutral"
-            )
-            badges = _badge(f"Atual: {company.current_regime}", "neutral")
-            if company.previous_regime not in ("—", "indefinido", ""):
-                badges += "  " + _badge(f"Anterior: {company.previous_regime}", "neutral")
-            badges += "  " + _badge(
-                f"Intensidade: {company.regime_change_intensity}", regime_tone
-            )
+            regime_tone = "bad" if regime_change_intensity == "significativo" else "warn" if regime_change_intensity == "moderado" else "neutral"
+            badges = _badge(f"Atual: {current_regime}", "neutral")
+            if previous_regime not in ("—", "indefinido", ""):
+                badges += "  " + _badge(f"Anterior: {previous_regime}", "neutral")
+            badges += "  " + _badge(f"Intensidade: {regime_change_intensity}", regime_tone)
             st.markdown(badges, unsafe_allow_html=True)
-            if company.regime_change_explanation:
-                st.markdown(_box_html(company.regime_change_explanation), unsafe_allow_html=True)
+            if regime_change_explanation:
+                st.markdown(_box_html(regime_change_explanation), unsafe_allow_html=True)
 
-        if company.attention_score > 0:
-            attn_tone = (
-                "bad" if company.attention_level == "alta"
-                else "warn" if company.attention_level == "média"
-                else "neutral"
-            )
+        attention_score = getattr(company, "attention_score", 0)
+        if attention_score > 0:
+            attn_tone = "bad" if attention_level == "alta" else "warn" if attention_level == "média" else "neutral"
             st.markdown("**Prioridade de Acompanhamento**")
-            st.markdown(
-                _badge(f"Nível: {company.attention_level.upper()}", attn_tone)
-                + "  "
-                + _badge(f"Score: {company.attention_score:.0f}/100", attn_tone)
-                + "  "
-                + _badge(company.recommended_action, attn_tone),
-                unsafe_allow_html=True,
-            )
-            _render_section_list("Drivers da prioridade", company.attention_drivers, limit=6)
+            st.markdown(_badge(f"Nível: {attention_level.upper()}", attn_tone) + "  " + _badge(f"Score: {attention_score:.0f}/100", attn_tone) + "  " + _badge(getattr(company, "recommended_action", ""), attn_tone), unsafe_allow_html=True)
+            _render_section_list("Drivers da prioridade", getattr(company, "attention_drivers", []), limit=6)
 
-        if company.forward_score > 0:
-            fwd_tone = (
-                "good" if company.forward_direction == "melhorando"
-                else "bad" if company.forward_direction == "deteriorando"
-                else "neutral"
-            )
+        if getattr(company, "forward_score", 0) > 0:
+            fwd_direction = getattr(company, "forward_direction", "")
+            fwd_tone = "good" if fwd_direction == "melhorando" else "bad" if fwd_direction == "deteriorando" else "neutral"
             st.markdown("**Sinal Prospectivo**")
-            st.markdown(
-                _badge(f"Forward score: {_fmt_score(company.forward_score)}", fwd_tone)
-                + "  "
-                + _badge(f"Direção: {company.forward_direction}", fwd_tone)
-                + "  "
-                + _badge(f"Confiança: {_fmt_confidence(company.forward_confidence)}", "neutral"),
-                unsafe_allow_html=True,
-            )
-            _render_section_list("Fatores prospectivos", company.forward_drivers, limit=6)
+            st.markdown(_badge(f"Forward score: {_fmt_score(getattr(company, 'forward_score', 0))}", fwd_tone) + "  " + _badge(f"Direção: {fwd_direction}", fwd_tone) + "  " + _badge(f"Confiança: {_fmt_confidence(getattr(company, 'forward_confidence', 0))}", "neutral"), unsafe_allow_html=True)
+            _render_section_list("Fatores prospectivos", getattr(company, "forward_drivers", []), limit=6)
+
 
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -950,28 +836,6 @@ def render_patch6_report(
 
     _render_macro_panel()
 
-    # ── v4 portfolio_trend strip ──────────────────────────────────────────────
-    portfolio_trend = getattr(analysis, "portfolio_trend", {}) or {}
-    if portfolio_trend:
-        _TREND_DISPLAY = [
-            ("qualidade",  "📊 Qualidade"),
-            ("execucao",   "⚙️ Execução"),
-            ("governanca", "🏛️ Governança"),
-            ("capital",    "💰 Capital"),
-        ]
-        trend_badges = []
-        for key, label in _TREND_DISPLAY:
-            val = portfolio_trend.get(key, "")
-            if val:
-                trend_badges.append(_badge(f"{label}: {val}", _tone_from_trend(val)))
-        if trend_badges:
-            st.markdown(
-                "<div style='margin:10px 0 4px;'>"
-                + "&nbsp;&nbsp;".join(trend_badges)
-                + "</div>",
-                unsafe_allow_html=True,
-            )
-
     # ── v3 portfolio signals ──────────────────────────────────────────────────
     v3_items = []
     if analysis.alta_prioridade_count > 0:
@@ -991,10 +855,10 @@ def render_patch6_report(
         v3_items.append(_badge("Mudanças de regime detectadas", "warn"))
 
     if v3_items:
-        st.markdown("&nbsp;&nbsp;".join(v3_items) + (
-            f"<br/><span style='font-size:11px;opacity:0.6'>{_esc(analysis.regime_summary)}</span>"
-            if analysis.regime_summary else ""
-        ), unsafe_allow_html=True)
+        st.markdown("&nbsp;&nbsp;".join(v3_items), unsafe_allow_html=True)
+        regime_summary_txt = _format_regime_summary(getattr(analysis, "regime_summary", ""))
+        if regime_summary_txt:
+            st.caption(regime_summary_txt)
         st.markdown("")  # spacing
 
     # ── v3 priority ranking (compact) ────────────────────────────────────────
