@@ -301,13 +301,15 @@ def _render_saved_data_header_html(selic: Any, n_acoes: int, margem: Any, n_segm
     '''
 
 def _render_ticker_chips_html(tickers: List[str]) -> str:
-    # Chips textuais simples para evitar duplicação visual por fallback de imagem/alt text
-    if not tickers:
-        return ""
+    # Chips com logo + ticker (mesmo padrão visual da seção Básica)
     parts: List[str] = ['<div class="p6-chips">']
     for t in tickers:
+        url = get_logo_url(t)
         parts.append(
-            f'<span class="p6-chip"><span class="tck">{html.escape(str(t))}</span></span>'
+            f'''<span class="p6-chip">
+                    <img src="{url}" alt="{t}" onerror="this.style.display='none';"/>
+                    <span class="tck">{t}</span>
+                </span>'''
         )
     parts.append("</div>")
     return "".join(parts)
@@ -728,15 +730,13 @@ def render() -> None:
 
     snapshot_id = str(snapshot.get("id") or "")
 
-    # Macro: carregado uma vez por sessão para não bater no banco a cada rerenderização.
-    # As chamadas dentro de _render_update_evidencias_panel e do botão LLM permanecem
-    # independentes e não são afetadas por este cache.
-    if "macro_ctx_page" not in st.session_state:
-        try:
-            st.session_state["macro_ctx_page"] = load_latest_macro_context()
-        except Exception:
-            st.session_state["macro_ctx_page"] = {}
-    macro_ctx_page: Dict[str, Any] = st.session_state.get("macro_ctx_page") or {}
+    # Macro: recarregado a cada renderização para evitar que um valor vazio de
+    # IPCA 12m fique congelado em session_state após mudanças no backend macro.
+    try:
+        macro_ctx_page: Dict[str, Any] = load_latest_macro_context() or {}
+    except Exception:
+        macro_ctx_page = {}
+    st.session_state["macro_ctx_page"] = macro_ctx_page
 
     # Dados salvos (sem expor o hash)
     selic_used = snapshot.get("selic") or snapshot.get("selic_ref") or snapshot.get("selic_aa")
