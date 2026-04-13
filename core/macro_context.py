@@ -146,7 +146,7 @@ def load_latest_macro_context() -> Dict[str, Any]:
         select *
         from public.info_economica_mensal
         order by data desc
-        limit 2
+        limit 12
         """
     )
 
@@ -163,6 +163,7 @@ def load_latest_macro_context() -> Dict[str, Any]:
     mensal_anterior: Dict[str, Any] = {}
     anual_atual: Dict[str, Any] = {}
     anual_anterior: Dict[str, Any] = {}
+    ultimo_ipca_12m_valido: Optional[float] = None
 
     with engine.connect() as conn:
         df_m = pd.read_sql_query(q_mensal, conn)
@@ -172,6 +173,16 @@ def load_latest_macro_context() -> Dict[str, Any]:
         mensal_atual = df_m.iloc[0].to_dict()
         if len(df_m) > 1:
             mensal_anterior = df_m.iloc[1].to_dict()
+
+    # Busca o último IPCA_12m não nulo entre os meses recentes para evitar
+    # exibição vazia quando o mês corrente e o imediatamente anterior ainda
+    # não tiverem sido publicados.
+    if not df_m.empty and "IPCA_12m" in df_m.columns:
+        for _, row in df_m.iterrows():
+            val = _to_float(row.get("IPCA_12m"))
+            if val is not None:
+                ultimo_ipca_12m_valido = val
+                break
 
     if not df_a.empty:
         anual_atual = df_a.iloc[0].to_dict()
@@ -183,6 +194,7 @@ def load_latest_macro_context() -> Dict[str, Any]:
         anual=anual_atual,
         mensal_prev=mensal_anterior,
         anual_prev=anual_anterior,
+        ultimo_ipca_12m_valido=ultimo_ipca_12m_valido,
     )
 
 
@@ -192,6 +204,7 @@ def build_macro_context(
     anual: Dict[str, Any],
     mensal_prev: Optional[Dict[str, Any]] = None,
     anual_prev: Optional[Dict[str, Any]] = None,
+    ultimo_ipca_12m_valido: Optional[float] = None,
 ) -> Dict[str, Any]:
     mensal_prev = mensal_prev or {}
     anual_prev = anual_prev or {}
@@ -222,6 +235,8 @@ def build_macro_context(
     _ipca_12m = _to_float(mensal.get("IPCA_12m"))
     if _ipca_12m is None:
         _ipca_12m = _to_float(mensal_prev.get("IPCA_12m"))
+    if _ipca_12m is None:
+        _ipca_12m = _to_float(ultimo_ipca_12m_valido)
 
     mensal_payload = {
         "data": str(mensal.get("data") or ""),
