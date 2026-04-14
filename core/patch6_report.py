@@ -18,6 +18,7 @@ import html
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
+from core.helpers import get_logo_url
 
 from core.patch6_analysis import (
     build_portfolio_analysis,
@@ -123,6 +124,11 @@ def _box_html(text: str) -> str:
     )
 
 _SPECIAL_PORTFOLIO_TITLES = {
+    "Base analítica": "neutral",
+    "Diagnóstico executivo": "neutral",
+    "Identidade da carteira": "good",
+    "Cenário macro atual": "warn",
+    "Leitura macro": "warn",
     "Riscos internacionais relevantes": "bad",
     "Dependências de cenário macro": "warn",
     "Vulnerabilidades da carteira sob o regime atual": "bad",
@@ -133,6 +139,10 @@ _SPECIAL_PORTFOLIO_TITLES = {
     "Fragilidades principais": "bad",
     "Riscos invisíveis": "bad",
     "Papel estratégico dos ativos": "neutral",
+    "Alocação sugerida (visão estratégica)": "good",
+    "Desalinhamentos": "bad",
+    "Plano de ação": "warn",
+    "Insight final": "good",
 }
 
 def _render_spotlight_section(title: str, body_html: str, tone: str = "neutral") -> None:
@@ -155,6 +165,38 @@ def _render_spotlight_section(title: str, body_html: str, tone: str = "neutral")
         </div>
         """,
         unsafe_allow_html=True,
+    )
+
+
+def _render_compact_asset_card(title_html: str, body_text: str, tone: str = "neutral") -> None:
+    tone_map = {
+        "good": ("rgba(34,197,94,.10)", "rgba(34,197,94,.26)"),
+        "warn": ("rgba(245,158,11,.10)", "rgba(245,158,11,.26)"),
+        "bad": ("rgba(239,68,68,.10)", "rgba(239,68,68,.26)"),
+        "neutral": ("rgba(59,130,246,.10)", "rgba(59,130,246,.24)"),
+    }
+    bg, border = tone_map.get(tone, tone_map["neutral"])
+    st.markdown(
+        f"""
+        <div style="border:1px solid {border};background:{bg};border-radius:16px;
+                    padding:14px 16px;margin:10px 0;box-shadow:0 10px 24px rgba(0,0,0,.16);">
+          <div style="font-size:16px;font-weight:900;line-height:1.35;margin-bottom:8px;">{title_html}</div>
+          <div style="font-size:15px;line-height:1.6;opacity:.96;">{_esc(body_text)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+def _ticker_title_with_logo(ticker: str, subtitle: str = "") -> str:
+    url = get_logo_url(ticker)
+    subtitle_html = f"<span style='opacity:.82;font-weight:700'> • {_esc(subtitle)}</span>" if subtitle else ""
+    return (
+        "<div style='display:flex;align-items:center;gap:12px;'>"
+        f"<img src='{url}' alt='{_esc(ticker)}' "
+        "style='width:38px;height:38px;object-fit:contain;border-radius:10px;background:#fff;padding:4px;' "
+        "onerror="this.style.display='none';"/>"
+        f"<div><span style='font-size:19px;font-weight:900'>{_esc(ticker)}</span>{subtitle_html}</div>"
+        "</div>"
     )
 
 def _render_text_spotlight(title: str, text_value: str) -> None:
@@ -536,46 +578,40 @@ def _render_structured_portfolio_report(report: Dict[str, Any], mode_label: str)
 
     asset_roles = report.get("asset_roles", []) or []
     if asset_roles:
-        _render_spotlight_section("Papel estratégico dos ativos", "<div style='font-size:13px;opacity:.82'>Leitura do papel de cada posição dentro da carteira, com foco em função estratégica e sensibilidade ao cenário.</div>", _SPECIAL_PORTFOLIO_TITLES.get("Papel estratégico dos ativos", "neutral"))
+        _render_spotlight_section(
+            "Papel estratégico dos ativos",
+            "<div style='font-size:13px;opacity:.82'>Leitura do papel de cada posição dentro da carteira, com foco em função estratégica, sensibilidade ao cenário e contribuição estratégica.</div>",
+            _SPECIAL_PORTFOLIO_TITLES.get("Papel estratégico dos ativos", "neutral"),
+        )
         for item in asset_roles[:12]:
             if not isinstance(item, dict):
                 continue
             ticker = strip_html(item.get("ticker") or "—")
             role = strip_html(item.get("role") or "")
             rationale = strip_html(item.get("rationale") or "")
-            st.markdown(
-                f"""
-                <div style="border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.025);
-                            border-radius:12px;padding:12px 14px;margin:8px 0;line-height:1.45;">
-                    <div style="font-size:13px;opacity:0.80;margin-bottom:6px;font-weight:700;letter-spacing:.2px;">
-                        {_esc(ticker)} {("• " + _esc(role)) if role else ""}
-                    </div>
-                    <div style="font-size:15px;line-height:1.55;">{_esc(rationale or "—")}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
+            _render_compact_asset_card(
+                _ticker_title_with_logo(ticker, role),
+                rationale or "—",
+                _SPECIAL_PORTFOLIO_TITLES.get("Papel estratégico dos ativos", "neutral"),
             )
 
     suggested_allocations = report.get("suggested_allocations", []) or []
     if suggested_allocations:
-        st.markdown("**Alocação sugerida (visão estratégica)**")
+        _render_spotlight_section(
+            "Alocação sugerida (visão estratégica)",
+            "<div style='font-size:13px;opacity:.82'>Faixas de alocação sugeridas para cada posição, com racional resumido de risco, qualidade e papel na carteira.</div>",
+            _SPECIAL_PORTFOLIO_TITLES.get("Alocação sugerida (visão estratégica)", "good"),
+        )
         for item in suggested_allocations[:15]:
             if not isinstance(item, dict):
                 continue
             ticker = strip_html(item.get("ticker") or "—")
             suggested_range = strip_html(item.get("suggested_range") or "")
             rationale = strip_html(item.get("rationale") or "")
-            st.markdown(
-                f"""
-                <div style="border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.025);
-                            border-radius:12px;padding:12px 14px;margin:8px 0;line-height:1.45;">
-                    <div style="font-size:13px;opacity:0.80;margin-bottom:6px;font-weight:700;letter-spacing:.2px;">
-                        {_esc(ticker)} {("• " + _esc(suggested_range)) if suggested_range else ""}
-                    </div>
-                    <div style="font-size:15px;line-height:1.55;">{_esc(rationale or "—")}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
+            _render_compact_asset_card(
+                _ticker_title_with_logo(ticker, suggested_range),
+                rationale or "—",
+                _SPECIAL_PORTFOLIO_TITLES.get("Alocação sugerida (visão estratégica)", "good"),
             )
 
     _render_section_list("Desalinhamentos", report.get("misalignments", []), limit=8)
