@@ -26,6 +26,7 @@ from sqlalchemy import text
 
 from core.db import get_engine
 from core.patch6_rag import enrich_evidencias_with_topics
+from core.portfolio_snapshot_analysis_store import load_snapshot_analysis
 from core.patch6_schema import (
     AllocationRow,
     CompanyAnalysis,
@@ -462,6 +463,89 @@ def _fmt_score(value: int) -> str:
     return f"{max(0, min(100, value))}/100"
 
 
+def _normalize_snapshot_quant_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(row or {})
+    for key in [
+        "ticker", "setor", "subsetor", "segmento", "classe_forca",
+    ]:
+        out[key] = strip_html(out.get(key))
+
+    for key in [
+        "rank_geral", "rank_segmento",
+    ]:
+        out[key] = safe_int(out.get(key), 0)
+
+    for key in [
+        "score_final", "score_qualidade", "score_valuation", "score_dividendos",
+        "score_crescimento", "score_consistencia", "penal_crowding",
+        "penal_lideranca", "penal_plato", "penal_total",
+    ]:
+        out[key] = safe_float(out.get(key), 0.0)
+
+    for key in ["drivers_positivos", "drivers_negativos", "motivos_selecao"]:
+        value = out.get(key)
+        if isinstance(value, list):
+            out[key] = [strip_html(v) for v in value if strip_html(v)]
+        elif isinstance(value, str) and value.strip():
+            out[key] = [strip_html(value)]
+        else:
+            out[key] = []
+
+    aj = out.get("analysis_json")
+    out["analysis_json"] = aj if isinstance(aj, dict) else {}
+    return out
+
+
+def _compute_quant_alignment(company: CompanyAnalysis, quant_row: Dict[str, Any]) -> Tuple[str, str]:
+    perspectiva = (company.perspectiva_compra or "").strip().lower()
+    classe = strip_html(quant_row.get("classe_forca") or "").strip().lower()
+    score_q = safe_float(quant_row.get("score_final"), 0.0)
+    penal_total = safe_float(quant_row.get("penal_total"), 0.0)
+
+    if not classe and score_q <= 0:
+        return "", ""
+
+    if perspectiva == "forte" and classe == "forte":
+        return "Alinhado", "A leitura qualitativa reforça a força quantitativa que sustentou a seleção do ativo."
+    if perspectiva == "fraca" and classe == "fraca":
+        return "Alinhado", "A deterioração qualitativa confirma uma base quantitativa menos favorável dentro do snapshot."
+    if perspectiva in ("forte", "moderada") and classe in ("forte", "moderada"):
+        return "Convergente", "Os sinais qualitativos e quantitativos seguem na mesma direção geral, com espaço para acompanhamento tático."
+    if perspectiva == "fraca" and classe in ("forte", "moderada"):
+        return "Conflito", "O ativo entrou bem posicionado no motor quantitativo, mas a leitura qualitativa atual traz deterioração ou cautela adicional."
+    if perspectiva == "forte" and classe == "fraca":
+        return "Conflito", "A narrativa atual parece melhor que a base quantitativa do snapshot, o que recomenda validação adicional antes de aumentar exposição."
+    if score_q >= 75 and penal_total <= 0.25:
+        return "Convergente", "O snapshot mostra força quantitativa relevante e penalizações contidas, compatíveis com permanência na carteira."
+    return "Parcial", "Há sinais mistos entre a base quantitativa da seleção e a leitura qualitativa mais recente."
+
+
+def _apply_snapshot_quant(company: CompanyAnalysis, quant_row: Optional[Dict[str, Any]]) -> CompanyAnalysis:
+    if not quant_row:
+        return company
+    qr = _normalize_snapshot_quant_row(quant_row)
+    company.quant_rank_geral = safe_int(qr.get("rank_geral"), 0)
+    company.quant_rank_segmento = safe_int(qr.get("rank_segmento"), 0)
+    company.quant_segmento = strip_html(qr.get("segmento") or qr.get("subsetor") or qr.get("setor") or "")
+    company.quant_classe_forca = strip_html(qr.get("classe_forca") or "")
+    company.quant_score_final = safe_float(qr.get("score_final"), 0.0)
+    company.quant_score_qualidade = safe_float(qr.get("score_qualidade"), 0.0)
+    company.quant_score_valuation = safe_float(qr.get("score_valuation"), 0.0)
+    company.quant_score_dividendos = safe_float(qr.get("score_dividendos"), 0.0)
+    company.quant_score_crescimento = safe_float(qr.get("score_crescimento"), 0.0)
+    company.quant_score_consistencia = safe_float(qr.get("score_consistencia"), 0.0)
+    company.quant_penal_total = safe_float(qr.get("penal_total"), 0.0)
+    company.quant_penal_crowding = safe_float(qr.get("penal_crowding"), 0.0)
+    company.quant_penal_lideranca = safe_float(qr.get("penal_lideranca"), 0.0)
+    company.quant_penal_plato = safe_float(qr.get("penal_plato"), 0.0)
+    company.quant_drivers_positivos = list(qr.get("drivers_positivos") or [])
+    company.quant_drivers_negativos = list(qr.get("drivers_negativos") or [])
+    company.quant_motivos_selecao = list(qr.get("motivos_selecao") or [])
+    company.quant_analysis_json = qr.get("analysis_json") if isinstance(qr.get("analysis_json"), dict) else {}
+    company.quant_alignment_label, company.quant_alignment_summary = _compute_quant_alignment(company, qr)
+    return company
+
+
 def _company_context_line(company: CompanyAnalysis) -> str:
     tese = company.tese or "sem tese consolidada"
     historico = pick_text(company.evolucao, "historico")
@@ -478,7 +562,7 @@ def _company_context_line(company: CompanyAnalysis) -> str:
         f"forward={company.forward_score}({company.forward_direction}); "
         f"prioridade={company.attention_level}; regime={company.current_regime}; "
         f"robustez={company.robustez_qualitativa:.2f}; trend={company.execution_trend}; "
-        f"shift={company.narrative_shift}; tese={tese}; "
+        f"shift={company.narrative_shift}; quant_classe={company.quant_classe_forca}; quant_score={company.quant_score_final:.1f}; alinhamento={company.quant_alignment_label}; tese={tese}; "
         f"historico={historico}; fase_atual={atual}; execucao={execucao_txt}; "
         f"riscos={riscos}; catalisadores={catalisadores}; cobertura_temporal={years_txt}"
     )
@@ -613,6 +697,7 @@ def build_portfolio_analysis(
     tickers: List[str],
     period_ref: str,
     n_temporal_periods: int = 4,
+    snapshot_id: str = "",
 ) -> Optional[PortfolioAnalysis]:
     """
     Fetches DB data and computes the full PortfolioAnalysis for a period.
@@ -636,11 +721,24 @@ def build_portfolio_analysis(
     except Exception:
         pass   # temporal data is enrichment — failure must not break the report
 
+    snapshot_quant_map: Dict[str, Dict[str, Any]] = {}
+    if snapshot_id:
+        try:
+            snapshot_df = load_snapshot_analysis(snapshot_id)
+            if snapshot_df is not None and not snapshot_df.empty:
+                for _row in snapshot_df.to_dict(orient="records"):
+                    tk = str(_row.get("ticker") or "").strip().upper()
+                    if tk:
+                        snapshot_quant_map[tk] = _normalize_snapshot_quant_row(_row)
+        except Exception:
+            snapshot_quant_map = {}
+
     companies: Dict[str, CompanyAnalysis] = {}
     for row in df.itertuples(index=False):
         tk = str(getattr(row, "ticker", "")).strip().upper()
         temporal = temporal_map.get(tk)
         company = _resolve_company(row, temporal=temporal)
+        company = _apply_snapshot_quant(company, snapshot_quant_map.get(tk))
         companies[company.ticker] = company
 
     stats = _compute_stats(companies)

@@ -697,6 +697,68 @@ def _render_structured_portfolio_report(report: Dict[str, Any], mode_label: str)
 # Company detail section
 # ────────────────────────────────────────────────────────────────────────────────
 
+def _fmt_pct_from_0_100(value: float, decimals: int = 1) -> str:
+    if value <= 0:
+        return "—"
+    return f"{value:.{decimals}f}%"
+
+
+def _tone_from_alignment(label: str) -> str:
+    v = (label or "").strip().lower()
+    if v in ("alinhado", "convergente"):
+        return "good"
+    if v in ("conflito",):
+        return "bad"
+    if v in ("parcial",):
+        return "warn"
+    return "neutral"
+
+
+def _render_quant_snapshot_card(company: CompanyAnalysis) -> None:
+    if company.quant_score_final <= 0 and not company.quant_classe_forca:
+        return
+    _render_detail_metric_strip([
+        ("Força quantitativa", company.quant_classe_forca or "—"),
+        ("Score do snapshot", _fmt_pct_from_0_100(company.quant_score_final)),
+        ("Rank geral", f"#{company.quant_rank_geral}" if company.quant_rank_geral > 0 else "—"),
+        ("Segmento", company.quant_segmento or "—"),
+    ])
+    body_parts = []
+    if company.quant_alignment_label:
+        body_parts.append(f"<div class='p6-kv-row'><div class='p6-kv-label'>Convergência quanti + quali</div><div class='p6-kv-value'>{_badge(company.quant_alignment_label, _tone_from_alignment(company.quant_alignment_label))}<div style='margin-top:8px'>{_esc(company.quant_alignment_summary or '—')}</div></div></div>")
+    if company.quant_motivos_selecao:
+        body_parts.append(f"<div class='p6-kv-row'><div class='p6-kv-label'>Motivos de seleção</div><div class='p6-kv-value'>{' • '.join(_esc(v) for v in company.quant_motivos_selecao[:5])}</div></div>")
+    if company.quant_drivers_positivos:
+        body_parts.append(f"<div class='p6-kv-row'><div class='p6-kv-label'>Drivers positivos</div><div class='p6-kv-value'>{' • '.join(_esc(v) for v in company.quant_drivers_positivos[:5])}</div></div>")
+    if company.quant_drivers_negativos:
+        body_parts.append(f"<div class='p6-kv-row'><div class='p6-kv-label'>Drivers negativos</div><div class='p6-kv-value'>{' • '.join(_esc(v) for v in company.quant_drivers_negativos[:5])}</div></div>")
+    if company.quant_penal_total > 0:
+        penalties = []
+        if company.quant_penal_crowding > 0:
+            penalties.append(f"Crowding {company.quant_penal_crowding:.2f}")
+        if company.quant_penal_lideranca > 0:
+            penalties.append(f"Liderança {company.quant_penal_lideranca:.2f}")
+        if company.quant_penal_plato > 0:
+            penalties.append(f"Platô {company.quant_penal_plato:.2f}")
+        penalties.append(f"Total {company.quant_penal_total:.2f}")
+        body_parts.append(f"<div class='p6-kv-row'><div class='p6-kv-label'>Penalizações</div><div class='p6-kv-value'>{' • '.join(_esc(v) for v in penalties)}</div></div>")
+    body = ''.join(body_parts)
+    if body:
+        _render_detail_card("0. Base quantitativa da seleção", body, "neutral")
+
+
+def _render_quant_factor_decomposition(company: CompanyAnalysis) -> None:
+    if company.quant_score_final <= 0:
+        return
+    _render_detail_metric_strip([
+        ("Qualidade", _fmt_pct_from_0_100(company.quant_score_qualidade)),
+        ("Valuation", _fmt_pct_from_0_100(company.quant_score_valuation)),
+        ("Dividendos", _fmt_pct_from_0_100(company.quant_score_dividendos)),
+        ("Crescimento", _fmt_pct_from_0_100(company.quant_score_crescimento)),
+        ("Consistência", _fmt_pct_from_0_100(company.quant_score_consistencia)),
+    ])
+
+
 def _render_company_expander(company: CompanyAnalysis) -> None:
     tk = (company.ticker or "").strip() or "—"
     p = (company.perspectiva_compra or "").strip().lower()
@@ -734,7 +796,9 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
         "fraca":    "p6-ec p6-ec-fraca",
     }.get(p, "p6-ec p6-ec-unknown")
 
-    badges_html = " ".join([x for x in [_badge((p or "—").upper(), _tone_from_perspectiva(p)), decision_badge, attn_badge] if x])
+    align_badge = _badge(company.quant_alignment_label, _tone_from_alignment(company.quant_alignment_label)) if company.quant_alignment_label else ""
+    quant_badge = _badge(f"QNT {company.quant_classe_forca.upper()}", "neutral") if company.quant_classe_forca else ""
+    badges_html = " ".join([x for x in [_badge((p or "—").upper(), _tone_from_perspectiva(p)), decision_badge, attn_badge, quant_badge, align_badge] if x])
 
     extra_pills = []
     if risco_src:
@@ -768,6 +832,9 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
             ("Confiança", _fmt_confidence(company.confianca)),
             ("Score", _fmt_score(company.score_qualitativo)),
         ])
+
+        _render_quant_snapshot_card(company)
+        _render_quant_factor_decomposition(company)
 
         _render_detail_text_card("1. Tese", company.tese or "—", "neutral")
 
@@ -855,6 +922,7 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
         _render_detail_text_card("9. Conclusão · Papel estratégico", company.papel_estrategico, "neutral")
         _render_detail_text_card("9. Conclusão · Alocação sugerida (faixa)", company.alocacao_sugerida_faixa, "good")
         _render_detail_text_card("9. Conclusão · Racional de alocação", company.racional_alocacao, "neutral")
+        _render_detail_text_card("9. Conclusão · Convergência quanti + quali", company.quant_alignment_summary, _tone_from_alignment(company.quant_alignment_label) if company.quant_alignment_label else "neutral")
         _render_detail_text_card("9. Conclusão · Considerações da LLM", company.consideracoes, "neutral")
 
 
@@ -944,11 +1012,12 @@ def render_patch6_report(
     llm_factory: Optional[Any] = None,
     show_company_details: bool = True,
     analysis_mode: str = "rigid",
+    snapshot_id: str = "",
 ) -> None:
     st.markdown(_P6_CSS, unsafe_allow_html=True)
 
     # ── Data + computation (pure, no Streamlit) ──────────────────────────────
-    analysis = build_portfolio_analysis(tickers, period_ref)
+    analysis = build_portfolio_analysis(tickers, period_ref, snapshot_id=snapshot_id)
     if analysis is None or not analysis.companies:
         st.warning(
             "Não há execuções salvas em patch6_runs para este period_ref e tickers do portfólio. "
