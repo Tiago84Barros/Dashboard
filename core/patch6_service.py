@@ -136,6 +136,13 @@ def build_portfolio_context_payload(
                 "monitorar": company.monitorar,
                 "mudancas": company.mudancas,
                 "macro_profile": company_macro_map.get(company.ticker, {}),
+                # v6 — quantitative snapshot fields (empty string if no snapshot data)
+                "quant_classe":            company.quant_classe,
+                "quant_rank_geral":        company.quant_rank_geral,
+                "quant_score_final":       company.quant_score_final,
+                "quant_context_text":      company.quant_context_text,
+                "quant_convergence":       company.quant_convergence,
+                "quant_allocation_multiplier": company.quant_allocation_multiplier,
             }
         )
 
@@ -157,6 +164,8 @@ def build_portfolio_context_payload(
         "market_context": market_context,
         "macro_company_map": company_macro_map,
         "current_allocations": allocation_rows_dicts,
+        # v6 — aggregated quantitative portfolio summary (empty string if no snapshot)
+        "quant_portfolio_summary": getattr(analysis, "quant_portfolio_summary", ""),
     }
 
 
@@ -164,6 +173,7 @@ def run_portfolio_llm_report(
     llm_factory: Any,
     analysis: PortfolioAnalysis,
     analysis_mode: str = "rigid",
+    snapshot_id: str = "",
 ) -> Optional[Dict[str, Any]]:
     if llm_factory is None:
         return None
@@ -185,6 +195,21 @@ def run_portfolio_llm_report(
         market_context = build_market_context(macro_context)
     except Exception as exc:
         logger.warning("Falha ao carregar contexto macro para Patch6 [%s]: %s", type(exc).__name__, exc)
+
+    # v6 — load quantitative snapshot and enrich analysis in-place
+    if snapshot_id:
+        try:
+            from core.patch6_snapshot_integration import load_snapshot_for_patch6
+            from core.patch6_analysis import enrich_quant_snapshot
+            snapshot_map = load_snapshot_for_patch6(snapshot_id)
+            if snapshot_map:
+                enrich_quant_snapshot(analysis, snapshot_map)
+                logger.info(
+                    "Snapshot quantitativo carregado: %d ativos para snapshot_id=%s",
+                    len(snapshot_map), snapshot_id,
+                )
+        except Exception as exc:
+            logger.warning("Falha ao carregar snapshot para Patch6 [%s]: %s", type(exc).__name__, exc)
 
     allocation_rows_dicts = [
         {

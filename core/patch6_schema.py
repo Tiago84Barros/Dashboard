@@ -126,28 +126,13 @@ class CompanyAnalysis:
     macro_exposure_tone: str = "neutral"       # good | warn | bad | neutral
     macro_exposure_detail: str = ""            # e.g. "Selic ↑ favorece spread bancário"
 
-
-    # v6 — seleção quantitativa do snapshot (runtime enrichment)
-    quant_rank_geral: int = 0
-    quant_rank_segmento: int = 0
-    quant_segmento: str = ""
-    quant_classe_forca: str = ""
-    quant_score_final: float = 0.0
-    quant_score_qualidade: float = 0.0
-    quant_score_valuation: float = 0.0
-    quant_score_dividendos: float = 0.0
-    quant_score_crescimento: float = 0.0
-    quant_score_consistencia: float = 0.0
-    quant_penal_total: float = 0.0
-    quant_penal_crowding: float = 0.0
-    quant_penal_lideranca: float = 0.0
-    quant_penal_plato: float = 0.0
-    quant_drivers_positivos: List[str] = field(default_factory=list)
-    quant_drivers_negativos: List[str] = field(default_factory=list)
-    quant_motivos_selecao: List[str] = field(default_factory=list)
-    quant_analysis_json: Dict[str, Any] = field(default_factory=dict)
-    quant_alignment_label: str = ""
-    quant_alignment_summary: str = ""
+    # v6 — quantitative snapshot integration (runtime, from portfolio_snapshot_analysis)
+    quant_classe: str = ""                     # "FORTE" | "MODERADA" | "FRACA"
+    quant_rank_geral: int = 0                  # rank overall in snapshot
+    quant_score_final: float = 0.0             # score_final from snapshot
+    quant_context_text: str = ""               # formatted text block for LLM
+    quant_convergence: str = ""                # convergence/conflict assessment text
+    quant_allocation_multiplier: float = 1.0   # allocation adjustment factor (0.70–1.30)
 
 
 @dataclass
@@ -189,3 +174,6 @@ class PortfolioAnalysis:
 
     # v5 — macro narrative (runtime derived)
     macro_narrative: str = ""                  # "Ambiente restritivo. Favorece: BBAS3, ITUB4. Pressiona: DIRR3."
+
+    # v6 — quantitative portfolio summary (runtime, from portfolio_snapshot_analysis)
+    quant_portfolio_summary: str = ""          # aggregated text for LLM context

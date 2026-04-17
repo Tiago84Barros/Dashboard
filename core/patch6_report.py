@@ -647,6 +647,22 @@ def _render_structured_portfolio_report(report: Dict[str, Any], mode_label: str)
         st.caption(f"Modo utilizado: {mode_label}")
         _render_section_text("Base analítica", report.get("analytical_basis", ""))
         _render_section_text("Diagnóstico executivo", report.get("executive_summary", ""))
+
+        # v6 — perfil quantitativo do portfólio (LLM)
+        _render_section_text("Perfil quantitativo do portfólio", report.get("quantitative_profile", ""))
+
+        # v6 — convergências e conflitos quanti/quali/macro (LLM)
+        _render_section_list(
+            "✅ Convergências (quanti + quali + macro)",
+            report.get("quanti_quali_macro_convergences", []),
+            limit=8,
+        )
+        _render_section_list(
+            "⚡ Conflitos detectados (quanti ↔ quali ↔ macro)",
+            report.get("quanti_quali_macro_conflicts", []),
+            limit=8,
+        )
+
         _render_section_text("Identidade da carteira", report.get("portfolio_identity", ""))
         _render_section_text("Cenário macro atual", report.get("current_market_context", ""))
         _render_section_text("Leitura macro", report.get("macro_reading", ""))
@@ -675,18 +691,37 @@ def _render_structured_portfolio_report(report: Dict[str, Any], mode_label: str)
 
     suggested_allocations = report.get("suggested_allocations", []) or []
     if suggested_allocations:
-        with st.expander("🎯 Alocação sugerida (visão estratégica)", expanded=False):
+        with st.expander("🎯 Alocação sugerida — síntese quanti + quali + macro", expanded=False):
+            st.caption(
+                "A alocação reflete a síntese integrada de três camadas: "
+                "base quantitativa (patches 1–5), leitura qualitativa documental e contexto macro."
+            )
             for item in suggested_allocations[:15]:
                 if not isinstance(item, dict):
                     continue
-                ticker = strip_html(item.get("ticker") or "—")
+                ticker        = strip_html(item.get("ticker") or "—")
                 suggested_range = strip_html(item.get("suggested_range") or "")
-                rationale = strip_html(item.get("rationale") or "")
+                rationale     = strip_html(item.get("rationale") or "")
+                quant_basis   = strip_html(item.get("quant_basis") or "")
+                quali_basis   = strip_html(item.get("quali_basis") or "")
+                macro_basis   = strip_html(item.get("macro_basis") or "")
+
+                basis_parts = []
+                if quant_basis:
+                    basis_parts.append(f"<span style='color:#60a5fa'>📐 Quant:</span> {_esc(quant_basis)}")
+                if quali_basis:
+                    basis_parts.append(f"<span style='color:#a3e635'>📄 Quali:</span> {_esc(quali_basis)}")
+                if macro_basis:
+                    basis_parts.append(f"<span style='color:#fb923c'>🌎 Macro:</span> {_esc(macro_basis)}")
+                basis_html = "<br/>".join(basis_parts) if basis_parts else ""
+
                 st.markdown(
                     f"""
                     <div class="p6-card" style="margin:8px 0;min-height:auto;">
                         {_company_row_html(ticker, "", suggested_range or '—')}
-                        <div style="font-size:15px;line-height:1.6;margin-top:10px;">{_esc(rationale or '—')}</div>
+                        {f'<div style="font-size:12px;line-height:1.7;margin:8px 0 4px;opacity:.85">{basis_html}</div>'
+                         if basis_html else ''}
+                        <div style="font-size:14px;line-height:1.6;margin-top:6px;opacity:.95">{_esc(rationale or '—')}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -696,68 +731,6 @@ def _render_structured_portfolio_report(report: Dict[str, Any], mode_label: str)
 # ────────────────────────────────────────────────────────────────────────────────
 # Company detail section
 # ────────────────────────────────────────────────────────────────────────────────
-
-def _fmt_pct_from_0_100(value: float, decimals: int = 1) -> str:
-    if value <= 0:
-        return "—"
-    return f"{value:.{decimals}f}%"
-
-
-def _tone_from_alignment(label: str) -> str:
-    v = (label or "").strip().lower()
-    if v in ("alinhado", "convergente"):
-        return "good"
-    if v in ("conflito",):
-        return "bad"
-    if v in ("parcial",):
-        return "warn"
-    return "neutral"
-
-
-def _render_quant_snapshot_card(company: CompanyAnalysis) -> None:
-    if company.quant_score_final <= 0 and not company.quant_classe_forca:
-        return
-    _render_detail_metric_strip([
-        ("Força quantitativa", company.quant_classe_forca or "—"),
-        ("Score do snapshot", _fmt_pct_from_0_100(company.quant_score_final)),
-        ("Rank geral", f"#{company.quant_rank_geral}" if company.quant_rank_geral > 0 else "—"),
-        ("Segmento", company.quant_segmento or "—"),
-    ])
-    body_parts = []
-    if company.quant_alignment_label:
-        body_parts.append(f"<div class='p6-kv-row'><div class='p6-kv-label'>Convergência quanti + quali</div><div class='p6-kv-value'>{_badge(company.quant_alignment_label, _tone_from_alignment(company.quant_alignment_label))}<div style='margin-top:8px'>{_esc(company.quant_alignment_summary or '—')}</div></div></div>")
-    if company.quant_motivos_selecao:
-        body_parts.append(f"<div class='p6-kv-row'><div class='p6-kv-label'>Motivos de seleção</div><div class='p6-kv-value'>{' • '.join(_esc(v) for v in company.quant_motivos_selecao[:5])}</div></div>")
-    if company.quant_drivers_positivos:
-        body_parts.append(f"<div class='p6-kv-row'><div class='p6-kv-label'>Drivers positivos</div><div class='p6-kv-value'>{' • '.join(_esc(v) for v in company.quant_drivers_positivos[:5])}</div></div>")
-    if company.quant_drivers_negativos:
-        body_parts.append(f"<div class='p6-kv-row'><div class='p6-kv-label'>Drivers negativos</div><div class='p6-kv-value'>{' • '.join(_esc(v) for v in company.quant_drivers_negativos[:5])}</div></div>")
-    if company.quant_penal_total > 0:
-        penalties = []
-        if company.quant_penal_crowding > 0:
-            penalties.append(f"Crowding {company.quant_penal_crowding:.2f}")
-        if company.quant_penal_lideranca > 0:
-            penalties.append(f"Liderança {company.quant_penal_lideranca:.2f}")
-        if company.quant_penal_plato > 0:
-            penalties.append(f"Platô {company.quant_penal_plato:.2f}")
-        penalties.append(f"Total {company.quant_penal_total:.2f}")
-        body_parts.append(f"<div class='p6-kv-row'><div class='p6-kv-label'>Penalizações</div><div class='p6-kv-value'>{' • '.join(_esc(v) for v in penalties)}</div></div>")
-    body = ''.join(body_parts)
-    if body:
-        _render_detail_card("0. Base quantitativa da seleção", body, "neutral")
-
-
-def _render_quant_factor_decomposition(company: CompanyAnalysis) -> None:
-    if company.quant_score_final <= 0:
-        return
-    _render_detail_metric_strip([
-        ("Qualidade", _fmt_pct_from_0_100(company.quant_score_qualidade)),
-        ("Valuation", _fmt_pct_from_0_100(company.quant_score_valuation)),
-        ("Dividendos", _fmt_pct_from_0_100(company.quant_score_dividendos)),
-        ("Crescimento", _fmt_pct_from_0_100(company.quant_score_crescimento)),
-        ("Consistência", _fmt_pct_from_0_100(company.quant_score_consistencia)),
-    ])
-
 
 def _render_company_expander(company: CompanyAnalysis) -> None:
     tk = (company.ticker or "").strip() or "—"
@@ -796,9 +769,7 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
         "fraca":    "p6-ec p6-ec-fraca",
     }.get(p, "p6-ec p6-ec-unknown")
 
-    align_badge = _badge(company.quant_alignment_label, _tone_from_alignment(company.quant_alignment_label)) if company.quant_alignment_label else ""
-    quant_badge = _badge(f"QNT {company.quant_classe_forca.upper()}", "neutral") if company.quant_classe_forca else ""
-    badges_html = " ".join([x for x in [_badge((p or "—").upper(), _tone_from_perspectiva(p)), decision_badge, attn_badge, quant_badge, align_badge] if x])
+    badges_html = " ".join([x for x in [_badge((p or "—").upper(), _tone_from_perspectiva(p)), decision_badge, attn_badge] if x])
 
     extra_pills = []
     if risco_src:
@@ -833,8 +804,45 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
             ("Score", _fmt_score(company.score_qualitativo)),
         ])
 
-        _render_quant_snapshot_card(company)
-        _render_quant_factor_decomposition(company)
+        # ── v6 quantitative snapshot section ─────────────────────────────────
+        _qc = (company.quant_classe or "").strip().upper()
+        _qt = (company.quant_context_text or "").strip()
+        _qv = (company.quant_convergence or "").strip()
+        if _qt:
+            _qc_tone = {"FORTE": "good", "MODERADA": "warn", "FRACA": "bad"}.get(_qc, "neutral")
+            _qc_colors = {"good": "#22c55e", "bad": "#ef4444", "warn": "#f59e0b", "neutral": "#64748b"}
+            _qc_border = _qc_colors.get(_qc_tone, "#64748b")
+            _qrank_str = (
+                f"Rank {company.quant_rank_geral}" if company.quant_rank_geral
+                else "Rank —"
+            )
+            _qscore_str = (
+                f"Score quant. {company.quant_score_final:.1f}"
+                if company.quant_score_final else ""
+            )
+            _qheader = f"📐 Base Quantitativa (Patches 1–5) — {_qc or '—'}" + (
+                f" | {_qrank_str}" if _qrank_str else ""
+            ) + (f" | {_qscore_str}" if _qscore_str else "")
+            st.markdown(
+                f"<div style='border:1px solid {_qc_border}33;border-left:4px solid {_qc_border};"
+                f"background:{_qc_border}0a;border-radius:12px;padding:12px 16px;"
+                f"margin:6px 0 6px;font-size:13px;line-height:1.55'>"
+                f"<strong>{_esc(_qheader)}</strong><br/>"
+                f"<pre style='font-family:inherit;font-size:12px;margin:6px 0 0;"
+                f"white-space:pre-wrap;opacity:.88'>{_esc(_qt)}</pre>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        if _qv:
+            _conflict = "CONFLITO" in _qv.upper() or "ALERTA" in _qv.upper()
+            _conv_tone_color = "#ef4444" if _conflict else "#64748b"
+            st.markdown(
+                f"<div style='border:1px solid {_conv_tone_color}22;border-left:3px solid {_conv_tone_color};"
+                f"background:{_conv_tone_color}08;border-radius:10px;padding:8px 14px;"
+                f"margin:4px 0 8px;font-size:12px;opacity:.90'>"
+                f"⚡ <em>{_esc(_qv)}</em></div>",
+                unsafe_allow_html=True,
+            )
 
         _render_detail_text_card("1. Tese", company.tese or "—", "neutral")
 
@@ -922,7 +930,6 @@ def _render_company_expander(company: CompanyAnalysis) -> None:
         _render_detail_text_card("9. Conclusão · Papel estratégico", company.papel_estrategico, "neutral")
         _render_detail_text_card("9. Conclusão · Alocação sugerida (faixa)", company.alocacao_sugerida_faixa, "good")
         _render_detail_text_card("9. Conclusão · Racional de alocação", company.racional_alocacao, "neutral")
-        _render_detail_text_card("9. Conclusão · Convergência quanti + quali", company.quant_alignment_summary, _tone_from_alignment(company.quant_alignment_label) if company.quant_alignment_label else "neutral")
         _render_detail_text_card("9. Conclusão · Considerações da LLM", company.consideracoes, "neutral")
 
 
@@ -1017,7 +1024,7 @@ def render_patch6_report(
     st.markdown(_P6_CSS, unsafe_allow_html=True)
 
     # ── Data + computation (pure, no Streamlit) ──────────────────────────────
-    analysis = build_portfolio_analysis(tickers, period_ref, snapshot_id=snapshot_id)
+    analysis = build_portfolio_analysis(tickers, period_ref)
     if analysis is None or not analysis.companies:
         st.warning(
             "Não há execuções salvas em patch6_runs para este period_ref e tickers do portfólio. "
@@ -1026,6 +1033,31 @@ def render_patch6_report(
         return
 
     stats = analysis.stats
+
+    # ── v5 — enriquecimento macro (impacto por empresa + narrativa portfólio) ──
+    try:
+        from core.macro_context import load_latest_macro_context
+        from core.patch6_analysis import enrich_macro_impact
+        _macro_enrich = (
+            st.session_state.get("macro_ctx_page")
+            or st.session_state.get("macro_context")
+            or load_latest_macro_context()
+        )
+        if _macro_enrich:
+            enrich_macro_impact(analysis, _macro_enrich)
+    except Exception:
+        pass  # v5 enrichment is optional — never breaks the report
+
+    # ── v6 — enriquecimento quantitativo (snapshot patches 1-5) ──────────────
+    if snapshot_id:
+        try:
+            from core.patch6_snapshot_integration import load_snapshot_for_patch6
+            from core.patch6_analysis import enrich_quant_snapshot
+            _snap_map = load_snapshot_for_patch6(snapshot_id)
+            if _snap_map:
+                enrich_quant_snapshot(analysis, _snap_map)
+        except Exception:
+            pass  # v6 enrichment is optional — never breaks the report
 
     # ── Cor semântica para os cards de resumo ─────────────────────────────────
     def _summary_color(label: str) -> str:
@@ -1094,7 +1126,10 @@ def render_patch6_report(
     _render_macro_panel()
 
     # ── LLM portfolio report (optional) ──────────────────────────────────────
-    portfolio_report = run_portfolio_llm_report(llm_factory, analysis, analysis_mode)
+    portfolio_report = run_portfolio_llm_report(
+        llm_factory, analysis, analysis_mode,
+        snapshot_id=snapshot_id,  # v6: pass snapshot_id for quant integration
+    )
 
     if portfolio_report:
         mode_label = "Análise Rígida" if analysis_mode == "rigid" else "Análise Flexível"
