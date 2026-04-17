@@ -1246,7 +1246,7 @@ def render() -> None:
                     llm_factory=llm_factory,
                     show_company_details=True,
                     analysis_mode=analysis_mode,
-                    snapshot_id=snapshot_id,
+                    snapshot_id=str(snapshot_id),  # v6: quantitative integration
                 )
             except Exception as e:
                 st.error("Relatório indisponível.")
