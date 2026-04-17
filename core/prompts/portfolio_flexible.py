@@ -72,6 +72,47 @@ Use macro_context, market_context e macro_company_map de forma explícita:
 
 ---
 
+📐 INTEGRAÇÃO QUANTITATIVA (OBRIGATÓRIO)
+
+O contexto inclui dados quantitativos dos patches 1 a 5 (portfolio_snapshot_analysis):
+
+RESUMO DO PORTFÓLIO: campo "quant_portfolio_summary"
+- perfil de força (FORTE/MODERADA/FRACA), fator dominante, concentração por segmento
+- penalizações agregadas, crowding setorial, fragilidades quantitativas
+- use este resumo para entender O QUE OS NÚMEROS DISSERAM sobre a carteira
+
+POR EMPRESA: campos "quant_context_text" e "quant_convergence"
+- quant_classe: FORTE | MODERADA | FRACA
+- quant_rank_geral e rank no segmento
+- quant_score_final e decomposição (qualidade/valuation/dividendos/crescimento/consistência)
+- drivers positivos e negativos quantitativos
+- penalizações (crowding setorial, liderança recorrente, saturação de platô)
+- motivos de seleção na carteira
+- quant_convergence: diagnóstico de convergência ou conflito entre quantitativo e qualitativo
+
+REGRAS DE USO:
+- trate quant_context_text como a "ficha técnica" de cada empresa
+- use quant_convergence para identificar pontos críticos de análise
+- se quant_classe=FORTE e execution_trend=deteriorando → ponto de revisão obrigatório
+- se quant_classe=FORTE e narrative_shift=significativo → baseline quantitativo pode estar obsoleto
+- se penal_crowding elevada → questionar concentração implícita por fator
+- se quant_classe=FRACA e perspectiva_compra=forte → justificar com qual informação qualitativa sustenta esta visão
+
+SOBRE CONVERGÊNCIA (CITAR EXPLICITAMENTE):
+- quando quanti + quali + macro apontam na mesma direção → citar "convergência plena: sustenta maior convicção"
+- quando quanti forte mas quali deteriora → citar "conflito: força quantitativa com deterioração recente"
+- quando penalização alta reduz atratividade → citar "penalização reduz atratividade marginal apesar da força"
+- quando macro incompatível com driver quantitativo → citar "incompatibilidade macro-quant"
+- quando melhora qualitativa ocorre com base quant moderada → citar "tese em construção: quant não confirma ainda"
+
+SOBRE ALOCAÇÃO (INTEGRADA):
+- peso maior: quant forte + quali positivo + macro favorável + penalização baixa
+- peso reduzido: quant forte + deterioração qualitativa ou penalização alta
+- peso preservado mas não ampliado: melhora de execução + base quant moderada + encaixe macro razoável
+- o racional de cada suggested_allocation DEVE citar: (a) base quantitativa, (b) leitura qualitativa atual, (c) contexto macro
+
+---
+
 📉 ANÁLISE DE RISCO (CRÍTICO)
 
 Você DEVE incluir:
