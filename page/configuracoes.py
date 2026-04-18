@@ -3,10 +3,11 @@ from __future__ import annotations
 import io
 import json
 import os
+import sys
 import traceback
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 import pandas as pd
 import streamlit as st
@@ -211,7 +212,17 @@ def _run_job(
     module_attr_name: str,
     main_func_name: str = "main",
     pipeline_name: Optional[str] = None,
+    env_overrides: Optional[Dict[str, str]] = None,
 ) -> None:
+    """Renderiza um botão de job e executa o pipeline quando acionado.
+
+    Args:
+        env_overrides: Variáveis de ambiente a serem definidas temporariamente
+            durante a execução. Útil para jobs que lêem configuração via env
+            (ex: CVM_DOC_TYPE=DFP). O módulo é removido do cache de importação
+            (sys.modules) para garantir que seja re-avaliado com os novos valores.
+            As variáveis são restauradas ao estado original após a execução.
+    """
     if job_key not in st.session_state:
         st.session_state[job_key] = False
 
@@ -249,8 +260,22 @@ def _run_job(
         stdout_buf = io.StringIO()
         stderr_buf = io.StringIO()
 
+        # ── Suporte a env_overrides: guarda env atual e força reload do módulo
+        _saved_env: Dict[str, Optional[str]] = {}
+        if env_overrides:
+            for k, v in env_overrides.items():
+                _saved_env[k] = os.environ.get(k)
+                os.environ[k] = v
+            # Remove módulo do cache para garantir re-importação com novas vars
+            sys.modules.pop(module_import_path, None)
+
         try:
             with st.status(status_label, expanded=True) as status:
+                if env_overrides:
+                    status.write(
+                        "Variáveis de ambiente aplicadas: "
+                        + ", ".join(f"`{k}={v}`" for k, v in env_overrides.items())
+                    )
                 status.write(f"Importando módulo `{module_import_path}` …")
 
                 with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
@@ -291,7 +316,157 @@ def _run_job(
                         st.code(err, language="text")
 
         finally:
+            # Restaura variáveis de ambiente originais
+            if env_overrides:
+                for k, old_v in _saved_env.items():
+                    if old_v is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = old_v
+                # Remove módulo do cache (próxima execução também será fresh)
+                sys.modules.pop(module_import_path, None)
+
             st.session_state[job_key] = False
+
+
+@st.cache_data(ttl=30)
+def _check_v2_schema_cached() -> dict:
+    """Verifica o schema V2 com cache de 30 s para não bater no banco a cada rerender."""
+    try:
+        from core.cvm_v2_schema_check import check_v2_schema
+        return check_v2_schema()
+    except Exception as exc:
+        return {"ready": False, "found": [], "missing": [], "error": str(exc)}
+
+
+def _render_v2_schema_status() -> bool:
+    """Exibe card de status do schema CVM V2. Retorna True se schema estiver pronto."""
+    with st.expander("Status do Schema CVM V2", expanded=True):
+        col_btn, col_txt = st.columns([1, 3], gap="small")
+        with col_btn:
+            if st.button("Reverificar schema", key="btn_v2_schema_check"):
+                st.cache_data.clear()
+                st.rerun()
+
+        result = _check_v2_schema_cached()
+
+        if result.get("error"):
+            st.error(
+                f"Falha ao verificar schema: {result['error']}\n\n"
+                "Verifique a variável **SUPABASE_DB_URL** e a conexão com o banco."
+            )
+            return False
+
+        found = result.get("found", [])
+        missing = result.get("missing", [])
+
+        if result.get("ready"):
+            st.success(
+                f"Schema CVM V2 completo — {len(found)} objeto(s) encontrado(s).\n\n"
+                + "\n".join(f"  ✅ {n}" for n in found)
+            )
+            return True
+        else:
+            st.error(
+                "Schema CVM V2 **incompleto**. Aplique o DDL institucional V2 antes de executar os jobs.\n\n"
+                + ("\n".join(f"  ✅ {n}" for n in found) + "\n" if found else "")
+                + "\n".join(f"  ❌ {n}" for n in missing)
+            )
+            st.info(
+                "Os jobs V2 abaixo **tentarão executar normalmente**, mas falharão com mensagem clara "
+                "se o schema não estiver disponível. Isso é seguro — nenhum dado existente será afetado."
+            )
+            return False
+
+
+def _render_v2_section() -> None:
+    """Renderiza a seção CVM V2 abaixo dos jobs legados."""
+    st.divider()
+    st.markdown("## CVM V2 — Pipeline Institucional Raw")
+    st.caption(
+        "Pipeline normalizado de ingestão CVM com rastreabilidade, deduplicação e mapeamento de contas. "
+        "Mantém os dados legados intactos — opera em tabelas V2 separadas."
+    )
+
+    _render_v2_schema_status()
+
+    st.markdown(
+        "**Ordem recomendada:**\n"
+        "1) Extract Raw (DFP) — extrai demonstrações anuais brutas\n"
+        "2) Extract Raw (ITR) — extrai demonstrações trimestrais brutas\n"
+        "3) Map Normalized — aplica mapeamento de contas e normaliza\n"
+        "4) Publish Financials — publica em demonstracoes_financeiras_v2\n"
+    )
+
+    st.divider()
+
+    st.markdown("### CVM V2 — Extract Raw (DFP)")
+    _run_job(
+        job_key="job_cvm_v2_extract_dfp_running",
+        button_label="CVM V2 — Extract Raw (DFP)",
+        info_text=(
+            "Executa **pickup/cvm_extract_v2.py** com `CVM_DOC_TYPE=DFP`.\n\n"
+            "Baixa ZIPs de DFP da CVM, extrai contas brutas e grava via UPSERT "
+            "em **public.cvm_financial_raw**. Registra execução em **public.cvm_ingestion_runs**."
+        ),
+        status_label="Executando CVM V2 — Extract Raw (DFP)...",
+        module_import_path="pickup.cvm_extract_v2",
+        module_attr_name="cvm_extract_v2",
+        env_overrides={"CVM_DOC_TYPE": "DFP"},
+    )
+
+    st.divider()
+
+    st.markdown("### CVM V2 — Extract Raw (ITR)")
+    _run_job(
+        job_key="job_cvm_v2_extract_itr_running",
+        button_label="CVM V2 — Extract Raw (ITR)",
+        info_text=(
+            "Executa **pickup/cvm_extract_v2.py** com `CVM_DOC_TYPE=ITR`.\n\n"
+            "Baixa ZIPs de ITR da CVM, extrai contas brutas e grava via UPSERT "
+            "em **public.cvm_financial_raw**. Registra execução em **public.cvm_ingestion_runs**."
+        ),
+        status_label="Executando CVM V2 — Extract Raw (ITR)...",
+        module_import_path="pickup.cvm_extract_v2",
+        module_attr_name="cvm_extract_v2",
+        env_overrides={"CVM_DOC_TYPE": "ITR"},
+    )
+
+    st.divider()
+
+    st.markdown("### CVM V2 — Map Normalized")
+    _run_job(
+        job_key="job_cvm_v2_map_running",
+        button_label="CVM V2 — Map Normalized",
+        info_text=(
+            "Executa **pickup/cvm_map_v2.py**.\n\n"
+            "Lê **public.cvm_financial_raw**, aplica mapeamento de contas de "
+            "**public.cvm_account_map** (ativo=TRUE, por prioridade) e grava "
+            "em **public.cvm_financial_normalized**.\n\n"
+            "Pré-requisito: Extract Raw DFP e/ou ITR já executados."
+        ),
+        status_label="Executando CVM V2 — Map Normalized...",
+        module_import_path="pickup.cvm_map_v2",
+        module_attr_name="cvm_map_v2",
+    )
+
+    st.divider()
+
+    st.markdown("### CVM V2 — Publish Financials")
+    _run_job(
+        job_key="job_cvm_v2_publish_running",
+        button_label="CVM V2 — Publish Financials",
+        info_text=(
+            "Executa **pickup/cvm_publish_financials_v2.py**.\n\n"
+            "Lê **public.vw_cvm_normalized_best_source**, consolida em formato wide "
+            "(pivot por canonical_key), deriva EBITDA/FCF/dívida e publica via UPSERT "
+            "em **public.demonstracoes_financeiras_v2**.\n\n"
+            "Pré-requisito: Map Normalized já executado."
+        ),
+        status_label="Executando CVM V2 — Publish Financials...",
+        module_import_path="pickup.cvm_publish_financials_v2",
+        module_attr_name="cvm_publish_financials_v2",
+    )
 
 
 def render() -> None:
@@ -467,6 +642,9 @@ def render() -> None:
         module_attr_name="dados_multiplos_itr",
         pipeline_name="multiplos_itr",
     )
+
+    # ── Seção CVM V2 (nova, abaixo dos jobs legados) ─────────────────────
+    _render_v2_section()
 
 
 def configuracoes() -> None:
