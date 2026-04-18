@@ -225,12 +225,23 @@ def run_portfolio_llm_report(
     ]
 
     rag_context_by_ticker: Dict[str, str] = {}
+    rag_coverage_warnings: Dict[str, str] = {}   # v7: ticker → warning message
     try:
         from core.patch6_rag import build_rag_context
         for company in analysis.companies.values():
-            rag_ctx = build_rag_context(company.ticker, max_total=8, days_back=730)
+            # v7: 1095 days = 36 months — aligns with TEMPORAL_WINDOW_MONTHS in rag_retriever
+            rag_ctx = build_rag_context(company.ticker, max_total=8, days_back=1095)
             if rag_ctx.total_selected > 0:
-                rag_context_by_ticker[company.ticker] = rag_ctx.as_text(max_chars_per_doc=2000)
+                rag_text = rag_ctx.as_text(max_chars_per_doc=2000)
+                # Prepend coverage warning so LLM sees it as part of the evidence block
+                if rag_ctx.recent_coverage_warning:
+                    rag_text = (
+                        f"[AVISO DE COBERTURA TEMPORAL: {rag_ctx.recent_coverage_warning}]\n\n"
+                        + rag_text
+                    )
+                rag_context_by_ticker[company.ticker] = rag_text
+                if rag_ctx.recent_coverage_warning:
+                    rag_coverage_warnings[company.ticker] = rag_ctx.recent_coverage_warning
     except Exception:
         pass
 
@@ -246,6 +257,8 @@ def run_portfolio_llm_report(
         )
         if rag_context_by_ticker:
             context_payload["rag_evidence_by_ticker"] = rag_context_by_ticker
+        if rag_coverage_warnings:
+            context_payload["rag_coverage_warnings"] = rag_coverage_warnings
         return generate_portfolio_report(
             llm_client=llm_client,
             context_payload=context_payload,

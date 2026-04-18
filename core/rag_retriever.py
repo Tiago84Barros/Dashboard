@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 import math
 import re
@@ -9,6 +10,25 @@ from collections import defaultdict
 from core.db_loader import get_supabase_engine
 from core.rag_multitopic import retrieve_multitopic_chunks
 import core.ai_models.llm_client.factory as llm_factory
+
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Tuning constants — adjust here to calibrate retrieval behaviour
+# ────────────────────────────────────────────────────────────────────────────────
+
+# Weight applied to the recency component in the final hybrid score.
+# Increase to bias more strongly toward recent chunks.
+# Range guidance: 1.5 (soft recency bias) to 4.0 (strong recency bias).
+RECENCY_ALPHA: float = 2.5
+
+# Hard temporal window in months. Chunks older than this are excluded.
+# Must match the analytical concept used in the Patch6 pipeline (36 months).
+TEMPORAL_WINDOW_MONTHS: int = 36
+
+# Coverage thresholds — used to classify recent coverage quality per ticker.
+# "recent" is defined as within the first 12 months of the window.
+COVERAGE_HIGH_THRESHOLD: int = 5   # ≥ N recent chunks → "alta"
+COVERAGE_MED_THRESHOLD: int = 2    # ≥ N recent chunks → "média"; below → "baixa"
 
 
 @dataclass
@@ -21,11 +41,65 @@ class RagHit:
     tipo_doc: str = ""
     strategic_theme: str = ""
     score: float = 0.0
+    recency_score: float = 0.0   # v7: 0.0–1.0, filled by compute_recency_score()
 
 
 def _extract_year(data_doc: Any) -> str:
     s = str(data_doc or "")[:4]
     return s if s.isdigit() else ""
+
+
+# ────────────────────────────────────────────────────────────────────────────────
+# v7 — Recency scoring
+# ────────────────────────────────────────────────────────────────────────────────
+
+def compute_recency_score(
+    data_doc: Any,
+    reference_date: Optional[datetime] = None,
+    max_window_months: int = TEMPORAL_WINDOW_MONTHS,
+) -> float:
+    """Score de recência temporal: 1.0 (hoje) → 0.0 (borda da janela) → inelegível.
+
+    Usa decaimento linear em dois estágios para maior discriminação:
+      - 0–12m:  1.0 → 0.65  (planalto recente: alta relevância)
+      - 12–24m: 0.65 → 0.30 (zona média: relevância moderada)
+      - 24–36m: 0.30 → 0.0  (zona histórica: relevância baixa)
+      - >36m:   retorna -1.0 (hard ineligibility marker)
+
+    Args:
+        data_doc:       String com data no formato YYYY-MM-DD (ou YYYY-MM ou YYYY).
+        reference_date: Data de referência (default = utcnow()).
+        max_window_months: Limite da janela em meses.
+
+    Returns:
+        float em [-1.0, 1.0]. Valores negativos indicam fora da janela.
+    """
+    s = str(data_doc or "")[:10].strip()
+    if len(s) < 4 or not s[:4].isdigit():
+        return 0.0   # data desconhecida → tratada como neutra, não inelegível
+
+    try:
+        year = int(s[:4])
+        month = int(s[5:7]) if len(s) >= 7 and s[4] in ("-", "/") else 6
+        ref = reference_date or datetime.utcnow()
+        months_old = (ref.year - year) * 12 + (ref.month - month)
+
+        if months_old < 0:
+            # Documento com data futura — tratar como mais recente possível
+            return 1.0
+        if months_old > max_window_months:
+            return -1.0   # fora da janela — marcador de inelegibilidade
+
+        # Decaimento em dois estágios
+        half = max_window_months / 2   # default: 18 meses
+        if months_old <= 12:
+            return 1.0 - 0.35 * (months_old / 12.0)    # 1.0 → 0.65
+        if months_old <= 24:
+            return 0.65 - 0.35 * ((months_old - 12.0) / 12.0)   # 0.65 → 0.30
+        # 24..max_window_months
+        return 0.30 - 0.30 * ((months_old - 24.0) / max(1, max_window_months - 24.0))  # 0.30 → 0.0
+    except Exception:
+        return 0.0   # parse failure → neutro
 
 
 def _bucket_for_months(data_doc: Any) -> str:
@@ -96,16 +170,42 @@ def _generic_penalty(txt: str) -> float:
     return 1.6 if any(k in blob for k in bad) else 0.0
 
 
-def _score_text_quality(texto: str, theme: str = "", tipo_doc: str = "", dist: Optional[float] = None) -> float:
+def _score_text_quality(
+    texto: str,
+    theme: str = "",
+    tipo_doc: str = "",
+    dist: Optional[float] = None,
+    data_doc: Optional[str] = None,     # v7: date string for recency component
+    recency_alpha: float = RECENCY_ALPHA,
+) -> float:
+    """Score híbrido = qualidade_textual + alpha * recência.
+
+    score_final = (semantic_distance_bonus + materiality + strategic - generic + length + type_bonus)
+                + recency_alpha * recency_score
+
+    Chunks mais recentes recebem bônus de até +recency_alpha.
+    Chunks com data inválida ou fora da janela recebem penalização severa.
+
+    Ajuste de calibração:
+      - RECENCY_ALPHA = 2.5  → recência equivale a distância semântica boa (3.8 - dist)
+      - Para bias mais forte: aumente para 3.5–4.0
+      - Para bias mais suave: reduza para 1.5
+    """
     txt = (texto or "").strip()
     if not txt:
         return -999.0
+
     score = 0.0
+
+    # ── Componente semântico (distância vetorial)
     if dist is not None and not (isinstance(dist, float) and math.isnan(dist)):
         score += max(0.0, 3.8 - float(dist))
+
+    # ── Componente de qualidade textual
     score += _materiality_bonus(txt)
     score += _strategic_bonus(txt, theme=theme, tipo_doc=tipo_doc)
     score -= _generic_penalty(txt)
+
     n = len(txt)
     if 220 <= n <= 1500:
         score += 0.9
@@ -121,6 +221,18 @@ def _score_text_quality(texto: str, theme: str = "", tipo_doc: str = "", dist: O
         score += 0.8
     elif any(k in tipo_blob for k in ["itr", "dfp", "fre"]):
         score += 0.6
+
+    # ── v7: componente de recência temporal ──────────────────────────────────
+    # score_final = score_qualidade + RECENCY_ALPHA * recency_score
+    # Chunks dentro da janela recebem bônus 0..RECENCY_ALPHA.
+    # Chunks fora da janela (recency < 0) recebem penalidade severa.
+    if data_doc is not None:
+        rec = compute_recency_score(data_doc)
+        if rec < 0:
+            # Fora da janela analítica — torna o chunk inelegível
+            return -999.0
+        score += recency_alpha * rec
+
     return score
 
 
@@ -137,6 +249,9 @@ def _take_best(
     for cand in pool:
         if len(selected) >= target:
             return
+        # v7: hard-exclude chunks outside temporal window (score = -999.0)
+        if cand.score <= -900.0:
+            continue
         key = (cand.doc_id, cand.chunk_text)
         if key in used:
             continue
@@ -200,6 +315,70 @@ def _select_diverse_hits(hits: List[RagHit], top_k: int) -> List[RagHit]:
     return selected[:top_k]
 
 
+def assess_recent_coverage(
+    hits: List[RagHit],
+    recent_months: int = 12,
+    reference_date: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Avalia qualidade da cobertura recente dos chunks selecionados.
+
+    Retorna um dict com:
+      - quality:  "alta" | "média" | "baixa"
+      - recent_count: nº de chunks nos últimos `recent_months`
+      - total_count: total de chunks elegíveis
+      - warning: mensagem de alerta ou "" se cobertura suficiente
+      - time_buckets: distribuição por bucket temporal
+
+    Usado para calibrar a confiança da LLM e alertar quando a empresa tem pouca
+    cobertura documental recente (ex: último relatório em 2022).
+    """
+    ref = reference_date or datetime.utcnow()
+    recent_count = 0
+    total_count = 0
+    buckets: Dict[str, int] = defaultdict(int)
+
+    for h in hits:
+        if h.score <= -900.0:
+            continue   # inelegível — não conta
+        total_count += 1
+        bucket = _bucket_for_months(h.data_doc)
+        buckets[bucket] += 1
+        s = str(h.data_doc or "")[:10]
+        if len(s) >= 7:
+            try:
+                year = int(s[:4])
+                month = int(s[5:7])
+                months_old = (ref.year - year) * 12 + (ref.month - month)
+                if months_old <= recent_months:
+                    recent_count += 1
+            except Exception:
+                pass
+
+    if recent_count >= COVERAGE_HIGH_THRESHOLD:
+        quality = "alta"
+        warning = ""
+    elif recent_count >= COVERAGE_MED_THRESHOLD:
+        quality = "média"
+        warning = (
+            f"Cobertura recente ({recent_months}m) moderada: {recent_count} chunks. "
+            "Análise pode ter lacunas de atualidade."
+        )
+    else:
+        quality = "baixa"
+        warning = (
+            f"Cobertura recente ({recent_months}m) insuficiente: apenas {recent_count} chunk(s). "
+            "LLM deve reduzir convicção sobre perspectiva atual da empresa."
+        )
+
+    return {
+        "quality": quality,
+        "recent_count": recent_count,
+        "total_count": total_count,
+        "warning": warning,
+        "time_buckets": dict(buckets),
+    }
+
+
 def get_topk_chunks_inteligente(
     ticker: str,
     top_k: int = 24,
@@ -240,11 +419,13 @@ def get_topk_chunks_inteligente(
             tipo_doc=str(row.get("tipo_doc") or ""),
             strategic_theme=str(row.get("topic") or ""),
         )
+        hit.recency_score = compute_recency_score(hit.data_doc)
         hit.score = _score_text_quality(
             hit.chunk_text,
             theme=hit.strategic_theme,
             tipo_doc=hit.tipo_doc,
             dist=hit.dist,
+            data_doc=hit.data_doc,   # v7: enables hybrid score + hard exclusion
         )
         hits.append(hit)
 

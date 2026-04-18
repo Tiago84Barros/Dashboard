@@ -78,6 +78,9 @@ class RagContext:
     total_selected: int = 0
     total_available: int = 0
     budget_used: Dict[str, int] = field(default_factory=dict)          # topic → slots used
+    # v7: recent coverage quality — used by LLM to calibrate confidence
+    recent_coverage_quality: str = ""     # "alta" | "média" | "baixa"
+    recent_coverage_warning: str = ""     # non-empty when coverage is insufficient
 
     def as_text(self, max_chars_per_doc: int = 3000) -> str:
         """Formats selected documents as plain text for prompt injection."""
@@ -152,7 +155,7 @@ def enrich_evidencias_with_topics(evidencias: List[Any]) -> List[Dict[str, Any]]
 def load_docs_for_rag(
     ticker: str,
     *,
-    days_back: int = 730,
+    days_back: int = 1095,   # v7: 36 months (3 years) — aligns with TEMPORAL_WINDOW_MONTHS
     limit_fetch: int = 60,
 ) -> List[Dict[str, Any]]:
     """
@@ -193,7 +196,7 @@ def build_rag_context(
     docs: Optional[List[Dict[str, Any]]] = None,
     budget: Optional[Dict[str, int]] = None,
     max_total: int = 10,
-    days_back: int = 730,
+    days_back: int = 1095,   # v7: 36 months — aligns with TEMPORAL_WINDOW_MONTHS
 ) -> RagContext:
     """
     Selects evidence from docs_corporativos using a topic budget.
@@ -256,4 +259,30 @@ def build_rag_context(
     ctx.topic_distribution = distribution
     ctx.total_selected = len(selected)
     ctx.budget_used = {t: v for t, v in topic_used.items() if v > 0}
+
+    # v7: assess recent coverage quality using hybrid-scored RagHits when available
+    # Fallback: count docs from the last 12 months directly from the selected list
+    try:
+        from core.rag_retriever import assess_recent_coverage, RagHit, compute_recency_score
+        from datetime import datetime
+        pseudo_hits: list = []
+        ref = datetime.utcnow()
+        for doc in selected:
+            data_str = str(doc.get("data") or doc.get("date") or "")
+            rec = compute_recency_score(data_str, reference_date=ref)
+            h = RagHit(
+                doc_id=None,
+                ticker=ticker,
+                chunk_text=str(doc.get("raw_text") or "")[:200],
+                data_doc=data_str,
+                score=0.0 if rec < 0 else rec,
+            )
+            pseudo_hits.append(h)
+        cov = assess_recent_coverage(pseudo_hits, recent_months=12, reference_date=ref)
+        ctx.recent_coverage_quality = cov["quality"]
+        ctx.recent_coverage_warning = cov["warning"]
+    except Exception:
+        ctx.recent_coverage_quality = ""
+        ctx.recent_coverage_warning = ""
+
     return ctx
