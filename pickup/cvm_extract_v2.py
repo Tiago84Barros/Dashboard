@@ -34,8 +34,7 @@ URLS = {
 }
 
 DOC_TYPE = os.getenv("CVM_DOC_TYPE", "DFP").strip().upper()
-if DOC_TYPE not in URLS:
-    raise ValueError("CVM_DOC_TYPE deve ser DFP ou ITR")
+# Nota: a validação de DOC_TYPE é feita em main() para evitar falha em import.
 
 MAX_WORKERS = int(os.getenv("MAX_WORKERS", "6"))
 ANO_INICIAL = int(os.getenv("ANO_INICIAL", "2010"))
@@ -615,6 +614,20 @@ def _finish_run(run_id: str, status: str, last_year: Optional[int], metrics: Opt
 # =========================================================
 def main() -> None:
     global _RUN_LOG
+
+    # ── Validações de pré-condição ──────────────────────────────────────────
+    if DOC_TYPE not in URLS:
+        raise ValueError(
+            f"CVM_DOC_TYPE inválido: '{DOC_TYPE}'. Deve ser 'DFP' ou 'ITR'. "
+            "Defina a variável de ambiente corretamente antes de executar."
+        )
+
+    # Valida schema CVM V2 antes de qualquer operação no banco
+    try:
+        from core.cvm_v2_schema_check import assert_v2_schema_ready
+        assert_v2_schema_ready()
+    except ImportError:
+        pass   # módulo de checagem não disponível — prossegue sem validação
 
     run_id = _create_run(DOC_TYPE, ANO_INICIAL, ULTIMO_ANO or None)
     log(f"Run criada: {run_id}")

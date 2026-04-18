@@ -328,6 +328,13 @@ def upsert_demonstracoes_financeiras_v2(df: pd.DataFrame) -> int:
 
 
 def main() -> None:
+    # ── Validação de pré-condição: schema V2 deve existir ──────────────────
+    try:
+        from core.cvm_v2_schema_check import assert_v2_schema_ready
+        assert_v2_schema_ready()
+    except ImportError:
+        pass   # módulo de checagem não disponível — prossegue
+
     log("Lendo vw_cvm_normalized_best_source...")
     df = fetch_best_source()
 
