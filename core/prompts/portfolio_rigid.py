@@ -55,6 +55,12 @@ SOBRE A CAMADA MACRO:
 - Destaque quando fragilidade da empresa estiver alinhada com o regime macro atual.
 - Use macro_flags por ticker para identificar sensibilidades ativadas.
 
+SOBRE COBERTURA DOCUMENTAL TEMPORAL (campo "rag_coverage_warnings"):
+- Se presente, indica que um ou mais tickers têm cobertura recente insuficiente (< 2 docs nos últimos 12 meses).
+- Para esses tickers: reduza a convicção na análise qualitativa, cite a lacuna, não extrapole perspectivas.
+- Nunca afirme perspectiva atual de execução como se fosse confirmada quando há aviso de cobertura baixa.
+- Um aviso de cobertura NÃO impede a análise — apenas limita a convicção qualitativa da empresa afetada.
+
 SOBRE CONVERGÊNCIA E CONFLITO (OBRIGATÓRIO):
 Identifique e cite explicitamente quando:
 - quant forte + quali positivo + macro favorável → convicção alta, peso relativo maior

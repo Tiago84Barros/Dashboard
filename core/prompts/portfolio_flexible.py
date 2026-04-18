@@ -72,6 +72,16 @@ Use macro_context, market_context e macro_company_map de forma explícita:
 
 ---
 
+⏱️ COBERTURA DOCUMENTAL TEMPORAL (campo "rag_coverage_warnings")
+
+Quando este campo estiver presente no contexto:
+- Ele indica tickers com cobertura recente insuficiente (poucos documentos nos últimos 12 meses).
+- Para esses tickers: reduza a convicção qualitativa, sinalize a lacuna ao usuário, não extrapole perspectivas de execução atual.
+- Nunca afirme como confirmada a perspectiva recente de um ticker marcado com aviso de cobertura baixa.
+- Um aviso de cobertura NÃO inviabiliza a análise — mas obriga a citar a limitação explicitamente.
+
+---
+
 📐 INTEGRAÇÃO QUANTITATIVA (OBRIGATÓRIO)
 
 O contexto inclui dados quantitativos dos patches 1 a 5 (portfolio_snapshot_analysis):
