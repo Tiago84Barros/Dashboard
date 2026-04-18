@@ -148,6 +148,9 @@ _SPECIAL_PORTFOLIO_TITLES = {
     "Desalinhamentos": "warn",
     "Plano de ação": "good",
     "Insight final": "neutral",
+    "Perfil quantitativo do portfólio": "neutral",
+    "✅ Convergências (quanti + quali + macro)": "good",
+    "⚡ Conflitos detectados (quanti ↔ quali ↔ macro)": "bad",
 }
 
 def _render_spotlight_section(title: str, body_html: str, tone: str = "neutral") -> None:
