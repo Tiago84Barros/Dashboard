@@ -620,6 +620,27 @@ def _render_v2_schema_status() -> bool:
         return False
 
 
+def _render_v2_extract_panel(doc_type: str) -> None:
+    st.markdown(f"### CVM V2 — Extract Raw ({doc_type})")
+    st.caption(
+        "Esta execução roda no fluxo síncrono do Streamlit. Para acompanhar progresso em tempo real ou solicitar parada, "
+        "abra a mesma página em outra aba ou sessão e use o monitor abaixo."
+    )
+
+    c1, c2, c3 = st.columns(3)
+    if c1.button(f"Iniciar {doc_type}", key=f"btn_start_{doc_type.lower()}", use_container_width=True):
+        _run_cvm_v2_extract_job(doc_type=doc_type, resume=False)
+    if c2.button(f"Retomar {doc_type}", key=f"btn_resume_{doc_type.lower()}", use_container_width=True):
+        _run_cvm_v2_extract_job(doc_type=doc_type, resume=True)
+    if c3.button(f"Solicitar parada {doc_type}", key=f"btn_stop_{doc_type.lower()}", use_container_width=True):
+        if _request_stop_latest_run(doc_type):
+            st.success(f"Parada solicitada para a última run {doc_type} em execução.")
+        else:
+            st.warning(f"Nenhuma run {doc_type} em execução foi encontrada para parar.")
+
+    _render_v2_progress(doc_type)
+
+
 def _render_v2_section() -> None:
     """Renderiza a seção CVM V2 abaixo dos jobs legados."""
     st.divider()
@@ -632,58 +653,38 @@ def _render_v2_section() -> None:
     _render_v2_schema_status()
 
     st.markdown(
-        "**Ordem recomendada:**\n"
-        "1) Extract Raw (DFP) — extrai demonstrações anuais brutas\n"
-        "2) Extract Raw (ITR) — extrai demonstrações trimestrais brutas\n"
-        "3) Map Normalized — aplica mapeamento de contas e normaliza\n"
-        "4) Publish Financials — publica em demonstracoes_financeiras_v2\n"
+        "**Ordem recomendada:**
+"
+        "1) Extract Raw (DFP) — extrai demonstrações anuais brutas
+"
+        "2) Extract Raw (ITR) — extrai demonstrações trimestrais brutas
+"
+        "3) Map Normalized — aplica mapeamento de contas e normaliza
+"
+        "4) Publish Financials — publica em demonstracoes_financeiras_v2
+"
     )
 
     st.divider()
-
-    st.markdown("### CVM V2 — Extract Raw (DFP)")
-    _run_job(
-        job_key="job_cvm_v2_extract_dfp_running",
-        button_label="CVM V2 — Extract Raw (DFP)",
-        info_text=(
-            "Executa **pickup/cvm_extract_v2.py** com `CVM_DOC_TYPE=DFP`.\n\n"
-            "Baixa ZIPs de DFP da CVM, extrai contas brutas e grava via UPSERT "
-            "em **public.cvm_financial_raw**. Registra execução em **public.cvm_ingestion_runs**."
-        ),
-        status_label="Executando CVM V2 — Extract Raw (DFP)...",
-        module_import_path="pickup.cvm_extract_v2",
-        module_attr_name="cvm_extract_v2",
-        env_overrides={"CVM_DOC_TYPE": "DFP"},
-    )
+    _render_v2_extract_panel("DFP")
 
     st.divider()
-
-    st.markdown("### CVM V2 — Extract Raw (ITR)")
-    _run_job(
-        job_key="job_cvm_v2_extract_itr_running",
-        button_label="CVM V2 — Extract Raw (ITR)",
-        info_text=(
-            "Executa **pickup/cvm_extract_v2.py** com `CVM_DOC_TYPE=ITR`.\n\n"
-            "Baixa ZIPs de ITR da CVM, extrai contas brutas e grava via UPSERT "
-            "em **public.cvm_financial_raw**. Registra execução em **public.cvm_ingestion_runs**."
-        ),
-        status_label="Executando CVM V2 — Extract Raw (ITR)...",
-        module_import_path="pickup.cvm_extract_v2",
-        module_attr_name="cvm_extract_v2",
-        env_overrides={"CVM_DOC_TYPE": "ITR"},
-    )
+    _render_v2_extract_panel("ITR")
 
     st.divider()
-
     st.markdown("### CVM V2 — Map Normalized")
     _run_job(
         job_key="job_cvm_v2_map_running",
         button_label="CVM V2 — Map Normalized",
         info_text=(
-            "Executa **pickup/cvm_map_v2.py**.\n\n"
+            "Executa **pickup/cvm_map_v2.py**.
+
+"
             "Lê **public.cvm_financial_raw**, aplica mapeamento de contas de "
             "**public.cvm_account_map** (ativo=TRUE, por prioridade) e grava "
-            "em **public.cvm_financial_normalized**.\n\n"
+            "em **public.cvm_financial_normalized**.
+
+"
             "Pré-requisito: Extract Raw DFP e/ou ITR já executados."
         ),
         status_label="Executando CVM V2 — Map Normalized...",
@@ -692,23 +693,25 @@ def _render_v2_section() -> None:
     )
 
     st.divider()
-
     st.markdown("### CVM V2 — Publish Financials")
     _run_job(
         job_key="job_cvm_v2_publish_running",
         button_label="CVM V2 — Publish Financials",
         info_text=(
-            "Executa **pickup/cvm_publish_financials_v2.py**.\n\n"
+            "Executa **pickup/cvm_publish_financials_v2.py**.
+
+"
             "Lê **public.vw_cvm_normalized_best_source**, consolida em formato wide "
             "(pivot por canonical_key), deriva EBITDA/FCF/dívida e publica via UPSERT "
-            "em **public.demonstracoes_financeiras_v2**.\n\n"
+            "em **public.demonstracoes_financeiras_v2**.
+
+"
             "Pré-requisito: Map Normalized já executado."
         ),
         status_label="Executando CVM V2 — Publish Financials...",
         module_import_path="pickup.cvm_publish_financials_v2",
         module_attr_name="cvm_publish_financials_v2",
     )
-
 
 def render() -> None:
     st.header("Configurações")
