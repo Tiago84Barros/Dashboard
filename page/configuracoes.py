@@ -349,208 +349,6 @@ def _get_v2_diagnostics_cached() -> dict:
         return {"error": str(exc)}
 
 
-
-
-@st.cache_data(ttl=5)
-def _get_latest_v2_run(source_doc: str) -> Optional[dict[str, Any]]:
-    try:
-        if get_engine is None or text is None:
-            return None
-        engine = get_engine()
-        query = text(
-            """
-            SELECT
-                run_id,
-                source_doc,
-                status,
-                started_at,
-                finished_at,
-                updated_at,
-                heartbeat_at,
-                ano_inicial,
-                ano_final,
-                ultimo_ano_disponivel,
-                current_year,
-                current_file,
-                last_completed_year,
-                stop_requested,
-                downloaded_bytes,
-                cached_bytes,
-                processed_files,
-                total_files,
-                rows_raw,
-                rows_inserted,
-                metrics,
-                errors,
-                params
-            FROM public.cvm_ingestion_runs
-            WHERE source_doc = :source_doc
-            ORDER BY updated_at DESC NULLS LAST, started_at DESC NULLS LAST
-            LIMIT 1
-            """
-        )
-        with engine.connect() as conn:
-            row = conn.execute(query, {"source_doc": source_doc}).mappings().first()
-        return dict(row) if row else None
-    except Exception:
-        return None
-
-
-def _format_bytes(value: Any) -> str:
-    try:
-        size = float(value or 0)
-    except Exception:
-        size = 0.0
-    units = ["B", "KB", "MB", "GB", "TB"]
-    idx = 0
-    while size >= 1024 and idx < len(units) - 1:
-        size /= 1024.0
-        idx += 1
-    if idx == 0:
-        return f"{int(size)} {units[idx]}"
-    return f"{size:.2f} {units[idx]}"
-
-
-def _request_stop_latest_run(source_doc: str) -> bool:
-    try:
-        if get_engine is None or text is None:
-            return False
-        engine = get_engine()
-        with engine.begin() as conn:
-            result = conn.execute(
-                text(
-                    """
-                    UPDATE public.cvm_ingestion_runs
-                    SET stop_requested = true,
-                        updated_at = NOW()
-                    WHERE run_id = (
-                        SELECT run_id
-                        FROM public.cvm_ingestion_runs
-                        WHERE source_doc = :source_doc
-                          AND status = 'running'
-                        ORDER BY updated_at DESC NULLS LAST, started_at DESC NULLS LAST
-                        LIMIT 1
-                    )
-                    """
-                ),
-                {"source_doc": source_doc},
-            )
-        st.cache_data.clear()
-        return (result.rowcount or 0) > 0
-    except Exception:
-        return False
-
-
-def _render_v2_progress(source_doc: str) -> None:
-    run = _get_latest_v2_run(source_doc)
-    title = f"Monitor de execução — {source_doc}"
-    st.markdown(f"#### {title}")
-    if not run:
-        st.info("Nenhuma execução registrada ainda.")
-        return
-
-    metrics = run.get("metrics") or {}
-    years_done = _safe_int(metrics.get("years_done"), _safe_int(run.get("last_completed_year")))
-    years_total = _safe_int(metrics.get("years_total"))
-    downloaded = run.get("downloaded_bytes") or metrics.get("downloaded_bytes_accum") or 0
-    cached = run.get("cached_bytes") or metrics.get("cached_bytes_accum") or 0
-    raw_rows = run.get("rows_raw") or metrics.get("raw_rows_accum") or 0
-    inserted_rows = run.get("rows_inserted") or metrics.get("inserted_rows_accum") or 0
-    processed_files = run.get("processed_files") or metrics.get("processed_files_done") or 0
-    total_files = run.get("total_files") or metrics.get("processed_files_total") or 0
-    elapsed = metrics.get("elapsed_seconds")
-    current_file = run.get("current_file") or metrics.get("current_file") or "—"
-    current_year = run.get("current_year") or metrics.get("current_year") or "—"
-
-    cols = st.columns(4)
-    cols[0].metric("Status", str(run.get("status") or "—").upper())
-    cols[1].metric("Ano atual", str(current_year))
-    cols[2].metric("Último ano concluído", str(run.get("last_completed_year") or "—"))
-    cols[3].metric("Arquivos processados", f"{_safe_int(processed_files)} / {_safe_int(total_files)}")
-
-    cols = st.columns(4)
-    cols[0].metric("Linhas RAW", f"{_safe_int(raw_rows):,}".replace(",", "."))
-    cols[1].metric("Linhas inseridas", f"{_safe_int(inserted_rows):,}".replace(",", "."))
-    cols[2].metric("Baixado da CVM", _format_bytes(downloaded))
-    cols[3].metric("Lido do cache", _format_bytes(cached))
-
-    if years_total > 0:
-        progress = max(0.0, min(1.0, years_done / years_total))
-        st.progress(progress, text=f"Anos concluídos: {years_done}/{years_total}")
-
-    detail_lines = [
-        f"Run ID: {run.get('run_id')}",
-        f"Início: {_format_dt(run.get('started_at'))}",
-        f"Última atualização: {_format_dt(run.get('updated_at'))}",
-        f"Heartbeat: {_format_dt(run.get('heartbeat_at'))}",
-        f"Arquivo atual: {current_file}",
-        f"Parada solicitada: {'sim' if run.get('stop_requested') else 'não'}",
-    ]
-    if elapsed not in (None, ""):
-        detail_lines.append(f"Tempo decorrido: {elapsed} s")
-    if run.get("finished_at"):
-        detail_lines.append(f"Fim: {_format_dt(run.get('finished_at'))}")
-    st.caption(" | ".join(detail_lines))
-
-
-def _run_cvm_v2_extract_job(*, doc_type: str, resume: bool = False) -> None:
-    job_key = f"job_cvm_v2_extract_{doc_type.lower()}_{'resume' if resume else 'start'}"
-    if job_key not in st.session_state:
-        st.session_state[job_key] = False
-    if st.session_state[job_key]:
-        st.warning("Já existe uma execução desta ação em andamento nesta sessão.")
-        return
-
-    st.session_state[job_key] = True
-    stdout_buf = io.StringIO()
-    stderr_buf = io.StringIO()
-    _saved_env: Dict[str, Optional[str]] = {}
-    env_overrides = {"CVM_DOC_TYPE": doc_type, "CVM_RESUME": "1" if resume else "0"}
-
-    try:
-        if not os.getenv("SUPABASE_DB_URL"):
-            st.error("SUPABASE_DB_URL não está definida.")
-            return
-
-        for k, v in env_overrides.items():
-            _saved_env[k] = os.environ.get(k)
-            os.environ[k] = v
-        sys.modules.pop("pickup.cvm_extract_v2", None)
-
-        action_label = "Retomando" if resume else "Executando"
-        with st.status(f"{action_label} extract RAW {doc_type}...", expanded=True) as status:
-            status.write("Importando módulo `pickup.cvm_extract_v2`…")
-            with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
-                mod = __import__("pickup.cvm_extract_v2", fromlist=["cvm_extract_v2"])
-                status.write("Chamando `main()`…")
-                getattr(mod, "main")()
-            status.update(label=f"{action_label} extract RAW {doc_type} finalizado.", state="complete")
-
-        st.success(f"Extract RAW {doc_type} finalizado sem exceções Python.")
-        st.cache_data.clear()
-    except Exception as e:
-        st.error("Falha ao executar a rotina. Traceback completo:")
-        st.code("".join(traceback.format_exception(type(e), e, e.__traceback__)), language="text")
-        out = stdout_buf.getvalue().strip()
-        err = stderr_buf.getvalue().strip()
-        if out or err:
-            with st.expander("Detalhes do erro", expanded=False):
-                if out:
-                    st.markdown("#### stdout")
-                    st.code(out, language="text")
-                if err:
-                    st.markdown("#### stderr")
-                    st.code(err, language="text")
-    finally:
-        for k, old_v in _saved_env.items():
-            if old_v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = old_v
-        sys.modules.pop("pickup.cvm_extract_v2", None)
-        st.session_state[job_key] = False
-
-
 def _render_v2_schema_status() -> bool:
     """Exibe card de status do schema CVM V2. Retorna True se schema estiver pronto."""
     with st.expander("Status do Schema CVM V2", expanded=True):
@@ -620,25 +418,130 @@ def _render_v2_schema_status() -> bool:
         return False
 
 
-def _render_v2_extract_panel(doc_type: str) -> None:
-    st.markdown(f"### CVM V2 — Extract Raw ({doc_type})")
-    st.caption(
-        "Esta execução roda no fluxo síncrono do Streamlit. Para acompanhar progresso em tempo real ou solicitar parada, "
-        "abra a mesma página em outra aba ou sessão e use o monitor abaixo."
+@st.cache_data(ttl=10)
+def _load_latest_v2_run(doc_type: str) -> Optional[dict]:
+    """Retorna o run mais recente de cvm_ingestion_runs para doc_type. TTL=10 s."""
+    if get_engine is None or text is None:
+        return None
+    try:
+        engine = get_engine()
+        sql = text(
+            """
+            SELECT run_id, source_doc, status, ano_inicial, ano_final,
+                   ultimo_ano_disponivel, metrics, errors,
+                   started_at, finished_at, updated_at
+            FROM public.cvm_ingestion_runs
+            WHERE source_doc = :doc
+            ORDER BY started_at DESC
+            LIMIT 1
+            """
+        )
+        with engine.connect() as conn:
+            row = conn.execute(sql, {"doc": doc_type}).fetchone()
+        if row is None:
+            return None
+        keys = [
+            "run_id", "source_doc", "status", "ano_inicial", "ano_final",
+            "ultimo_ano_disponivel", "metrics", "errors",
+            "started_at", "finished_at", "updated_at",
+        ]
+        return dict(zip(keys, row))
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+def _render_single_run_card(doc_type: str) -> None:
+    """Renderiza um card de status/progresso para o run mais recente de doc_type."""
+    run = _load_latest_v2_run(doc_type)
+
+    st.markdown(f"**{doc_type}**")
+
+    if run is None:
+        st.info("Nenhum run registrado ainda para este tipo de documento.")
+        return
+
+    if run.get("error"):
+        st.warning(f"Erro ao consultar run: {run['error']}")
+        return
+
+    status = run.get("status", "?")
+    STATUS_ICON = {
+        "running": "🔄",
+        "success": "✅",
+        "partial_success": "⚠️",
+        "failed": "❌",
+    }
+    icon = STATUS_ICON.get(status, "❓")
+
+    metrics: dict = run.get("metrics") or {}
+    if isinstance(metrics, str):
+        try:
+            metrics = json.loads(metrics)
+        except Exception:
+            metrics = {}
+
+    errors_payload: dict = run.get("errors") or {}
+    if isinstance(errors_payload, str):
+        try:
+            errors_payload = json.loads(errors_payload)
+        except Exception:
+            errors_payload = {}
+
+    started = _format_dt(run.get("started_at"))
+    finished = _format_dt(run.get("finished_at"))
+    updated = _format_dt(run.get("updated_at"))
+
+    st.markdown(
+        f"{icon} **Status:** `{status}`  \n"
+        f"**Run ID:** `{run.get('run_id', '?')}`  \n"
+        f"**Início:** {started}  \n"
+        f"**Fim:** {finished}  \n"
+        f"**Última atualização:** {updated}"
     )
 
-    c1, c2, c3 = st.columns(3)
-    if c1.button(f"Iniciar {doc_type}", key=f"btn_start_{doc_type.lower()}", use_container_width=True):
-        _run_cvm_v2_extract_job(doc_type=doc_type, resume=False)
-    if c2.button(f"Retomar {doc_type}", key=f"btn_resume_{doc_type.lower()}", use_container_width=True):
-        _run_cvm_v2_extract_job(doc_type=doc_type, resume=True)
-    if c3.button(f"Solicitar parada {doc_type}", key=f"btn_stop_{doc_type.lower()}", use_container_width=True):
-        if _request_stop_latest_run(doc_type):
-            st.success(f"Parada solicitada para a última run {doc_type} em execução.")
-        else:
-            st.warning(f"Nenhuma run {doc_type} em execução foi encontrada para parar.")
+    # Progresso incremental
+    years_total = _safe_int(metrics.get("years_total"), 0)
+    years_done = _safe_int(metrics.get("years_done"), 0)
+    years_failed = _safe_int(metrics.get("years_failed"), 0)
+    raw_rows = _safe_int(metrics.get("raw_rows_accum"), 0)
+    inserted = _safe_int(metrics.get("inserted_rows_accum"), 0)
+    current_year = metrics.get("current_year")
+    message = metrics.get("message", "")
 
-    _render_v2_progress(doc_type)
+    if years_total > 0:
+        years_processed = years_done + years_failed
+        pct = years_processed / years_total
+        st.progress(min(pct, 1.0), text=f"{years_processed}/{years_total} anos processados")
+        cols_m = st.columns(3)
+        cols_m[0].metric("Anos OK", years_done)
+        cols_m[1].metric("Anos c/ erro", years_failed)
+        cols_m[2].metric("Ano atual", current_year or "—")
+        st.caption(
+            f"Raw rows acumuladas: **{raw_rows:,}** | Inseridas: **{inserted:,}**"
+        )
+
+    if message:
+        st.caption(f"Mensagem: {message}")
+
+    errors_list = errors_payload.get("errors", [])
+    if errors_list:
+        with st.expander(f"⚠️ {len(errors_list)} erro(s) registrado(s)", expanded=False):
+            for e in errors_list[-10:]:
+                st.code(e, language="text")
+
+
+def _render_v2_run_monitor() -> None:
+    """Renderiza o painel de monitoramento de runs V2 (DFP e ITR lado a lado)."""
+    with st.expander("📊 Monitor de Runs V2", expanded=True):
+        if st.button("🔄 Atualizar status dos runs", key="btn_v2_refresh_runs"):
+            st.cache_data.clear()
+            st.rerun()
+
+        col_dfp, col_itr = st.columns(2)
+        with col_dfp:
+            _render_single_run_card("DFP")
+        with col_itr:
+            _render_single_run_card("ITR")
 
 
 def _render_v2_section() -> None:
@@ -651,22 +554,52 @@ def _render_v2_section() -> None:
     )
 
     _render_v2_schema_status()
+    _render_v2_run_monitor()
 
     st.markdown(
         "**Ordem recomendada:**\n"
         "1) Extract Raw (DFP) — extrai demonstrações anuais brutas\n"
         "2) Extract Raw (ITR) — extrai demonstrações trimestrais brutas\n"
         "3) Map Normalized — aplica mapeamento de contas e normaliza\n"
-        "4) Publish Financials — publica em demonstracoes_financeiras_v2"
+        "4) Publish Financials — publica em demonstracoes_financeiras_v2\n"
     )
 
     st.divider()
-    _render_v2_extract_panel("DFP")
+
+    st.markdown("### CVM V2 — Extract Raw (DFP)")
+    _run_job(
+        job_key="job_cvm_v2_extract_dfp_running",
+        button_label="CVM V2 — Extract Raw (DFP)",
+        info_text=(
+            "Executa **pickup/cvm_extract_v2.py** com `CVM_DOC_TYPE=DFP`.\n\n"
+            "Baixa ZIPs de DFP da CVM, extrai contas brutas e grava via UPSERT "
+            "em **public.cvm_financial_raw**. Registra execução em **public.cvm_ingestion_runs**."
+        ),
+        status_label="Executando CVM V2 — Extract Raw (DFP)...",
+        module_import_path="pickup.cvm_extract_v2",
+        module_attr_name="cvm_extract_v2",
+        env_overrides={"CVM_DOC_TYPE": "DFP"},
+    )
 
     st.divider()
-    _render_v2_extract_panel("ITR")
+
+    st.markdown("### CVM V2 — Extract Raw (ITR)")
+    _run_job(
+        job_key="job_cvm_v2_extract_itr_running",
+        button_label="CVM V2 — Extract Raw (ITR)",
+        info_text=(
+            "Executa **pickup/cvm_extract_v2.py** com `CVM_DOC_TYPE=ITR`.\n\n"
+            "Baixa ZIPs de ITR da CVM, extrai contas brutas e grava via UPSERT "
+            "em **public.cvm_financial_raw**. Registra execução em **public.cvm_ingestion_runs**."
+        ),
+        status_label="Executando CVM V2 — Extract Raw (ITR)...",
+        module_import_path="pickup.cvm_extract_v2",
+        module_attr_name="cvm_extract_v2",
+        env_overrides={"CVM_DOC_TYPE": "ITR"},
+    )
 
     st.divider()
+
     st.markdown("### CVM V2 — Map Normalized")
     _run_job(
         job_key="job_cvm_v2_map_running",
@@ -684,6 +617,7 @@ def _render_v2_section() -> None:
     )
 
     st.divider()
+
     st.markdown("### CVM V2 — Publish Financials")
     _run_job(
         job_key="job_cvm_v2_publish_running",
@@ -699,6 +633,7 @@ def _render_v2_section() -> None:
         module_import_path="pickup.cvm_publish_financials_v2",
         module_attr_name="cvm_publish_financials_v2",
     )
+
 
 def render() -> None:
     st.header("Configurações")
