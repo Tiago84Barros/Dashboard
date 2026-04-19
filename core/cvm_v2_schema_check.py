@@ -11,27 +11,30 @@ from typing import Any, Dict, List, Optional
 # Objetos obrigatórios do schema CVM V2
 # Tuplas (nome_para_display, schema, nome_objeto)
 V2_REQUIRED_OBJECTS: List[tuple] = [
-    ("public.cvm_ingestion_runs",          "public", "cvm_ingestion_runs"),
-    ("public.cvm_financial_raw",           "public", "cvm_financial_raw"),
-    ("public.cvm_account_map",             "public", "cvm_account_map"),
-    ("public.cvm_financial_normalized",    "public", "cvm_financial_normalized"),
-    ("public.demonstracoes_financeiras_v2","public", "demonstracoes_financeiras_v2"),
-    ("public.vw_cvm_normalized_best_source","public","vw_cvm_normalized_best_source"),
+    ("public.cvm_ingestion_runs",           "public", "cvm_ingestion_runs"),
+    ("public.cvm_financial_raw",            "public", "cvm_financial_raw"),
+    ("public.cvm_account_map",              "public", "cvm_account_map"),
+    ("public.cvm_financial_normalized",     "public", "cvm_financial_normalized"),
+    ("public.demonstracoes_financeiras_v2", "public", "demonstracoes_financeiras_v2"),
+    ("public.vw_cvm_normalized_best_source","public", "vw_cvm_normalized_best_source"),
 ]
+
+# Nomes literais para usar na query IN (evita problema com ANY(:list) em alguns drivers)
+_V2_NAMES_LITERAL = ", ".join(f"'{obj[2]}'" for obj in V2_REQUIRED_OBJECTS)
 
 
 def check_v2_schema(engine=None) -> Dict[str, Any]:
     """Verifica se todos os objetos do schema CVM V2 existem no banco.
 
-    Args:
-        engine: SQLAlchemy engine opcional. Se None, tenta obter via core.db.get_engine().
+    Usa IN com literais em vez de ANY(:list) para máxima compatibilidade
+    com diferentes versões de SQLAlchemy e psycopg2.
 
     Returns:
         {
-            "ready":   bool,           # True somente se todos os objetos estão presentes
-            "found":   List[str],      # nomes dos objetos encontrados
-            "missing": List[str],      # nomes dos objetos ausentes
-            "error":   str | None,     # mensagem de erro se a verificação falhou
+            "ready":   bool,
+            "found":   List[str],   # display names encontrados
+            "missing": List[str],   # display names ausentes
+            "error":   str | None,
         }
     """
     result: Dict[str, Any] = {
@@ -46,25 +49,22 @@ def check_v2_schema(engine=None) -> Dict[str, Any]:
             from core.db import get_engine
             engine = get_engine()
 
-        names = [obj[2] for obj in V2_REQUIRED_OBJECTS]
-
-        # information_schema.tables inclui tanto tabelas quanto views
-        sql = """
+        # Usa IN com valores literais — sem parâmetros de lista que variam por driver
+        sql = f"""
             SELECT table_name
             FROM information_schema.tables
             WHERE table_schema = 'public'
-              AND table_name = ANY(:names)
+              AND table_name IN ({_V2_NAMES_LITERAL})
         """
         from sqlalchemy import text as sa_text
         with engine.connect() as conn:
-            rows = conn.execute(sa_text(sql), {"names": names}).fetchall()
+            rows = conn.execute(sa_text(sql)).fetchall()
 
         found_set = {row[0] for row in rows}
-        all_names = [obj[2] for obj in V2_REQUIRED_OBJECTS]
         display_names = {obj[2]: obj[0] for obj in V2_REQUIRED_OBJECTS}
 
-        result["found"] = [display_names[n] for n in all_names if n in found_set]
-        result["missing"] = [display_names[n] for n in all_names if n not in found_set]
+        result["found"] = [display_names[n] for n in [o[2] for o in V2_REQUIRED_OBJECTS] if n in found_set]
+        result["missing"] = [display_names[n] for n in [o[2] for o in V2_REQUIRED_OBJECTS] if n not in found_set]
         result["ready"] = len(result["missing"]) == 0
 
     except Exception as exc:
@@ -72,6 +72,64 @@ def check_v2_schema(engine=None) -> Dict[str, Any]:
         result["ready"] = False
 
     return result
+
+
+def get_connection_diagnostics(engine=None) -> Dict[str, Any]:
+    """Retorna informações de diagnóstico da conexão e do schema public.
+
+    Útil para confirmar se o app está conectado ao banco correto
+    e se o DDL foi aplicado no lugar certo.
+
+    Returns:
+        {
+            "current_database": str,
+            "current_schema":   str,
+            "public_table_count": int,
+            "public_tables_sample": List[str],   # primeiras 20 tabelas
+            "cvm_v2_tables_found": List[str],    # tabelas V2 encontradas (raw names)
+            "error": str | None,
+        }
+    """
+    diag: Dict[str, Any] = {
+        "current_database": None,
+        "current_schema": None,
+        "public_table_count": None,
+        "public_tables_sample": [],
+        "cvm_v2_tables_found": [],
+        "error": None,
+    }
+
+    try:
+        if engine is None:
+            from core.db import get_engine
+            engine = get_engine()
+
+        from sqlalchemy import text as sa_text
+        with engine.connect() as conn:
+            # Banco e schema atuais
+            row = conn.execute(sa_text(
+                "SELECT current_database(), current_schema()"
+            )).fetchone()
+            diag["current_database"] = row[0]
+            diag["current_schema"] = row[1]
+
+            # Todas as tabelas/views em public
+            rows = conn.execute(sa_text(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'public' ORDER BY table_name"
+            )).fetchall()
+            all_tables = [r[0] for r in rows]
+            diag["public_table_count"] = len(all_tables)
+            diag["public_tables_sample"] = all_tables[:30]
+
+            # Quais das tabelas V2 existem (raw names)
+            v2_names = {obj[2] for obj in V2_REQUIRED_OBJECTS}
+            diag["cvm_v2_tables_found"] = [t for t in all_tables if t in v2_names]
+
+    except Exception as exc:
+        diag["error"] = str(exc)
+
+    return diag
 
 
 def assert_v2_schema_ready(engine=None) -> None:
