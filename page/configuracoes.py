@@ -202,6 +202,47 @@ def _render_summary(summary: Optional[dict[str, Any]], *, empty_message: str = "
     st.success("\n".join(lines))
 
 
+class _StatusTee:
+    """Stream que escreve simultaneamente em um buffer de texto E no st.status().
+
+    Isso faz com que cada linha de `log()` do pipeline apareça em tempo real
+    no widget st.status() enquanto o job executa, sem perder o conteúdo para
+    o buffer (usado para análise pós-execução e exibição de erros).
+    """
+
+    def __init__(self, buf: "io.StringIO", status_widget: Any) -> None:
+        self._buf = buf
+        self._status = status_widget
+        self._pending = ""   # caracteres ainda não terminados em \n
+
+    def write(self, text: str) -> int:
+        self._buf.write(text)
+        self._pending += text
+        # Emite uma linha completa a cada \n
+        while "\n" in self._pending:
+            line, self._pending = self._pending.split("\n", 1)
+            stripped = line.strip()
+            if stripped:
+                try:
+                    self._status.write(stripped)
+                except Exception:
+                    pass   # st.status pode rejeitar writes fora de contexto — ignorar
+        return len(text)
+
+    def flush(self) -> None:
+        self._buf.flush()
+        # Emite qualquer resto pendente (sem \n) ao fazer flush
+        if self._pending.strip():
+            try:
+                self._status.write(self._pending.strip())
+            except Exception:
+                pass
+            self._pending = ""
+
+    def isatty(self) -> bool:
+        return False
+
+
 def _run_job(
     *,
     job_key: str,
@@ -278,7 +319,9 @@ def _run_job(
                     )
                 status.write(f"Importando módulo `{module_import_path}` …")
 
-                with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
+                # _StatusTee: cada log() do pipeline aparece no status em tempo real
+                stdout_tee = _StatusTee(stdout_buf, status)
+                with redirect_stdout(stdout_tee), redirect_stderr(stderr_buf):
                     mod = __import__(module_import_path, fromlist=[module_attr_name])
                     status.write(f"Executando `{module_attr_name}.{main_func_name}()` …")
                     getattr(mod, main_func_name)()
