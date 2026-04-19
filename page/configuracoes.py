@@ -653,16 +653,11 @@ def _render_v2_section() -> None:
     _render_v2_schema_status()
 
     st.markdown(
-        "**Ordem recomendada:**
-"
-        "1) Extract Raw (DFP) — extrai demonstrações anuais brutas
-"
-        "2) Extract Raw (ITR) — extrai demonstrações trimestrais brutas
-"
-        "3) Map Normalized — aplica mapeamento de contas e normaliza
-"
-        "4) Publish Financials — publica em demonstracoes_financeiras_v2
-"
+        "**Ordem recomendada:**\n"
+        "1) Extract Raw (DFP) — extrai demonstrações anuais brutas\n"
+        "2) Extract Raw (ITR) — extrai demonstrações trimestrais brutas\n"
+        "3) Map Normalized — aplica mapeamento de contas e normaliza\n"
+        "4) Publish Financials — publica em demonstracoes_financeiras_v2"
     )
 
     st.divider()
@@ -677,14 +672,10 @@ def _render_v2_section() -> None:
         job_key="job_cvm_v2_map_running",
         button_label="CVM V2 — Map Normalized",
         info_text=(
-            "Executa **pickup/cvm_map_v2.py**.
-
-"
+            "Executa **pickup/cvm_map_v2.py**.\n\n"
             "Lê **public.cvm_financial_raw**, aplica mapeamento de contas de "
             "**public.cvm_account_map** (ativo=TRUE, por prioridade) e grava "
-            "em **public.cvm_financial_normalized**.
-
-"
+            "em **public.cvm_financial_normalized**.\n\n"
             "Pré-requisito: Extract Raw DFP e/ou ITR já executados."
         ),
         status_label="Executando CVM V2 — Map Normalized...",
@@ -698,14 +689,10 @@ def _render_v2_section() -> None:
         job_key="job_cvm_v2_publish_running",
         button_label="CVM V2 — Publish Financials",
         info_text=(
-            "Executa **pickup/cvm_publish_financials_v2.py**.
-
-"
+            "Executa **pickup/cvm_publish_financials_v2.py**.\n\n"
             "Lê **public.vw_cvm_normalized_best_source**, consolida em formato wide "
             "(pivot por canonical_key), deriva EBITDA/FCF/dívida e publica via UPSERT "
-            "em **public.demonstracoes_financeiras_v2**.
-
-"
+            "em **public.demonstracoes_financeiras_v2**.\n\n"
             "Pré-requisito: Map Normalized já executado."
         ),
         status_label="Executando CVM V2 — Publish Financials...",
