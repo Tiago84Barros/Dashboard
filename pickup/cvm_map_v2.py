@@ -112,22 +112,46 @@ def normalize(df_raw: pd.DataFrame, mappings: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(results)
 
 
-def save(df: pd.DataFrame, engine=None) -> int:
-    """Grava em public.cvm_financial_normalized via append."""
+def save(df: pd.DataFrame, engine=None, chunksize: int = 2000) -> int:
+    """Grava em public.cvm_financial_normalized com UPSERT idempotente.
+
+    Usa ON CONFLICT DO NOTHING para que re-execuções não falhem.
+    Usa SQL literal com named params para compatibilidade com colunas ENUM
+    (cvm_source_doc, cvm_tipo_demo, mapping_quality).
+    """
     if engine is None:
         engine = get_engine()
     if df.empty:
         return 0
-    df.to_sql(
-        "cvm_financial_normalized",
-        engine,
-        schema="public",
-        if_exists="append",
-        index=False,
-        method="multi",
-        chunksize=2000,
+
+    cols = [
+        "ticker", "cd_cvm", "source_doc", "tipo_demo", "dt_refer",
+        "canonical_key", "valor", "unidade", "qualidade_mapeamento", "row_hash",
+    ]
+
+    # Garante que apenas colunas presentes no df sejam usadas
+    cols = [c for c in cols if c in df.columns]
+
+    sql = text(
+        f"""
+        INSERT INTO public.cvm_financial_normalized
+            ({", ".join(cols)})
+        VALUES
+            ({", ".join(f":{c}" for c in cols)})
+        ON CONFLICT (ticker, source_doc, tipo_demo, dt_refer, canonical_key, row_hash)
+        DO NOTHING
+        """
     )
-    return len(df)
+
+    records = df[cols].where(pd.notnull(df[cols]), None).to_dict(orient="records")
+    inserted = 0
+    for i in range(0, len(records), chunksize):
+        batch = records[i: i + chunksize]
+        with engine.begin() as conn:
+            conn.execute(sql, batch)
+        inserted += len(batch)
+
+    return inserted
 
 
 def main() -> None:
