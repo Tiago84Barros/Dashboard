@@ -49,7 +49,11 @@ TICKER_PATH = Path(os.getenv("TICKER_PATH", str(BASE_DIR / "cvm_to_ticker.csv"))
 CACHE_DIR = Path(os.getenv("CVM_CACHE_DIR", str(BASE_DIR / f".cache_cvm_{DOC_TYPE.lower()}_v2")))
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-DEMO_TYPES = ("DRE", "BPA", "BPP", "DFC", "DMPL", "DVA")
+# Ordem importa: substrings mais específicas ANTES das genéricas.
+# Os arquivos CVM usam DFC_MI (método indireto) e DFC_MD (método direto).
+# Se "DFC" viesse primeiro, ele matcharia DFC_MI e DFC_MD erroneamente,
+# inserindo tipo_demo="DFC" que não existe no ENUM cvm_tipo_demo → batch inteira falha.
+DEMO_TYPES = ("DRE", "BPA", "BPP", "DFC_MI", "DFC_MD", "DMPL", "DVA")
 _RUN_LOG = None
 
 
@@ -473,7 +477,6 @@ def upsert_cvm_financial_raw(rows: List[dict], run_id: Optional[str]) -> int:
     raw_conn = engine.raw_connection()
     try:
         with raw_conn.cursor() as cur:
-            _assert_raw_unique_ready(cur)
             execute_values(cur, sql, values, page_size=BATCH_SIZE_INSERT)
         raw_conn.commit()
     except Exception:
@@ -670,11 +673,15 @@ def main() -> None:
                             f" em {round(time.time() - t_year, 1)}s."
                         )
                     except Exception as upsert_exc:
-                        msg = f"{DOC_TYPE} {year}: erro no upsert: {upsert_exc}"
+                        import traceback as _tb
+                        msg = (
+                            f"{DOC_TYPE} {year}: erro no upsert: {upsert_exc}\n"
+                            + _tb.format_exc()
+                        )
                         all_errors.append(msg)
                         log(msg, level="ERROR")
                         progress["years_failed"] += 1
-                        progress["message"] = f"Erro no upsert do ano {year} — continuando."
+                        progress["message"] = f"ERRO upsert ano {year}: {upsert_exc}"
                         _update_run_progress(run_id, progress)
                         continue
                 else:
