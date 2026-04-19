@@ -203,40 +203,56 @@ def _render_summary(summary: Optional[dict[str, Any]], *, empty_message: str = "
 
 
 class _StatusTee:
-    """Stream que escreve simultaneamente em um buffer de texto E no st.status().
+    """Stream que escreve no buffer E atualiza um st.empty() em tempo real.
 
-    Isso faz com que cada linha de `log()` do pipeline apareça em tempo real
-    no widget st.status() enquanto o job executa, sem perder o conteúdo para
-    o buffer (usado para análise pós-execução e exibição de erros).
+    Usa um único placeholder (st.empty) que é SOBRESCRITO a cada linha —
+    nunca acumula elementos no frontend. Isso evita o crash por overflow de
+    widgets quando o pipeline emite centenas/milhares de linhas de log.
+
+    Rate-limit: no máximo 1 atualização visual por segundo, independente do
+    volume de output. Linhas JSON estruturadas (do _IngestionLog) são ignoradas
+    no display mas ainda gravadas no buffer.
     """
 
-    def __init__(self, buf: "io.StringIO", status_widget: Any) -> None:
+    _MIN_INTERVAL_S: float = 1.0   # intervalo mínimo entre atualizações visuais
+
+    def __init__(self, buf: "io.StringIO", placeholder: Any) -> None:
         self._buf = buf
-        self._status = status_widget
-        self._pending = ""   # caracteres ainda não terminados em \n
+        self._placeholder = placeholder
+        self._pending = ""
+        self._last_ts: float = 0.0
+
+    def _is_json(self, line: str) -> bool:
+        s = line.strip()
+        return s.startswith("{") and s.endswith("}")
+
+    def _maybe_display(self, line: str) -> None:
+        """Atualiza o placeholder apenas se passou tempo suficiente e a linha não é JSON puro."""
+        if self._is_json(line):
+            return   # ignora logs estruturados do _IngestionLog — não são legíveis
+        import time as _time
+        now = _time.monotonic()
+        if now - self._last_ts >= self._MIN_INTERVAL_S:
+            try:
+                self._placeholder.text(line[:200])   # trunca linhas muito longas
+            except Exception:
+                pass
+            self._last_ts = now
 
     def write(self, text: str) -> int:
         self._buf.write(text)
         self._pending += text
-        # Emite uma linha completa a cada \n
         while "\n" in self._pending:
             line, self._pending = self._pending.split("\n", 1)
             stripped = line.strip()
             if stripped:
-                try:
-                    self._status.write(stripped)
-                except Exception:
-                    pass   # st.status pode rejeitar writes fora de contexto — ignorar
+                self._maybe_display(stripped)
         return len(text)
 
     def flush(self) -> None:
         self._buf.flush()
-        # Emite qualquer resto pendente (sem \n) ao fazer flush
         if self._pending.strip():
-            try:
-                self._status.write(self._pending.strip())
-            except Exception:
-                pass
+            self._maybe_display(self._pending.strip())
             self._pending = ""
 
     def isatty(self) -> bool:
@@ -319,12 +335,14 @@ def _run_job(
                     )
                 status.write(f"Importando módulo `{module_import_path}` …")
 
-                # _StatusTee: cada log() do pipeline aparece no status em tempo real
-                stdout_tee = _StatusTee(stdout_buf, status)
+                # Placeholder único: sobrescrito a cada linha (não acumula elementos)
+                log_placeholder = st.empty()
+                stdout_tee = _StatusTee(stdout_buf, log_placeholder)
                 with redirect_stdout(stdout_tee), redirect_stderr(stderr_buf):
                     mod = __import__(module_import_path, fromlist=[module_attr_name])
                     status.write(f"Executando `{module_attr_name}.{main_func_name}()` …")
                     getattr(mod, main_func_name)()
+                log_placeholder.empty()   # limpa o placeholder ao terminar
 
                 status.update(label="Execução finalizada.", state="complete")
 
@@ -568,8 +586,10 @@ def _render_single_run_card(doc_type: str) -> None:
 
     errors_list = errors_payload.get("errors", [])
     if errors_list:
-        with st.expander(f"⚠️ {len(errors_list)} erro(s) registrado(s)", expanded=False):
-            for e in errors_list[-10:]:
+        # Expande automaticamente quando o status é failed para facilitar diagnóstico
+        auto_expand = status in ("failed", "partial_success")
+        with st.expander(f"⚠️ {len(errors_list)} erro(s) registrado(s)", expanded=auto_expand):
+            for e in errors_list[-20:]:
                 st.code(e, language="text")
 
 
