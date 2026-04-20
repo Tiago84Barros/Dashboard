@@ -439,7 +439,7 @@ def _render_v2_schema_status() -> bool:
         # Schema incompleto — mostrar diagnóstico de conexão para ajudar o usuário
         st.error(
             "Schema CVM V2 **incompleto**. Aplique o DDL institucional V2 antes de executar os jobs.\n\n"
-            + ("\n".join(f"  ✅ {n}" for n in found) + "\n" if found else "")
+            + (("\n".join(f"  ✅ {n}" for n in found) + "\n") if found else "")
             + "\n".join(f"  ❌ {n}" for n in missing)
         )
 
@@ -563,7 +563,7 @@ def _render_single_run_card(doc_type: str) -> None:
     # Progresso incremental
     years_total = _safe_int(metrics.get("years_total"), 0)
     years_done = _safe_int(metrics.get("years_done"), 0)
-    years_failed = _safe_int(metrics.get("years_failed"), 0)
+    years_failed = _safe_int(metrics.get("failed_years_count", metrics.get("years_failed")), 0)
     raw_rows = _safe_int(metrics.get("raw_rows_accum"), 0)
     inserted = _safe_int(metrics.get("inserted_rows_accum"), 0)
     current_year = metrics.get("current_year")
@@ -586,6 +586,24 @@ def _render_single_run_card(doc_type: str) -> None:
 
     if message:
         st.caption(f"Mensagem: {message}")
+
+    year_details = metrics.get("year_details") or {}
+    if isinstance(year_details, dict) and year_details:
+        with st.expander("Detalhes por ano", expanded=status in ("failed", "partial_success")):
+            for year_key in sorted(year_details.keys()):
+                info = year_details.get(year_key) or {}
+                info_metrics = info.get("metrics") or {}
+                rows_prepared = _safe_int(info.get("rows_prepared", info_metrics.get("rows_prepared")), 0)
+                rows_inserted = _safe_int(info.get("rows_inserted"), 0)
+                rows_with_ticker = _safe_int(info_metrics.get("rows_with_ticker"), 0)
+                rows_without_ticker = _safe_int(info_metrics.get("rows_without_ticker"), 0)
+                st.markdown(
+                    f"**{year_key}** — status: `{info.get('status', '?')}`  \n"
+                    f"Preparadas: **{rows_prepared:,}** | Inseridas: **{rows_inserted:,}** | "
+                    f"Com ticker: **{rows_with_ticker:,}** | Sem ticker: **{rows_without_ticker:,}**"
+                )
+                if info.get("errors"):
+                    st.code("\n\n".join(info.get("errors", [])[-3:]), language="text")
 
     errors_list = errors_payload.get("errors", [])
     if errors_list:
