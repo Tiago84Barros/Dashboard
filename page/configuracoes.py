@@ -225,13 +225,20 @@ def _coerce_dt(value: Any) -> Optional[pd.Timestamp]:
         return None
 
 
+def _utc_now_ts() -> pd.Timestamp:
+    now = pd.Timestamp.utcnow()
+    if getattr(now, "tzinfo", None) is None:
+        return now.tz_localize("UTC")
+    return now.tz_convert("UTC")
+
+
 def _is_v2_run_stale(run: Optional[dict], stale_minutes: int = V2_STALE_MINUTES) -> bool:
     if not run or run.get("status") != "running":
         return False
     updated = _coerce_dt(run.get("updated_at"))
     if updated is None:
         return False
-    age = pd.Timestamp.utcnow().tz_localize("UTC") - updated
+    age = _utc_now_ts() - updated
     return age.total_seconds() >= stale_minutes * 60
 
 
@@ -241,7 +248,7 @@ def _stale_age_minutes(run: Optional[dict]) -> Optional[int]:
     updated = _coerce_dt(run.get("updated_at"))
     if updated is None:
         return None
-    age = pd.Timestamp.utcnow().tz_localize("UTC") - updated
+    age = _utc_now_ts() - updated
     return max(int(age.total_seconds() // 60), 0)
 
 
@@ -276,17 +283,6 @@ def _mark_run_failed(run_id: str, note: str) -> bool:
 
 
 class _StatusTee:
-    """Stream que escreve no buffer E atualiza um st.empty() em tempo real.
-
-    Usa um único placeholder (st.empty) que é SOBRESCRITO a cada linha —
-    nunca acumula elementos no frontend. Isso evita o crash por overflow de
-    widgets quando o pipeline emite centenas/milhares de linhas de log.
-
-    Rate-limit: no máximo 1 atualização visual por segundo, independente do
-    volume de output. Linhas JSON estruturadas (do _IngestionLog) são ignoradas
-    no display mas ainda gravadas no buffer.
-    """
-
     _MIN_INTERVAL_S: float = 1.0
 
     def __init__(self, buf: "io.StringIO", placeholder: Any) -> None:
@@ -398,7 +394,6 @@ def _run_job(
 
     with col2:
         if run_is_active:
-            age = latest_v2_run.get("stale_age_minutes")
             st.warning(
                 f"Existe um run `{active_run_check_doc_type}` em andamento. "
                 f"Run ID: `{latest_v2_run.get('run_id')}` | Ano atual: `{(latest_v2_run.get('metrics') or {}).get('current_year', '—')}` | "
