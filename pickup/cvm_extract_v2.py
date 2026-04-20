@@ -702,6 +702,14 @@ def upsert_cvm_financial_raw(rows: List[dict], run_id: Optional[str]) -> int:
     df = pd.DataFrame(rows)
     df["run_id"] = run_id
 
+    # Corrige null handling em colunas date para evitar NaN float no psycopg2.
+    for date_col in ["dt_refer", "dt_ini_exerc", "dt_fim_exerc"]:
+        if date_col in df.columns:
+            df[date_col] = pd.to_datetime(df[date_col], errors="coerce").dt.date
+
+    # Converte todos os NaN/NaT para None real de Python antes do execute_values.
+    df = df.astype(object).where(pd.notna(df), None)
+
     before_dedup = len(df)
     df = df.drop_duplicates(
         subset=["source_doc", "tipo_demo", "arquivo_origem", "cd_cvm", "dt_refer", "cd_conta", "row_hash"],
