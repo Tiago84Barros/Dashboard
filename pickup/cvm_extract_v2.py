@@ -43,6 +43,9 @@ CACHE_ZIPS = os.getenv("CACHE_ZIPS", "1").strip() == "1"
 FORCAR_REDOWNLOAD = os.getenv("FORCAR_REDOWNLOAD", "0").strip() == "1"
 BATCH_SIZE_INSERT = int(os.getenv("BATCH_SIZE_INSERT", "3000"))
 LOG_PREFIX = os.getenv("LOG_PREFIX", f"[{DOC_TYPE}_RAW_V2]")
+# Máximo de anos processados por execução. Evita crash por timeout/memória no
+# Streamlit Cloud. Execute múltiplas vezes: anos já com dados são pulados.
+MAX_ANOS_POR_RUN = int(os.getenv("MAX_ANOS_POR_RUN", "3"))
 
 BASE_DIR = Path(__file__).resolve().parent
 TICKER_PATH = Path(os.getenv("TICKER_PATH", str(BASE_DIR / "cvm_to_ticker.csv")))
@@ -376,6 +379,34 @@ def process_year(session: requests.Session, year: int, ticker_map: pd.DataFrame)
 # =========================================================
 # DB
 # =========================================================
+def _get_years_with_data(source_doc: str) -> set:
+    """Retorna conjunto de anos que já possuem linhas em cvm_financial_raw.
+
+    Usado para pular anos já processados em execuções anteriores,
+    permitindo retomada incremental sem re-processar dados existentes.
+    """
+    try:
+        from sqlalchemy import text as sa_text
+        engine = get_engine()
+        with engine.connect() as conn:
+            rows = conn.execute(
+                sa_text(
+                    """
+                    SELECT DISTINCT EXTRACT(YEAR FROM dt_refer::date)::int AS ano
+                    FROM public.cvm_financial_raw
+                    WHERE source_doc = :doc
+                    ORDER BY ano
+                    """
+                ),
+                {"doc": source_doc},
+            ).fetchall()
+        result = {int(r[0]) for r in rows if r[0] is not None}
+        return result
+    except Exception as exc:
+        log(f"[WARN] Não foi possível verificar anos já processados: {exc} — prosseguindo sem filtro.", level="WARN")
+        return set()
+
+
 def _assert_raw_unique_ready(cur) -> None:
     cur.execute(
         """
@@ -613,16 +644,43 @@ def main() -> None:
     log(f"Ticker map carregado: {len(ticker_map)} empresas.")
 
     last_year = int(ULTIMO_ANO) if ULTIMO_ANO else _last_available_year(session)
-    years = list(range(ANO_INICIAL, last_year + 1))
-    log(f"Anos a processar: {ANO_INICIAL}–{last_year} ({len(years)} anos).")
+    all_years = list(range(ANO_INICIAL, last_year + 1))
+
+    # ── Filtra anos já com dados no banco (retomada incremental) ───────────
+    log("Verificando anos já processados no banco…")
+    years_with_data = _get_years_with_data(DOC_TYPE)
+    if years_with_data:
+        log(f"Anos já com dados ({len(years_with_data)}): {sorted(years_with_data)}")
+    else:
+        log("Nenhum dado encontrado ainda — iniciando do zero.")
+
+    years_pending = [y for y in all_years if y not in years_with_data]
+
+    if not years_pending:
+        log(f"Todos os {len(all_years)} anos já estão no banco. Nada a fazer.")
+        return
+
+    # ── Limita ao máximo por execução para evitar timeout/OOM ──────────────
+    years = years_pending[:MAX_ANOS_POR_RUN]
+    anos_restantes_apos = len(years_pending) - len(years)
+
+    log(
+        f"Anos pendentes: {len(years_pending)} | "
+        f"Processando agora: {len(years)} ({years[0]}–{years[-1]}) | "
+        f"Restam após esta execução: {anos_restantes_apos} | "
+        f"Limite por run: MAX_ANOS_POR_RUN={MAX_ANOS_POR_RUN}"
+    )
 
     # ── Cria o run registry DEPOIS de saber o intervalo real ───────────────
-    run_id = _create_run(DOC_TYPE, ANO_INICIAL, last_year)
+    run_id = _create_run(DOC_TYPE, years[0], years[-1])
     log(f"Run criada: {run_id}")
 
     # Progresso inicial
     progress: dict = {
         "stage": "processing",
+        "anos_neste_lote": years,           # anos que serão processados agora
+        "anos_ja_no_banco": sorted(years_with_data),
+        "anos_restantes_apos_run": anos_restantes_apos,
         "years_total": len(years),
         "years_done": 0,
         "years_failed": 0,
@@ -630,7 +688,7 @@ def main() -> None:
         "raw_rows_accum": 0,
         "inserted_rows_accum": 0,
         "last_event_at": datetime.utcnow().isoformat(),
-        "message": "Iniciando processamento ano a ano…",
+        "message": f"Iniciando lote: {years[0]}–{years[-1]} ({len(years)} anos)…",
     }
     _update_run_progress(run_id, progress)
 
