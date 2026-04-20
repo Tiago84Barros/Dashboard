@@ -273,10 +273,44 @@ def _row_hash(
 
 
 # =========================================================
+# FILTROS DE VALUATION
+# =========================================================
+
+# Apenas demonstrações consolidadas necessárias para valuation.
+# Individual (holding sem subsidiárias) e DVA/DMPL são ignorados.
+DEMOS_VALUATION = frozenset(["DRE", "BPA", "BPP", "DFC_MI", "DFC_MD"])
+
+# Nível máximo de conta a importar.
+# Nível 1-3 cobre os agregados usados em valuation (ex: 3.01, 3.02, 3.03).
+# Nível 4+ são subcontas de detalhe desnecessárias (ex: 3.06.01.01.02).
+NIVEL_CONTA_MAX = int(os.getenv("NIVEL_CONTA_MAX", "3"))
+
+# Rótulo do exercício atual dentro de cada arquivo.
+# Cada DFP/ITR carrega o período atual + o anterior para comparação.
+# Só o atual interessa na camada raw — o anterior já está ou virá do seu próprio arquivo.
+ORDEM_EXERC_VALIDO = frozenset(["ÚLTIMO EXERCÍCIO", "ULTIMO EXERCICIO"])
+
+
+def _arquivo_relevante(filename: str) -> bool:
+    """Retorna True se o arquivo CSV do ZIP deve ser processado para valuation.
+
+    Regras:
+    - Deve ser arquivo consolidado (_con_): individual ignora subsidiárias.
+    - Deve ser uma das demos essenciais: DRE, BPA, BPP, DFC_MI, DFC_MD.
+    - DMPL e DVA são ignorados — irrelevantes para valuation.
+    """
+    name = filename.upper()
+    if "_IND_" in name:
+        return False   # individual: apenas holding, sem subsidiárias
+    demo_type = _infer_demo_type(filename)
+    return demo_type in DEMOS_VALUATION
+
+
+# =========================================================
 # EXTRACTION
 # =========================================================
 def _empty_year_result() -> Dict[str, object]:
-    return {"rows": [], "errors": []}
+    return {"rows": [], "errors": [], "skipped_files": 0, "skipped_rows": 0}
 
 
 def process_year(session: requests.Session, year: int, ticker_map: pd.DataFrame) -> Dict[str, object]:
@@ -291,12 +325,15 @@ def process_year(session: requests.Session, year: int, ticker_map: pd.DataFrame)
 
     try:
         with zipfile.ZipFile(io.BytesIO(raw_zip)) as zip_ref:
-            for filename in zip_ref.namelist():
-                if not filename.endswith(".csv"):
+            all_csv = [f for f in zip_ref.namelist() if f.endswith(".csv")]
+            for filename in all_csv:
+
+                # ── Filtro 1: apenas demos consolidadas relevantes para valuation ──
+                if not _arquivo_relevante(filename):
+                    result["skipped_files"] += 1
                     continue
+
                 demo_type = _infer_demo_type(filename)
-                if demo_type is None:
-                    continue
 
                 with zip_ref.open(filename) as csvfile:
                     try:
@@ -309,11 +346,36 @@ def process_year(session: requests.Session, year: int, ticker_map: pd.DataFrame)
                                 logger=_RUN_LOG,
                             )
 
+                        before = len(df)
+
+                        # ── Filtro 2: apenas exercício atual (não o comparativo) ──
+                        if "ORDEM_EXERC" in df.columns:
+                            mask_exerc = (
+                                df["ORDEM_EXERC"]
+                                .astype(str)
+                                .str.strip()
+                                .str.upper()
+                                .isin(ORDEM_EXERC_VALIDO)
+                            )
+                            df = df[mask_exerc].copy()
+
+                        # ── Filtro 3: apenas contas até nível 3 (agregados de valuation) ──
+                        if "NIVEL_CONTA" in df.columns:
+                            df = df[
+                                pd.to_numeric(df["NIVEL_CONTA"], errors="coerce")
+                                .fillna(99)
+                                .le(NIVEL_CONTA_MAX)
+                            ].copy()
+
+                        result["skipped_rows"] += before - len(df)
+
+                        if df.empty:
+                            continue
+
                         df = _normalize_value_scale(df)
                         group_demo = _infer_group_demo(filename, df)
                         df = df.merge(ticker_map, how="left", on="CD_CVM")
 
-                        # Mantém tudo, inclusive exercícios reprocessados, para a camada raw.
                         for row in df.to_dict(orient="records"):
                             dt_refer = _safe_date(row.get("DT_REFER"))
                             if dt_refer is None:
@@ -366,7 +428,14 @@ def process_year(session: requests.Session, year: int, ticker_map: pd.DataFrame)
                         message = f"{DOC_TYPE} {year}: erro ao processar arquivo {filename}: {exc}"
                         result["errors"].append(message)
                         log(message, level="ERROR", year=year, file=filename, stage="file_processing_failed")
+
+        log(
+            f"  {DOC_TYPE} {year}: {len(result['rows'])} linhas úteis | "
+            f"{result['skipped_files']} arquivos ignorados | "
+            f"{result['skipped_rows']} linhas filtradas"
+        )
         return result
+
     except zipfile.BadZipFile:
         message = f"{DOC_TYPE} {year}: ZIP inválido."
         result["errors"].append(message)
@@ -720,6 +789,8 @@ def main() -> None:
                 all_errors.extend(errors)
 
                 progress["raw_rows_accum"] += len(rows)
+                progress["skipped_files_accum"] = progress.get("skipped_files_accum", 0) + year_result.get("skipped_files", 0)
+                progress["skipped_rows_accum"] = progress.get("skipped_rows_accum", 0) + year_result.get("skipped_rows", 0)
                 progress["last_event_at"] = datetime.utcnow().isoformat()
 
                 if rows:
