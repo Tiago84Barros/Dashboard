@@ -577,8 +577,11 @@ def _render_single_run_card(doc_type: str) -> None:
         cols_m[0].metric("Anos OK", years_done)
         cols_m[1].metric("Anos c/ erro", years_failed)
         cols_m[2].metric("Ano atual", current_year or "—")
+        skipped_files = _safe_int(metrics.get("skipped_files_accum"), 0)
+        skipped_rows = _safe_int(metrics.get("skipped_rows_accum"), 0)
         st.caption(
-            f"Raw rows acumuladas: **{raw_rows:,}** | Inseridas: **{inserted:,}**"
+            f"Úteis: **{raw_rows:,}** linhas | Inseridas: **{inserted:,}** | "
+            f"Filtradas: **{skipped_rows:,}** linhas + **{skipped_files}** arquivos ignorados"
         )
 
     if message:
