@@ -22,6 +22,7 @@ except Exception:  # pragma: no cover
 
 LOCAL_TZ = "America/Sao_Paulo"
 PIPELINES_COM_TICKERS = {"dfp", "itr", "multiplos_dfp", "multiplos_itr"}
+V2_STALE_MINUTES = int(os.getenv("V2_STALE_MINUTES", "5"))
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
@@ -202,6 +203,78 @@ def _render_summary(summary: Optional[dict[str, Any]], *, empty_message: str = "
     st.success("\n".join(lines))
 
 
+def _parse_jsonish(value: Any) -> dict:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _coerce_dt(value: Any) -> Optional[pd.Timestamp]:
+    try:
+        dt = pd.to_datetime(value, utc=True)
+        if pd.isna(dt):
+            return None
+        return dt
+    except Exception:
+        return None
+
+
+def _is_v2_run_stale(run: Optional[dict], stale_minutes: int = V2_STALE_MINUTES) -> bool:
+    if not run or run.get("status") != "running":
+        return False
+    updated = _coerce_dt(run.get("updated_at"))
+    if updated is None:
+        return False
+    age = pd.Timestamp.utcnow().tz_localize("UTC") - updated
+    return age.total_seconds() >= stale_minutes * 60
+
+
+def _stale_age_minutes(run: Optional[dict]) -> Optional[int]:
+    if not run:
+        return None
+    updated = _coerce_dt(run.get("updated_at"))
+    if updated is None:
+        return None
+    age = pd.Timestamp.utcnow().tz_localize("UTC") - updated
+    return max(int(age.total_seconds() // 60), 0)
+
+
+def _mark_run_failed(run_id: str, note: str) -> bool:
+    if get_engine is None:
+        return False
+    try:
+        engine = get_engine()
+        raw_conn = engine.raw_connection()
+        try:
+            with raw_conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE public.cvm_ingestion_runs
+                    SET status = 'failed',
+                        finished_at = NOW(),
+                        updated_at = NOW(),
+                        errors = COALESCE(errors, '{}'::jsonb) || jsonb_build_object('manual_note', %s)
+                    WHERE run_id = %s
+                    """,
+                    (note, run_id),
+                )
+            raw_conn.commit()
+        except Exception:
+            raw_conn.rollback()
+            raise
+        finally:
+            raw_conn.close()
+        return True
+    except Exception:
+        return False
+
+
 class _StatusTee:
     """Stream que escreve no buffer E atualiza um st.empty() em tempo real.
 
@@ -214,7 +287,7 @@ class _StatusTee:
     no display mas ainda gravadas no buffer.
     """
 
-    _MIN_INTERVAL_S: float = 1.0   # intervalo mínimo entre atualizações visuais
+    _MIN_INTERVAL_S: float = 1.0
 
     def __init__(self, buf: "io.StringIO", placeholder: Any) -> None:
         self._buf = buf
@@ -227,14 +300,13 @@ class _StatusTee:
         return s.startswith("{") and s.endswith("}")
 
     def _maybe_display(self, line: str) -> None:
-        """Atualiza o placeholder apenas se passou tempo suficiente e a linha não é JSON puro."""
         if self._is_json(line):
-            return   # ignora logs estruturados do _IngestionLog — não são legíveis
+            return
         import time as _time
         now = _time.monotonic()
         if now - self._last_ts >= self._MIN_INTERVAL_S:
             try:
-                self._placeholder.text(line[:200])   # trunca linhas muito longas
+                self._placeholder.text(line[:200])
             except Exception:
                 pass
             self._last_ts = now
@@ -259,6 +331,42 @@ class _StatusTee:
         return False
 
 
+@st.cache_data(ttl=10)
+def _load_latest_v2_run(doc_type: str) -> Optional[dict]:
+    if get_engine is None or text is None:
+        return None
+    try:
+        engine = get_engine()
+        sql = text(
+            """
+            SELECT run_id, source_doc, status, ano_inicial, ano_final,
+                   ultimo_ano_disponivel, metrics, errors,
+                   started_at, finished_at, updated_at
+            FROM public.cvm_ingestion_runs
+            WHERE source_doc = :doc
+            ORDER BY started_at DESC
+            LIMIT 1
+            """
+        )
+        with engine.connect() as conn:
+            row = conn.execute(sql, {"doc": doc_type}).fetchone()
+        if row is None:
+            return None
+        keys = [
+            "run_id", "source_doc", "status", "ano_inicial", "ano_final",
+            "ultimo_ano_disponivel", "metrics", "errors",
+            "started_at", "finished_at", "updated_at",
+        ]
+        run = dict(zip(keys, row))
+        run["metrics"] = _parse_jsonish(run.get("metrics"))
+        run["errors"] = _parse_jsonish(run.get("errors"))
+        run["is_stale"] = _is_v2_run_stale(run)
+        run["stale_age_minutes"] = _stale_age_minutes(run)
+        return run
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
 def _run_job(
     *,
     job_key: str,
@@ -270,18 +378,14 @@ def _run_job(
     main_func_name: str = "main",
     pipeline_name: Optional[str] = None,
     env_overrides: Optional[Dict[str, str]] = None,
+    active_run_check_doc_type: Optional[str] = None,
 ) -> None:
-    """Renderiza um botão de job e executa o pipeline quando acionado.
-
-    Args:
-        env_overrides: Variáveis de ambiente a serem definidas temporariamente
-            durante a execução. Útil para jobs que lêem configuração via env
-            (ex: CVM_DOC_TYPE=DFP). O módulo é removido do cache de importação
-            (sys.modules) para garantir que seja re-avaliado com os novos valores.
-            As variáveis são restauradas ao estado original após a execução.
-    """
     if job_key not in st.session_state:
         st.session_state[job_key] = False
+
+    latest_v2_run = _load_latest_v2_run(active_run_check_doc_type) if active_run_check_doc_type else None
+    run_is_stale = bool(latest_v2_run and latest_v2_run.get("is_stale"))
+    run_is_active = bool(latest_v2_run and latest_v2_run.get("status") == "running" and not run_is_stale)
 
     col1, col2 = st.columns([1, 2], gap="large")
 
@@ -289,17 +393,50 @@ def _run_job(
         run = st.button(
             button_label,
             use_container_width=True,
-            disabled=st.session_state[job_key],
+            disabled=st.session_state[job_key] or run_is_active,
         )
 
     with col2:
-        st.info(info_text)
+        if run_is_active:
+            age = latest_v2_run.get("stale_age_minutes")
+            st.warning(
+                f"Existe um run `{active_run_check_doc_type}` em andamento. "
+                f"Run ID: `{latest_v2_run.get('run_id')}` | Ano atual: `{(latest_v2_run.get('metrics') or {}).get('current_year', '—')}` | "
+                f"Última atualização: {_format_dt(latest_v2_run.get('updated_at'))}"
+            )
+        elif run_is_stale:
+            age = latest_v2_run.get("stale_age_minutes")
+            st.warning(
+                f"O último run `{active_run_check_doc_type}` parece travado (stale). "
+                f"Run ID: `{latest_v2_run.get('run_id')}` | Sem atualização há ~{age} min. "
+                f"Use as ações de manutenção para marcá-lo como failed e liberar nova execução."
+            )
+        else:
+            st.info(info_text)
 
     with st.expander("Ações de manutenção", expanded=False):
         if st.button(f"Resetar trava do botão ({button_label})"):
             st.session_state[job_key] = False
             st.success("Trava resetada.")
             st.rerun()
+
+        if active_run_check_doc_type and latest_v2_run and latest_v2_run.get("status") == "running":
+            if latest_v2_run.get("is_stale"):
+                if st.button(f"Marcar último run {active_run_check_doc_type} como failed (stale)"):
+                    note = (
+                        f"Run marcado como failed manualmente pela UI após ficar stale por ~"
+                        f"{latest_v2_run.get('stale_age_minutes')} min sem atualizar progresso."
+                    )
+                    ok = _mark_run_failed(latest_v2_run.get("run_id"), note)
+                    if ok:
+                        st.session_state[job_key] = False
+                        st.cache_data.clear()
+                        st.success("Run marcado como failed e botão liberado.")
+                        st.rerun()
+                    else:
+                        st.error("Não foi possível marcar o run como failed.")
+            else:
+                st.caption("A nova execução será liberada automaticamente quando o run ativo terminar ou falhar.")
 
     summary_placeholder = st.empty()
     latest_summary = _load_latest_success_summary(pipeline_name) if pipeline_name else None
@@ -316,14 +453,11 @@ def _run_job(
 
         stdout_buf = io.StringIO()
         stderr_buf = io.StringIO()
-
-        # ── Suporte a env_overrides: guarda env atual e força reload do módulo
         _saved_env: Dict[str, Optional[str]] = {}
         if env_overrides:
             for k, v in env_overrides.items():
                 _saved_env[k] = os.environ.get(k)
                 os.environ[k] = v
-            # Remove módulo do cache para garantir re-importação com novas vars
             sys.modules.pop(module_import_path, None)
 
         try:
@@ -335,14 +469,13 @@ def _run_job(
                     )
                 status.write(f"Importando módulo `{module_import_path}` …")
 
-                # Placeholder único: sobrescrito a cada linha (não acumula elementos)
                 log_placeholder = st.empty()
                 stdout_tee = _StatusTee(stdout_buf, log_placeholder)
                 with redirect_stdout(stdout_tee), redirect_stderr(stderr_buf):
                     mod = __import__(module_import_path, fromlist=[module_attr_name])
                     status.write(f"Executando `{module_attr_name}.{main_func_name}()` …")
                     getattr(mod, main_func_name)()
-                log_placeholder.empty()   # limpa o placeholder ao terminar
+                log_placeholder.empty()
 
                 status.update(label="Execução finalizada.", state="complete")
 
@@ -377,14 +510,12 @@ def _run_job(
                         st.code(err, language="text")
 
         finally:
-            # Restaura variáveis de ambiente originais
             if env_overrides:
                 for k, old_v in _saved_env.items():
                     if old_v is None:
                         os.environ.pop(k, None)
                     else:
                         os.environ[k] = old_v
-                # Remove módulo do cache (próxima execução também será fresh)
                 sys.modules.pop(module_import_path, None)
 
             st.session_state[job_key] = False
@@ -392,7 +523,6 @@ def _run_job(
 
 @st.cache_data(ttl=30)
 def _check_v2_schema_cached() -> dict:
-    """Verifica o schema V2 com cache de 30 s."""
     try:
         from core.cvm_v2_schema_check import check_v2_schema
         return check_v2_schema()
@@ -402,7 +532,6 @@ def _check_v2_schema_cached() -> dict:
 
 @st.cache_data(ttl=30)
 def _get_v2_diagnostics_cached() -> dict:
-    """Diagnóstico de conexão com cache de 30 s."""
     try:
         from core.cvm_v2_schema_check import get_connection_diagnostics
         return get_connection_diagnostics()
@@ -411,7 +540,6 @@ def _get_v2_diagnostics_cached() -> dict:
 
 
 def _render_v2_schema_status() -> bool:
-    """Exibe card de status do schema CVM V2. Retorna True se schema estiver pronto."""
     with st.expander("Status do Schema CVM V2", expanded=True):
         if st.button("Reverificar schema", key="btn_v2_schema_check"):
             st.cache_data.clear()
@@ -436,14 +564,12 @@ def _render_v2_schema_status() -> bool:
             )
             return True
 
-        # Schema incompleto — mostrar diagnóstico de conexão para ajudar o usuário
         st.error(
             "Schema CVM V2 **incompleto**. Aplique o DDL institucional V2 antes de executar os jobs.\n\n"
             + (("\n".join(f"  ✅ {n}" for n in found) + "\n") if found else "")
             + "\n".join(f"  ❌ {n}" for n in missing)
         )
 
-        # Diagnóstico de conexão — mostra banco conectado e tabelas existentes
         diag = _get_v2_diagnostics_cached()
         if diag.get("error"):
             st.warning(f"Não foi possível obter diagnóstico de conexão: {diag['error']}")
@@ -479,40 +605,7 @@ def _render_v2_schema_status() -> bool:
         return False
 
 
-@st.cache_data(ttl=10)
-def _load_latest_v2_run(doc_type: str) -> Optional[dict]:
-    """Retorna o run mais recente de cvm_ingestion_runs para doc_type. TTL=10 s."""
-    if get_engine is None or text is None:
-        return None
-    try:
-        engine = get_engine()
-        sql = text(
-            """
-            SELECT run_id, source_doc, status, ano_inicial, ano_final,
-                   ultimo_ano_disponivel, metrics, errors,
-                   started_at, finished_at, updated_at
-            FROM public.cvm_ingestion_runs
-            WHERE source_doc = :doc
-            ORDER BY started_at DESC
-            LIMIT 1
-            """
-        )
-        with engine.connect() as conn:
-            row = conn.execute(sql, {"doc": doc_type}).fetchone()
-        if row is None:
-            return None
-        keys = [
-            "run_id", "source_doc", "status", "ano_inicial", "ano_final",
-            "ultimo_ano_disponivel", "metrics", "errors",
-            "started_at", "finished_at", "updated_at",
-        ]
-        return dict(zip(keys, row))
-    except Exception as exc:
-        return {"error": str(exc)}
-
-
 def _render_single_run_card(doc_type: str) -> None:
-    """Renderiza um card de status/progresso para o run mais recente de doc_type."""
     run = _load_latest_v2_run(doc_type)
 
     st.markdown(f"**{doc_type}**")
@@ -526,41 +619,40 @@ def _render_single_run_card(doc_type: str) -> None:
         return
 
     status = run.get("status", "?")
+    display_status = status
+    if run.get("is_stale"):
+        display_status = "stale"
+
     STATUS_ICON = {
         "running": "🔄",
         "success": "✅",
         "partial_success": "⚠️",
         "failed": "❌",
+        "stale": "⏸️",
     }
-    icon = STATUS_ICON.get(status, "❓")
+    icon = STATUS_ICON.get(display_status, "❓")
 
     metrics: dict = run.get("metrics") or {}
-    if isinstance(metrics, str):
-        try:
-            metrics = json.loads(metrics)
-        except Exception:
-            metrics = {}
-
     errors_payload: dict = run.get("errors") or {}
-    if isinstance(errors_payload, str):
-        try:
-            errors_payload = json.loads(errors_payload)
-        except Exception:
-            errors_payload = {}
 
     started = _format_dt(run.get("started_at"))
     finished = _format_dt(run.get("finished_at"))
     updated = _format_dt(run.get("updated_at"))
 
     st.markdown(
-        f"{icon} **Status:** `{status}`  \n"
+        f"{icon} **Status:** `{display_status}`  \n"
         f"**Run ID:** `{run.get('run_id', '?')}`  \n"
         f"**Início:** {started}  \n"
         f"**Fim:** {finished}  \n"
         f"**Última atualização:** {updated}"
     )
 
-    # Progresso incremental
+    if run.get("is_stale"):
+        st.warning(
+            f"Run sem atualização há ~{run.get('stale_age_minutes')} min. "
+            "Provavelmente travado. Pode ser marcado como failed nas ações de manutenção do botão."
+        )
+
     years_total = _safe_int(metrics.get("years_total"), 0)
     years_done = _safe_int(metrics.get("years_done"), 0)
     years_failed = _safe_int(metrics.get("failed_years_count", metrics.get("years_failed")), 0)
@@ -589,7 +681,7 @@ def _render_single_run_card(doc_type: str) -> None:
 
     year_details = metrics.get("year_details") or {}
     if isinstance(year_details, dict) and year_details:
-        with st.expander("Detalhes por ano", expanded=status in ("failed", "partial_success")):
+        with st.expander("Detalhes por ano", expanded=display_status in ("failed", "partial_success", "stale")):
             for year_key in sorted(year_details.keys()):
                 info = year_details.get(year_key) or {}
                 info_metrics = info.get("metrics") or {}
@@ -607,8 +699,7 @@ def _render_single_run_card(doc_type: str) -> None:
 
     errors_list = errors_payload.get("errors", [])
     if errors_list:
-        # Expande automaticamente quando o status é failed para facilitar diagnóstico
-        auto_expand = status in ("failed", "partial_success")
+        auto_expand = display_status in ("failed", "partial_success", "stale")
         with st.expander(f"⚠️ {len(errors_list)} erro(s) registrado(s)", expanded=auto_expand):
             for e in errors_list[-20:]:
                 st.code(e, language="text")
@@ -616,7 +707,6 @@ def _render_single_run_card(doc_type: str) -> None:
 
 @st.cache_data(ttl=15)
 def _count_years_in_db(doc_type: str) -> list:
-    """Retorna lista de anos distintos em cvm_financial_raw para doc_type."""
     if get_engine is None or text is None:
         return []
     try:
@@ -637,13 +727,11 @@ def _count_years_in_db(doc_type: str) -> list:
 
 
 def _render_v2_run_monitor() -> None:
-    """Renderiza o painel de monitoramento de runs V2 (DFP e ITR lado a lado)."""
     with st.expander("📊 Monitor de Runs V2", expanded=True):
         if st.button("🔄 Atualizar status dos runs", key="btn_v2_refresh_runs"):
             st.cache_data.clear()
             st.rerun()
 
-        # Progresso acumulado entre todos os runs
         dfp_years = _count_years_in_db("DFP")
         itr_years = _count_years_in_db("ITR")
         ano_ref = 2010
@@ -673,7 +761,6 @@ def _render_v2_run_monitor() -> None:
 
 
 def _render_v2_section() -> None:
-    """Renderiza a seção CVM V2 abaixo dos jobs legados."""
     st.divider()
     st.markdown("## CVM V2 — Pipeline Institucional Raw")
     st.caption(
@@ -692,7 +779,6 @@ def _render_v2_section() -> None:
         "4) Publish Financials — publica em demonstracoes_financeiras_v2\n"
     )
 
-    # ── Controle de lote ───────────────────────────────────────────────────
     st.divider()
     st.markdown("#### ⚙️ Configuração do lote de extração")
     st.caption(
@@ -732,6 +818,7 @@ def _render_v2_section() -> None:
         module_import_path="pickup.cvm_extract_v2",
         module_attr_name="cvm_extract_v2",
         env_overrides={"CVM_DOC_TYPE": "DFP", **env_extract},
+        active_run_check_doc_type="DFP",
     )
 
     st.divider()
@@ -749,6 +836,7 @@ def _render_v2_section() -> None:
         module_import_path="pickup.cvm_extract_v2",
         module_attr_name="cvm_extract_v2",
         env_overrides={"CVM_DOC_TYPE": "ITR", **env_extract},
+        active_run_check_doc_type="ITR",
     )
 
     st.divider()
@@ -962,7 +1050,6 @@ def render() -> None:
         pipeline_name="multiplos_itr",
     )
 
-    # ── Seção CVM V2 (nova, abaixo dos jobs legados) ─────────────────────
     _render_v2_section()
 
 
