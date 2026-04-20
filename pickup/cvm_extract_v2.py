@@ -306,9 +306,15 @@ DEMOS_VALUATION = frozenset(["DRE", "BPA", "BPP", "DFC_MI", "DFC_MD"])
 NIVEL_CONTA_MAX = int(os.getenv("NIVEL_CONTA_MAX", "3"))
 
 # Rótulo do exercício atual dentro de cada arquivo.
-# Cada DFP/ITR carrega o período atual + o anterior para comparação.
-# Só o atual interessa na camada raw — o anterior já está ou virá do seu próprio arquivo.
-ORDEM_EXERC_VALIDO = frozenset(["ÚLTIMO EXERCÍCIO", "ULTIMO EXERCICIO"])
+# Evidência validada no ZIP real dfp_cia_aberta_2025.zip:
+# ORDEM_EXERC vem como "ÚLTIMO" / "PENÚLTIMO".
+# Mantemos também variantes antigas/alternativas por compatibilidade.
+ORDEM_EXERC_VALIDO = frozenset([
+    "ÚLTIMO",
+    "ULTIMO",
+    "ÚLTIMO EXERCÍCIO",
+    "ULTIMO EXERCICIO",
+])
 
 
 def _arquivo_relevante(filename: str) -> bool:
