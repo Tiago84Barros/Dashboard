@@ -683,10 +683,10 @@ def _render_v2_section() -> None:
         "Anos já salvos no banco são pulados automaticamente."
     )
     max_anos = st.number_input(
-        "Máximo de anos por execução (DFP e ITR)",
-        min_value=1, max_value=10, value=2, step=1,
+        "Máximo de anos por execução (0 = todos)",
+        min_value=0, max_value=50, value=0, step=1,
         key="v2_max_anos_por_run",
-        help="Recomendado: 2. Aumente se o servidor aguentar, reduza se travar.",
+        help="0 = processa todos os anos pendentes de uma vez. Use 1–3 apenas se o servidor travar.",
     )
     ano_inicial = st.number_input(
         "Ano inicial da extração",
@@ -707,8 +707,8 @@ def _render_v2_section() -> None:
         button_label="CVM V2 — Extract Raw (DFP)",
         info_text=(
             f"Executa **pickup/cvm_extract_v2.py** com `CVM_DOC_TYPE=DFP`.\n\n"
-            f"Processa até **{int(max_anos)} ano(s)** por execução a partir de **{int(ano_inicial)}**. "
-            "Anos já no banco são pulados. Execute quantas vezes forem necessárias."
+            f"Processa {'**todos** os anos pendentes' if int(max_anos) == 0 else f'até **{int(max_anos)} ano(s)**'} "
+            f"a partir de **{int(ano_inicial)}**. Anos já no banco são pulados automaticamente."
         ),
         status_label="Executando CVM V2 — Extract Raw (DFP)...",
         module_import_path="pickup.cvm_extract_v2",
@@ -724,8 +724,8 @@ def _render_v2_section() -> None:
         button_label="CVM V2 — Extract Raw (ITR)",
         info_text=(
             f"Executa **pickup/cvm_extract_v2.py** com `CVM_DOC_TYPE=ITR`.\n\n"
-            f"Processa até **{int(max_anos)} ano(s)** por execução a partir de **{int(ano_inicial)}**. "
-            "Anos já no banco são pulados. Execute quantas vezes forem necessárias."
+            f"Processa {'**todos** os anos pendentes' if int(max_anos) == 0 else f'até **{int(max_anos)} ano(s)**'} "
+            f"a partir de **{int(ano_inicial)}**. Anos já no banco são pulados automaticamente."
         ),
         status_label="Executando CVM V2 — Extract Raw (ITR)...",
         module_import_path="pickup.cvm_extract_v2",
