@@ -43,9 +43,11 @@ CACHE_ZIPS = os.getenv("CACHE_ZIPS", "1").strip() == "1"
 FORCAR_REDOWNLOAD = os.getenv("FORCAR_REDOWNLOAD", "0").strip() == "1"
 BATCH_SIZE_INSERT = int(os.getenv("BATCH_SIZE_INSERT", "3000"))
 LOG_PREFIX = os.getenv("LOG_PREFIX", f"[{DOC_TYPE}_RAW_V2]")
-# Máximo de anos processados por execução. Evita crash por timeout/memória no
-# Streamlit Cloud. Execute múltiplas vezes: anos já com dados são pulados.
-MAX_ANOS_POR_RUN = int(os.getenv("MAX_ANOS_POR_RUN", "3"))
+# Máximo de anos processados por execução.
+# 0 = sem limite (processa todos os anos pendentes de uma vez).
+# Use valor baixo (ex: 2) apenas se o servidor travar por memória/timeout.
+_max_anos_env = int(os.getenv("MAX_ANOS_POR_RUN", "0"))
+MAX_ANOS_POR_RUN = _max_anos_env if _max_anos_env > 0 else 9999
 
 BASE_DIR = Path(__file__).resolve().parent
 TICKER_PATH = Path(os.getenv("TICKER_PATH", str(BASE_DIR / "cvm_to_ticker.csv")))
