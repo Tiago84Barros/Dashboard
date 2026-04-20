@@ -142,6 +142,8 @@ def _download_year_zip(session: requests.Session, year: int) -> bytes:
 
     log(f"Baixando ZIP {DOC_TYPE} {year}...")
     r = session.get(url, timeout=REQUEST_TIMEOUT)
+    if r.status_code == 404:
+        raise FileNotFoundError(f"Ano {year} não disponível na CVM (404) — ignorando.")
     if r.status_code != 200:
         raise RuntimeError(f"Falha ao baixar ano {year} (status={r.status_code})")
 
@@ -317,29 +319,66 @@ def _empty_year_result() -> Dict[str, object]:
 
 def process_year(session: requests.Session, year: int, ticker_map: pd.DataFrame) -> Dict[str, object]:
     result = _empty_year_result()
+
+    # ── Download ────────────────────────────────────────────────────────────
     try:
         raw_zip = _download_year_zip(session, year)
+    except FileNotFoundError as exc:
+        log(f"  — {exc}", year=year, stage="year_not_available")
+        result["not_available"] = True
+        return result
     except Exception as exc:
         message = f"{DOC_TYPE} {year}: erro ao baixar ZIP: {exc}"
         result["errors"].append(message)
         log(message, level="ERROR", year=year, stage="download_failed")
         return result
 
+    zip_kb = len(raw_zip) // 1024
+    log(f"  ZIP baixado: OK — {zip_kb:,} KB")
+
+    # ── Inspeciona conteúdo do ZIP ──────────────────────────────────────────
     try:
-        with zipfile.ZipFile(io.BytesIO(raw_zip)) as zip_ref:
-            all_csv = [f for f in zip_ref.namelist() if f.endswith(".csv")]
-            for filename in all_csv:
+        zip_buf = io.BytesIO(raw_zip)
+        with zipfile.ZipFile(zip_buf) as zip_ref:
+            all_names   = zip_ref.namelist()
+            all_csv     = [f for f in all_names if f.endswith(".csv")]
+            relevant    = [f for f in all_csv if _arquivo_relevante(f)]
+            irrelevant  = [f for f in all_csv if not _arquivo_relevante(f)]
 
-                # ── Filtro 1: apenas demos consolidadas relevantes para valuation ──
-                if not _arquivo_relevante(filename):
-                    result["skipped_files"] += 1
-                    continue
+            log(f"  Arquivos no ZIP: {len(all_names)} total | {len(all_csv)} CSVs | "
+                f"{len(relevant)} relevantes | {len(irrelevant)} ignorados")
 
+            if not all_csv:
+                msg = f"{DOC_TYPE} {year}: ZIP sem arquivos CSV — estrutura pode ter mudado."
+                result["errors"].append(msg)
+                log(msg, level="ERROR")
+                return result
+
+            if not relevant:
+                log(f"  AVISO: nenhum arquivo passou pelo filtro _arquivo_relevante(). "
+                    f"CSVs encontrados: {all_csv}", level="WARN")
+                log(f"  DEMOS_VALUATION={DEMOS_VALUATION} | "
+                    f"Exemplos de nomes: {all_csv[:5]}", level="WARN")
+                result["skipped_files"] += len(irrelevant)
+                return result
+
+            log(f"  Arquivos ignorados: {irrelevant}")
+            log(f"  Arquivos a processar: {relevant}")
+
+            # ── Processa cada arquivo relevante ────────────────────────────
+            for filename in relevant:
                 demo_type = _infer_demo_type(filename)
 
                 with zip_ref.open(filename) as csvfile:
                     try:
                         df = pd.read_csv(csvfile, sep=";", decimal=",", encoding="ISO-8859-1")
+                        n_lidas = len(df)
+                        log(f"    [{filename}] Linhas lidas: {n_lidas} | Colunas: {list(df.columns)}")
+
+                        if df.empty:
+                            log(f"    [{filename}] CSV vazio — pulando.")
+                            continue
+
                         if validate_required_columns:
                             validate_required_columns(
                                 df,
@@ -348,39 +387,65 @@ def process_year(session: requests.Session, year: int, ticker_map: pd.DataFrame)
                                 logger=_RUN_LOG,
                             )
 
-                        before = len(df)
-
-                        # ── Filtro 2: apenas exercício atual (não o comparativo) ──
+                        # ── Filtro 2: ORDEM_EXERC ───────────────────────────
                         if "ORDEM_EXERC" in df.columns:
+                            valores_unicos = df["ORDEM_EXERC"].astype(str).str.strip().unique().tolist()
+                            log(f"    [{filename}] ORDEM_EXERC valores únicos: {valores_unicos}")
                             mask_exerc = (
                                 df["ORDEM_EXERC"]
-                                .astype(str)
-                                .str.strip()
-                                .str.upper()
+                                .astype(str).str.strip().str.upper()
                                 .isin(ORDEM_EXERC_VALIDO)
                             )
+                            n_antes = len(df)
                             df = df[mask_exerc].copy()
+                            log(f"    [{filename}] Após filtro ORDEM_EXERC "
+                                f"(válidos={ORDEM_EXERC_VALIDO}): {n_antes} → {len(df)}")
+                            if df.empty:
+                                log(f"    [{filename}] ZERO linhas após filtro ORDEM_EXERC — "
+                                    f"verifique os valores acima vs ORDEM_EXERC_VALIDO.", level="WARN")
+                                result["skipped_rows"] += n_antes
+                                continue
+                        else:
+                            log(f"    [{filename}] Coluna ORDEM_EXERC ausente — sem filtro de exercício.")
 
-                        # ── Filtro 3: apenas contas até nível 3 (agregados de valuation) ──
+                        # ── Filtro 3: NIVEL_CONTA ───────────────────────────
                         if "NIVEL_CONTA" in df.columns:
+                            niveis = df["NIVEL_CONTA"].dropna().unique().tolist()
+                            log(f"    [{filename}] NIVEL_CONTA valores únicos: {sorted(niveis)}")
+                            n_antes = len(df)
                             df = df[
                                 pd.to_numeric(df["NIVEL_CONTA"], errors="coerce")
-                                .fillna(99)
-                                .le(NIVEL_CONTA_MAX)
+                                .fillna(99).le(NIVEL_CONTA_MAX)
                             ].copy()
+                            log(f"    [{filename}] Após filtro NIVEL_CONTA <= {NIVEL_CONTA_MAX}: "
+                                f"{n_antes} → {len(df)}")
+                            if df.empty:
+                                log(f"    [{filename}] ZERO linhas após filtro NIVEL_CONTA — "
+                                    f"NIVEL_CONTA_MAX={NIVEL_CONTA_MAX}, níveis encontrados={sorted(niveis)}", level="WARN")
+                                result["skipped_rows"] += n_antes
+                                continue
+                        else:
+                            log(f"    [{filename}] Coluna NIVEL_CONTA ausente — sem filtro de nível.")
 
-                        result["skipped_rows"] += before - len(df)
-
-                        if df.empty:
-                            continue
+                        result["skipped_rows"] += n_lidas - len(df)
 
                         df = _normalize_value_scale(df)
-                        group_demo = _infer_group_demo(filename, df)
-                        df = df.merge(ticker_map, how="left", on="CD_CVM")
 
+                        # ── Merge com ticker_map ────────────────────────────
+                        n_antes_merge = len(df)
+                        df = df.merge(ticker_map, how="left", on="CD_CVM")
+                        log(f"    [{filename}] Após merge ticker_map: {n_antes_merge} → {len(df)} "
+                            f"(ticker_map tem {len(ticker_map)} empresas)")
+
+                        group_demo = _infer_group_demo(filename, df)
+                        n_rows_antes = len(result["rows"])
+
+                        # ── Monta linhas ────────────────────────────────────
+                        sem_dt_refer = 0
                         for row in df.to_dict(orient="records"):
                             dt_refer = _safe_date(row.get("DT_REFER"))
                             if dt_refer is None:
+                                sem_dt_refer += 1
                                 continue
 
                             dt_ini = _safe_date(row.get("DT_INI_EXERC"))
@@ -398,48 +463,64 @@ def process_year(session: requests.Session, year: int, ticker_map: pd.DataFrame)
                                 ordem_exerc=row.get("ORDEM_EXERC"),
                                 versao=row.get("VERSAO"),
                             )
+                            result["rows"].append({
+                                "source_doc": DOC_TYPE,
+                                "tipo_demo": demo_type,
+                                "grupo_demo": group_demo,
+                                "arquivo_origem": filename,
+                                "cd_cvm": int(row["CD_CVM"]) if pd.notna(row.get("CD_CVM")) else None,
+                                "cnpj_cia": str(row.get("CNPJ_CIA") or "").strip() or None,
+                                "denom_cia": str(row.get("DENOM_CIA") or "").strip() or None,
+                                "ticker": str(row.get("Ticker") or "").strip().upper() or None,
+                                "versao": int(row["VERSAO"]) if pd.notna(row.get("VERSAO")) else None,
+                                "ordem_exerc": str(row.get("ORDEM_EXERC") or "").strip() or None,
+                                "dt_refer": dt_refer,
+                                "dt_ini_exerc": dt_ini,
+                                "dt_fim_exerc": dt_fim,
+                                "cd_conta": str(row.get("CD_CONTA") or "").strip() or None,
+                                "ds_conta": str(row.get("DS_CONTA") or "").strip() or None,
+                                "nivel_conta": int(row["NIVEL_CONTA"]) if pd.notna(row.get("NIVEL_CONTA")) else None,
+                                "conta_pai": str(row.get("CD_CONTA_PAI") or "").strip() or None,
+                                "vl_conta": None if pd.isna(row.get("VL_CONTA")) else float(row.get("VL_CONTA")),
+                                "escala_moeda": str(row.get("ESCALA_MOEDA") or "").strip() or None,
+                                "moeda": str(row.get("MOEDA") or "").strip() or None,
+                                "st_conta_fixa": str(row.get("ST_CONTA_FIXA") or "").strip() or None,
+                                "row_hash": row_hash,
+                                "payload": json.dumps(payload, ensure_ascii=False) if payload else None,
+                            })
 
-                            result["rows"].append(
-                                {
-                                    "source_doc": DOC_TYPE,
-                                    "tipo_demo": demo_type,
-                                    "grupo_demo": group_demo,
-                                    "arquivo_origem": filename,
-                                    "cd_cvm": int(row["CD_CVM"]) if pd.notna(row.get("CD_CVM")) else None,
-                                    "cnpj_cia": str(row.get("CNPJ_CIA") or "").strip() or None,
-                                    "denom_cia": str(row.get("DENOM_CIA") or "").strip() or None,
-                                    "ticker": str(row.get("Ticker") or "").strip().upper() or None,
-                                    "versao": int(row["VERSAO"]) if pd.notna(row.get("VERSAO")) else None,
-                                    "ordem_exerc": str(row.get("ORDEM_EXERC") or "").strip() or None,
-                                    "dt_refer": dt_refer,
-                                    "dt_ini_exerc": dt_ini,
-                                    "dt_fim_exerc": dt_fim,
-                                    "cd_conta": str(row.get("CD_CONTA") or "").strip() or None,
-                                    "ds_conta": str(row.get("DS_CONTA") or "").strip() or None,
-                                    "nivel_conta": int(row["NIVEL_CONTA"]) if pd.notna(row.get("NIVEL_CONTA")) else None,
-                                    "conta_pai": str(row.get("CD_CONTA_PAI") or "").strip() or None,
-                                    "vl_conta": None if pd.isna(row.get("VL_CONTA")) else float(row.get("VL_CONTA")),
-                                    "escala_moeda": str(row.get("ESCALA_MOEDA") or "").strip() or None,
-                                    "moeda": str(row.get("MOEDA") or "").strip() or None,
-                                    "st_conta_fixa": str(row.get("ST_CONTA_FIXA") or "").strip() or None,
-                                    "row_hash": row_hash,
-                                    "payload": json.dumps(payload, ensure_ascii=False) if payload else None,
-                                }
-                            )
+                        adicionadas = len(result["rows"]) - n_rows_antes
+                        log(f"    [{filename}] Linhas adicionadas ao resultado: {adicionadas} "
+                            f"(descartadas por DT_REFER nula: {sem_dt_refer})")
+
                     except Exception as exc:
-                        message = f"{DOC_TYPE} {year}: erro ao processar arquivo {filename}: {exc}"
+                        import traceback as _tb
+                        message = (f"{DOC_TYPE} {year}: erro ao processar {filename}: {exc}\n"
+                                   + _tb.format_exc())
                         result["errors"].append(message)
                         log(message, level="ERROR", year=year, file=filename, stage="file_processing_failed")
 
+        # ── Resumo final do ano ─────────────────────────────────────────────
+        total = len(result["rows"])
         log(
-            f"  {DOC_TYPE} {year}: {len(result['rows'])} linhas úteis | "
+            f"  RESUMO {DOC_TYPE} {year}: {total} linhas úteis | "
             f"{result['skipped_files']} arquivos ignorados | "
             f"{result['skipped_rows']} linhas filtradas"
         )
+
+        if total == 0 and not result["errors"]:
+            msg = (
+                f"{DOC_TYPE} {year}: process_year() retornou 0 linhas SEM erros. "
+                f"Arquivos relevantes processados: {relevant}. "
+                f"Verifique os logs de ORDEM_EXERC e NIVEL_CONTA acima."
+            )
+            result["errors"].append(msg)
+            log(msg, level="ERROR")
+
         return result
 
     except zipfile.BadZipFile:
-        message = f"{DOC_TYPE} {year}: ZIP inválido."
+        message = f"{DOC_TYPE} {year}: ZIP inválido ou corrompido."
         result["errors"].append(message)
         log(message, level="ERROR", year=year, stage="bad_zip")
         return result
@@ -786,6 +867,14 @@ def main() -> None:
                 log(f"▶ Processando {DOC_TYPE} {year}…")
 
                 year_result = process_year(session, year, ticker_map)
+
+                # Ano não disponível na CVM (ex: ITR 2010) — pula sem contar como erro
+                if year_result.get("not_available"):
+                    progress["years_done"] += 1
+                    progress["message"] = f"Ano {year} não disponível na CVM — pulado."
+                    _update_run_progress(run_id, progress)
+                    continue
+
                 rows = year_result["rows"]
                 errors = year_result["errors"]
                 all_errors.extend(errors)
@@ -908,5 +997,62 @@ def main() -> None:
         raise
 
 
+def diagnostico_ano(year: int = 2023) -> None:
+    """Executa process_year() para um único ano com log detalhado.
+
+    Uso:
+        python pickup/cvm_extract_v2.py diag 2023
+        python pickup/cvm_extract_v2.py diag 2022
+
+    Não grava nada no banco — apenas mostra o que seria processado.
+    """
+    print(f"\n{'='*60}")
+    print(f"DIAGNÓSTICO {DOC_TYPE} — ano {year}")
+    print(f"{'='*60}")
+    print(f"URL base  : {URLS.get(DOC_TYPE, 'INVÁLIDO')}")
+    print(f"URL do ZIP: {_url_zip_year(year)}")
+    print(f"DEMOS_VALUATION: {DEMOS_VALUATION}")
+    print(f"NIVEL_CONTA_MAX: {NIVEL_CONTA_MAX}")
+    print(f"ORDEM_EXERC_VALIDO: {ORDEM_EXERC_VALIDO}")
+    print(f"ticker_map: {TICKER_PATH} (existe={TICKER_PATH.exists()})")
+    print(f"{'='*60}\n")
+
+    session = build_session()
+    try:
+        ticker_map = _load_ticker_map()
+        print(f"Ticker map carregado: {len(ticker_map)} empresas\n")
+    except Exception as exc:
+        print(f"ERRO ao carregar ticker_map: {exc}")
+        return
+
+    result = process_year(session, year, ticker_map)
+
+    print(f"\n{'='*60}")
+    print(f"RESULTADO FINAL — {DOC_TYPE} {year}")
+    print(f"{'='*60}")
+    print(f"not_available  : {result.get('not_available', False)}")
+    print(f"rows           : {len(result['rows'])}")
+    print(f"errors         : {len(result['errors'])}")
+    print(f"skipped_files  : {result.get('skipped_files', 0)}")
+    print(f"skipped_rows   : {result.get('skipped_rows', 0)}")
+
+    if result["errors"]:
+        print("\nERROS:")
+        for e in result["errors"]:
+            print(f"  {e}")
+
+    if result["rows"]:
+        print(f"\nPrimeiras 3 linhas:")
+        for r in result["rows"][:3]:
+            print(f"  {r}")
+    else:
+        print("\n⚠️  ZERO linhas retornadas — verifique os logs acima para identificar o filtro causador.")
+
+
 if __name__ == "__main__":
-    main()
+    import sys as _sys
+    if len(_sys.argv) >= 2 and _sys.argv[1] == "diag":
+        _year = int(_sys.argv[2]) if len(_sys.argv) >= 3 else 2023
+        diagnostico_ano(_year)
+    else:
+        main()
