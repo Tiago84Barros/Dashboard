@@ -593,6 +593,28 @@ def _render_single_run_card(doc_type: str) -> None:
                 st.code(e, language="text")
 
 
+@st.cache_data(ttl=15)
+def _count_years_in_db(doc_type: str) -> list:
+    """Retorna lista de anos distintos em cvm_financial_raw para doc_type."""
+    if get_engine is None or text is None:
+        return []
+    try:
+        engine = get_engine()
+        sql = text(
+            """
+            SELECT DISTINCT EXTRACT(YEAR FROM dt_refer::date)::int AS ano
+            FROM public.cvm_financial_raw
+            WHERE source_doc = :doc
+            ORDER BY ano
+            """
+        )
+        with engine.connect() as conn:
+            rows = conn.execute(sql, {"doc": doc_type}).fetchall()
+        return sorted(int(r[0]) for r in rows if r[0] is not None)
+    except Exception:
+        return []
+
+
 def _render_v2_run_monitor() -> None:
     """Renderiza o painel de monitoramento de runs V2 (DFP e ITR lado a lado)."""
     with st.expander("📊 Monitor de Runs V2", expanded=True):
@@ -600,6 +622,28 @@ def _render_v2_run_monitor() -> None:
             st.cache_data.clear()
             st.rerun()
 
+        # Progresso acumulado entre todos os runs
+        dfp_years = _count_years_in_db("DFP")
+        itr_years = _count_years_in_db("ITR")
+        ano_ref = 2010
+        ano_atual = datetime.now().year
+        total_esperado = ano_atual - ano_ref + 1
+
+        st.markdown("##### Progresso acumulado no banco (todos os runs)")
+        col_prog_dfp, col_prog_itr = st.columns(2)
+        with col_prog_dfp:
+            pct_dfp = len(dfp_years) / total_esperado if total_esperado else 0
+            st.progress(min(pct_dfp, 1.0), text=f"DFP: {len(dfp_years)}/{total_esperado} anos salvos")
+            if dfp_years:
+                st.caption(f"De {dfp_years[0]} a {dfp_years[-1]}")
+        with col_prog_itr:
+            pct_itr = len(itr_years) / total_esperado if total_esperado else 0
+            st.progress(min(pct_itr, 1.0), text=f"ITR: {len(itr_years)}/{total_esperado} anos salvos")
+            if itr_years:
+                st.caption(f"De {itr_years[0]} a {itr_years[-1]}")
+
+        st.divider()
+        st.markdown("##### Último run por tipo")
         col_dfp, col_itr = st.columns(2)
         with col_dfp:
             _render_single_run_card("DFP")
@@ -621,11 +665,36 @@ def _render_v2_section() -> None:
 
     st.markdown(
         "**Ordem recomendada:**\n"
-        "1) Extract Raw (DFP) — extrai demonstrações anuais brutas\n"
-        "2) Extract Raw (ITR) — extrai demonstrações trimestrais brutas\n"
+        "1) Extract Raw (DFP) — extrai demonstrações anuais brutas *(execute várias vezes até completar todos os anos)*\n"
+        "2) Extract Raw (ITR) — extrai demonstrações trimestrais brutas *(idem)*\n"
         "3) Map Normalized — aplica mapeamento de contas e normaliza\n"
         "4) Publish Financials — publica em demonstracoes_financeiras_v2\n"
     )
+
+    # ── Controle de lote ───────────────────────────────────────────────────
+    st.divider()
+    st.markdown("#### ⚙️ Configuração do lote de extração")
+    st.caption(
+        "O Streamlit Cloud tem limite de memória e tempo. "
+        "Processe poucos anos por execução e repita até completar. "
+        "Anos já salvos no banco são pulados automaticamente."
+    )
+    max_anos = st.number_input(
+        "Máximo de anos por execução (DFP e ITR)",
+        min_value=1, max_value=10, value=2, step=1,
+        key="v2_max_anos_por_run",
+        help="Recomendado: 2. Aumente se o servidor aguentar, reduza se travar.",
+    )
+    ano_inicial = st.number_input(
+        "Ano inicial da extração",
+        min_value=2000, max_value=2030, value=2010, step=1,
+        key="v2_ano_inicial",
+        help="Padrão: 2010. O pipeline pula automaticamente anos já no banco.",
+    )
+    env_extract = {
+        "MAX_ANOS_POR_RUN": str(int(max_anos)),
+        "ANO_INICIAL": str(int(ano_inicial)),
+    }
 
     st.divider()
 
@@ -634,14 +703,14 @@ def _render_v2_section() -> None:
         job_key="job_cvm_v2_extract_dfp_running",
         button_label="CVM V2 — Extract Raw (DFP)",
         info_text=(
-            "Executa **pickup/cvm_extract_v2.py** com `CVM_DOC_TYPE=DFP`.\n\n"
-            "Baixa ZIPs de DFP da CVM, extrai contas brutas e grava via UPSERT "
-            "em **public.cvm_financial_raw**. Registra execução em **public.cvm_ingestion_runs**."
+            f"Executa **pickup/cvm_extract_v2.py** com `CVM_DOC_TYPE=DFP`.\n\n"
+            f"Processa até **{int(max_anos)} ano(s)** por execução a partir de **{int(ano_inicial)}**. "
+            "Anos já no banco são pulados. Execute quantas vezes forem necessárias."
         ),
         status_label="Executando CVM V2 — Extract Raw (DFP)...",
         module_import_path="pickup.cvm_extract_v2",
         module_attr_name="cvm_extract_v2",
-        env_overrides={"CVM_DOC_TYPE": "DFP"},
+        env_overrides={"CVM_DOC_TYPE": "DFP", **env_extract},
     )
 
     st.divider()
@@ -651,14 +720,14 @@ def _render_v2_section() -> None:
         job_key="job_cvm_v2_extract_itr_running",
         button_label="CVM V2 — Extract Raw (ITR)",
         info_text=(
-            "Executa **pickup/cvm_extract_v2.py** com `CVM_DOC_TYPE=ITR`.\n\n"
-            "Baixa ZIPs de ITR da CVM, extrai contas brutas e grava via UPSERT "
-            "em **public.cvm_financial_raw**. Registra execução em **public.cvm_ingestion_runs**."
+            f"Executa **pickup/cvm_extract_v2.py** com `CVM_DOC_TYPE=ITR`.\n\n"
+            f"Processa até **{int(max_anos)} ano(s)** por execução a partir de **{int(ano_inicial)}**. "
+            "Anos já no banco são pulados. Execute quantas vezes forem necessárias."
         ),
         status_label="Executando CVM V2 — Extract Raw (ITR)...",
         module_import_path="pickup.cvm_extract_v2",
         module_attr_name="cvm_extract_v2",
-        env_overrides={"CVM_DOC_TYPE": "ITR"},
+        env_overrides={"CVM_DOC_TYPE": "ITR", **env_extract},
     )
 
     st.divider()
