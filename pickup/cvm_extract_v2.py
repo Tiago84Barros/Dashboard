@@ -137,17 +137,10 @@ def _download_year_zip(session: requests.Session, year: int) -> bytes:
     cache_path = _cache_zip_path(year)
 
     if CACHE_ZIPS and cache_path.exists() and not FORCAR_REDOWNLOAD:
-        content = cache_path.read_bytes()
-        log(
-            f"Usando cache local do ano {year}: {cache_path.name}",
-            year=year,
-            stage="download_cache_hit",
-            url=url,
-            zip_size_bytes=len(content),
-        )
-        return content
+        log(f"Usando cache local do ano {year}: {cache_path.name}")
+        return cache_path.read_bytes()
 
-    log(f"Baixando ZIP {DOC_TYPE} {year}...", year=year, stage="download_start", url=url)
+    log(f"Baixando ZIP {DOC_TYPE} {year}...")
     r = session.get(url, timeout=REQUEST_TIMEOUT)
     if r.status_code == 404:
         raise FileNotFoundError(f"Ano {year} não disponível na CVM (404) — ignorando.")
@@ -157,14 +150,6 @@ def _download_year_zip(session: requests.Session, year: int) -> bytes:
     content = r.content
     if CACHE_ZIPS:
         cache_path.write_bytes(content)
-    log(
-        f"Download concluído ZIP {DOC_TYPE} {year}",
-        year=year,
-        stage="download_done",
-        url=url,
-        http_status=r.status_code,
-        zip_size_bytes=len(content),
-    )
     return content
 
 
@@ -200,10 +185,9 @@ def _load_ticker_map() -> pd.DataFrame:
         validate_required_columns(df, ["CVM", "Ticker"], context="Mapa CVM->Ticker", logger=_RUN_LOG)
 
     out = df[["CVM", "Ticker"]].copy()
-    out["CD_CVM"] = pd.to_numeric(out["CVM"], errors="coerce").astype("Int64")
     out["Ticker"] = out["Ticker"].astype(str).str.upper().str.strip()
-    out = out[out["Ticker"].ne("") & out["CD_CVM"].notna()].drop_duplicates(subset=["CD_CVM"], keep="last")
-    return out[["CD_CVM", "Ticker"]]
+    out = out[out["Ticker"].ne("")].drop_duplicates(subset=["CVM"], keep="last")
+    return out.rename(columns={"CVM": "CD_CVM"})
 
 
 def _infer_demo_type(filename: str) -> Optional[str]:
@@ -306,15 +290,9 @@ DEMOS_VALUATION = frozenset(["DRE", "BPA", "BPP", "DFC_MI", "DFC_MD"])
 NIVEL_CONTA_MAX = int(os.getenv("NIVEL_CONTA_MAX", "3"))
 
 # Rótulo do exercício atual dentro de cada arquivo.
-# Evidência validada no ZIP real dfp_cia_aberta_2025.zip:
-# ORDEM_EXERC vem como "ÚLTIMO" / "PENÚLTIMO".
-# Mantemos também variantes antigas/alternativas por compatibilidade.
-ORDEM_EXERC_VALIDO = frozenset([
-    "ÚLTIMO",
-    "ULTIMO",
-    "ÚLTIMO EXERCÍCIO",
-    "ULTIMO EXERCICIO",
-])
+# Cada DFP/ITR carrega o período atual + o anterior para comparação.
+# Só o atual interessa na camada raw — o anterior já está ou virá do seu próprio arquivo.
+ORDEM_EXERC_VALIDO = frozenset(["ÚLTIMO EXERCÍCIO", "ULTIMO EXERCICIO"])
 
 
 def _arquivo_relevante(filename: str) -> bool:
@@ -336,38 +314,15 @@ def _arquivo_relevante(filename: str) -> bool:
 # EXTRACTION
 # =========================================================
 def _empty_year_result() -> Dict[str, object]:
-    return {
-        "rows": [],
-        "errors": [],
-        "skipped_files": 0,
-        "skipped_rows": 0,
-        "metrics": {
-            "zip_url": None,
-            "zip_size_bytes": 0,
-            "zip_entries_total": 0,
-            "zip_csv_total": 0,
-            "accepted_csvs": [],
-            "ignored_csvs": [],
-            "csv_rows_read": 0,
-            "rows_after_parse": 0,
-            "rows_after_filters": 0,
-            "rows_after_ticker_merge": 0,
-            "rows_with_ticker": 0,
-            "rows_without_ticker": 0,
-            "rows_prepared": 0,
-            "rows_missing_dt_refer": 0,
-        },
-    }
+    return {"rows": [], "errors": [], "skipped_files": 0, "skipped_rows": 0}
 
 
 def process_year(session: requests.Session, year: int, ticker_map: pd.DataFrame) -> Dict[str, object]:
     result = _empty_year_result()
-    result["metrics"]["zip_url"] = _url_zip_year(year)
 
     # ── Download ────────────────────────────────────────────────────────────
     try:
         raw_zip = _download_year_zip(session, year)
-        result["metrics"]["zip_size_bytes"] = len(raw_zip)
     except FileNotFoundError as exc:
         log(f"  — {exc}", year=year, stage="year_not_available")
         result["not_available"] = True
@@ -379,73 +334,49 @@ def process_year(session: requests.Session, year: int, ticker_map: pd.DataFrame)
         return result
 
     zip_kb = len(raw_zip) // 1024
-    log(f"  ZIP baixado: OK — {zip_kb:,} KB", year=year, stage="zip_downloaded", zip_size_bytes=len(raw_zip))
+    log(f"  ZIP baixado: OK — {zip_kb:,} KB")
 
     # ── Inspeciona conteúdo do ZIP ──────────────────────────────────────────
     try:
         zip_buf = io.BytesIO(raw_zip)
         with zipfile.ZipFile(zip_buf) as zip_ref:
-            all_names = zip_ref.namelist()
-            all_csv = [f for f in all_names if f.endswith(".csv")]
-            relevant = [f for f in all_csv if _arquivo_relevante(f)]
-            irrelevant = [f for f in all_csv if not _arquivo_relevante(f)]
-            result["metrics"]["zip_entries_total"] = len(all_names)
-            result["metrics"]["zip_csv_total"] = len(all_csv)
-            result["metrics"]["accepted_csvs"] = relevant
-            result["metrics"]["ignored_csvs"] = irrelevant
+            all_names   = zip_ref.namelist()
+            all_csv     = [f for f in all_names if f.endswith(".csv")]
+            relevant    = [f for f in all_csv if _arquivo_relevante(f)]
+            irrelevant  = [f for f in all_csv if not _arquivo_relevante(f)]
 
-            log(
-                f"  Arquivos no ZIP: {len(all_names)} total | {len(all_csv)} CSVs | "
-                f"{len(relevant)} relevantes | {len(irrelevant)} ignorados",
-                year=year,
-                stage="zip_inventory",
-                zip_entries_total=len(all_names),
-                zip_csv_total=len(all_csv),
-                accepted_csvs=relevant,
-                ignored_csvs=irrelevant,
-            )
+            log(f"  Arquivos no ZIP: {len(all_names)} total | {len(all_csv)} CSVs | "
+                f"{len(relevant)} relevantes | {len(irrelevant)} ignorados")
 
             if not all_csv:
                 msg = f"{DOC_TYPE} {year}: ZIP sem arquivos CSV — estrutura pode ter mudado."
                 result["errors"].append(msg)
-                log(msg, level="ERROR", year=year, stage="zip_without_csv")
+                log(msg, level="ERROR")
                 return result
 
             if not relevant:
-                msg = (
-                    f"{DOC_TYPE} {year}: nenhum arquivo passou pelo filtro _arquivo_relevante(). "
-                    f"Estrutura/nomenclatura do ZIP pode ter mudado. CSVs encontrados: {all_csv}"
-                )
-                result["errors"].append(msg)
+                log(f"  AVISO: nenhum arquivo passou pelo filtro _arquivo_relevante(). "
+                    f"CSVs encontrados: {all_csv}", level="WARN")
+                log(f"  DEMOS_VALUATION={DEMOS_VALUATION} | "
+                    f"Exemplos de nomes: {all_csv[:5]}", level="WARN")
                 result["skipped_files"] += len(irrelevant)
-                log(
-                    msg,
-                    level="ERROR",
-                    year=year,
-                    stage="no_relevant_csv",
-                    csvs_found=all_csv,
-                    demos_valuation=sorted(DEMOS_VALUATION),
-                )
                 return result
 
+            log(f"  Arquivos ignorados: {irrelevant}")
+            log(f"  Arquivos a processar: {relevant}")
+
+            # ── Processa cada arquivo relevante ────────────────────────────
             for filename in relevant:
                 demo_type = _infer_demo_type(filename)
+
                 with zip_ref.open(filename) as csvfile:
                     try:
                         df = pd.read_csv(csvfile, sep=";", decimal=",", encoding="ISO-8859-1")
                         n_lidas = len(df)
-                        result["metrics"]["csv_rows_read"] += n_lidas
-                        log(
-                            f"    [{filename}] Linhas lidas: {n_lidas}",
-                            year=year,
-                            file=filename,
-                            stage="csv_read",
-                            rows_read=n_lidas,
-                            columns=list(df.columns),
-                        )
+                        log(f"    [{filename}] Linhas lidas: {n_lidas} | Colunas: {list(df.columns)}")
 
                         if df.empty:
-                            log(f"    [{filename}] CSV vazio — pulando.", year=year, file=filename, stage="csv_empty")
+                            log(f"    [{filename}] CSV vazio — pulando.")
                             continue
 
                         if validate_required_columns:
@@ -456,14 +387,10 @@ def process_year(session: requests.Session, year: int, ticker_map: pd.DataFrame)
                                 logger=_RUN_LOG,
                             )
 
-                        # Normaliza tipos mínimos antes de filtros/merge
-                        df = df.copy()
-                        df["CD_CVM"] = pd.to_numeric(df["CD_CVM"], errors="coerce").astype("Int64")
-                        result["metrics"]["rows_after_parse"] += len(df)
-
                         # ── Filtro 2: ORDEM_EXERC ───────────────────────────
                         if "ORDEM_EXERC" in df.columns:
                             valores_unicos = df["ORDEM_EXERC"].astype(str).str.strip().unique().tolist()
+                            log(f"    [{filename}] ORDEM_EXERC valores únicos: {valores_unicos}")
                             mask_exerc = (
                                 df["ORDEM_EXERC"]
                                 .astype(str).str.strip().str.upper()
@@ -471,79 +398,44 @@ def process_year(session: requests.Session, year: int, ticker_map: pd.DataFrame)
                             )
                             n_antes = len(df)
                             df = df[mask_exerc].copy()
-                            log(
-                                f"    [{filename}] Após filtro ORDEM_EXERC: {n_antes} → {len(df)}",
-                                year=year,
-                                file=filename,
-                                stage="filter_ordem_exerc",
-                                rows_before=n_antes,
-                                rows_after=len(df),
-                                ordem_exerc_values=valores_unicos,
-                                ordem_exerc_valid=sorted(ORDEM_EXERC_VALIDO),
-                            )
+                            log(f"    [{filename}] Após filtro ORDEM_EXERC "
+                                f"(válidos={ORDEM_EXERC_VALIDO}): {n_antes} → {len(df)}")
                             if df.empty:
+                                log(f"    [{filename}] ZERO linhas após filtro ORDEM_EXERC — "
+                                    f"verifique os valores acima vs ORDEM_EXERC_VALIDO.", level="WARN")
                                 result["skipped_rows"] += n_antes
                                 continue
                         else:
-                            log(
-                                f"    [{filename}] Coluna ORDEM_EXERC ausente — sem filtro de exercício.",
-                                year=year,
-                                file=filename,
-                                stage="filter_ordem_exerc_skipped",
-                            )
+                            log(f"    [{filename}] Coluna ORDEM_EXERC ausente — sem filtro de exercício.")
 
                         # ── Filtro 3: NIVEL_CONTA ───────────────────────────
                         if "NIVEL_CONTA" in df.columns:
-                            niveis = sorted(df["NIVEL_CONTA"].dropna().unique().tolist())
+                            niveis = df["NIVEL_CONTA"].dropna().unique().tolist()
+                            log(f"    [{filename}] NIVEL_CONTA valores únicos: {sorted(niveis)}")
                             n_antes = len(df)
                             df = df[
                                 pd.to_numeric(df["NIVEL_CONTA"], errors="coerce")
                                 .fillna(99).le(NIVEL_CONTA_MAX)
                             ].copy()
-                            log(
-                                f"    [{filename}] Após filtro NIVEL_CONTA <= {NIVEL_CONTA_MAX}: {n_antes} → {len(df)}",
-                                year=year,
-                                file=filename,
-                                stage="filter_nivel_conta",
-                                rows_before=n_antes,
-                                rows_after=len(df),
-                                nivel_conta_values=niveis,
-                                nivel_conta_max=NIVEL_CONTA_MAX,
-                            )
+                            log(f"    [{filename}] Após filtro NIVEL_CONTA <= {NIVEL_CONTA_MAX}: "
+                                f"{n_antes} → {len(df)}")
                             if df.empty:
+                                log(f"    [{filename}] ZERO linhas após filtro NIVEL_CONTA — "
+                                    f"NIVEL_CONTA_MAX={NIVEL_CONTA_MAX}, níveis encontrados={sorted(niveis)}", level="WARN")
                                 result["skipped_rows"] += n_antes
                                 continue
                         else:
-                            log(
-                                f"    [{filename}] Coluna NIVEL_CONTA ausente — sem filtro de nível.",
-                                year=year,
-                                file=filename,
-                                stage="filter_nivel_conta_skipped",
-                            )
+                            log(f"    [{filename}] Coluna NIVEL_CONTA ausente — sem filtro de nível.")
 
-                        result["metrics"]["rows_after_filters"] += len(df)
                         result["skipped_rows"] += n_lidas - len(df)
+
                         df = _normalize_value_scale(df)
 
                         # ── Merge com ticker_map ────────────────────────────
                         n_antes_merge = len(df)
                         df = df.merge(ticker_map, how="left", on="CD_CVM")
-                        with_ticker = int(df["Ticker"].notna().sum()) if "Ticker" in df.columns else 0
-                        without_ticker = len(df) - with_ticker
-                        result["metrics"]["rows_after_ticker_merge"] += len(df)
-                        result["metrics"]["rows_with_ticker"] += with_ticker
-                        result["metrics"]["rows_without_ticker"] += without_ticker
-                        log(
-                            f"    [{filename}] Após merge ticker_map: {n_antes_merge} → {len(df)}",
-                            year=year,
-                            file=filename,
-                            stage="ticker_merge",
-                            rows_before=n_antes_merge,
-                            rows_after=len(df),
-                            ticker_map_size=len(ticker_map),
-                            rows_with_ticker=with_ticker,
-                            rows_without_ticker=without_ticker,
-                        )
+                        log(f"    [{filename}] Após merge ticker_map: {n_antes_merge} → {len(df)} "
+                            f"(ticker_map tem {len(ticker_map)} empresas)")
 
                         group_demo = _infer_group_demo(filename, df)
                         n_rows_antes = len(result["rows"])
@@ -598,16 +490,8 @@ def process_year(session: requests.Session, year: int, ticker_map: pd.DataFrame)
                             })
 
                         adicionadas = len(result["rows"]) - n_rows_antes
-                        result["metrics"]["rows_missing_dt_refer"] += sem_dt_refer
-                        result["metrics"]["rows_prepared"] += adicionadas
-                        log(
-                            f"    [{filename}] Linhas preparadas para insert: {adicionadas}",
-                            year=year,
-                            file=filename,
-                            stage="rows_prepared",
-                            rows_prepared=adicionadas,
-                            rows_missing_dt_refer=sem_dt_refer,
-                        )
+                        log(f"    [{filename}] Linhas adicionadas ao resultado: {adicionadas} "
+                            f"(descartadas por DT_REFER nula: {sem_dt_refer})")
 
                     except Exception as exc:
                         import traceback as _tb
@@ -616,24 +500,22 @@ def process_year(session: requests.Session, year: int, ticker_map: pd.DataFrame)
                         result["errors"].append(message)
                         log(message, level="ERROR", year=year, file=filename, stage="file_processing_failed")
 
+        # ── Resumo final do ano ─────────────────────────────────────────────
         total = len(result["rows"])
         log(
             f"  RESUMO {DOC_TYPE} {year}: {total} linhas úteis | "
             f"{result['skipped_files']} arquivos ignorados | "
-            f"{result['skipped_rows']} linhas filtradas",
-            year=year,
-            stage="year_summary",
-            metrics=result["metrics"],
+            f"{result['skipped_rows']} linhas filtradas"
         )
 
         if total == 0 and not result["errors"]:
             msg = (
-                f"{DOC_TYPE} {year}: process_year() retornou 0 linhas sem erro explícito. "
-                f"Possível perda em filtros, DT_REFER ou estrutura nova do CSV. "
-                f"Métricas: {json.dumps(result['metrics'], ensure_ascii=False)}"
+                f"{DOC_TYPE} {year}: process_year() retornou 0 linhas SEM erros. "
+                f"Arquivos relevantes processados: {relevant}. "
+                f"Verifique os logs de ORDEM_EXERC e NIVEL_CONTA acima."
             )
             result["errors"].append(msg)
-            log(msg, level="ERROR", year=year, stage="year_zero_rows_without_explicit_error")
+            log(msg, level="ERROR")
 
         return result
 
@@ -642,6 +524,8 @@ def process_year(session: requests.Session, year: int, ticker_map: pd.DataFrame)
         result["errors"].append(message)
         log(message, level="ERROR", year=year, stage="bad_zip")
         return result
+
+
 
 
 # =========================================================
@@ -675,6 +559,48 @@ def _get_years_with_data(source_doc: str) -> set:
         return set()
 
 
+def _get_not_available_years(source_doc: str) -> set:
+    """Retorna anos que a CVM nunca publicou, conforme runs bem-sucedidos anteriores.
+
+    Evita retentativa perpétua de anos indisponíveis (ex: ITR 2010).
+    A query extrai os anos cujo year_details[ano].status == 'not_available'.
+    """
+    try:
+        from sqlalchemy import text as sa_text
+        import json as _json
+        engine = get_engine()
+        with engine.connect() as conn:
+            rows = conn.execute(
+                sa_text(
+                    """
+                    SELECT metrics->'year_details' AS year_details
+                    FROM public.cvm_ingestion_runs
+                    WHERE source_doc = :doc
+                      AND status IN ('success', 'partial_success', 'failed')
+                      AND metrics->'year_details' IS NOT NULL
+                    ORDER BY started_at DESC
+                    LIMIT 20
+                    """
+                ),
+                {"doc": source_doc},
+            ).fetchall()
+        not_avail: set = set()
+        for (yd_raw,) in rows:
+            if yd_raw is None:
+                continue
+            yd = yd_raw if isinstance(yd_raw, dict) else _json.loads(str(yd_raw))
+            for ano_str, detail in yd.items():
+                if isinstance(detail, dict) and detail.get("status") == "not_available":
+                    try:
+                        not_avail.add(int(ano_str))
+                    except (ValueError, TypeError):
+                        pass
+        return not_avail
+    except Exception as exc:
+        log(f"[WARN] _get_not_available_years falhou: {exc}", level="WARN")
+        return set()
+
+
 def _assert_raw_unique_ready(cur) -> None:
     cur.execute(
         """
@@ -701,14 +627,6 @@ def upsert_cvm_financial_raw(rows: List[dict], run_id: Optional[str]) -> int:
 
     df = pd.DataFrame(rows)
     df["run_id"] = run_id
-
-    # Corrige null handling em colunas date para evitar NaN float no psycopg2.
-    for date_col in ["dt_refer", "dt_ini_exerc", "dt_fim_exerc"]:
-        if date_col in df.columns:
-            df[date_col] = pd.to_datetime(df[date_col], errors="coerce").dt.date
-
-    # Converte todos os NaN/NaT para None real de Python antes do execute_values.
-    df = df.astype(object).where(pd.notna(df), None)
 
     before_dedup = len(df)
     df = df.drop_duplicates(
@@ -784,7 +702,6 @@ def upsert_cvm_financial_raw(rows: List[dict], run_id: Optional[str]) -> int:
     raw_conn = engine.raw_connection()
     try:
         with raw_conn.cursor() as cur:
-            _assert_raw_unique_ready(cur)
             execute_values(cur, sql, values, page_size=BATCH_SIZE_INSERT)
         raw_conn.commit()
     except Exception:
@@ -793,7 +710,7 @@ def upsert_cvm_financial_raw(rows: List[dict], run_id: Optional[str]) -> int:
     finally:
         raw_conn.close()
 
-    log(f"Upsert concluído em cvm_financial_raw: {len(df)} linhas.", rows=len(df), stage="upsert_done")
+    log(f"Upsert concluído em cvm_financial_raw: {len(df)} linhas.", rows=len(df))
     return len(df)
 
 
@@ -918,7 +835,7 @@ def main() -> None:
     log(f"Iniciando {DOC_TYPE} RAW V2. Descobrindo intervalo de anos disponíveis na CVM…")
     session = build_session()
     ticker_map = _load_ticker_map()
-    log(f"Ticker map carregado: {len(ticker_map)} empresas.", stage="ticker_map_loaded", ticker_map_size=len(ticker_map))
+    log(f"Ticker map carregado: {len(ticker_map)} empresas.")
 
     last_year = int(ULTIMO_ANO) if ULTIMO_ANO else _last_available_year(session)
     all_years = list(range(ANO_INICIAL, last_year + 1))
@@ -931,10 +848,18 @@ def main() -> None:
     else:
         log("Nenhum dado encontrado ainda — iniciando do zero.")
 
-    years_pending = [y for y in all_years if y not in years_with_data]
+    # Exclui anos que a CVM nunca disponibilizou (ex: ITR 2010 = not_available)
+    not_available_years = _get_not_available_years(DOC_TYPE)
+    if not_available_years:
+        log(f"Anos confirmados como não disponíveis na CVM (serão ignorados): {sorted(not_available_years)}")
+
+    years_pending = [
+        y for y in all_years
+        if y not in years_with_data and y not in not_available_years
+    ]
 
     if not years_pending:
-        log(f"Todos os {len(all_years)} anos já estão no banco. Nada a fazer.")
+        log(f"Todos os {len(all_years)} anos já estão no banco ou confirmados como não disponíveis. Nada a fazer.")
         return
 
     # ── Limita ao máximo por execução para evitar timeout/OOM ──────────────
@@ -955,19 +880,17 @@ def main() -> None:
     # Progresso inicial
     progress: dict = {
         "stage": "processing",
-        "anos_neste_lote": years,
+        "anos_neste_lote": years,           # anos que serão processados agora
         "anos_ja_no_banco": sorted(years_with_data),
         "anos_restantes_apos_run": anos_restantes_apos,
         "years_total": len(years),
         "years_done": 0,
         "years_failed": 0,
-        "failed_years_count": 0,
         "current_year": None,
         "raw_rows_accum": 0,
         "inserted_rows_accum": 0,
         "last_event_at": datetime.utcnow().isoformat(),
         "message": f"Iniciando lote: {years[0]}–{years[-1]} ({len(years)} anos)…",
-        "year_details": {},
     }
     _update_run_progress(run_id, progress)
 
@@ -991,51 +914,33 @@ def main() -> None:
                 _update_run_progress(run_id, progress)
 
                 t_year = time.time()
-                log(f"▶ Processando {DOC_TYPE} {year}…", year=year, stage="year_start")
-                year_result = process_year(session, year, ticker_map)
+                log(f"▶ Processando {DOC_TYPE} {year}…")
 
-                year_metrics = year_result.get("metrics", {}) or {}
-                year_errors = year_result.get("errors", []) or []
+                year_result = process_year(session, year, ticker_map)
 
                 # Ano não disponível na CVM (ex: ITR 2010) — pula sem contar como erro
                 if year_result.get("not_available"):
                     progress["years_done"] += 1
                     progress["message"] = f"Ano {year} não disponível na CVM — pulado."
-                    progress["year_details"][str(year)] = {
-                        "status": "not_available",
-                        "metrics": year_metrics,
-                        "errors": year_errors,
-                    }
                     _update_run_progress(run_id, progress)
                     continue
 
                 rows = year_result["rows"]
-                errors = year_errors
+                errors = year_result["errors"]
                 all_errors.extend(errors)
 
                 progress["raw_rows_accum"] += len(rows)
                 progress["skipped_files_accum"] = progress.get("skipped_files_accum", 0) + year_result.get("skipped_files", 0)
                 progress["skipped_rows_accum"] = progress.get("skipped_rows_accum", 0) + year_result.get("skipped_rows", 0)
                 progress["last_event_at"] = datetime.utcnow().isoformat()
-                progress["year_details"][str(year)] = {
-                    "status": "processed",
-                    "metrics": year_metrics,
-                    "errors": errors,
-                    "rows_prepared": len(rows),
-                }
 
-                inserted = 0
                 if rows:
                     try:
                         inserted = upsert_cvm_financial_raw(rows, run_id)
                         progress["inserted_rows_accum"] += inserted
-                        progress["year_details"][str(year)]["rows_inserted"] = inserted
                         log(
-                            f"  ✓ Ano {year}: {len(rows)} linhas raw, {inserted} inseridas em {round(time.time() - t_year, 1)}s.",
-                            year=year,
-                            stage="year_upsert_done",
-                            rows_prepared=len(rows),
-                            rows_inserted=inserted,
+                            f"  ✓ Ano {year}: {len(rows)} linhas raw, {inserted} inseridas"
+                            f" em {round(time.time() - t_year, 1)}s."
                         )
                     except Exception as upsert_exc:
                         import traceback as _tb
@@ -1044,41 +949,22 @@ def main() -> None:
                             + _tb.format_exc()
                         )
                         all_errors.append(msg)
-                        errors.append(msg)
-                        progress["year_details"][str(year)]["status"] = "upsert_failed"
-                        progress["year_details"][str(year)]["rows_inserted"] = 0
-                        log(msg, level="ERROR", year=year, stage="year_upsert_failed")
+                        log(msg, level="ERROR")
                         progress["years_failed"] += 1
-                        progress["failed_years_count"] = progress["years_failed"]
                         progress["message"] = f"ERRO upsert ano {year}: {upsert_exc}"
                         _update_run_progress(run_id, progress)
                         continue
                 else:
-                    log(
-                        f"  — Ano {year}: nenhuma linha retornada (erros: {len(errors)}).",
-                        year=year,
-                        stage="year_zero_rows",
-                        year_metrics=year_metrics,
-                    )
+                    log(f"  — Ano {year}: nenhuma linha retornada (erros: {len(errors)}).")
 
-                if errors or inserted == 0:
-                    if inserted == 0 and not errors:
-                        msg = (
-                            f"{DOC_TYPE} {year}: 0 linhas inseridas sem exceção. "
-                            f"Métricas do ano: {json.dumps(year_metrics, ensure_ascii=False)}"
-                        )
-                        errors.append(msg)
-                        all_errors.append(msg)
-                        log(msg, level="ERROR", year=year, stage="year_zero_insert_explicit_error")
+                if errors:
                     progress["years_failed"] += 1
-                    progress["failed_years_count"] = progress["years_failed"]
-                    progress["year_details"][str(year)]["status"] = "failed"
                 else:
                     progress["years_done"] += 1
-                    progress["year_details"][str(year)]["status"] = "success"
 
                 progress["message"] = (
-                    f"Ano {year} concluído. Acumulado: {progress['raw_rows_accum']} raw, "
+                    f"Ano {year} concluído. "
+                    f"Acumulado: {progress['raw_rows_accum']} raw, "
                     f"{progress['inserted_rows_accum']} inseridas."
                 )
                 _update_run_progress(run_id, progress)
@@ -1086,14 +972,8 @@ def main() -> None:
             # ── Determina status final ──────────────────────────────────────
             years_done = progress["years_done"]
             years_failed = progress["years_failed"]
-            inserted_total = progress["inserted_rows_accum"]
 
-            if inserted_total == 0:
-                final_status = "failed"
-                all_errors.append(
-                    f"{DOC_TYPE}: execução terminou com 0 inserts totais. Verifique metrics.year_details e logs dos filtros."
-                )
-            elif years_failed == 0:
+            if years_failed == 0:
                 final_status = "success"
             elif years_done == 0:
                 final_status = "failed"
@@ -1129,7 +1009,8 @@ def main() -> None:
                 _log_ctx.add_rows(inserted=progress["inserted_rows_accum"])
 
             log(
-                f"Ingestão RAW V2 {final_status} | Doc: {DOC_TYPE} | Run: {run_id} | raw={progress['raw_rows_accum']} inserted={progress['inserted_rows_accum']}",
+                f"Ingestão RAW V2 {final_status} | Doc: {DOC_TYPE} | Run: {run_id} | "
+                f"raw={progress['raw_rows_accum']} inserted={progress['inserted_rows_accum']}",
                 stage="final",
                 run_id=run_id,
             )
@@ -1161,6 +1042,7 @@ def main() -> None:
             _RUN_LOG = None
 
     except Exception:
+        # Garante que _RUN_LOG é limpo mesmo se o setup do _IngestionLog falhar
         _RUN_LOG = None
         raise
 
@@ -1203,7 +1085,6 @@ def diagnostico_ano(year: int = 2023) -> None:
     print(f"errors         : {len(result['errors'])}")
     print(f"skipped_files  : {result.get('skipped_files', 0)}")
     print(f"skipped_rows   : {result.get('skipped_rows', 0)}")
-    print(f"metrics        : {json.dumps(result.get('metrics', {}), ensure_ascii=False, indent=2)}")
 
     if result["errors"]:
         print("\nERROS:")

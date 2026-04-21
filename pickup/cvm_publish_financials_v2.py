@@ -327,6 +327,36 @@ def upsert_demonstracoes_financeiras_v2(df: pd.DataFrame) -> int:
     return len(df)
 
 
+def _register_run(run_id: str, status: str, metrics: dict) -> None:
+    """Registra ou atualiza o run de publicação em cvm_ingestion_runs."""
+    try:
+        import json as _json
+        engine = get_engine()
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO public.cvm_ingestion_runs
+                        (run_id, source_doc, status, metrics, finished_at, updated_at)
+                    VALUES
+                        (:run_id, 'PUBLISH_V2', :status, :metrics::jsonb, NOW(), NOW())
+                    ON CONFLICT (run_id) DO UPDATE SET
+                        status = EXCLUDED.status,
+                        metrics = EXCLUDED.metrics,
+                        finished_at = NOW(),
+                        updated_at = NOW()
+                    """
+                ),
+                {
+                    "run_id": run_id,
+                    "status": status,
+                    "metrics": _json.dumps(metrics, ensure_ascii=False, default=str),
+                },
+            )
+    except Exception as exc:
+        log(f"[WARN] _register_run falhou (não crítico): {exc}")
+
+
 def main() -> None:
     # ── Validação de pré-condição: schema V2 deve existir ──────────────────
     try:
@@ -339,7 +369,11 @@ def main() -> None:
     df = fetch_best_source()
 
     if df.empty:
-        log("Nenhum dado encontrado na view priorizada.")
+        log("Nenhum dado encontrado na view priorizada. Verifique se Map Normalized foi executado.")
+        _register_run(
+            RUN_ID, "failed",
+            {"message": "vw_cvm_normalized_best_source está vazia — execute Map Normalized primeiro.", "rows": 0},
+        )
         return
 
     log(f"Linhas lidas: {len(df)}")
@@ -347,9 +381,19 @@ def main() -> None:
 
     if wide.empty:
         log("Nenhuma linha publicada após pivot e derivação.")
+        _register_run(RUN_ID, "failed", {"message": "build_wide retornou vazio", "rows": 0})
         return
 
     rows = upsert_demonstracoes_financeiras_v2(wide)
+    _register_run(
+        RUN_ID, "success",
+        {
+            "message": f"Publicação concluída: {rows} linhas em demonstracoes_financeiras_v2.",
+            "rows": rows,
+            "tickers": int(wide["ticker"].nunique()),
+            "periodos": int(wide["data"].nunique()),
+        },
+    )
     log(f"Processo finalizado com sucesso | rows={rows} | run_id={RUN_ID}")
 
 
