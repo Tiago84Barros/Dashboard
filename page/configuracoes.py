@@ -736,8 +736,6 @@ def _render_v2_section() -> None:
         "Mantém os dados legados intactos — opera em tabelas V2 separadas."
     )
 
-    _render_v2_run_monitor()
-
     st.markdown(
         "**Ordem recomendada:**\n"
         "1) Extract Raw (DFP) — extrai demonstrações anuais brutas *(execute várias vezes até completar todos os anos)*\n"
