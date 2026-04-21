@@ -217,6 +217,59 @@ def _load_latest_v2_extract_summary(doc_type: str) -> Optional[dict[str, Any]]:
         return None
 
 
+def _load_latest_v2_stage_summary(source_doc: str) -> Optional[dict[str, Any]]:
+    if not source_doc or get_engine is None or text is None:
+        return None
+    try:
+        engine = get_engine()
+        query = text(
+            """
+            SELECT
+                run_id,
+                source_doc,
+                status,
+                started_at,
+                finished_at,
+                updated_at,
+                metrics,
+                errors
+            FROM public.cvm_ingestion_runs
+            WHERE source_doc = :doc
+              AND status IN ('success', 'partial_success')
+            ORDER BY finished_at DESC NULLS LAST, started_at DESC
+            LIMIT 1
+            """
+        )
+        with engine.connect() as conn:
+            row = conn.execute(query, {"doc": source_doc}).mappings().first()
+
+        if not row:
+            return None
+
+        metrics = row.get("metrics") or {}
+        errors = row.get("errors") or {}
+        errors_list = errors.get("errors", []) if isinstance(errors, dict) else []
+
+        rows_inserted = _safe_int(
+            metrics.get("total_inserted", metrics.get("rows", metrics.get("inserted_rows_accum", 0)))
+        )
+        tickers = _safe_int(metrics.get("tickers", 0))
+
+        return {
+            "kind": "tickers" if tickers > 0 else "default",
+            "pipeline": str(source_doc).lower(),
+            "finished_at": row.get("finished_at") or row.get("updated_at"),
+            "rows_inserted": rows_inserted,
+            "tickers": tickers,
+            "year_start": _normalize_year(metrics.get("year_start")),
+            "year_end": _normalize_year(metrics.get("year_end")),
+            "errors_count": len(errors_list),
+            "warnings_count": 0,
+        }
+    except Exception:
+        return None
+
+
 def _render_summary(summary: Optional[dict[str, Any]], *, empty_message: str = "Nenhuma atualização bem-sucedida registrada ainda.") -> None:
     st.markdown("### Última atualização")
     if not summary:
@@ -426,6 +479,7 @@ def _run_job(
     env_overrides: Optional[Dict[str, str]] = None,
     active_run_check_doc_type: Optional[str] = None,
     latest_summary_doc_type: Optional[str] = None,
+    latest_summary_source_doc: Optional[str] = None,
 ) -> None:
     if job_key not in st.session_state:
         st.session_state[job_key] = False
@@ -487,6 +541,8 @@ def _run_job(
     summary_placeholder = st.empty()
     if latest_summary_doc_type:
         latest_summary = _load_latest_v2_extract_summary(latest_summary_doc_type)
+    elif latest_summary_source_doc:
+        latest_summary = _load_latest_v2_stage_summary(latest_summary_source_doc)
     else:
         latest_summary = _load_latest_success_summary(pipeline_name) if pipeline_name else None
     with summary_placeholder.container():
@@ -531,6 +587,8 @@ def _run_job(
             out = stdout_buf.getvalue().strip()
             if latest_summary_doc_type:
                 summary = _load_latest_v2_extract_summary(latest_summary_doc_type)
+            elif latest_summary_source_doc:
+                summary = _load_latest_v2_stage_summary(latest_summary_source_doc)
             else:
                 summary = (_extract_summary_from_stdout(out, pipeline_name=pipeline_name) if out else None) or (
                     _load_latest_success_summary(pipeline_name) if pipeline_name else None
@@ -822,6 +880,7 @@ def _render_v2_section() -> None:
         status_label="Executando CVM V2 — Map Normalized...",
         module_import_path="pickup.cvm_map_v2",
         module_attr_name="cvm_map_v2",
+        latest_summary_source_doc="MAP_V2",
     )
 
     st.divider()
@@ -840,6 +899,7 @@ def _render_v2_section() -> None:
         status_label="Executando CVM V2 — Publish Financials...",
         module_import_path="pickup.cvm_publish_financials_v2",
         module_attr_name="cvm_publish_financials_v2",
+        latest_summary_source_doc="PUBLISH_V2",
     )
 
 
