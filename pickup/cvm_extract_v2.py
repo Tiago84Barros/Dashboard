@@ -292,7 +292,14 @@ NIVEL_CONTA_MAX = int(os.getenv("NIVEL_CONTA_MAX", "3"))
 # Rótulo do exercício atual dentro de cada arquivo.
 # Cada DFP/ITR carrega o período atual + o anterior para comparação.
 # Só o atual interessa na camada raw — o anterior já está ou virá do seu próprio arquivo.
-ORDEM_EXERC_VALIDO = frozenset(["ÚLTIMO EXERCÍCIO", "ULTIMO EXERCICIO"])
+# A CVM usa dois formatos ao longo do tempo:
+#   - Arquivos até ~2024: "ÚLTIMO EXERCÍCIO" / "ULTIMO EXERCICIO"
+#   - Arquivos 2025+: apenas "ÚLTIMO" / "ULTIMO"
+# Ambos identificam o período atual (não o comparativo PENÚLTIMO).
+ORDEM_EXERC_VALIDO = frozenset([
+    "ÚLTIMO EXERCÍCIO", "ULTIMO EXERCICIO",
+    "ÚLTIMO", "ULTIMO",
+])
 
 
 def _arquivo_relevante(filename: str) -> bool:
