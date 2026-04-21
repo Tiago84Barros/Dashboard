@@ -167,6 +167,56 @@ def _load_latest_success_summary(pipeline_name: str) -> Optional[dict[str, Any]]
         return None
 
 
+def _load_latest_v2_extract_summary(doc_type: str) -> Optional[dict[str, Any]]:
+    if not doc_type or get_engine is None or text is None:
+        return None
+    try:
+        engine = get_engine()
+        query = text(
+            """
+            SELECT
+                run_id,
+                source_doc,
+                status,
+                started_at,
+                finished_at,
+                updated_at,
+                metrics,
+                errors,
+                ano_inicial,
+                ano_final,
+                ultimo_ano_disponivel
+            FROM public.cvm_ingestion_runs
+            WHERE source_doc = :doc
+              AND status IN ('success', 'partial_success')
+            ORDER BY finished_at DESC NULLS LAST, started_at DESC
+            LIMIT 1
+            """
+        )
+        with engine.connect() as conn:
+            row = conn.execute(query, {"doc": doc_type}).mappings().first()
+
+        if not row:
+            return None
+
+        metrics = row.get("metrics") or {}
+        errors = row.get("errors") or {}
+        errors_list = errors.get("errors", []) if isinstance(errors, dict) else []
+        return {
+            "kind": "tickers",
+            "pipeline": f"v2_extract_{str(doc_type).lower()}",
+            "finished_at": row.get("finished_at") or row.get("updated_at"),
+            "rows_inserted": _safe_int(metrics.get("inserted_rows_accum")),
+            "tickers": _safe_int(metrics.get("tickers", 0)),
+            "year_start": _normalize_year(row.get("ano_inicial")),
+            "year_end": _normalize_year(row.get("ano_final") or row.get("ultimo_ano_disponivel")),
+            "errors_count": len(errors_list),
+            "warnings_count": 0,
+        }
+    except Exception:
+        return None
+
+
 def _render_summary(summary: Optional[dict[str, Any]], *, empty_message: str = "Nenhuma atualização bem-sucedida registrada ainda.") -> None:
     st.markdown("### Última atualização")
     if not summary:
@@ -375,6 +425,7 @@ def _run_job(
     pipeline_name: Optional[str] = None,
     env_overrides: Optional[Dict[str, str]] = None,
     active_run_check_doc_type: Optional[str] = None,
+    latest_summary_doc_type: Optional[str] = None,
 ) -> None:
     if job_key not in st.session_state:
         st.session_state[job_key] = False
@@ -434,7 +485,10 @@ def _run_job(
                 st.caption("A nova execução será liberada automaticamente quando o run ativo terminar ou falhar.")
 
     summary_placeholder = st.empty()
-    latest_summary = _load_latest_success_summary(pipeline_name) if pipeline_name else None
+    if latest_summary_doc_type:
+        latest_summary = _load_latest_v2_extract_summary(latest_summary_doc_type)
+    else:
+        latest_summary = _load_latest_success_summary(pipeline_name) if pipeline_name else None
     with summary_placeholder.container():
         _render_summary(latest_summary)
 
@@ -475,9 +529,12 @@ def _run_job(
                 status.update(label="Execução finalizada.", state="complete")
 
             out = stdout_buf.getvalue().strip()
-            summary = (_extract_summary_from_stdout(out, pipeline_name=pipeline_name) if out else None) or (
-                _load_latest_success_summary(pipeline_name) if pipeline_name else None
-            )
+            if latest_summary_doc_type:
+                summary = _load_latest_v2_extract_summary(latest_summary_doc_type)
+            else:
+                summary = (_extract_summary_from_stdout(out, pipeline_name=pipeline_name) if out else None) or (
+                    _load_latest_success_summary(pipeline_name) if pipeline_name else None
+                )
 
             with summary_placeholder.container():
                 _render_summary(summary)
@@ -516,88 +573,25 @@ def _run_job(
             st.session_state[job_key] = False
 
 
-@st.cache_data(ttl=30)
-def _check_v2_schema_cached() -> dict:
+@st.cache_data(ttl=15)
+def _count_years_in_db(doc_type: str) -> list:
+    if get_engine is None or text is None:
+        return []
     try:
-        from core.cvm_v2_schema_check import check_v2_schema
-        return check_v2_schema()
-    except Exception as exc:
-        return {"ready": False, "found": [], "missing": [], "error": str(exc)}
-
-
-@st.cache_data(ttl=30)
-def _get_v2_diagnostics_cached() -> dict:
-    try:
-        from core.cvm_v2_schema_check import get_connection_diagnostics
-        return get_connection_diagnostics()
-    except Exception as exc:
-        return {"error": str(exc)}
-
-
-def _render_v2_schema_status() -> bool:
-    with st.expander("Status do Schema CVM V2", expanded=True):
-        if st.button("Reverificar schema", key="btn_v2_schema_check"):
-            st.cache_data.clear()
-            st.rerun()
-
-        result = _check_v2_schema_cached()
-
-        if result.get("error"):
-            st.error(
-                f"Falha ao verificar schema: {result['error']}\n\n"
-                "Verifique a variável **SUPABASE_DB_URL** e a conexão com o banco."
-            )
-            return False
-
-        found = result.get("found", [])
-        missing = result.get("missing", [])
-
-        if result.get("ready"):
-            st.success(
-                f"Schema CVM V2 completo — {len(found)} objeto(s) encontrado(s).\n\n"
-                + "\n".join(f"  ✅ {n}" for n in found)
-            )
-            return True
-
-        st.error(
-            "Schema CVM V2 **incompleto**. Aplique o DDL institucional V2 antes de executar os jobs.\n\n"
-            + (("\n".join(f"  ✅ {n}" for n in found) + "\n") if found else "")
-            + "\n".join(f"  ❌ {n}" for n in missing)
+        engine = get_engine()
+        sql = text(
+            """
+            SELECT DISTINCT EXTRACT(YEAR FROM dt_refer::date)::int AS ano
+            FROM public.cvm_financial_raw
+            WHERE source_doc = :doc
+            ORDER BY ano
+            """
         )
-
-        diag = _get_v2_diagnostics_cached()
-        if diag.get("error"):
-            st.warning(f"Não foi possível obter diagnóstico de conexão: {diag['error']}")
-        else:
-            with st.expander("🔍 Diagnóstico de conexão (clique para expandir)", expanded=True):
-                st.markdown(
-                    f"**Banco conectado:** `{diag.get('current_database', '?')}`  \n"
-                    f"**Schema padrão:** `{diag.get('current_schema', '?')}`  \n"
-                    f"**Tabelas em public:** {diag.get('public_table_count', '?')}"
-                )
-
-                v2_found = diag.get("cvm_v2_tables_found", [])
-                if v2_found:
-                    st.success(f"Tabelas V2 encontradas neste banco: {', '.join(v2_found)}")
-                else:
-                    st.error(
-                        "**Nenhuma tabela V2 encontrada neste banco.**\n\n"
-                        "Isso confirma que o DDL ainda não foi aplicado — ou foi aplicado em outro projeto/banco do Supabase."
-                    )
-
-                sample = diag.get("public_tables_sample", [])
-                if sample:
-                    st.markdown("**Primeiras tabelas no schema public** (para confirmar que é o banco certo):")
-                    st.code(", ".join(sample), language="text")
-                else:
-                    st.warning("Nenhuma tabela encontrada no schema public.")
-
-            st.info(
-                "**Como resolver:** abra o SQL Editor do Supabase no projeto correto e execute o DDL institucional V2.\n\n"
-                "Se o banco acima não é o esperado, verifique a variável **SUPABASE_DB_URL** nas configurações do app."
-            )
-
-        return False
+        with engine.connect() as conn:
+            rows = conn.execute(sql, {"doc": doc_type}).fetchall()
+        return sorted(int(r[0]) for r in rows if r[0] is not None)
+    except Exception:
+        return []
 
 
 def _render_single_run_card(doc_type: str) -> None:
@@ -664,8 +658,8 @@ def _render_single_run_card(doc_type: str) -> None:
         cols_m[0].metric("Anos OK", years_done)
         cols_m[1].metric("Anos c/ erro", years_failed)
         cols_m[2].metric("Ano atual", current_year or "—")
-        skipped_files = _safe_int(metrics.get("skipped_files_accum"), 0)
-        skipped_rows = _safe_int(metrics.get("skipped_rows_accum"), 0)
+        skipped_files = _safe_int(metrics.get("skipped_files_accum", 0))
+        skipped_rows = _safe_int(metrics.get("skipped_rows_accum", 0))
         st.caption(
             f"Úteis: **{raw_rows:,}** linhas | Inseridas: **{inserted:,}** | "
             f"Filtradas: **{skipped_rows:,}** linhas + **{skipped_files}** arquivos ignorados"
@@ -698,27 +692,6 @@ def _render_single_run_card(doc_type: str) -> None:
         with st.expander(f"⚠️ {len(errors_list)} erro(s) registrado(s)", expanded=auto_expand):
             for e in errors_list[-20:]:
                 st.code(e, language="text")
-
-
-@st.cache_data(ttl=15)
-def _count_years_in_db(doc_type: str) -> list:
-    if get_engine is None or text is None:
-        return []
-    try:
-        engine = get_engine()
-        sql = text(
-            """
-            SELECT DISTINCT EXTRACT(YEAR FROM dt_refer::date)::int AS ano
-            FROM public.cvm_financial_raw
-            WHERE source_doc = :doc
-            ORDER BY ano
-            """
-        )
-        with engine.connect() as conn:
-            rows = conn.execute(sql, {"doc": doc_type}).fetchall()
-        return sorted(int(r[0]) for r in rows if r[0] is not None)
-    except Exception:
-        return []
 
 
 def _render_v2_run_monitor() -> None:
@@ -763,7 +736,6 @@ def _render_v2_section() -> None:
         "Mantém os dados legados intactos — opera em tabelas V2 separadas."
     )
 
-    _render_v2_schema_status()
     _render_v2_run_monitor()
 
     st.markdown(
@@ -814,6 +786,7 @@ def _render_v2_section() -> None:
         module_attr_name="cvm_extract_v2",
         env_overrides={"CVM_DOC_TYPE": "DFP", **env_extract},
         active_run_check_doc_type="DFP",
+        latest_summary_doc_type="DFP",
     )
 
     st.divider()
@@ -832,6 +805,7 @@ def _render_v2_section() -> None:
         module_attr_name="cvm_extract_v2",
         env_overrides={"CVM_DOC_TYPE": "ITR", **env_extract},
         active_run_check_doc_type="ITR",
+        latest_summary_doc_type="ITR",
     )
 
     st.divider()
