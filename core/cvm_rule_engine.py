@@ -19,6 +19,15 @@ SCOPE_RANK = {
     "company": 3,
 }
 
+STATEMENT_ALIASES = {
+    "dre": {"dre", "demonstracao do resultado", "demonstração do resultado", "resultado"},
+    "bpa": {"bpa", "ativo"},
+    "bpp": {"bpp", "passivo", "patrimonio liquido", "patrimônio líquido"},
+    "dfc": {"dfc", "fluxo de caixa", "caixa"},
+    "dmpl": {"dmpl", "mutacoes do patrimonio liquido", "mutações do patrimônio líquido"},
+    "dva": {"dva", "valor adicionado"},
+}
+
 
 def _is_blank(value: Any) -> bool:
     if value is None:
@@ -40,6 +49,28 @@ def _parse_date(value: Any) -> Optional[date]:
     if pd.isna(dt):
         return None
     return dt.date()
+
+
+def _matches_dimension(rule_value: Any, row_value: Any, aliases: Optional[dict[str, set[str]]] = None) -> bool:
+    rule_norm = normalize_text(rule_value)
+    row_norm = normalize_text(row_value)
+
+    if not rule_norm or rule_norm in {"all", "both"}:
+        return True
+    if not row_norm:
+        return False
+    if rule_norm == row_norm:
+        return True
+    if rule_norm in row_norm or row_norm in rule_norm:
+        return True
+
+    if aliases:
+        for canonical, variants in aliases.items():
+            all_terms = {normalize_text(canonical), *(normalize_text(v) for v in variants)}
+            if rule_norm in all_terms and any(term and term in row_norm for term in all_terms):
+                return True
+
+    return False
 
 
 def prepare_rules(mappings: pd.DataFrame) -> pd.DataFrame:
@@ -164,11 +195,11 @@ def _rule_matches_context(row: Dict[str, Any], rule: Dict[str, Any], require_pat
     row_sector = normalize_text(row.get("sector"))
 
     source_doc = normalize_text(rule.get("source_doc"))
-    if source_doc and source_doc not in {"all", "both"} and source_doc != row_source_doc:
+    if not _matches_dimension(source_doc, row_source_doc):
         return False
 
     statement_type = normalize_text(rule.get("statement_type"))
-    if statement_type and statement_type not in {"all", "both"} and statement_type != row_statement_type:
+    if not _matches_dimension(statement_type, row_statement_type, aliases=STATEMENT_ALIASES):
         return False
 
     company_cvm = rule.get("company_cvm")
