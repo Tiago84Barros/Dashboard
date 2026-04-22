@@ -466,6 +466,91 @@ def _load_latest_v2_run(doc_type: str) -> Optional[dict]:
         return {"error": str(exc)}
 
 
+@st.cache_data(ttl=10)
+def _load_v2_population_diagnostics(source_doc: str) -> dict:
+    base = {
+        "source_doc": source_doc,
+        "raw_count": 0,
+        "normalized_count": 0,
+        "final_count": 0,
+        "best_source_count": 0,
+        "active_mappings": 0,
+        "latest_run": None,
+        "error": None,
+    }
+    if get_engine is None or text is None:
+        base["error"] = "Conexão com banco indisponível nesta página."
+        return base
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            if source_doc == "MAP_V2":
+                base["raw_count"] = _safe_int(conn.execute(text("SELECT COUNT(*) FROM public.cvm_financial_raw")).scalar())
+                base["normalized_count"] = _safe_int(conn.execute(text("SELECT COUNT(*) FROM public.cvm_financial_normalized")).scalar())
+                base["active_mappings"] = _safe_int(conn.execute(text("SELECT COUNT(*) FROM public.cvm_account_map WHERE ativo = TRUE")).scalar())
+            elif source_doc == "PUBLISH_V2":
+                base["normalized_count"] = _safe_int(conn.execute(text("SELECT COUNT(*) FROM public.cvm_financial_normalized")).scalar())
+                base["best_source_count"] = _safe_int(conn.execute(text("SELECT COUNT(*) FROM public.vw_cvm_normalized_best_source")).scalar())
+                base["final_count"] = _safe_int(conn.execute(text("SELECT COUNT(*) FROM public.demonstracoes_financeiras_v2")).scalar())
+        base["latest_run"] = _load_latest_v2_run(source_doc)
+        return base
+    except Exception as exc:
+        base["error"] = str(exc)
+        return base
+
+
+def _render_v2_population_diagnostics(source_doc: Optional[str]) -> None:
+    if source_doc not in {"MAP_V2", "PUBLISH_V2"}:
+        return
+    diag = _load_v2_population_diagnostics(source_doc)
+    st.markdown("### Diagnóstico do povoamento")
+    if diag.get("error"):
+        st.warning(f"Não foi possível montar o diagnóstico agora: {diag['error']}")
+        return
+
+    latest_run = diag.get("latest_run") or {}
+    metrics = latest_run.get("metrics") or {}
+    message = metrics.get("message") or ""
+    status = latest_run.get("status") or "sem run"
+
+    if source_doc == "MAP_V2":
+        cols = st.columns(3)
+        cols[0].metric("Linhas brutas", f"{diag['raw_count']:,}")
+        cols[1].metric("Regras ativas", f"{diag['active_mappings']:,}")
+        cols[2].metric("Linhas normalizadas", f"{diag['normalized_count']:,}")
+
+        if diag["raw_count"] == 0:
+            st.error("O banco ainda não tem material bruto para traduzir. Execute primeiro o Extract Raw DFP e/ou ITR.")
+        elif diag["active_mappings"] == 0:
+            st.error("A tabela de regras está vazia. O sistema até lê os dados brutos, mas não sabe como interpretar as contas.")
+        elif status == "failed":
+            st.warning("O Map terminou como falha. Isso normalmente significa que os dados brutos existem, mas as regras não conseguiram reconhecer as contas necessárias.")
+        elif diag["normalized_count"] == 0:
+            st.warning("Há dados brutos e regras, mas nenhuma linha organizada foi gerada. O problema mais provável é desencontro entre os códigos/nomes das contas e as regras de mapeamento.")
+        else:
+            st.success("A etapa de tradução já gerou linhas organizadas. Se a base final ainda estiver vazia, o gargalo provavelmente está na publicação.")
+
+    if source_doc == "PUBLISH_V2":
+        cols = st.columns(3)
+        cols[0].metric("Linhas normalizadas", f"{diag['normalized_count']:,}")
+        cols[1].metric("Linhas prontas para publicar", f"{diag['best_source_count']:,}")
+        cols[2].metric("Linhas na base final", f"{diag['final_count']:,}")
+
+        if diag["normalized_count"] == 0:
+            st.error("Ainda não há material traduzido para montar a base final. O Publish depende do sucesso do Map Normalized.")
+        elif diag["best_source_count"] == 0:
+            st.error("Existem linhas traduzidas, mas nada ficou pronto para publicação. Isso indica que a visão intermediária não conseguiu selecionar uma base válida por empresa e data.")
+        elif status == "failed" and diag["final_count"] == 0:
+            st.warning("O Publish terminou como falha. O sistema encontrou algum material antes, mas não conseguiu montar ou gravar a estrutura final.")
+        elif diag["final_count"] == 0:
+            st.warning("Há material para publicar, mas a base final continua vazia. Isso sugere problema na etapa de gravação final ou na montagem da estrutura wide.")
+        else:
+            st.success("A publicação final já gerou registros. Se algum número estiver faltando, o problema passa a ser de cobertura e qualidade, não de povoamento zero.")
+
+    if message:
+        st.caption(f"Última mensagem registrada: {message}")
+
+
 def _run_job(
     *,
     job_key: str,
@@ -480,6 +565,7 @@ def _run_job(
     active_run_check_doc_type: Optional[str] = None,
     latest_summary_doc_type: Optional[str] = None,
     latest_summary_source_doc: Optional[str] = None,
+    diagnostic_source_doc: Optional[str] = None,
 ) -> None:
     if job_key not in st.session_state:
         st.session_state[job_key] = False
@@ -539,6 +625,7 @@ def _run_job(
                 st.caption("A nova execução será liberada automaticamente quando o run ativo terminar ou falhar.")
 
     summary_placeholder = st.empty()
+    diag_placeholder = st.empty()
     if latest_summary_doc_type:
         latest_summary = _load_latest_v2_extract_summary(latest_summary_doc_type)
     elif latest_summary_source_doc:
@@ -547,6 +634,9 @@ def _run_job(
         latest_summary = _load_latest_success_summary(pipeline_name) if pipeline_name else None
     with summary_placeholder.container():
         _render_summary(latest_summary)
+    if diagnostic_source_doc:
+        with diag_placeholder.container():
+            _render_v2_population_diagnostics(diagnostic_source_doc)
 
     if run:
         st.session_state[job_key] = True
@@ -596,6 +686,9 @@ def _run_job(
 
             with summary_placeholder.container():
                 _render_summary(summary)
+            if diagnostic_source_doc:
+                with diag_placeholder.container():
+                    _render_v2_population_diagnostics(diagnostic_source_doc)
 
             st.success("Rotina concluída (sem exceções Python).")
 
@@ -881,6 +974,7 @@ def _render_v2_section() -> None:
         module_import_path="pickup.cvm_map_v2",
         module_attr_name="cvm_map_v2",
         latest_summary_source_doc="MAP_V2",
+        diagnostic_source_doc="MAP_V2",
     )
 
     st.divider()
@@ -900,6 +994,7 @@ def _render_v2_section() -> None:
         module_import_path="pickup.cvm_publish_financials_v2",
         module_attr_name="cvm_publish_financials_v2",
         latest_summary_source_doc="PUBLISH_V2",
+        diagnostic_source_doc="PUBLISH_V2",
     )
 
 
