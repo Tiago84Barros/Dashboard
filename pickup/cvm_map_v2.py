@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 import pandas as pd
 from sqlalchemy import text
@@ -24,14 +24,26 @@ from datetime import datetime as _dt
 LOG_PREFIX = os.getenv("LOG_PREFIX", "[CVM_MAP_V2]")
 RAW_CHUNK_SIZE = int(os.getenv("MAP_CHUNK_SIZE", "10000"))
 INSERT_CHUNK_SIZE = int(os.getenv("MAP_INSERT_CHUNK", "5000"))
+MAP_SOURCE_DOC = (os.getenv("MAP_SOURCE_DOC") or "ALL").strip().upper()
+MAP_YEAR_START = (os.getenv("MAP_YEAR_START") or "").strip()
+MAP_YEAR_END = (os.getenv("MAP_YEAR_END") or "").strip()
+MAP_MAX_ROWS = (os.getenv("MAP_MAX_ROWS") or "").strip()
 
 
 def log(msg: str) -> None:
     print(f"{LOG_PREFIX} {msg}", flush=True)
 
 
+def _safe_int_env(value: str | None) -> int | None:
+    if value in (None, "", "0"):
+        return None
+    try:
+        return int(str(value).strip())
+    except Exception:
+        return None
+
+
 def _register_run(run_id: str, status: str, metrics: dict) -> None:
-    """Registra o run de normalização em cvm_ingestion_runs."""
     try:
         import json as _json
         engine = get_engine()
@@ -75,10 +87,6 @@ def _get_table_columns(engine, schema: str, table: str) -> set[str]:
 
 
 def fetch_mapping(engine=None) -> pd.DataFrame:
-    """Carrega mapeamento de contas ativo de public.cvm_account_map.
-
-    Compatível com o modelo legado e com o modelo expandido da Etapa 1.
-    """
     if engine is None:
         engine = get_engine()
 
@@ -126,16 +134,6 @@ def _apply_mapping_chunk(
     exact_candidates_idx: dict,
     regex_rules: list,
 ) -> tuple[pd.DataFrame, dict[str, int]]:
-    """Aplica mapeamento contextual em um chunk do DataFrame raw.
-
-    Ordem:
-    1. Regra exata global e inequívoca (fast path)
-    2. Regras exatas com contexto (empresa, período, tipo_demo, etc.)
-    3. Regras por padrão textual (regex)
-
-    Em caso de conflito com mesma força entre regras incompatíveis,
-    a linha não é classificada automaticamente.
-    """
     stats = {
         "rows_input": int(len(chunk)),
         "rows_non_null": 0,
@@ -210,18 +208,44 @@ def _apply_mapping_chunk(
     return (pd.DataFrame(rows_out) if rows_out else pd.DataFrame()), stats
 
 
-def save_chunk(df: pd.DataFrame, engine, sql: text, cols: list) -> int:
-    """Grava um chunk em public.cvm_financial_normalized."""
+def save_chunk(df: pd.DataFrame, engine, sql: text, cols: list[str]) -> int:
     if df.empty:
         return 0
     records = df[cols].where(pd.notnull(df[cols]), None).to_dict(orient="records")
     inserted = 0
     for i in range(0, len(records), INSERT_CHUNK_SIZE):
-        batch = records[i: i + INSERT_CHUNK_SIZE]
+        batch = records[i : i + INSERT_CHUNK_SIZE]
         with engine.begin() as conn:
             conn.execute(sql, batch)
         inserted += len(batch)
     return inserted
+
+
+def _build_raw_filters() -> tuple[str, dict[str, Any], str]:
+    filters = []
+    params: dict[str, Any] = {}
+    labels = []
+
+    if MAP_SOURCE_DOC and MAP_SOURCE_DOC != "ALL":
+        filters.append("source_doc = :map_source_doc")
+        params["map_source_doc"] = MAP_SOURCE_DOC
+        labels.append(f"source_doc={MAP_SOURCE_DOC}")
+
+    year_start = _safe_int_env(MAP_YEAR_START)
+    if year_start is not None:
+        filters.append("EXTRACT(YEAR FROM dt_refer::date) >= :map_year_start")
+        params["map_year_start"] = year_start
+        labels.append(f"ano_inicial={year_start}")
+
+    year_end = _safe_int_env(MAP_YEAR_END)
+    if year_end is not None:
+        filters.append("EXTRACT(YEAR FROM dt_refer::date) <= :map_year_end")
+        params["map_year_end"] = year_end
+        labels.append(f"ano_final={year_end}")
+
+    where_sql = f"WHERE {' AND '.join(filters)}" if filters else ""
+    label = ", ".join(labels) if labels else "sem filtros"
+    return where_sql, params, label
 
 
 def main() -> None:
@@ -278,13 +302,21 @@ def main() -> None:
         "ticker, cd_cvm, source_doc, tipo_demo, dt_refer, "
         "cd_conta, ds_conta, conta_pai, nivel_conta, vl_conta, row_hash"
     )
-    count_query = text("SELECT COUNT(*) FROM public.cvm_financial_raw")
+    where_sql, query_params, filters_label = _build_raw_filters()
+
+    count_query = text(f"SELECT COUNT(*) FROM public.cvm_financial_raw {where_sql}")
     with engine.connect() as conn:
-        total_raw = conn.execute(count_query).scalar() or 0
+        total_raw = conn.execute(count_query, query_params).scalar() or 0
     log(
         f"Total de linhas raw a processar: {total_raw:,} | "
-        f"chunk_size={RAW_CHUNK_SIZE:,} | leitura sem ORDER BY global"
+        f"chunk_size={RAW_CHUNK_SIZE:,} | filtros={filters_label}"
     )
+
+    if total_raw == 0:
+        msg = f"Nenhuma linha encontrada para os filtros atuais ({filters_label})."
+        log(msg)
+        _register_run(run_id, "failed", {"message": msg, "filters": filters_label, "chunk_size": RAW_CHUNK_SIZE})
+        return
 
     total_inserted = 0
     total_matched = 0
@@ -295,11 +327,16 @@ def main() -> None:
     total_regex = 0
     chunk_num = 0
 
-    raw_query = f"SELECT {raw_cols} FROM public.cvm_financial_raw"
+    raw_query = f"SELECT {raw_cols} FROM public.cvm_financial_raw {where_sql}"
+    max_rows = _safe_int_env(MAP_MAX_ROWS)
+    if max_rows is not None:
+        raw_query += " LIMIT :map_max_rows"
+        query_params = {**query_params, "map_max_rows": max_rows}
+        filters_label = f"{filters_label}, max_rows={max_rows}" if filters_label != "sem filtros" else f"max_rows={max_rows}"
 
     try:
         with engine.connect() as conn:
-            for chunk in pd.read_sql(text(raw_query), conn, chunksize=RAW_CHUNK_SIZE):
+            for chunk in pd.read_sql(text(raw_query), conn, params=query_params, chunksize=RAW_CHUNK_SIZE):
                 chunk_num += 1
                 t_chunk = time.time()
 
@@ -331,16 +368,14 @@ def main() -> None:
     except Exception as exc:
         msg = str(exc)
         if "statement timeout" in msg.lower() or "querycanceled" in msg.lower():
-            timeout_msg = (
-                "Timeout ao ler public.cvm_financial_raw. Ajuste aplicado: leitura sem ORDER BY global; "
-                "se persistir, reduza MAP_CHUNK_SIZE ou particione a leitura por source_doc/período."
-            )
+            timeout_msg = "Timeout ao ler public.cvm_financial_raw. Use lote menor por documento/anos e reduza o volume por execução."
             log(f"ERRO: {timeout_msg}")
             _register_run(
                 run_id,
                 "failed",
                 {
                     "message": timeout_msg,
+                    "filters": filters_label,
                     "total_raw": total_raw,
                     "chunk_size": RAW_CHUNK_SIZE,
                     "mapped_fast": total_fast,
@@ -371,6 +406,7 @@ def main() -> None:
                 f"fast={total_fast:,}, ctx={total_contextual:,}, regex={total_regex:,}, "
                 f"amb={total_ambiguous:,}, sem_match={total_unmatched:,}."
             ),
+            "filters": filters_label,
             "total_raw": total_raw,
             "total_matched": total_matched,
             "total_inserted": total_inserted,
@@ -387,7 +423,7 @@ def main() -> None:
     if total_inserted == 0 and total_raw > 0:
         log(
             "AVISO: 0 linhas inseridas apesar de raw ter dados. "
-            "Verifique regras ativas, validade temporal, prioridade e conflitos em cvm_account_map."
+            "Verifique regras ativas, validade temporal, prioridade, conflitos e filtros aplicados em cvm_account_map."
         )
 
 
