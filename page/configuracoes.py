@@ -499,6 +499,38 @@ def _load_v2_population_diagnostics(source_doc: str) -> dict:
         return base
 
 
+@st.cache_data(ttl=10)
+def _load_top_unmapped_accounts(limit: int = 20) -> pd.DataFrame:
+    if get_engine is None or text is None:
+        return pd.DataFrame()
+    try:
+        engine = get_engine()
+        query = text(
+            """
+            SELECT
+                r.cd_conta,
+                MIN(r.ds_conta) AS ds_conta,
+                MIN(r.source_doc) AS source_doc_exemplo,
+                COUNT(*) AS ocorrencias
+            FROM public.cvm_financial_raw r
+            LEFT JOIN public.cvm_account_map m
+              ON m.ativo = TRUE
+             AND m.cd_conta IS NOT NULL
+             AND TRIM(m.cd_conta) = TRIM(r.cd_conta)
+            WHERE m.cd_conta IS NULL
+              AND r.cd_conta IS NOT NULL
+            GROUP BY r.cd_conta
+            ORDER BY COUNT(*) DESC, r.cd_conta
+            LIMIT :limit
+            """
+        )
+        with engine.connect() as conn:
+            df = pd.read_sql(query, conn, params={"limit": int(limit)})
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
 def _render_v2_population_diagnostics(source_doc: Optional[str]) -> None:
     if source_doc not in {"MAP_V2", "PUBLISH_V2"}:
         return
@@ -526,9 +558,26 @@ def _render_v2_population_diagnostics(source_doc: Optional[str]) -> None:
         elif status == "failed":
             st.warning("O Map terminou como falha. Isso normalmente significa que os dados brutos existem, mas as regras não conseguiram reconhecer as contas necessárias.")
         elif diag["normalized_count"] == 0:
-            st.warning("Há dados brutos e regras, mas nenhuma linha organizada foi gerada. O problema mais provável é desencontro entre os códigos/nomes das contas e as regras de mapeamento.")
+            st.warning("Há dados brutos e regras, mas nenhuma linha organizada foi gerada. O problema mais provável é desencontro entre os códigos ou nomes das contas e as regras de mapeamento.")
         else:
             st.success("A etapa de tradução já gerou linhas organizadas. Se a base final ainda estiver vazia, o gargalo provavelmente está na publicação.")
+
+        unmapped = _load_top_unmapped_accounts(limit=20)
+        if not unmapped.empty:
+            st.markdown("#### Contas brutas mais frequentes ainda sem regra")
+            st.caption("Use essa lista para começar o preenchimento da tabela de regras. Priorize primeiro as contas com mais ocorrências.")
+            st.dataframe(
+                unmapped.rename(
+                    columns={
+                        "cd_conta": "Código da conta",
+                        "ds_conta": "Descrição",
+                        "source_doc_exemplo": "Exemplo",
+                        "ocorrencias": "Ocorrências",
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
 
     if source_doc == "PUBLISH_V2":
         cols = st.columns(3)
@@ -543,7 +592,7 @@ def _render_v2_population_diagnostics(source_doc: Optional[str]) -> None:
         elif status == "failed" and diag["final_count"] == 0:
             st.warning("O Publish terminou como falha. O sistema encontrou algum material antes, mas não conseguiu montar ou gravar a estrutura final.")
         elif diag["final_count"] == 0:
-            st.warning("Há material para publicar, mas a base final continua vazia. Isso sugere problema na etapa de gravação final ou na montagem da estrutura wide.")
+            st.warning("Há material para publicar, mas a base final continua vazia. Isso sugere problema na etapa de gravação final ou na montagem da estrutura final.")
         else:
             st.success("A publicação final já gerou registros. Se algum número estiver faltando, o problema passa a ser de cobertura e qualidade, não de povoamento zero.")
 
