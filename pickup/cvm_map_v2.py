@@ -22,7 +22,7 @@ from core.cvm_rule_engine import build_rule_indexes, prepare_rules, select_best_
 from datetime import datetime as _dt
 
 LOG_PREFIX = os.getenv("LOG_PREFIX", "[CVM_MAP_V2]")
-RAW_CHUNK_SIZE = int(os.getenv("MAP_CHUNK_SIZE", "50000"))
+RAW_CHUNK_SIZE = int(os.getenv("MAP_CHUNK_SIZE", "10000"))
 INSERT_CHUNK_SIZE = int(os.getenv("MAP_INSERT_CHUNK", "5000"))
 
 
@@ -281,7 +281,10 @@ def main() -> None:
     count_query = text("SELECT COUNT(*) FROM public.cvm_financial_raw")
     with engine.connect() as conn:
         total_raw = conn.execute(count_query).scalar() or 0
-    log(f"Total de linhas raw a processar: {total_raw:,} | chunk_size={RAW_CHUNK_SIZE:,}")
+    log(
+        f"Total de linhas raw a processar: {total_raw:,} | "
+        f"chunk_size={RAW_CHUNK_SIZE:,} | leitura sem ORDER BY global"
+    )
 
     total_inserted = 0
     total_matched = 0
@@ -292,38 +295,63 @@ def main() -> None:
     total_regex = 0
     chunk_num = 0
 
-    raw_query = f"SELECT {raw_cols} FROM public.cvm_financial_raw ORDER BY source_doc, dt_refer"
+    raw_query = f"SELECT {raw_cols} FROM public.cvm_financial_raw"
 
-    with engine.connect() as conn:
-        for chunk in pd.read_sql(text(raw_query), conn, chunksize=RAW_CHUNK_SIZE):
-            chunk_num += 1
-            t_chunk = time.time()
+    try:
+        with engine.connect() as conn:
+            for chunk in pd.read_sql(text(raw_query), conn, chunksize=RAW_CHUNK_SIZE):
+                chunk_num += 1
+                t_chunk = time.time()
 
-            df_norm, chunk_stats = _apply_mapping_chunk(
-                chunk,
-                fast_exact_idx,
-                exact_candidates_idx,
-                regex_rules,
+                df_norm, chunk_stats = _apply_mapping_chunk(
+                    chunk,
+                    fast_exact_idx,
+                    exact_candidates_idx,
+                    regex_rules,
+                )
+                total_matched += len(df_norm)
+                total_ambiguous += chunk_stats["ambiguous"]
+                total_unmatched += chunk_stats["unmatched"]
+                total_fast += chunk_stats["mapped_fast"]
+                total_contextual += chunk_stats["mapped_contextual"]
+                total_regex += chunk_stats["mapped_regex"]
+
+                if not df_norm.empty:
+                    ins = save_chunk(df_norm, engine, sql_upsert, cols_upsert)
+                    total_inserted += ins
+
+                elapsed_chunk = round(time.time() - t_chunk, 1)
+                log(
+                    f"  Chunk {chunk_num}: {len(chunk):,} raw "
+                    f"→ {len(df_norm):,} mapeadas "
+                    f"(fast={chunk_stats['mapped_fast']:,}, ctx={chunk_stats['mapped_contextual']:,}, regex={chunk_stats['mapped_regex']:,}, "
+                    f"amb={chunk_stats['ambiguous']:,}, sem_match={chunk_stats['unmatched']:,}) | "
+                    f"{total_inserted:,} inseridas acumuladas ({elapsed_chunk}s)"
+                )
+    except Exception as exc:
+        msg = str(exc)
+        if "statement timeout" in msg.lower() or "querycanceled" in msg.lower():
+            timeout_msg = (
+                "Timeout ao ler public.cvm_financial_raw. Ajuste aplicado: leitura sem ORDER BY global; "
+                "se persistir, reduza MAP_CHUNK_SIZE ou particione a leitura por source_doc/período."
             )
-            total_matched += len(df_norm)
-            total_ambiguous += chunk_stats["ambiguous"]
-            total_unmatched += chunk_stats["unmatched"]
-            total_fast += chunk_stats["mapped_fast"]
-            total_contextual += chunk_stats["mapped_contextual"]
-            total_regex += chunk_stats["mapped_regex"]
-
-            if not df_norm.empty:
-                ins = save_chunk(df_norm, engine, sql_upsert, cols_upsert)
-                total_inserted += ins
-
-            elapsed_chunk = round(time.time() - t_chunk, 1)
-            log(
-                f"  Chunk {chunk_num}: {len(chunk):,} raw "
-                f"→ {len(df_norm):,} mapeadas "
-                f"(fast={chunk_stats['mapped_fast']:,}, ctx={chunk_stats['mapped_contextual']:,}, regex={chunk_stats['mapped_regex']:,}, "
-                f"amb={chunk_stats['ambiguous']:,}, sem_match={chunk_stats['unmatched']:,}) | "
-                f"{total_inserted:,} inseridas acumuladas ({elapsed_chunk}s)"
+            log(f"ERRO: {timeout_msg}")
+            _register_run(
+                run_id,
+                "failed",
+                {
+                    "message": timeout_msg,
+                    "total_raw": total_raw,
+                    "chunk_size": RAW_CHUNK_SIZE,
+                    "mapped_fast": total_fast,
+                    "mapped_contextual": total_contextual,
+                    "mapped_regex": total_regex,
+                    "ambiguous_rows": total_ambiguous,
+                    "unmatched_rows": total_unmatched,
+                },
             )
+            raise
+        raise
 
     elapsed = round(time.time() - t0, 1)
     log(
@@ -352,6 +380,7 @@ def main() -> None:
             "ambiguous_rows": total_ambiguous,
             "unmatched_rows": total_unmatched,
             "elapsed_s": elapsed,
+            "chunk_size": RAW_CHUNK_SIZE,
         },
     )
 
