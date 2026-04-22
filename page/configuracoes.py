@@ -500,7 +500,7 @@ def _load_v2_population_diagnostics(source_doc: str) -> dict:
 
 
 @st.cache_data(ttl=10)
-def _load_top_unmapped_accounts(limit: int = 20) -> pd.DataFrame:
+def _load_top_unmapped_accounts(limit: int = 10) -> pd.DataFrame:
     if get_engine is None or text is None:
         return pd.DataFrame()
     try:
@@ -562,22 +562,21 @@ def _render_v2_population_diagnostics(source_doc: Optional[str]) -> None:
         else:
             st.success("A etapa de tradução já gerou linhas organizadas. Se a base final ainda estiver vazia, o gargalo provavelmente está na publicação.")
 
-        unmapped = _load_top_unmapped_accounts(limit=20)
+        unmapped = _load_top_unmapped_accounts(limit=10)
         if not unmapped.empty:
             st.markdown("#### Contas brutas mais frequentes ainda sem regra")
-            st.caption("Use essa lista para começar o preenchimento da tabela de regras. Priorize primeiro as contas com mais ocorrências.")
-            st.dataframe(
-                unmapped.rename(
-                    columns={
-                        "cd_conta": "Código da conta",
-                        "ds_conta": "Descrição",
-                        "source_doc_exemplo": "Exemplo",
-                        "ocorrencias": "Ocorrências",
-                    }
-                ),
-                use_container_width=True,
-                hide_index=True,
-            )
+            st.caption("Lista enxuta para celular. Priorize primeiro as contas com mais ocorrências.")
+            view = unmapped.rename(
+                columns={
+                    "cd_conta": "Código",
+                    "ds_conta": "Descrição",
+                    "source_doc_exemplo": "Exemplo",
+                    "ocorrencias": "Ocorrências",
+                }
+            ).copy()
+            view["Descrição"] = view["Descrição"].astype(str).str.slice(0, 70)
+            view["Ocorrências"] = view["Ocorrências"].map(lambda x: f"{int(x):,}")
+            st.table(view[["Código", "Ocorrências", "Exemplo", "Descrição"]])
 
     if source_doc == "PUBLISH_V2":
         cols = st.columns(3)
