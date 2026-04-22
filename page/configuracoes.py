@@ -500,6 +500,81 @@ def _load_v2_population_diagnostics(source_doc: str) -> dict:
 
 
 @st.cache_data(ttl=10)
+def _load_rule_profile_stats() -> dict:
+    result = {
+        "total": 0,
+        "global": 0,
+        "sector": 0,
+        "company": 0,
+        "regex": 0,
+        "validity": 0,
+        "high_conf": 0,
+        "error": None,
+    }
+    if get_engine is None or text is None:
+        result["error"] = "Conexão com banco indisponível nesta página."
+        return result
+    try:
+        engine = get_engine()
+        query = text(
+            """
+            SELECT
+                COUNT(*) AS total,
+                COUNT(*) FILTER (
+                    WHERE COALESCE(NULLIF(BTRIM(rule_scope), ''),
+                        CASE
+                            WHEN company_cvm IS NOT NULL THEN 'company'
+                            WHEN sector IS NOT NULL AND BTRIM(sector) <> '' THEN 'sector'
+                            ELSE 'global'
+                        END
+                    ) = 'global'
+                ) AS global_count,
+                COUNT(*) FILTER (
+                    WHERE COALESCE(NULLIF(BTRIM(rule_scope), ''),
+                        CASE
+                            WHEN company_cvm IS NOT NULL THEN 'company'
+                            WHEN sector IS NOT NULL AND BTRIM(sector) <> '' THEN 'sector'
+                            ELSE 'global'
+                        END
+                    ) = 'sector'
+                ) AS sector_count,
+                COUNT(*) FILTER (
+                    WHERE COALESCE(NULLIF(BTRIM(rule_scope), ''),
+                        CASE
+                            WHEN company_cvm IS NOT NULL THEN 'company'
+                            WHEN sector IS NOT NULL AND BTRIM(sector) <> '' THEN 'sector'
+                            ELSE 'global'
+                        END
+                    ) = 'company'
+                ) AS company_count,
+                COUNT(*) FILTER (WHERE ds_conta_pattern IS NOT NULL AND BTRIM(ds_conta_pattern) <> '') AS regex_count,
+                COUNT(*) FILTER (WHERE valid_from IS NOT NULL OR valid_to IS NOT NULL) AS validity_count,
+                COUNT(*) FILTER (WHERE COALESCE(confidence_score, 0) >= 0.90) AS high_conf_count
+            FROM public.cvm_account_map
+            WHERE ativo = TRUE
+            """
+        )
+        with engine.connect() as conn:
+            row = conn.execute(query).mappings().first()
+        if row:
+            result.update(
+                {
+                    "total": _safe_int(row.get("total")),
+                    "global": _safe_int(row.get("global_count")),
+                    "sector": _safe_int(row.get("sector_count")),
+                    "company": _safe_int(row.get("company_count")),
+                    "regex": _safe_int(row.get("regex_count")),
+                    "validity": _safe_int(row.get("validity_count")),
+                    "high_conf": _safe_int(row.get("high_conf_count")),
+                }
+            )
+        return result
+    except Exception as exc:
+        result["error"] = str(exc)
+        return result
+
+
+@st.cache_data(ttl=10)
 def _load_top_unmapped_accounts(limit: int = 10) -> pd.DataFrame:
     if get_engine is None or text is None:
         return pd.DataFrame()
@@ -550,6 +625,18 @@ def _render_v2_population_diagnostics(source_doc: Optional[str]) -> None:
         cols[0].metric("Linhas brutas", f"{diag['raw_count']:,}")
         cols[1].metric("Regras ativas", f"{diag['active_mappings']:,}")
         cols[2].metric("Linhas normalizadas", f"{diag['normalized_count']:,}")
+
+        rule_profile = _load_rule_profile_stats()
+        if not rule_profile.get("error") and rule_profile.get("total", 0) > 0:
+            st.markdown("#### Perfil das regras ativas")
+            p1, p2, p3, p4 = st.columns(4)
+            p1.metric("Globais", f"{rule_profile['global']:,}")
+            p2.metric("Por setor", f"{rule_profile['sector']:,}")
+            p3.metric("Por empresa", f"{rule_profile['company']:,}")
+            p4.metric("Alta confiança", f"{rule_profile['high_conf']:,}")
+            q1, q2 = st.columns(2)
+            q1.metric("Com regex", f"{rule_profile['regex']:,}")
+            q2.metric("Com validade", f"{rule_profile['validity']:,}")
 
         if diag["raw_count"] == 0:
             st.error("O banco ainda não tem material bruto para traduzir. Execute primeiro o Extract Raw DFP e/ou ITR.")
