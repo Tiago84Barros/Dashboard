@@ -29,6 +29,7 @@ MAP_TIPO_DEMO = (os.getenv("MAP_TIPO_DEMO") or "ALL").strip().upper()
 MAP_YEAR_START = (os.getenv("MAP_YEAR_START") or "").strip()
 MAP_YEAR_END = (os.getenv("MAP_YEAR_END") or "").strip()
 MAP_MAX_ROWS = (os.getenv("MAP_MAX_ROWS") or "").strip()
+MAP_ONLY_RULE_CODES = (os.getenv("MAP_ONLY_RULE_CODES") or "0").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def log(msg: str) -> None:
@@ -129,6 +130,19 @@ def fetch_mapping(engine=None) -> pd.DataFrame:
         return pd.read_sql(query, conn)
 
 
+def _extract_rule_codes(rules: pd.DataFrame) -> list[str]:
+    if rules is None or rules.empty or "cd_conta" not in rules.columns:
+        return []
+    codes = (
+        rules["cd_conta"]
+        .astype(str)
+        .str.strip()
+        .replace({"nan": "", "None": ""})
+    )
+    uniq = [code for code in codes.tolist() if code]
+    return sorted(set(uniq))
+
+
 def _apply_mapping_chunk(
     chunk: pd.DataFrame,
     fast_exact_idx: dict,
@@ -222,7 +236,7 @@ def save_chunk(df: pd.DataFrame, engine, sql: text, cols: list[str]) -> int:
     return inserted
 
 
-def _build_raw_filters() -> tuple[str, dict[str, Any], str]:
+def _build_raw_filters(rule_codes: list[str] | None = None) -> tuple[str, dict[str, Any], str]:
     filters = []
     params: dict[str, Any] = {}
     labels = []
@@ -248,6 +262,15 @@ def _build_raw_filters() -> tuple[str, dict[str, Any], str]:
         filters.append("EXTRACT(YEAR FROM dt_refer::date) <= :map_year_end")
         params["map_year_end"] = year_end
         labels.append(f"ano_final={year_end}")
+
+    if MAP_ONLY_RULE_CODES:
+        valid_codes = [code for code in (rule_codes or []) if code]
+        if valid_codes:
+            filters.append("cd_conta = ANY(:map_rule_codes)")
+            params["map_rule_codes"] = valid_codes
+            labels.append(f"only_rule_codes={len(valid_codes)}")
+        else:
+            labels.append("only_rule_codes=0")
 
     where_sql = f"WHERE {' AND '.join(filters)}" if filters else ""
     label = ", ".join(labels) if labels else "sem filtros"
@@ -282,11 +305,13 @@ def main() -> None:
         return
 
     fast_exact_idx, exact_candidates_idx, regex_rules = build_rule_indexes(rules)
+    rule_codes = _extract_rule_codes(rules)
     log(
         "Regras preparadas: "
         f"fast_exact={len(fast_exact_idx)} | "
         f"exact_contextual={sum(len(v) for v in exact_candidates_idx.values())} | "
-        f"regex={len(regex_rules)}"
+        f"regex={len(regex_rules)} | "
+        f"rule_codes={len(rule_codes)}"
     )
 
     cols_upsert = [
@@ -308,7 +333,7 @@ def main() -> None:
         "ticker, cd_cvm, source_doc, tipo_demo, dt_refer, "
         "cd_conta, ds_conta, conta_pai, nivel_conta, vl_conta, row_hash"
     )
-    where_sql, query_params, filters_label = _build_raw_filters()
+    where_sql, query_params, filters_label = _build_raw_filters(rule_codes=rule_codes)
 
     count_query = text(f"SELECT COUNT(*) FROM public.cvm_financial_raw {where_sql}")
     with engine.connect() as conn:
@@ -423,6 +448,8 @@ def main() -> None:
             "unmatched_rows": total_unmatched,
             "elapsed_s": elapsed,
             "chunk_size": RAW_CHUNK_SIZE,
+            "only_rule_codes": MAP_ONLY_RULE_CODES,
+            "rule_codes_count": len(rule_codes),
         },
     )
 
