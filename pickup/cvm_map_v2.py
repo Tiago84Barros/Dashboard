@@ -25,6 +25,7 @@ LOG_PREFIX = os.getenv("LOG_PREFIX", "[CVM_MAP_V2]")
 RAW_CHUNK_SIZE = int(os.getenv("MAP_CHUNK_SIZE", "10000"))
 INSERT_CHUNK_SIZE = int(os.getenv("MAP_INSERT_CHUNK", "5000"))
 MAP_SOURCE_DOC = (os.getenv("MAP_SOURCE_DOC") or "ALL").strip().upper()
+MAP_TIPO_DEMO = (os.getenv("MAP_TIPO_DEMO") or "ALL").strip().upper()
 MAP_YEAR_START = (os.getenv("MAP_YEAR_START") or "").strip()
 MAP_YEAR_END = (os.getenv("MAP_YEAR_END") or "").strip()
 MAP_MAX_ROWS = (os.getenv("MAP_MAX_ROWS") or "").strip()
@@ -54,7 +55,7 @@ def _register_run(run_id: str, status: str, metrics: dict) -> None:
                     INSERT INTO public.cvm_ingestion_runs
                         (run_id, source_doc, status, metrics, finished_at, updated_at)
                     VALUES
-                        (:run_id, 'MAP_V2', :status, :metrics::jsonb, NOW(), NOW())
+                        (:run_id, 'MAP_V2', :status, CAST(:metrics AS jsonb), NOW(), NOW())
                     ON CONFLICT (run_id) DO UPDATE SET
                         status = EXCLUDED.status,
                         metrics = EXCLUDED.metrics,
@@ -230,6 +231,11 @@ def _build_raw_filters() -> tuple[str, dict[str, Any], str]:
         filters.append("source_doc = :map_source_doc")
         params["map_source_doc"] = MAP_SOURCE_DOC
         labels.append(f"source_doc={MAP_SOURCE_DOC}")
+
+    if MAP_TIPO_DEMO and MAP_TIPO_DEMO != "ALL":
+        filters.append("UPPER(tipo_demo) = :map_tipo_demo")
+        params["map_tipo_demo"] = MAP_TIPO_DEMO
+        labels.append(f"tipo_demo={MAP_TIPO_DEMO}")
 
     year_start = _safe_int_env(MAP_YEAR_START)
     if year_start is not None:
