@@ -78,6 +78,7 @@ def _get_layout_funcs() -> tuple[Callable[[], None], Callable[[], None]]:
     except Exception:
         pass
 
+    # fallback seguro
     def _fallback_config():
         try:
             st.set_page_config(
@@ -86,6 +87,7 @@ def _get_layout_funcs() -> tuple[Callable[[], None], Callable[[], None]]:
                 initial_sidebar_state="expanded",
             )
         except Exception:
+            # set_page_config só pode ser chamado uma vez; ignora se já foi chamado.
             pass
 
     def _fallback_css():
@@ -103,6 +105,11 @@ def _get_layout_funcs() -> tuple[Callable[[], None], Callable[[], None]]:
 
 
 def _get_db_loader():
+    """
+    Obtém load_setores_from_db em:
+    - core.db_loader
+    - db_loader
+    """
     mod = _import_first("core.db_loader", "db_loader")
     fn = getattr(mod, "load_setores_from_db", None)
     if not callable(fn):
@@ -111,12 +118,16 @@ def _get_db_loader():
 
 
 def _load_page_renderer(page_key: str) -> Callable[[], None]:
+    """
+    Carrega a função render() da página escolhida, com fallback de caminhos.
+    """
     mapping = {
         "Básica": ("page.basic", "basic"),
         "Avançada": ("page.advanced", "advanced"),
         "Criação de Portfólio": ("page.criacao_portfolio", "criacao_portfolio"),
         "Análises de Portfólio": ("page.analises_portfolio", "analises_portfolio"),
-        "Configurações": ("page.configuracoes_limpa", "page.configuracoes", "configuracoes"),
+        #"Análises de Portfólio V2": ("page.analises_portfolio_v2", "analises_portfolio_v2"),
+        "Configurações": ("page.configuracoes", "configuracoes"),
     }
     paths = mapping.get(page_key)
     if not paths:
@@ -129,11 +140,13 @@ def _load_page_renderer(page_key: str) -> Callable[[], None]:
     return render
 
 
+# ───────────────────────── Layout Global ───────────────────────────
 configurar_pagina, aplicar_estilos_css = _get_layout_funcs()
 configurar_pagina()
 aplicar_estilos_css()
 
 
+# ───────────────────────── Cache inicial ───────────────────────────
 def _ensure_setores_df() -> None:
     if "setores_df" in st.session_state and st.session_state["setores_df"] is not None:
         return
@@ -142,6 +155,7 @@ def _ensure_setores_df() -> None:
     st.session_state["setores_df"] = setores_df
 
 
+# ───────────────────────── Sidebar navegação ───────────────────────
 with st.sidebar:
     st.markdown("## Análises")
     pagina_escolhida = st.radio(
@@ -151,11 +165,13 @@ with st.sidebar:
             "Avançada",
             "Criação de Portfólio",
             "Análises de Portfólio",
+            #"Análises de Portfólio V2",
             "Configurações",
         ],
         index=0,
     )
 
+# ───────────────────────── Execução / Roteamento ────────────────────
 try:
     _ensure_setores_df()
 except Exception as e:
