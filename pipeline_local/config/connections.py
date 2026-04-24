@@ -9,9 +9,17 @@ from sqlalchemy.engine import Engine, Connection
 from pipeline_local.config.settings import load_settings
 
 
+def _is_duckdb(url: str) -> bool:
+    return url.startswith("duckdb")
+
+
 def get_local_engine() -> Engine:
     settings = load_settings()
-    return create_engine(settings.local_db_url, pool_pre_ping=True, future=True)
+    url = settings.local_db_url
+    if _is_duckdb(url):
+        # DuckDB não suporta pool_pre_ping nem pool threading padrão
+        return create_engine(url, future=True)
+    return create_engine(url, pool_pre_ping=True, future=True)
 
 
 def get_supabase_engine() -> Engine:

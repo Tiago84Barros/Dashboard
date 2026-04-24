@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pg_isready)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(docker --version)",
+      "Bash(psql --version)",
+      "Bash(python -c \"import sqlalchemy; print\\('sqlalchemy', sqlalchemy.__version__\\)\")",
+      "Bash(python -c \"import psycopg2; print\\('psycopg2 ok'\\)\")",
+      "Bash(python -m pip show sqlalchemy)",
+      "Bash(python -m pip show psycopg2-binary)",
+      "Bash(where python *)",
+      "Bash(where pip *)",
+      "Bash(.venv/Scripts/python.exe -c \"import sqlalchemy; print\\('sqlalchemy', sqlalchemy.__version__\\); import psycopg2; print\\('psycopg2 ok'\\)\")",
+      "Bash(winget --version)",
+      "Bash(choco --version)",
+      "Bash(.venv/Scripts/python.exe -c \"import duckdb; print\\('duckdb', duckdb.__version__\\)\")",
+      "Bash(.venv/Scripts/pip.exe show *)",
+      "Bash(.venv/Scripts/pip.exe install *)",
+      "Bash(.venv/Scripts/python.exe -m pipeline_local.setup_local_db)",
+      "Bash(.venv/Scripts/python.exe -m pipeline_local.check_setup)",
+      "Bash(.venv/Scripts/python.exe -c ' *)",
+      "Bash(.venv/Scripts/python.exe -m pipeline_local.run_pipeline --stage extract --source DFP --year-start 2023 --year-end 2023)",
+      "Bash(tasklist)",
+      "Bash(taskkill /PID 21508 /F)",
+      "PowerShell(Stop-Process -Id 21508 -Force)"
+    ]
+  }
+}

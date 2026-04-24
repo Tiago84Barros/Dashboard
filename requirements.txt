@@ -9,6 +9,8 @@ matplotlib
 psycopg2-binary
 python-bcb
 sqlalchemy>=2.0
+duckdb>=1.4.0
+duckdb-engine>=0.17.0
 openai>=1.0.0
 tradingcomdados==1.4.10
 pdfplumber==0.11.4
