@@ -271,6 +271,15 @@ def _safe_num(value, default=None):
         return default
 
 
+
+def _safe_round(value, ndigits: int = 2):
+    try:
+        if value is None or pd.isna(value):
+            return None
+        return round(float(value), ndigits)
+    except Exception:
+        return None
+
 def _first_existing(row: pd.Series, candidates: list[str], default=None):
     for col in candidates:
         if col in row.index:
@@ -745,9 +754,9 @@ def render():
                 "setor": setor, "subsetor": subsetor, "segmento": segmento,
                 "motivo": motivo_equal_weight if modo_equal_weight == "filtro" else f"Diagnóstico: {motivo_equal_weight}",
                 "modo_equal_weight": modo_equal_weight,
-                "alpha_selic_pct": round(diff, 2), "alpha_equal_weight_pct": None,
-                "valor_estrategia": round(final_empresas, 2), "valor_selic": round(final_selic, 2),
-                "valor_equal_weight": None if final_equal_weight is None else round(final_equal_weight, 2),
+                "alpha_selic_pct": _safe_round(diff, 2), "alpha_equal_weight_pct": None,
+                "valor_estrategia": _safe_round(final_empresas, 2), "valor_selic": _safe_round(final_selic, 2),
+                "valor_equal_weight": None if final_equal_weight is None else _safe_round(final_equal_weight, 2),
             })
             if modo_equal_weight == "filtro":
                 continue
@@ -757,9 +766,9 @@ def render():
             segmentos_reprovados.append({
                 "setor": setor, "subsetor": subsetor, "segmento": segmento,
                 "motivo": "Falhou vs Selic",
-                "alpha_selic_pct": round(diff, 2), "alpha_equal_weight_pct": round(diff_vs_equal_weight, 2),
-                "valor_estrategia": round(final_empresas, 2), "valor_selic": round(final_selic, 2),
-                "valor_equal_weight": round(final_equal_weight, 2),
+                "alpha_selic_pct": _safe_round(diff, 2), "alpha_equal_weight_pct": _safe_round(diff_vs_equal_weight, 2),
+                "valor_estrategia": _safe_round(final_empresas, 2), "valor_selic": _safe_round(final_selic, 2),
+                "valor_equal_weight": _safe_round(final_equal_weight, 2),
             })
             continue
 
@@ -771,9 +780,9 @@ def render():
                     "setor": setor, "subsetor": subsetor, "segmento": segmento,
                     "motivo": "Falhou vs Equal-Weight" if modo_equal_weight == "filtro" else "Diagnóstico: falharia vs Equal-Weight",
                     "modo_equal_weight": modo_equal_weight,
-                    "alpha_selic_pct": round(diff, 2), "alpha_equal_weight_pct": round(diff_vs_equal_weight, 2),
-                    "valor_estrategia": round(final_empresas, 2), "valor_selic": round(final_selic, 2),
-                    "valor_equal_weight": round(final_equal_weight, 2),
+                    "alpha_selic_pct": _safe_round(diff, 2), "alpha_equal_weight_pct": _safe_round(diff_vs_equal_weight, 2),
+                    "valor_estrategia": _safe_round(final_empresas, 2), "valor_selic": _safe_round(final_selic, 2),
+                    "valor_equal_weight": _safe_round(final_equal_weight, 2),
                 })
                 if modo_equal_weight == "filtro":
                     continue
@@ -875,7 +884,7 @@ def render():
                     "is_maior_part": is_maior_part,
                     "motivos": motivos,
                     "alpha_selic": float(diff),
-                    "alpha_equal_weight": float(diff_vs_equal_weight),
+                    "alpha_equal_weight": (None if diff_vs_equal_weight is None else float(diff_vs_equal_weight)),
                 },
             )
 
