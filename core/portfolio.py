@@ -267,96 +267,6 @@ def gerir_carteira_todas_empresas(
     return pd.DataFrame.from_dict(patrimonio, orient="columns").sort_index()
 
 
-
-
-def gerir_carteira_equal_weight_segmento(
-    precos: pd.DataFrame,
-    tickers: Sequence[str],
-    datas_aportes: Sequence[pd.Timestamp],
-    dividendos_dict: Optional[Dict[str, Union[pd.Series, pd.DataFrame]]] = None,
-    aporte_mensal: float = 1000.0,
-    fee_bps: float = 0.0,
-    slippage_bps: float = 0.0,
-) -> pd.Series:
-    """
-    Benchmark investível equal-weight do segmento.
-
-    O aporte_mensal é TOTAL para o segmento e é dividido igualmente
-    entre todos os tickers elegíveis. Não usa ranking, liderança ou score.
-
-    Compatível com colunas de preço com ou sem sufixo .SA e com dicionário
-    de dividendos indexado por ticker com ou sem .SA.
-    """
-    precos = _ensure_dt_index(precos)
-    if precos is None or precos.empty or not tickers or not datas_aportes:
-        return pd.Series(dtype="float64", name="Benchmark Equal-Weight Segmento")
-
-    dividendos_dict = dividendos_dict or {}
-
-    tickers_exec: List[str] = []
-    for tk in tickers:
-        tk_str = str(tk or "").strip()
-        if not tk_str:
-            continue
-        col = _resolve_ticker_col(precos, tk_str)
-        if col is None:
-            col = _resolve_ticker_col(precos, f"{tk_str.replace('.SA', '')}.SA")
-        if col is not None and col not in tickers_exec:
-            tickers_exec.append(col)
-
-    if not tickers_exec:
-        return pd.Series(dtype="float64", name="Benchmark Equal-Weight Segmento")
-
-    divs: Dict[str, pd.Series] = {}
-    for col in tickers_exec:
-        k = _resolve_div_key(dividendos_dict, col)
-        divs[col] = _as_div_series(dividendos_dict.get(k)) if k is not None else pd.Series(dtype="float64")
-
-    cf = _cost_factor(fee_bps, slippage_bps)
-    carteira = {t: 0.0 for t in tickers_exec}
-    patrimonio_hist: Dict[pd.Timestamp, float] = {}
-
-    for data0 in datas_aportes:
-        data_aporte = encontrar_proxima_data_valida(pd.Timestamp(data0), precos)
-        if data_aporte is None:
-            continue
-
-        ativos_validos = [t for t in tickers_exec if _get_price(precos, data_aporte, t) is not None]
-        if not ativos_validos:
-            continue
-
-        aporte_por_ticker = float(aporte_mensal) / len(ativos_validos)
-
-        for t in ativos_validos:
-            px = _get_price(precos, data_aporte, t)
-            if px is None:
-                continue
-
-            s = divs.get(t, pd.Series(dtype="float64"))
-            div_mes = _div_mes_por_acao_sanitizado(
-                s=s,
-                ano=int(data_aporte.year),
-                mes=int(data_aporte.month),
-                ticker=t,
-                px_ref=px,
-            )
-
-            reinvest = div_mes * carteira[t]
-            aporte_total = (aporte_por_ticker * cf) + reinvest
-            carteira[t] += aporte_total / px
-
-        total = 0.0
-        for t, qtd in carteira.items():
-            px = _get_price(precos, data_aporte, t)
-            if px is not None:
-                total += qtd * px
-
-        patrimonio_hist[data_aporte] = total
-
-    if not patrimonio_hist:
-        return pd.Series(dtype="float64", name="Benchmark Equal-Weight Segmento")
-
-    return pd.Series(patrimonio_hist, name="Benchmark Equal-Weight Segmento").sort_index().ffill()
 def calcular_patrimonio_selic_macro(
     dados_macro: pd.DataFrame,
     datas_aportes: Sequence[pd.Timestamp],
@@ -1353,7 +1263,6 @@ __all__ = [
     "encontrar_proxima_data_valida",
     "gerir_carteira_simples",
     "gerir_carteira_todas_empresas",
-    "gerir_carteira_equal_weight_segmento",
     "calcular_patrimonio_selic_macro",
     "gerir_carteira",
     "gerir_carteira_modulada",
