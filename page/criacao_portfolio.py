@@ -447,7 +447,7 @@ def render():
     # CONTROLES DE EXECUÇÃO (não roda sozinho)
     # ─────────────────────────────────────────────────────────────
     if "cp_last_params" not in st.session_state:
-        st.session_state["cp_last_params"] = {"margem_superior": 10.0}
+        st.session_state["cp_last_params"] = {"margem_superior": 10.0, "margem_equal_weight": 0.0, "modo_equal_weight": "diagnostico", "mostrar_reprovados": True}
     if "cp_should_run" not in st.session_state:
         st.session_state["cp_should_run"] = False
 
@@ -462,12 +462,45 @@ def render():
                 value=float(st.session_state["cp_last_params"].get("margem_superior", 10.0)),
                 step=0.1,
                 format="%.2f",
-                help="Digite a % e clique em RODAR. Ex.: 7.5, 12, 33.33",
+                help="Filtro absoluto: quanto a estratégia do segmento precisa superar o Tesouro Selic.",
+            )
+            margem_equal_weight = st.number_input(
+                "Margem mínima vs Equal-Weight do segmento (%)",
+                min_value=-1000.0,
+                max_value=10000.0,
+                value=float(st.session_state["cp_last_params"].get("margem_equal_weight", 0.0)),
+                step=0.1,
+                format="%.2f",
+                help=(
+                    "Filtro relativo: quanto a estratégia precisa superar uma carteira passiva "
+                    "equal-weight do próprio segmento. Use 0 para exigir apenas superar o segmento; "
+                    "use valor negativo para flexibilizar."
+                ),
+            )
+            modo_equal_weight_label = st.selectbox(
+                "Uso do Equal-Weight na seleção",
+                options=["Apenas diagnóstico", "Filtro obrigatório"],
+                index=0 if st.session_state["cp_last_params"].get("modo_equal_weight", "diagnostico") != "filtro" else 1,
+                help=(
+                    "Apenas diagnóstico: calcula e mostra o alpha vs Equal-Weight, mas não bloqueia o segmento. "
+                    "Filtro obrigatório: o segmento só entra se também superar o Equal-Weight pela margem configurada."
+                ),
+            )
+            modo_equal_weight = "filtro" if modo_equal_weight_label == "Filtro obrigatório" else "diagnostico"
+
+            mostrar_reprovados = st.checkbox(
+                "Mostrar auditoria dos segmentos",
+                value=bool(st.session_state["cp_last_params"].get("mostrar_reprovados", True)),
             )
             gerar = st.form_submit_button("🚀 Rodar Criação de Portfólio")
 
         if gerar:
-            st.session_state["cp_last_params"] = {"margem_superior": float(margem_superior)}
+            st.session_state["cp_last_params"] = {
+                "margem_superior": float(margem_superior),
+                "margem_equal_weight": float(margem_equal_weight),
+                "modo_equal_weight": str(modo_equal_weight),
+                "mostrar_reprovados": bool(mostrar_reprovados),
+            }
             st.session_state["cp_should_run"] = True
 
     if not st.session_state["cp_should_run"]:
@@ -475,6 +508,14 @@ def render():
         return
 
     margem_superior = float(st.session_state["cp_last_params"]["margem_superior"])
+    margem_equal_weight = float(st.session_state["cp_last_params"].get("margem_equal_weight", 0.0))
+    modo_equal_weight = str(st.session_state["cp_last_params"].get("modo_equal_weight", "diagnostico"))
+    mostrar_reprovados = bool(st.session_state["cp_last_params"].get("mostrar_reprovados", True))
+
+    if modo_equal_weight == "diagnostico":
+        st.info("Equal-Weight em modo diagnóstico: ele será calculado e exibido, mas não bloqueará a seleção do segmento.")
+    else:
+        st.warning("Equal-Weight em modo filtro obrigatório: segmentos que perderem para o benchmark interno serão excluídos.")
 
     # Score V2: AUTOMÁTICO (se disponível)
     use_score_v2 = calcular_score_acumulado_v2 is not None
@@ -517,6 +558,7 @@ def render():
     )
 
     empresas_final_map: Dict[str, dict] = {}
+    segmentos_reprovados: List[dict] = []
 
     score_global_parts: List[pd.DataFrame] = []
     lideres_global_parts: List[pd.DataFrame] = []
@@ -678,29 +720,72 @@ def render():
             datas_aportes=datas_aportes,
             dividendos_dict=dividendos,
         )
+
+        final_equal_weight = None
+        diff_vs_equal_weight = None
+        equal_weight_disponivel = False
+        motivo_equal_weight = "OK"
+
         if patrimonio_equal_weight is None or patrimonio_equal_weight.empty:
-            continue
+            motivo_equal_weight = "Equal-Weight indisponível"
+        else:
+            equal_clean = pd.to_numeric(patrimonio_equal_weight, errors="coerce").dropna()
+            if equal_clean.empty:
+                motivo_equal_weight = "Equal-Weight sem valores válidos"
+            else:
+                final_equal_weight = float(equal_clean.iloc[-1])
+                if final_equal_weight <= 0:
+                    motivo_equal_weight = "Equal-Weight <= 0"
+                else:
+                    equal_weight_disponivel = True
+                    diff_vs_equal_weight = ((final_empresas / final_equal_weight) - 1) * 100.0
 
-        final_equal_weight = float(pd.to_numeric(patrimonio_equal_weight, errors="coerce").dropna().iloc[-1])
-        if final_equal_weight <= 0:
-            continue
-
-        diff_vs_equal_weight = ((final_empresas / final_equal_weight) - 1) * 100.0
+        if not equal_weight_disponivel:
+            segmentos_reprovados.append({
+                "setor": setor, "subsetor": subsetor, "segmento": segmento,
+                "motivo": motivo_equal_weight if modo_equal_weight == "filtro" else f"Diagnóstico: {motivo_equal_weight}",
+                "modo_equal_weight": modo_equal_weight,
+                "alpha_selic_pct": round(diff, 2), "alpha_equal_weight_pct": None,
+                "valor_estrategia": round(final_empresas, 2), "valor_selic": round(final_selic, 2),
+                "valor_equal_weight": None if final_equal_weight is None else round(final_equal_weight, 2),
+            })
+            if modo_equal_weight == "filtro":
+                continue
 
         # Filtro 1: alfa absoluto vs Selic
         if diff < margem_superior:
+            segmentos_reprovados.append({
+                "setor": setor, "subsetor": subsetor, "segmento": segmento,
+                "motivo": "Falhou vs Selic",
+                "alpha_selic_pct": round(diff, 2), "alpha_equal_weight_pct": round(diff_vs_equal_weight, 2),
+                "valor_estrategia": round(final_empresas, 2), "valor_selic": round(final_selic, 2),
+                "valor_equal_weight": round(final_equal_weight, 2),
+            })
             continue
 
         # Filtro 2: alfa relativo vs carteira equal-weight do segmento
-        if diff_vs_equal_weight < 0:
-            continue
+        if equal_weight_disponivel and diff_vs_equal_weight is not None:
+            falhou_equal = diff_vs_equal_weight < margem_equal_weight
+            if falhou_equal:
+                segmentos_reprovados.append({
+                    "setor": setor, "subsetor": subsetor, "segmento": segmento,
+                    "motivo": "Falhou vs Equal-Weight" if modo_equal_weight == "filtro" else "Diagnóstico: falharia vs Equal-Weight",
+                    "modo_equal_weight": modo_equal_weight,
+                    "alpha_selic_pct": round(diff, 2), "alpha_equal_weight_pct": round(diff_vs_equal_weight, 2),
+                    "valor_estrategia": round(final_empresas, 2), "valor_selic": round(final_selic, 2),
+                    "valor_equal_weight": round(final_equal_weight, 2),
+                })
+                if modo_equal_weight == "filtro":
+                    continue
 
         # Exibição do segmento destacado
         st.markdown(f"### {setor} > {subsetor} > {segmento}")
+        equal_txt = "Equal-Weight indisponível"
+        if equal_weight_disponivel and diff_vs_equal_weight is not None:
+            equal_txt = f"{diff_vs_equal_weight:.1f}% acima do Equal-Weight do segmento"
         st.markdown(
             f"**Valor final da estratégia:** R$ {final_empresas:,.2f} "
-            f"({diff:.1f}% acima do Tesouro Selic; "
-            f"{diff_vs_equal_weight:.1f}% acima do Equal-Weight do segmento)"
+            f"({diff:.1f}% acima do Tesouro Selic; {equal_txt})"
         )
 
         empresas_estrategia = cols_empresas
@@ -789,11 +874,29 @@ def render():
                     "is_lider_ultimo": is_lider_ultimo,
                     "is_maior_part": is_maior_part,
                     "motivos": motivos,
+                    "alpha_selic": float(diff),
+                    "alpha_equal_weight": float(diff_vs_equal_weight),
                 },
             )
 
     # transforma map em lista final
     empresas_lideres_finais: List[dict] = list(empresas_final_map.values())
+
+    if mostrar_reprovados and segmentos_reprovados:
+        st.markdown("## 🧪 Segmentos reprovados pelo filtro duplo")
+        st.caption(
+            "A tabela abaixo explica por que segmentos não entraram. "
+            "Com margem Selic = 0%, um segmento ainda pode ser reprovado se a estratégia perder para o Equal-Weight."
+        )
+        df_reprovados = pd.DataFrame(segmentos_reprovados)
+        st.dataframe(df_reprovados, use_container_width=True)
+
+    if not empresas_lideres_finais:
+        st.warning(
+            "Nenhum segmento passou no filtro configurado. "
+            "Verifique a tabela de reprovados acima. Para testar somente o filtro Selic, "
+            "defina a margem vs Equal-Weight como um valor negativo, por exemplo -1000."
+        )
 
     # ─────────────────────────────────────────────────────────
     # Bloco final: empresas para o próximo ano + distribuição
@@ -1022,9 +1125,14 @@ def render():
                 "tipo_empresa": "ESTABELECIDA_10A",
                 "min_anos_dre": 10,
                 "margem_superior_percent": float(margem_superior),
-                "filtro_duplo_ativo": True,
+                "equal_weight_mode": str(modo_equal_weight),
+                "filtro_duplo_ativo": bool(modo_equal_weight == "filtro"),
                 "benchmark_relativo": "equal_weight_segmento",
-                "criterio_segmento": "estrategia >= selic + margem AND estrategia >= equal_weight_segmento",
+                "criterio_segmento": (
+                    "estrategia >= selic + margem AND estrategia >= equal_weight_segmento + margem" 
+                    if modo_equal_weight == "filtro" else 
+                    "estrategia >= selic + margem; equal_weight apenas diagnostico"
+                ),
                 "segmentos": segmentos_cobertos,
                 "selic_source": "macro_db_load_macro_summary",
                 "macro_last_date": str(dados_macro["Data"].max().date()) if "Data" in dados_macro.columns else None,
@@ -1035,6 +1143,8 @@ def render():
                 "items": items,
                 "tipo_empresa": "ESTABELECIDA_10A",
                 "margem_superior_percent": float(margem_superior),
+                "margem_equal_weight_percent": float(margem_equal_weight),
+                "equal_weight_mode": str(modo_equal_weight),
                 "filters_json": filters_json,
                 "status": "active",
             }
