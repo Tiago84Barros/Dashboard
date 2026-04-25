@@ -392,6 +392,69 @@ def _calcular_equal_weight_segmento_local(precos: pd.DataFrame, tickers: Sequenc
             hist[pd.Timestamp(data_aporte)] = total
     return pd.Series(hist, dtype="float64").sort_index().ffill()
 
+
+def _anos_lider_por_ticker(lideres: pd.DataFrame, ticker: str) -> List[int]:
+    """Retorna anos em que o ticker foi líder, normalizado sem .SA."""
+    if lideres is None or lideres.empty or "ticker" not in lideres.columns or "Ano" not in lideres.columns:
+        return []
+    tk = _strip_sa(str(ticker))
+    try:
+        mask = lideres["ticker"].astype(str).apply(_strip_sa) == tk
+        anos = pd.to_numeric(lideres.loc[mask, "Ano"], errors="coerce").dropna().astype(int).tolist()
+        return sorted(set(int(a) for a in anos))
+    except Exception:
+        return []
+
+
+def _ultimo_ano_lider(lideres: pd.DataFrame, ticker: str) -> Optional[int]:
+    anos = _anos_lider_por_ticker(lideres, ticker)
+    return max(anos) if anos else None
+
+
+def _rank_ultimo_ano(score: pd.DataFrame, ticker: str, ultimo_ano: int) -> Optional[int]:
+    """Rank do ticker no último ano de score, menor é melhor."""
+    if score is None or score.empty or "ticker" not in score.columns or "Score_Ajustado" not in score.columns:
+        return None
+    try:
+        df = score.copy()
+        df["Ano"] = pd.to_numeric(df.get("Ano"), errors="coerce")
+        df = df[df["Ano"] == int(ultimo_ano)].copy()
+        if df.empty:
+            return None
+        df["ticker_norm"] = df["ticker"].astype(str).apply(_strip_sa)
+        df["Score_Ajustado"] = pd.to_numeric(df["Score_Ajustado"], errors="coerce")
+        df = df.dropna(subset=["Score_Ajustado"]).sort_values("Score_Ajustado", ascending=False).reset_index(drop=True)
+        pos = df.index[df["ticker_norm"] == _strip_sa(str(ticker))]
+        if len(pos) == 0:
+            return None
+        return int(pos[0]) + 1
+    except Exception:
+        return None
+
+
+def _pode_incluir_maior_participacao(
+    lideres: pd.DataFrame,
+    score: pd.DataFrame,
+    ticker: str,
+    ultimo_ano: int,
+    max_anos_desde_lider: int = 5,
+    max_rank_ultimo_ano: int = 3,
+) -> Tuple[bool, str, Optional[int], Optional[int]]:
+    """
+    Evita que uma empresa vencedora apenas no passado distante entre na carteira
+    por ter carregado a maior participação do backtest.
+    """
+    ultimo_lider = _ultimo_ano_lider(lideres, ticker)
+    rank_atual = _rank_ultimo_ano(score, ticker, ultimo_ano)
+
+    if ultimo_lider is not None and (int(ultimo_ano) - int(ultimo_lider)) <= int(max_anos_desde_lider):
+        return True, "Maior participação com liderança recente", ultimo_lider, rank_atual
+
+    if rank_atual is not None and int(rank_atual) <= int(max_rank_ultimo_ano):
+        return True, "Maior participação ainda bem ranqueada no score atual", ultimo_lider, rank_atual
+
+    return False, "Maior participação descartada por liderança antiga/baixo rank atual", ultimo_lider, rank_atual
+
 def _first_existing(row: pd.Series, candidates: list[str], default=None):
     for col in candidates:
         if col in row.index:
@@ -568,7 +631,7 @@ def render():
     # CONTROLES DE EXECUÇÃO (não roda sozinho)
     # ─────────────────────────────────────────────────────────────
     if "cp_last_params" not in st.session_state:
-        st.session_state["cp_last_params"] = {"margem_superior": 10.0, "margem_equal_weight": 0.0, "modo_equal_weight": "diagnostico", "mostrar_reprovados": True}
+        st.session_state["cp_last_params"] = {"margem_superior": 10.0, "margem_equal_weight": 0.0, "modo_equal_weight": "diagnostico", "mostrar_reprovados": True, "max_anos_desde_lider": 5}
     if "cp_should_run" not in st.session_state:
         st.session_state["cp_should_run"] = False
 
@@ -613,6 +676,17 @@ def render():
                 "Mostrar auditoria dos segmentos",
                 value=bool(st.session_state["cp_last_params"].get("mostrar_reprovados", True)),
             )
+            max_anos_desde_lider = st.number_input(
+                "Máx. anos desde última liderança",
+                min_value=1,
+                max_value=15,
+                value=int(st.session_state["cp_last_params"].get("max_anos_desde_lider", 5)),
+                step=1,
+                help=(
+                    "Controle de recência: uma empresa de maior participação só entra junto do líder atual "
+                    "se foi líder recentemente ou ainda está bem ranqueada no score atual."
+                ),
+            )
             gerar = st.form_submit_button("🚀 Rodar Criação de Portfólio")
 
         if gerar:
@@ -621,6 +695,7 @@ def render():
                 "margem_equal_weight": float(margem_equal_weight),
                 "modo_equal_weight": str(modo_equal_weight),
                 "mostrar_reprovados": bool(mostrar_reprovados),
+                "max_anos_desde_lider": int(max_anos_desde_lider),
             }
             st.session_state["cp_should_run"] = True
 
@@ -632,6 +707,7 @@ def render():
     margem_equal_weight = float(st.session_state["cp_last_params"].get("margem_equal_weight", 0.0))
     modo_equal_weight = str(st.session_state["cp_last_params"].get("modo_equal_weight", "diagnostico"))
     mostrar_reprovados = bool(st.session_state["cp_last_params"].get("mostrar_reprovados", True))
+    max_anos_desde_lider = int(st.session_state["cp_last_params"].get("max_anos_desde_lider", 5))
 
     if modo_equal_weight == "diagnostico":
         st.info("Equal-Weight em modo diagnóstico: ele será calculado e exibido, mas não bloqueará a seleção do segmento.")
@@ -963,9 +1039,37 @@ def render():
         ticker_lider_ultimo = _strip_sa(str(lideres_ano.iloc[0]["ticker"]))
 
         # Selecionados do segmento
+        # O líder do score mais recente sempre é considerado.
+        # A empresa de maior participação só entra se também tiver recência
+        # ou ainda estiver bem posicionada no score atual.
         selecionados = [ticker_lider_ultimo]
         if ticker_maior_part and (ticker_maior_part != ticker_lider_ultimo):
-            selecionados.append(ticker_maior_part)
+            incluir_maior, motivo_maior, ultimo_lider_maior, rank_atual_maior = _pode_incluir_maior_participacao(
+                lideres=lideres,
+                score=score,
+                ticker=ticker_maior_part,
+                ultimo_ano=ultimo_ano,
+                max_anos_desde_lider=max_anos_desde_lider,
+                max_rank_ultimo_ano=3,
+            )
+            if incluir_maior:
+                selecionados.append(ticker_maior_part)
+            else:
+                segmentos_reprovados.append({
+                    "setor": setor,
+                    "subsetor": subsetor,
+                    "segmento": segmento,
+                    "ticker": ticker_maior_part,
+                    "motivo": motivo_maior,
+                    "ultimo_ano_lider": ultimo_lider_maior,
+                    "rank_ultimo_ano": rank_atual_maior,
+                    "ano_referencia": ultimo_ano,
+                    "alpha_selic_pct": _safe_round(diff, 2),
+                    "alpha_equal_weight_pct": _safe_round(diff_vs_equal_weight, 2),
+                    "valor_estrategia": _safe_round(final_empresas, 2),
+                    "valor_selic": _safe_round(final_selic, 2),
+                    "valor_equal_weight": _safe_round(final_equal_weight, 2),
+                })
 
         for tk in selecionados:
             tk = _strip_sa(tk)
@@ -1246,6 +1350,8 @@ def render():
                 "tipo_empresa": "ESTABELECIDA_10A",
                 "min_anos_dre": 10,
                 "margem_superior_percent": float(margem_superior),
+                "max_anos_desde_lider": int(max_anos_desde_lider),
+                "selection_recency_rule": "maior_participacao_requer_lideranca_recente_ou_top3_score_atual",
                 "equal_weight_mode": str(modo_equal_weight),
                 "filtro_duplo_ativo": bool(modo_equal_weight == "filtro"),
                 "benchmark_relativo": "equal_weight_segmento",
