@@ -27,6 +27,7 @@ from core.portfolio import (
     encontrar_proxima_data_valida,
     gerir_carteira,
     gerir_carteira_simples,
+    gerir_carteira_equal_weight_segmento,
 )
 from core.scoring import (
     calcular_score_acumulado,
@@ -663,14 +664,44 @@ def render():
             continue
 
         diff = ((final_empresas / final_selic) - 1) * 100.0
+
+        # ─────────────────────────────────────────────
+        # Filtro duplo de entrada do segmento
+        # 1) Estratégia precisa superar a Selic pela margem configurada
+        # 2) Estratégia precisa superar o benchmark investível equal-weight do próprio segmento
+        #
+        # Observação: o equal-weight aqui usa R$ 1.000/mês TOTAL dividido entre todas
+        # as empresas elegíveis do segmento, sem ranking.
+        # ─────────────────────────────────────────────
+        patrimonio_equal_weight = gerir_carteira_equal_weight_segmento(
+            precos=precos,
+            tickers=tickers_score,
+            datas_aportes=datas_aportes,
+            dividendos_dict=dividendos,
+        )
+        if patrimonio_equal_weight is None or patrimonio_equal_weight.empty:
+            continue
+
+        final_equal_weight = float(pd.to_numeric(patrimonio_equal_weight, errors="coerce").dropna().iloc[-1])
+        if final_equal_weight <= 0:
+            continue
+
+        diff_vs_equal_weight = ((final_empresas / final_equal_weight) - 1) * 100.0
+
+        # Filtro 1: alfa absoluto vs Selic
         if diff < margem_superior:
+            continue
+
+        # Filtro 2: alfa relativo vs carteira equal-weight do segmento
+        if diff_vs_equal_weight < 0:
             continue
 
         # Exibição do segmento destacado
         st.markdown(f"### {setor} > {subsetor} > {segmento}")
         st.markdown(
             f"**Valor final da estratégia:** R$ {final_empresas:,.2f} "
-            f"({diff:.1f}% acima do Tesouro Selic)"
+            f"({diff:.1f}% acima do Tesouro Selic; "
+            f"{diff_vs_equal_weight:.1f}% acima do Equal-Weight do segmento)"
         )
 
         empresas_estrategia = cols_empresas
@@ -992,6 +1023,9 @@ def render():
                 "tipo_empresa": "ESTABELECIDA_10A",
                 "min_anos_dre": 10,
                 "margem_superior_percent": float(margem_superior),
+                "filtro_duplo_ativo": True,
+                "benchmark_relativo": "equal_weight_segmento",
+                "criterio_segmento": "estrategia >= selic + margem AND estrategia >= equal_weight_segmento",
                 "segmentos": segmentos_cobertos,
                 "selic_source": "macro_db_load_macro_summary",
                 "macro_last_date": str(dados_macro["Data"].max().date()) if "Data" in dados_macro.columns else None,
