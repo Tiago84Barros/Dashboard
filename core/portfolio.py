@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -266,91 +266,6 @@ def gerir_carteira_todas_empresas(
 
     return pd.DataFrame.from_dict(patrimonio, orient="columns").sort_index()
 
-
-
-def gerir_carteira_equal_weight_segmento(
-    precos: pd.DataFrame,
-    tickers: Sequence[str],
-    datas_aportes: Sequence[pd.Timestamp],
-    dividendos_dict: Optional[Dict[str, Union[pd.Series, pd.DataFrame]]] = None,
-    aporte_mensal: float = 1000.0,
-    fee_bps: float = 0.0,
-    slippage_bps: float = 0.0,
-) -> pd.Series:
-    """
-    Benchmark investível equal-weight do segmento.
-
-    O aporte_mensal é TOTAL para o segmento e é dividido igualmente
-    entre todos os tickers elegíveis. Não usa ranking, liderança ou score.
-    """
-    precos = _ensure_dt_index(precos)
-    if precos is None or precos.empty or not tickers or not datas_aportes:
-        return pd.Series(dtype="float64", name="Benchmark Equal-Weight Segmento")
-
-    dividendos_dict = dividendos_dict or {}
-
-    tickers_exec: List[str] = []
-    for tk in tickers:
-        tk_str = str(tk).strip()
-        col = _resolve_ticker_col(precos, tk_str)
-        if col is None:
-            col = _resolve_ticker_col(precos, f"{tk_str.replace('.SA', '')}.SA")
-        if col is not None and col not in tickers_exec:
-            tickers_exec.append(col)
-
-    if not tickers_exec:
-        return pd.Series(dtype="float64", name="Benchmark Equal-Weight Segmento")
-
-    divs: Dict[str, pd.Series] = {}
-    for col in tickers_exec:
-        k = _resolve_div_key(dividendos_dict, col)
-        divs[col] = _as_div_series(dividendos_dict.get(k)) if k is not None else pd.Series(dtype="float64")
-
-    cf = _cost_factor(fee_bps, slippage_bps)
-    carteira = {t: 0.0 for t in tickers_exec}
-    patrimonio_hist: Dict[pd.Timestamp, float] = {}
-
-    for data0 in datas_aportes:
-        data_aporte = encontrar_proxima_data_valida(pd.Timestamp(data0), precos)
-        if data_aporte is None:
-            continue
-
-        ativos_validos = [t for t in tickers_exec if _get_price(precos, data_aporte, t) is not None]
-        if not ativos_validos:
-            continue
-
-        aporte_por_ticker = float(aporte_mensal) / len(ativos_validos)
-
-        for t in ativos_validos:
-            px = _get_price(precos, data_aporte, t)
-            if px is None:
-                continue
-
-            s = divs.get(t, pd.Series(dtype="float64"))
-            div_mes = _div_mes_por_acao_sanitizado(
-                s=s,
-                ano=int(data_aporte.year),
-                mes=int(data_aporte.month),
-                ticker=t,
-                px_ref=px,
-            )
-
-            reinvest = div_mes * carteira[t]
-            aporte_total = (aporte_por_ticker * cf) + reinvest
-            carteira[t] += aporte_total / px
-
-        total = 0.0
-        for t, qtd in carteira.items():
-            px = _get_price(precos, data_aporte, t)
-            if px is not None:
-                total += qtd * px
-
-        patrimonio_hist[data_aporte] = total
-
-    if not patrimonio_hist:
-        return pd.Series(dtype="float64", name="Benchmark Equal-Weight Segmento")
-
-    return pd.Series(patrimonio_hist, name="Benchmark Equal-Weight Segmento").sort_index().ffill()
 
 def calcular_patrimonio_selic_macro(
     dados_macro: pd.DataFrame,
@@ -1344,11 +1259,151 @@ def gerir_carteira_modulada(
     return df_patrimonio, datas_aportes
 
 
+# ─────────────────────────────────────────────────────────────
+# Filtro duplo de benchmark para seleção de segmentos
+# ─────────────────────────────────────────────────────────────
+
+def _last_valid_value(obj: Union[pd.Series, pd.DataFrame], preferred_col: Optional[str] = None) -> Optional[float]:
+    """Retorna o último valor numérico válido de uma Series/DataFrame."""
+    if obj is None:
+        return None
+    try:
+        if isinstance(obj, pd.DataFrame):
+            if obj.empty:
+                return None
+            if preferred_col and preferred_col in obj.columns:
+                s = obj[preferred_col]
+            elif obj.shape[1] == 1:
+                s = obj.iloc[:, 0]
+            elif "Patrimônio" in obj.columns:
+                s = obj["Patrimônio"]
+            elif "Tesouro Selic" in obj.columns:
+                s = obj["Tesouro Selic"]
+            else:
+                s = obj.select_dtypes(include=[np.number]).iloc[:, 0]
+        else:
+            s = obj
+        s = pd.to_numeric(s, errors="coerce").dropna()
+        if s.empty:
+            return None
+        v = float(s.iloc[-1])
+        return v if np.isfinite(v) else None
+    except Exception:
+        return None
+
+
+def calcular_retorno_total_simulado(
+    patrimonio: Union[pd.Series, pd.DataFrame],
+    total_aportado: Optional[float] = None,
+    aporte_mensal: float = 1000.0,
+    preferred_col: Optional[str] = None,
+) -> Optional[float]:
+    """Calcula retorno total aproximado da simulação."""
+    valor_final = _last_valid_value(patrimonio, preferred_col=preferred_col)
+    if valor_final is None:
+        return None
+
+    if total_aportado is None:
+        try:
+            if isinstance(patrimonio, pd.DataFrame):
+                if preferred_col and preferred_col in patrimonio.columns:
+                    n = int(pd.to_numeric(patrimonio[preferred_col], errors="coerce").dropna().shape[0])
+                elif "Patrimônio" in patrimonio.columns:
+                    n = int(pd.to_numeric(patrimonio["Patrimônio"], errors="coerce").dropna().shape[0])
+                elif "Tesouro Selic" in patrimonio.columns:
+                    n = int(pd.to_numeric(patrimonio["Tesouro Selic"], errors="coerce").dropna().shape[0])
+                else:
+                    n = int(patrimonio.dropna(how="all").shape[0])
+            else:
+                n = int(pd.to_numeric(patrimonio, errors="coerce").dropna().shape[0])
+            total_aportado = float(aporte_mensal) * max(n, 1)
+        except Exception:
+            total_aportado = None
+
+    if total_aportado is None or not np.isfinite(float(total_aportado)) or float(total_aportado) <= 0:
+        return None
+
+    return float(valor_final / float(total_aportado) - 1.0)
+
+
+def avaliar_filtro_duplo_segmento(
+    patrimonio_estrategia: Union[pd.Series, pd.DataFrame],
+    patrimonio_selic: Union[pd.Series, pd.DataFrame],
+    patrimonio_equal_weight: Union[pd.Series, pd.DataFrame],
+    margem_minima_selic: float = 0.0,
+    margem_minima_equal_weight: float = 0.0,
+    aporte_mensal: float = 1000.0,
+) -> Dict[str, Any]:
+    """
+    Avalia se um segmento passa no filtro duplo:
+    1) Estratégia supera Tesouro Selic.
+    2) Estratégia supera a carteira equal-weight do próprio segmento.
+    """
+    v_estrategia = _last_valid_value(patrimonio_estrategia, preferred_col="Patrimônio")
+    v_selic = _last_valid_value(patrimonio_selic, preferred_col="Tesouro Selic")
+    v_equal = _last_valid_value(patrimonio_equal_weight, preferred_col="Benchmark Equal-Weight Segmento")
+
+    r_estrategia = calcular_retorno_total_simulado(patrimonio_estrategia, aporte_mensal=aporte_mensal, preferred_col="Patrimônio")
+    r_selic = calcular_retorno_total_simulado(patrimonio_selic, aporte_mensal=aporte_mensal, preferred_col="Tesouro Selic")
+    r_equal = calcular_retorno_total_simulado(patrimonio_equal_weight, aporte_mensal=aporte_mensal, preferred_col="Benchmark Equal-Weight Segmento")
+
+    alpha_selic = None if (r_estrategia is None or r_selic is None) else float(r_estrategia - r_selic)
+    alpha_equal = None if (r_estrategia is None or r_equal is None) else float(r_estrategia - r_equal)
+
+    passa_selic = bool(alpha_selic is not None and alpha_selic >= float(margem_minima_selic))
+    passa_equal_weight = bool(alpha_equal is not None and alpha_equal >= float(margem_minima_equal_weight))
+
+    return {
+        "valor_final_estrategia": v_estrategia,
+        "valor_final_selic": v_selic,
+        "valor_final_equal_weight": v_equal,
+        "retorno_estrategia": r_estrategia,
+        "retorno_selic": r_selic,
+        "retorno_equal_weight": r_equal,
+        "alpha_selic": alpha_selic,
+        "alpha_equal_weight": alpha_equal,
+        "margem_minima_selic": float(margem_minima_selic),
+        "margem_minima_equal_weight": float(margem_minima_equal_weight),
+        "passa_selic": passa_selic,
+        "passa_equal_weight": passa_equal_weight,
+        "aprovado_filtro_duplo": bool(passa_selic and passa_equal_weight),
+    }
+
+
+def filtrar_segmentos_por_duplo_benchmark(
+    resultados_segmentos: pd.DataFrame,
+    margem_minima_selic: float = 0.0,
+    margem_minima_equal_weight: float = 0.0,
+    col_alpha_selic: str = "alpha_selic",
+    col_alpha_equal_weight: str = "alpha_equal_weight",
+) -> pd.DataFrame:
+    """Aplica filtro duplo em uma tabela já consolidada por segmento."""
+    if resultados_segmentos is None or resultados_segmentos.empty:
+        return pd.DataFrame()
+
+    out = resultados_segmentos.copy()
+    if col_alpha_selic not in out.columns:
+        out[col_alpha_selic] = np.nan
+    if col_alpha_equal_weight not in out.columns:
+        out[col_alpha_equal_weight] = np.nan
+
+    out[col_alpha_selic] = pd.to_numeric(out[col_alpha_selic], errors="coerce")
+    out[col_alpha_equal_weight] = pd.to_numeric(out[col_alpha_equal_weight], errors="coerce")
+
+    out["passa_selic"] = out[col_alpha_selic] >= float(margem_minima_selic)
+    out["passa_equal_weight"] = out[col_alpha_equal_weight] >= float(margem_minima_equal_weight)
+    out["aprovado_filtro_duplo"] = out["passa_selic"] & out["passa_equal_weight"]
+    return out
+
+
 __all__ = [
     "encontrar_proxima_data_valida",
     "gerir_carteira_simples",
     "gerir_carteira_todas_empresas",
     "gerir_carteira_equal_weight_segmento",
+    "calcular_retorno_total_simulado",
+    "avaliar_filtro_duplo_segmento",
+    "filtrar_segmentos_por_duplo_benchmark",
     "calcular_patrimonio_selic_macro",
     "gerir_carteira",
     "gerir_carteira_modulada",
