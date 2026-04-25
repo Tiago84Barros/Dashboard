@@ -241,6 +241,152 @@ def calcular_score_ajustado_v2(
     return out
 
 
+
+
+# ─────────────────────────────────────────────────────────────
+# Modelo bancário setorial
+# ─────────────────────────────────────────────────────────────
+
+BANKING_SCORE_WEIGHTS: Dict[str, float] = {
+    "ROE_mean": 0.30,                    # qualidade/geração sobre patrimônio
+    "P/VP_mean": 0.25,                   # valuation relativo; menor é melhor, mas via percentil intra-grupo
+    "Instability_CV": 0.20,              # estabilidade dos fundamentos; menor é melhor
+    "Lucro_Liquido_slope_log": 0.15,     # crescimento, com peso menor por ciclicidade de crédito/juros
+    "DY_mean": 0.10,                     # retorno ao acionista
+}
+
+BANKING_DECAY_PER_YEAR = 0.02
+BANKING_DECAY_CAP = 0.10
+BANKING_CROWDING_MIN_FACTOR = 0.90
+
+
+def _normalize_text_flag(value: Any) -> str:
+    """Normaliza texto para detecção simples de grupos setoriais."""
+    s = str(value or "").strip().lower()
+    repl = {
+        "á": "a", "à": "a", "ã": "a", "â": "a",
+        "é": "e", "ê": "e",
+        "í": "i",
+        "ó": "o", "ô": "o", "õ": "o",
+        "ú": "u",
+        "ç": "c",
+    }
+    for a, b in repl.items():
+        s = s.replace(a, b)
+    return s
+
+
+def _is_banking_row(row: Mapping[str, Any]) -> bool:
+    """
+    Detecta bancos dentro do setor financeiro.
+
+    B3 costuma classificar bancos em:
+    SETOR='Financeiro', SUBSETOR='Intermediários Financeiros', SEGMENTO='Bancos'.
+
+    A regra é intencionalmente conservadora: aplica o modelo bancário quando
+    SEGMENTO/SUBSETOR menciona banco ou quando o segmento é Bancos. Evita afetar
+    seguradoras, holdings e serviços financeiros que não têm a mesma mecânica de
+    balanço bancário.
+    """
+    seg = _normalize_text_flag(row.get("SEGMENTO"))
+    sub = _normalize_text_flag(row.get("SUBSETOR"))
+    setor = _normalize_text_flag(row.get("SETOR"))
+
+    if "banco" in seg or "bancos" in seg:
+        return True
+    if "banco" in sub or "bancos" in sub:
+        return True
+
+    # fallback defensivo para bases que trazem apenas Financeiro + Intermediários Financeiros
+    if setor == "financeiro" and "intermediario" in sub:
+        return True
+
+    return False
+
+
+def _banking_score_for_group(df_bank: pd.DataFrame, group_col: str) -> pd.Series:
+    """
+    Score específico para bancos, em escala 0..1.
+
+    Usa percentis intra-grupo para preservar comparabilidade:
+    - ROE maior é melhor;
+    - P/VP menor é melhor;
+    - Instability_CV menor é melhor;
+    - crescimento do lucro maior é melhor, mas com peso reduzido;
+    - DY maior é melhor.
+
+    Se algum indicador estiver ausente, os pesos dos indicadores disponíveis são
+    renormalizados para evitar distorção.
+    """
+    if df_bank is None or df_bank.empty:
+        return pd.Series(dtype="float64")
+
+    out = pd.Series(0.0, index=df_bank.index, dtype="float64")
+    total_w = 0.0
+
+    specs = {
+        "ROE_mean": True,
+        "P/VP_mean": False,
+        "Instability_CV": False,
+        "Lucro_Liquido_slope_log": True,
+        "DY_mean": True,
+    }
+
+    for col, melhor_alto in specs.items():
+        if col not in df_bank.columns:
+            continue
+
+        w = float(BANKING_SCORE_WEIGHTS.get(col, 0.0))
+        if w <= 0:
+            continue
+
+        pct = df_bank.groupby(group_col, dropna=False)[col].transform(
+            lambda s, m=melhor_alto: percentile_score(winsorize_series(s), melhor_alto=m)
+        )
+        out = out.add(pd.to_numeric(pct, errors="coerce").fillna(0.5) * w, fill_value=0.0)
+        total_w += w
+
+    if total_w <= 0:
+        return pd.Series(0.5, index=df_bank.index, dtype="float64")
+
+    return (out / total_w).clip(0.0, 1.0)
+
+
+def apply_banking_sector_model(df_ano: pd.DataFrame, group_col: str) -> pd.DataFrame:
+    """
+    Substitui o Score_Ajustado apenas para bancos por um modelo setorial próprio.
+
+    Também marca as linhas com Banking_Model=True para que o acumulador aplique
+    decay mais leve e cap de crowding mais conservador no score final.
+    """
+    if df_ano is None or df_ano.empty:
+        return df_ano
+
+    out = df_ano.copy()
+    out["Banking_Model"] = out.apply(_is_banking_row, axis=1)
+
+    mask = out["Banking_Model"].astype(bool)
+    if not mask.any():
+        return out
+
+    if group_col not in out.columns:
+        out[group_col] = "OUTROS"
+
+    bank_scores = _banking_score_for_group(out.loc[mask].copy(), group_col=group_col)
+    out.loc[mask, "Score_Ajustado"] = bank_scores.reindex(out.loc[mask].index).fillna(0.5).values
+
+    # Como a estabilidade já entra explicitamente no score bancário, reduzimos
+    # a penalidade posterior de instabilidade para evitar dupla punição.
+    if "InstabilityPenalty" in out.columns:
+        out.loc[mask, "InstabilityPenalty"] = (
+            pd.to_numeric(out.loc[mask, "InstabilityPenalty"], errors="coerce")
+            .fillna(0.0)
+            .clip(0.0, DEFAULT_INSTABILITY_CAP)
+            * 0.50
+        )
+
+    return out
+
 # ─────────────────────────────────────────────────────────────
 # Score acumulado v2 (mesma filosofia do v1 + robustez validada)
 # ─────────────────────────────────────────────────────────────
@@ -437,6 +583,11 @@ def calcular_score_acumulado_v2(
             power=instability_power,
         )
 
+        # (B.1) Modelo setorial específico para bancos:
+        # substitui o score fundamental por uma composição mais adequada para
+        # instituições bancárias e reduz dupla punição de instabilidade.
+        df_ano = apply_banking_sector_model(df_ano, group_col=group_col_eff)
+
         # (C) Seleciona líder e aplica crowding + decay no score final
         df_ano = df_ano.sort_values("Score_Ajustado", ascending=False).reset_index(drop=True)
         lider_ano = str(df_ano.loc[0, "ticker"])
@@ -454,15 +605,24 @@ def calcular_score_acumulado_v2(
             else:
                 anos_lider[tk] = 0
 
-            # Decay anual leve (aplicado ao score final), com cap
-            decay_factor = 1.0 - min(float(decay_per_year) * max(anos_lider[tk] - 1, 0), float(decay_cap))
+            is_banking_model = bool(row.get("Banking_Model", False))
+
+            # Decay anual leve (aplicado ao score final), com cap.
+            # Para bancos, a persistência de liderança é estruturalmente mais comum;
+            # por isso o decay é mais brando.
+            decay_rate_eff = BANKING_DECAY_PER_YEAR if is_banking_model else float(decay_per_year)
+            decay_cap_eff = BANKING_DECAY_CAP if is_banking_model else float(decay_cap)
+            decay_factor = 1.0 - min(float(decay_rate_eff) * max(anos_lider[tk] - 1, 0), float(decay_cap_eff))
             decay_factor = float(np.clip(decay_factor, 0.0, 1.0))
 
-            # Crowding: aplicar após score consolidado, com cap mínimo
+            # Crowding: aplicar após score consolidado, com cap mínimo.
+            # Para bancos, P/VP premium pode refletir qualidade; reduzimos a chance
+            # de o crowding punir indevidamente líderes consistentes.
+            crowd_min_eff = BANKING_CROWDING_MIN_FACTOR if is_banking_model else float(crowding_min_factor)
             crowd = float(row.get("Penalty_Crowd", 1.0))
             if not np.isfinite(crowd):
                 crowd = 1.0
-            crowd = max(crowd, float(crowding_min_factor))  # cap de penalidade máxima
+            crowd = max(crowd, float(crowd_min_eff))  # cap de penalidade máxima
 
             # Base score
             base = float(row.get("Score_Ajustado", 0.0))
@@ -500,4 +660,5 @@ __all__ = [
     "calcular_score_ajustado_v2",
     "calcular_score_acumulado_v2",
     "resolve_group_col",
+    "apply_banking_sector_model",
 ]
