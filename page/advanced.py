@@ -39,6 +39,7 @@ from core.portfolio import (
     gerir_carteira,
     gerir_carteira_modulada,
     gerir_carteira_todas_empresas,
+    gerir_carteira_equal_weight_segmento,
     calcular_patrimonio_selic_macro,
 )
 from core.weights import get_pesos
@@ -429,15 +430,33 @@ def render() -> None:
         st.warning("Falha ao calcular o benchmark Tesouro Selic.")
         return
 
+    # Mantém a simulação individual por empresa para os cards comparativos abaixo.
     patrimonio_empresas = gerir_carteira_todas_empresas(precos, tickers_scores, datas_aportes, dividendos)
     if patrimonio_empresas is None or patrimonio_empresas.empty:
         st.warning("Falha ao simular a carteira (todas as empresas).")
         return
 
-    patrimonio_final = pd.concat([patrimonio_estrategia, patrimonio_empresas, patrimonio_selic], axis=1).sort_index()
+    # Benchmark correto: R$ 1.000/mês TOTAL para o segmento,
+    # dividido igualmente entre todas as empresas elegíveis, sem usar ranking.
+    benchmark_segmento = gerir_carteira_equal_weight_segmento(
+        precos=precos,
+        tickers=tickers_scores,
+        datas_aportes=datas_aportes,
+        dividendos_dict=dividendos,
+    )
+    if benchmark_segmento is None or benchmark_segmento.empty:
+        st.warning("Falha ao simular o benchmark equal-weight do segmento.")
+        return
+
+    patrimonio_benchmark_segmento = benchmark_segmento.to_frame("Benchmark Equal-Weight Segmento")
+
+    patrimonio_final = pd.concat(
+        [patrimonio_estrategia, patrimonio_empresas, patrimonio_selic, patrimonio_benchmark_segmento],
+        axis=1,
+    ).sort_index()
     patrimonio_final = patrimonio_final.apply(pd.to_numeric, errors="coerce").ffill()
 
-    st.markdown("## Evolução do patrimônio (Estratégia vs Empresas vs Selic)")
+    st.markdown("## Evolução do patrimônio (Estratégia vs Benchmark do Segmento vs Selic)")
 
     fig, ax = plt.subplots(figsize=(12, 6))
     if "Patrimônio" in patrimonio_final.columns:
@@ -446,10 +465,12 @@ def render() -> None:
     if "Tesouro Selic" in patrimonio_final.columns:
         ax.plot(patrimonio_final.index, patrimonio_final["Tesouro Selic"], label="Tesouro Selic")
 
-    cols_emp = [c for c in patrimonio_empresas.columns if c in patrimonio_final.columns]
-    if cols_emp:
-        media_emp = patrimonio_final[cols_emp].mean(axis=1, skipna=True)
-        ax.plot(patrimonio_final.index, media_emp, label="Média (Empresas do segmento)")
+    if "Benchmark Equal-Weight Segmento" in patrimonio_final.columns:
+        ax.plot(
+            patrimonio_final.index,
+            patrimonio_final["Benchmark Equal-Weight Segmento"],
+            label="Carteira Equal-Weight (Segmento)",
+        )
 
     ax.set_xlabel("Data")
     ax.set_ylabel("Patrimônio (R$)")
@@ -498,6 +519,11 @@ def render() -> None:
             border_color = "#007bff"
             nome_exibicao = "Tesouro Selic"
             lider_texto = ""
+        elif tk == "Benchmark Equal-Weight Segmento":
+            icone_url = "https://cdn-icons-png.flaticon.com/512/3135/3135706.png"
+            border_color = "#2ecc71"
+            nome_exibicao = "Benchmark Equal-Weight Segmento"
+            lider_texto = "R$ 1.000/mês dividido entre todas as empresas elegíveis"
         else:
             icone_url = get_logo_url(tk)
             border_color = "#d3d3d3"
