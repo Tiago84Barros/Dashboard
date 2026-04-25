@@ -27,7 +27,6 @@ from core.portfolio import (
     encontrar_proxima_data_valida,
     gerir_carteira,
     gerir_carteira_simples,
-    gerir_carteira_equal_weight_segmento,
 )
 from core.scoring import (
     calcular_score_acumulado,
@@ -673,9 +672,9 @@ def render():
         # Observação: o equal-weight aqui usa R$ 1.000/mês TOTAL dividido entre todas
         # as empresas elegíveis do segmento, sem ranking.
         # ─────────────────────────────────────────────
-        patrimonio_equal_weight = gerir_carteira_equal_weight_segmento(
+        patrimonio_equal_weight = gerir_carteira_simples(
             precos=precos,
-            tickers=tickers_score,
+            tickers=tickers_score_yf,
             datas_aportes=datas_aportes,
             dividendos_dict=dividendos,
         )
