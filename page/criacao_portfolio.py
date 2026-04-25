@@ -280,6 +280,118 @@ def _safe_round(value, ndigits: int = 2):
     except Exception:
         return None
 
+
+
+def _resolve_price_col(precos: pd.DataFrame, ticker: str) -> Optional[str]:
+    if precos is None or precos.empty:
+        return None
+    tk = str(ticker or "").strip().upper()
+    if not tk:
+        return None
+    candidates = [tk, tk.replace(".SA", "") if tk.endswith(".SA") else f"{tk}.SA"]
+    for c in candidates:
+        if c in precos.columns:
+            return c
+    colmap = {str(c).strip().upper(): c for c in precos.columns}
+    for c in candidates:
+        if c in colmap:
+            return colmap[c]
+    return None
+
+def _resolve_div_key_local(dividendos: Dict, ticker_col: str) -> Optional[str]:
+    if not dividendos:
+        return None
+    tk = str(ticker_col or "").strip().upper()
+    candidates = [tk, tk.replace(".SA", "") if tk.endswith(".SA") else f"{tk}.SA"]
+    keymap = {str(k).strip().upper(): k for k in dividendos.keys()}
+    for c in candidates:
+        if c in keymap:
+            return keymap[c]
+    return None
+
+def _as_div_series_local(div) -> pd.Series:
+    if div is None:
+        return pd.Series(dtype="float64")
+    try:
+        s = div.iloc[:, 0] if isinstance(div, pd.DataFrame) else div
+        s = pd.to_numeric(s, errors="coerce")
+        s.index = pd.to_datetime(s.index, errors="coerce")
+        return s.dropna().astype(float)
+    except Exception:
+        return pd.Series(dtype="float64")
+
+def _div_mes_local(s: pd.Series, data: pd.Timestamp, px_ref: Optional[float] = None) -> float:
+    if s is None or s.empty:
+        return 0.0
+    try:
+        d = pd.Timestamp(data)
+        val = float(s[(s.index.year == d.year) & (s.index.month == d.month)].sum())
+        if not pd.notna(val) or val <= 0 or val > 20.0:
+            return 0.0
+        if px_ref is not None and pd.notna(px_ref) and px_ref > 0 and val > 0.5 * float(px_ref):
+            return 0.0
+        return val
+    except Exception:
+        return 0.0
+
+def _calcular_equal_weight_segmento_local(precos: pd.DataFrame, tickers: Sequence[str], datas_aportes: Sequence[pd.Timestamp], dividendos: Dict, aporte_mensal: float = 1000.0) -> pd.Series:
+    if precos is None or precos.empty or not tickers or not datas_aportes:
+        return pd.Series(dtype="float64")
+    px = precos.copy()
+    px.index = pd.to_datetime(px.index, errors="coerce")
+    px = px[~px.index.isna()].sort_index()
+    if px.empty:
+        return pd.Series(dtype="float64")
+    tickers_exec: List[str] = []
+    for tk in tickers:
+        col = _resolve_price_col(px, tk)
+        if col is not None and col not in tickers_exec:
+            tickers_exec.append(col)
+    if not tickers_exec:
+        return pd.Series(dtype="float64")
+    divs: Dict[str, pd.Series] = {}
+    for col in tickers_exec:
+        key = _resolve_div_key_local(dividendos, col)
+        divs[col] = _as_div_series_local(dividendos.get(key)) if key is not None else pd.Series(dtype="float64")
+    carteira = {t: 0.0 for t in tickers_exec}
+    hist: Dict[pd.Timestamp, float] = {}
+    for data0 in datas_aportes:
+        data_aporte = encontrar_proxima_data_valida(pd.Timestamp(data0), px)
+        if data_aporte is None:
+            continue
+        ativos_validos = []
+        for t in tickers_exec:
+            try:
+                val = float(px.loc[data_aporte, t])
+                if pd.notna(val) and val > 0:
+                    ativos_validos.append(t)
+            except Exception:
+                continue
+        if not ativos_validos:
+            continue
+        aporte_por_ticker = float(aporte_mensal) / len(ativos_validos)
+        for t in ativos_validos:
+            try:
+                preco_t = float(px.loc[data_aporte, t])
+            except Exception:
+                continue
+            if not pd.notna(preco_t) or preco_t <= 0:
+                continue
+            div_mes = _div_mes_local(divs.get(t), data_aporte, px_ref=preco_t)
+            reinvest = div_mes * carteira.get(t, 0.0)
+            carteira[t] = carteira.get(t, 0.0) + ((aporte_por_ticker + reinvest) / preco_t)
+        total = 0.0
+        for t, qtd in carteira.items():
+            try:
+                preco_t = float(px.loc[data_aporte, t])
+            except Exception:
+                continue
+            if pd.notna(preco_t) and preco_t > 0:
+                total += float(qtd) * preco_t
+        if total > 0:
+            hist[pd.Timestamp(data_aporte)] = total
+    return pd.Series(hist, dtype="float64").sort_index().ffill()
+
 def _first_existing(row: pd.Series, candidates: list[str], default=None):
     for col in candidates:
         if col in row.index:
@@ -723,11 +835,11 @@ def render():
         # Observação: o equal-weight aqui usa R$ 1.000/mês TOTAL dividido entre todas
         # as empresas elegíveis do segmento, sem ranking.
         # ─────────────────────────────────────────────
-        patrimonio_equal_weight = gerir_carteira_simples(
+        patrimonio_equal_weight = _calcular_equal_weight_segmento_local(
             precos=precos,
             tickers=tickers_score_yf,
             datas_aportes=datas_aportes,
-            dividendos_dict=dividendos,
+            dividendos=dividendos,
         )
 
         final_equal_weight = None
