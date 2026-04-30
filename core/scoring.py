@@ -104,6 +104,7 @@ def calcular_metricas_historicas_simplificadas(df_mult: pd.DataFrame, df_dre: pd
     metrics: Dict[str, float] = {}
 
     mult_cols = [
+        # Existentes
         "Margem_Liquida",
         "Margem_Operacional",
         "ROE",
@@ -114,6 +115,14 @@ def calcular_metricas_historicas_simplificadas(df_mult: pd.DataFrame, df_dre: pd
         "Alavancagem_Financeira",
         "Liquidez_Corrente",
         "DY",
+        # Novos (disponíveis na tabela multiplos após expansão)
+        "Liquidez_Seca",
+        "Liquidez_Imediata",
+        "Giro_Ativo",
+        "Margem_FCO",
+        "FCO_sobre_Divida",
+        "Cobertura_Investimento",
+        "Prazo_Medio_Recebimento",
     ]
     for col in mult_cols:
         mean, std = calcular_media_e_std(df_mult2, col)

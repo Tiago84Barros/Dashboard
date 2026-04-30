@@ -424,12 +424,15 @@ def _main_impl(run) -> None:
 
         g = g.sort_values("Data").copy()
 
-        # TTM fluxos
-        g["Receita_12M"] = rolling_ttm(g["Receita_Liquida"])
-        g["EBIT_12M"] = rolling_ttm(g["EBIT"])
-        g["Lucro_12M"] = rolling_ttm(g["Lucro_Liquido"])
-        g["Dividendos_12M"] = rolling_ttm(g["Dividendos"])
-        g["LPA_12M"] = rolling_ttm(g["LPA"])
+        # TTM fluxos (Dividendos pode ser NULL no TRI → trata como 0)
+        g["Receita_12M"]    = rolling_ttm(g["Receita_Liquida"])
+        g["EBIT_12M"]       = rolling_ttm(g["EBIT"])
+        g["Lucro_12M"]      = rolling_ttm(g["Lucro_Liquido"])
+        g["Dividendos_12M"] = rolling_ttm(g["Dividendos"].fillna(0))
+        g["LPA_12M"]        = rolling_ttm(g["LPA"])
+        # Novos TTM (colunas que podem não existir em dados antigos)
+        g["FCO_12M"] = rolling_ttm(g["Caixa_Liquido"]) if "Caixa_Liquido" in g.columns else np.nan
+        g["FCI_12M"] = rolling_ttm(g["FCI"])           if "FCI"           in g.columns else np.nan
 
         g_ttm = g.dropna(subset=["Receita_12M", "EBIT_12M", "Lucro_12M", "Dividendos_12M", "LPA_12M"])
         if g_ttm.empty:
@@ -445,79 +448,128 @@ def _main_impl(run) -> None:
             # -------- lookup do preço trimestral (quarter-end)
             px = None
             if (not SKIP_PRICE) and (not df_preco.empty) and ticker_valido_yf(ticker):
-                # TRI date -> quarter-end
                 q_end = pd.to_datetime(data_tri).to_period("Q").end_time
                 q_key = pd.to_datetime(q_end, utc=True).normalize()
-
                 hit = df_preco[(df_preco["Ticker"] == ticker) & (df_preco["Data"] == q_key)]
                 if not hit.empty:
-                    # evitar warnings future: usar iloc[0]
                     px = float(hit["Preco_Medio_TRIM"].iloc[0])
 
-            # Estoques (último TRI)
-            ativo = float(row["Ativo_Total"]) if row["Ativo_Total"] is not None else None
-            ativo_c = float(row["Ativo_Circulante"]) if row["Ativo_Circulante"] is not None else None
-            passivo = float(row["Passivo_Total"]) if row["Passivo_Total"] is not None else None
-            passivo_c = float(row["Passivo_Circulante"]) if row["Passivo_Circulante"] is not None else None
-            pl = float(row["Patrimonio_Liquido"]) if row["Patrimonio_Liquido"] is not None else None
-            divliq = float(row["Divida_Liquida"]) if row["Divida_Liquida"] is not None else None
+            def _fv(key):
+                """Extrai float ou None de uma linha do DataFrame."""
+                v = row.get(key)
+                if v is None:
+                    return None
+                try:
+                    f = float(v)
+                    return None if (np.isnan(f) or np.isinf(f)) else f
+                except (TypeError, ValueError):
+                    return None
+
+            # Balanço (ponto)
+            ativo    = _fv("Ativo_Total")
+            ativo_c  = _fv("Ativo_Circulante")
+            passivo  = _fv("Passivo_Total")
+            passivo_c = _fv("Passivo_Circulante")
+            pl       = _fv("Patrimonio_Liquido")
+            divliq   = _fv("Divida_Liquida")
+            divtot   = _fv("Divida_Total")
+            estoques = _fv("Estoques")
+            caixa    = _fv("Caixa")
+            cr       = _fv("Contas_Receber")
+            forn     = _fv("Fornecedores")
 
             # Fluxos (TTM)
-            receita = float(row["Receita_12M"]) if row["Receita_12M"] is not None else None
-            ebit = float(row["EBIT_12M"]) if row["EBIT_12M"] is not None else None
-            lucro = float(row["Lucro_12M"]) if row["Lucro_12M"] is not None else None
-            div = float(row["Dividendos_12M"]) if row["Dividendos_12M"] is not None else None
-            lpa = float(row["LPA_12M"]) if row["LPA_12M"] is not None else None
+            receita = _fv("Receita_12M")
+            ebit    = _fv("EBIT_12M")
+            lucro   = _fv("Lucro_12M")
+            div     = _fv("Dividendos_12M")
+            lpa     = _fv("LPA_12M")
+            fco     = _fv("FCO_12M")
+            fci     = _fv("FCI_12M")
 
-            # Contábeis
-            liquidez = (ativo_c / passivo_c) if (ativo_c is not None and passivo_c not in (None, 0)) else None
-            endiv = (passivo / ativo) if (passivo is not None and ativo not in (None, 0)) else None
-            alav = (divliq / pl) if (divliq is not None and pl not in (None, 0)) else None
-
-            margem_op = (ebit / receita) if (ebit is not None and receita not in (None, 0)) else None
-            margem_liq = (lucro / receita) if (lucro is not None and receita not in (None, 0)) else None
-
-            roe = (lucro / pl) if (lucro is not None and pl not in (None, 0)) else None
-            roa = (lucro / ativo) if (lucro is not None and ativo not in (None, 0)) else None
+            # ---- Múltiplos existentes ----
+            liquidez   = (ativo_c / passivo_c)  if (ativo_c  is not None and passivo_c not in (None, 0)) else None
+            endiv      = (passivo / ativo)       if (passivo  is not None and ativo     not in (None, 0)) else None
+            alav       = (divliq / pl)           if (divliq   is not None and pl        not in (None, 0)) else None
+            margem_op  = (ebit / receita)        if (ebit     is not None and receita   not in (None, 0)) else None
+            margem_liq = (lucro / receita)       if (lucro    is not None and receita   not in (None, 0)) else None
+            roe        = (lucro / pl)            if (lucro    is not None and pl        not in (None, 0)) else None
+            roa        = (lucro / ativo)         if (lucro    is not None and ativo     not in (None, 0)) else None
 
             base_roic = (ativo - passivo_c) if (ativo is not None and passivo_c is not None) else None
-            roic = (ebit / base_roic) if (ebit is not None and base_roic not in (None, 0)) else None
+            roic      = (ebit / base_roic)  if (ebit is not None and base_roic not in (None, 0)) else None
 
-            # Com preço (se não tiver, ficam NULL)
-            dy = (div / px) if (px not in (None, 0) and div is not None) else None
-            pl_mult = (px / lpa) if (px not in (None, 0) and lpa not in (None, 0)) else None
+            dy      = (div / px)  if (px not in (None, 0) and div is not None) else None
+            pl_mult = (px / lpa)  if (px not in (None, 0) and lpa not in (None, 0)) else None
 
             pvp = None
-            if (px not in (None, 0)) and (pl not in (None, 0)) and (not SKIP_PRICE) and ticker_valido_yf(ticker):
+            market_cap = None
+            if (px not in (None, 0)) and (not SKIP_PRICE) and ticker_valido_yf(ticker):
                 so = shares_cache.get(ticker)
                 if so and so > 0:
                     market_cap = px * so
-                    pvp = market_cap / pl
+                    if pl not in (None, 0):
+                        pvp = market_cap / pl
 
             payout = (div / lucro) if (div is not None and lucro not in (None, 0)) else None
 
-            # =========================
-            # CAP / WINSORIZATION (ANTI-OUTLIER)
-            # =========================
-            dy = cap(dy, 0.0, 0.30)            # 0% a 30% a.a.
-            payout = cap(payout, 0.0, 2.0)     # 0% a 200%
+            # CAP / WINSORIZATION
+            dy      = cap(dy,      0.0,    0.30)
+            payout  = cap(payout,  0.0,    2.0)
             pl_mult = cap(pl_mult, -200.0, 200.0)
+
+            # ---- Novos múltiplos ----
+            # Liquidez ampliada
+            liq_seca     = ((ativo_c - (estoques or 0)) / passivo_c) if (ativo_c is not None and passivo_c not in (None, 0)) else None
+            liq_imediata = (caixa / passivo_c) if (caixa is not None and passivo_c not in (None, 0)) else None
+
+            # Eficiência
+            giro_ativo = (receita / ativo) if (receita is not None and ativo not in (None, 0)) else None
+
+            # Fluxo de Caixa
+            margem_fco = (fco / receita * 100)  if (fco is not None and receita not in (None, 0)) else None
+            fco_divida = (fco / divtot)          if (fco is not None and divtot  not in (None, 0)) else None
+            cobertura_inv = (fco / abs(fci))     if (fco is not None and fci     not in (None, 0)) else None
+
+            # Capital de Giro
+            ncg = None
+            if cr is not None or estoques is not None or forn is not None:
+                ncg = (cr or 0) + (estoques or 0) - (forn or 0)
+            pmr = (cr / receita * 365) if (cr is not None and receita not in (None, 0)) else None
+
+            # Valuation com preço
+            p_fco      = (market_cap / fco)                                      if (market_cap and fco  not in (None, 0)) else None
+            ev_ebit    = ((market_cap + (divliq or 0)) / ebit)                   if (market_cap and ebit not in (None, 0)) else None
+            p_receita  = (market_cap / receita)                                   if (market_cap and receita not in (None, 0)) else None
 
             resultados.append({
                 "Ticker": ticker,
-                "Data": to_utc_midnight_timestamptz(data_tri),  # timestamptz 00:00Z
-                "Liquidez_Corrente": liquidez,
-                "Endividamento_Total": endiv,
+                "Data": to_utc_midnight_timestamptz(data_tri),
+                # Existentes
+                "Liquidez_Corrente":    liquidez,
+                "Endividamento_Total":  endiv,
                 "Alavancagem_Financeira": alav,
-                "Margem_Operacional": margem_op,
-                "Margem_Liquida": margem_liq,
-                "ROE": roe,
-                "ROA": roa,
-                "ROIC": roic,
-                "DY": dy,
-                "P/L": pl_mult,
-                "P/VP": pvp,
-                "Payout": payout,
+                "Margem_Operacional":   margem_op,
+                "Margem_Liquida":       margem_liq,
+                "ROE":                  roe,
+                "ROA":                  roa,
+                "ROIC":                 roic,
+                "DY":                   dy,
+                "P/L":                  pl_mult,
+                "P/VP":                 pvp,
+                "Payout":               payout,
+                # Novos
+                "Liquidez_Seca":            liq_seca,
+                "Liquidez_Imediata":        liq_imediata,
+                "Giro_Ativo":               giro_ativo,
+                "Margem_FCO":               margem_fco,
+                "FCO_sobre_Divida":         fco_divida,
+                "Cobertura_Investimento":   cobertura_inv,
+                "NCG":                      ncg,
+                "Prazo_Medio_Recebimento":  pmr,
+                "P_FCO":                    p_fco,
+                "EV_EBIT":                  ev_ebit,
+                "P_Receita":                p_receita,
             })
 
     df_out = pd.DataFrame(resultados)

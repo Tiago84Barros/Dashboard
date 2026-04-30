@@ -162,28 +162,35 @@ def _prepare_df(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _insert_batch(df: pd.DataFrame, engine, batch_size: int) -> Dict[str, int]:
-    from sqlalchemy import text as sa_text
+_KEEP_COLS = [
+    "source_doc", "tipo_demo", "grupo_demo", "arquivo_origem",
+    "cd_cvm", "cnpj_cia", "denom_cia", "ticker",
+    "versao", "ordem_exerc", "dt_refer", "dt_ini_exerc", "dt_fim_exerc",
+    "cd_conta", "ds_conta", "nivel_conta", "vl_conta",
+    "escala_moeda", "moeda", "st_conta_fixa", "row_hash",
+]
 
-    keep_cols = [
-        "source_doc", "tipo_demo", "grupo_demo", "arquivo_origem",
-        "cd_cvm", "cnpj_cia", "denom_cia", "ticker",
-        "versao", "ordem_exerc", "dt_refer", "dt_ini_exerc", "dt_fim_exerc",
-        "cd_conta", "ds_conta", "nivel_conta", "vl_conta",
-        "escala_moeda", "moeda", "st_conta_fixa", "row_hash",
-    ]
-    for col in keep_cols:
+
+def _insert_batch(df: pd.DataFrame, engine, batch_size: int) -> Dict[str, int]:
+    for col in _KEEP_COLS:
         if col not in df.columns:
             df[col] = None
-    df = df[keep_cols].copy()
+    df = df[_KEEP_COLS].copy()
+
+    if str(engine.url).startswith("duckdb"):
+        from pipeline_local.utils.duckdb_utils import bulk_insert_duckdb
+        try:
+            return bulk_insert_duckdb(df, engine, TARGET_TABLE, "row_hash")
+        except Exception as exc:
+            log.error("bulk_insert_duckdb falhou (ITR)", erro=str(exc))
+            return {"inserted": 0, "skipped": len(df)}
+
+    from sqlalchemy import text as sa_text
     insert_sql = sa_text(f"""
-        INSERT INTO {TARGET_TABLE}
-            ({", ".join(keep_cols)})
-        VALUES
-            ({", ".join(f":{c}" for c in keep_cols)})
+        INSERT INTO {TARGET_TABLE} ({", ".join(_KEEP_COLS)})
+        VALUES ({", ".join(f":{c}" for c in _KEEP_COLS)})
         ON CONFLICT (row_hash) DO NOTHING
     """)
-
     inserted = skipped = 0
     for start in range(0, len(df), batch_size):
         chunk = df.iloc[start: start + batch_size]

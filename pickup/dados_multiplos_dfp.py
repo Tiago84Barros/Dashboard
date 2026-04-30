@@ -295,12 +295,56 @@ def calcular_multiplos(df_demonstracoes: pd.DataFrame) -> pd.DataFrame:
 
     out["Payout"] = _safe_div(df["Dividendos"], df["Lucro_Liquido"]).fillna(0.0)
 
-    # schema tem coluna Payout; também existe Payout no notebook
-    # schema também tem "Payout" e "P/L", "P/VP"
-
-    # normalizações finais
+    # normalizações finais das colunas existentes
     out.replace([np.inf, -np.inf], np.nan, inplace=True)
     out.fillna(0.0, inplace=True)
+
+    # ----------------------------------------------------------------
+    # NOVOS MÚLTIPLOS — mantêm NaN onde dado não disponível (→ NULL no DB)
+    # ----------------------------------------------------------------
+    def _col(name):
+        """Retorna coluna do df ou Series de NaN se não existir."""
+        return df[name] if name in df.columns else pd.Series(np.nan, index=df.index)
+
+    estoques   = _col("Estoques")
+    caixa      = _col("Caixa")
+    cr         = _col("Contas_Receber")
+    forn       = _col("Fornecedores")
+    fco        = _col("Caixa_Liquido")
+    fci        = _col("FCI")
+    divida_tot = _col("Divida_Total")
+    divida_liq = _col("Divida_Liquida")
+    preco      = _col("Preco_Medio_Anual")
+
+    # Shares — sem forçar 0 (mantém NaN quando LPA=0 ou ausente)
+    n_acoes_px = _safe_div(df["Lucro_Liquido"].abs(), df["LPA"].abs())  # NaN quando inválido
+    market_cap = preco * n_acoes_px
+
+    # Liquidez ampliada
+    out["Liquidez_Seca"] = _safe_div(
+        df["Ativo_Circulante"].sub(estoques.fillna(0)), df["Passivo_Circulante"]
+    )
+    out["Liquidez_Imediata"] = _safe_div(caixa, df["Passivo_Circulante"])
+
+    # Eficiência
+    out["Giro_Ativo"] = _safe_div(df["Receita_Liquida"], df["Ativo_Total"])
+
+    # Fluxo de Caixa
+    out["Margem_FCO"]              = _safe_div(fco, df["Receita_Liquida"]) * 100
+    out["FCO_sobre_Divida"]        = _safe_div(fco, divida_tot)
+    out["Cobertura_Investimento"]  = _safe_div(fco, fci.abs())
+
+    # Capital de Giro
+    tem_ncg = cr.notna() | estoques.notna() | forn.notna()
+    out["NCG"] = (cr.fillna(0) + estoques.fillna(0) - forn.fillna(0)).where(tem_ncg, other=np.nan)
+    out["Prazo_Medio_Recebimento"] = _safe_div(cr, df["Receita_Liquida"]) * 365
+
+    # Valuation com preço
+    out["P_FCO"]     = _safe_div(market_cap, fco)
+    out["EV_EBIT"]   = _safe_div(market_cap + divida_liq.fillna(0), df["EBIT"])
+    out["P_Receita"] = _safe_div(market_cap, df["Receita_Liquida"])
+
+    out.replace([np.inf, -np.inf], np.nan, inplace=True)
 
     # garante tz UTC e tipo datetime compatível com TIMESTAMPTZ
     out["Data"] = pd.to_datetime(out["Data"], errors="coerce")
@@ -376,6 +420,8 @@ def upsert_multiplos(df_multiplos: pd.DataFrame) -> None:
     df_db = df_multiplos.rename(columns={"Data": "data"}).copy()
 
     cols = list(df_db.columns)
+    # NaN → None para gravar NULL no Postgres (colunas novas podem ter NaN)
+    df_db = df_db.where(pd.notna(df_db), other=None)
     values = [tuple(x) for x in df_db.itertuples(index=False, name=None)]
 
     # cria unique index necessário para ON CONFLICT

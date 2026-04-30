@@ -3,3 +3,12 @@ __pycache__/
 .codex
 .env
 .streamlit/secrets.toml
+
+# Banco de dados local do pipeline (arquivo binário, não rastrear)
+*.duckdb
+*.duckdb.wal
+data/local_pipeline.duckdb
+
+# Cache de ZIPs da CVM
+.cache_cvm_dfp_local/
+.cache_cvm_itr_local/

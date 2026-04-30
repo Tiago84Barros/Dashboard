@@ -314,12 +314,15 @@ def calcular_score_acumulado_v2(
     resultados: List[pd.DataFrame] = []
     anos_lider: Dict[str, int] = {}
 
-    # Colunas candidatas para instabilidade (no DRE histórico)
-    # Ajuste aqui se seus nomes forem diferentes. Mantive uma lista abrangente.
+    # Colunas candidatas para instabilidade (no histórico de múltiplos/DRE)
     instability_candidates = [
-        "ROIC", "ROIC_mean",
-        "Margem_Operacional", "Margem_Operacional_mean",
-        "Margem_Liquida", "Margem_Liquida_mean",
+        "ROIC",              "ROIC_mean",
+        "Margem_Operacional","Margem_Operacional_mean",
+        "Margem_Liquida",    "Margem_Liquida_mean",
+        # Novos — instabilidade de caixa e eficiência
+        "Margem_FCO",        "Margem_FCO_mean",
+        "FCO_sobre_Divida",  "FCO_sobre_Divida_mean",
+        "Giro_Ativo",        "Giro_Ativo_mean",
     ]
 
     for idx in range(anos_minimos, len(anos_disponiveis)):
@@ -391,8 +394,28 @@ def calcular_score_acumulado_v2(
             metricas = calcular_metricas_historicas_simplificadas(df_mult_hist, df_dre_hist)
 
             # instabilidade real (CV em janela)
+            # Os candidatos (ROIC, Margens, FCO/Divida, Giro_Ativo…) estão em
+            # df_mult_hist, não em df_dre_hist. Fazemos merge por Ano para cobrir
+            # colunas de ambas as fontes sem perder séries históricas.
+            _cand_set = set(instability_candidates)
+            _mult_keep = ["Ano"] + [c for c in df_mult_hist.columns if c in _cand_set]
+            _dre_keep  = ["Ano"] + [c for c in df_dre_hist.columns  if c in _cand_set]
+
+            if len(_mult_keep) > 1 and len(_dre_keep) > 1:
+                df_inst = pd.merge(
+                    df_mult_hist[_mult_keep],
+                    df_dre_hist[_dre_keep],
+                    on="Ano", how="outer",
+                )
+            elif len(_mult_keep) > 1:
+                df_inst = df_mult_hist[_mult_keep]
+            elif len(_dre_keep) > 1:
+                df_inst = df_dre_hist[_dre_keep]
+            else:
+                df_inst = df_mult_hist  # fallback: tenta tudo de multiplos
+
             instability_cv = compute_instability_cv(
-                df_dre_hist,
+                df_inst,
                 candidate_cols=instability_candidates,
                 year_col="Ano",
                 window=instability_window_years,

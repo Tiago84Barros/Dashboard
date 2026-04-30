@@ -251,7 +251,12 @@ def _insert_batch(df: pd.DataFrame, engine, batch_size: int) -> Dict[str, int]:
     df = df[_KEEP_COLS].copy()
 
     if str(engine.url).startswith("duckdb"):
-        return _insert_duckdb(df, engine)
+        from pipeline_local.utils.duckdb_utils import bulk_insert_duckdb
+        try:
+            return bulk_insert_duckdb(df, engine, TARGET_TABLE, "row_hash")
+        except Exception as exc:
+            log.error("bulk_insert_duckdb falhou (DFP)", erro=str(exc))
+            return {"inserted": 0, "skipped": len(df)}
 
     from sqlalchemy import text as sa_text
     insert_sql = sa_text(f"""
@@ -277,29 +282,6 @@ def _insert_batch(df: pd.DataFrame, engine, batch_size: int) -> Dict[str, int]:
                     except Exception:
                         skipped += 1
     return {"inserted": inserted, "skipped": skipped}
-
-
-def _insert_duckdb(df: pd.DataFrame, engine) -> Dict[str, int]:
-    """Vectorized bulk insert via DuckDB native register API — avoids slow SQLAlchemy executemany."""
-    import duckdb
-    db_path = engine.url.database or ""
-    db_path = os.path.normpath(db_path)
-    engine.dispose()  # release SQLAlchemy pool so native connection can acquire write lock
-    cols = ", ".join(_KEEP_COLS)
-    con = duckdb.connect(db_path)
-    try:
-        before = con.execute(f"SELECT COUNT(*) FROM {TARGET_TABLE}").fetchone()[0]
-        con.register("_ins", df)
-        con.execute(f"INSERT INTO {TARGET_TABLE} ({cols}) SELECT {cols} FROM _ins ON CONFLICT (row_hash) DO NOTHING")
-        after = con.execute(f"SELECT COUNT(*) FROM {TARGET_TABLE}").fetchone()[0]
-        con.unregister("_ins")
-        inserted = after - before
-        return {"inserted": inserted, "skipped": len(df) - inserted}
-    except Exception as exc:
-        log.error("Erro no insert nativo DuckDB", erro=str(exc))
-        return {"inserted": 0, "skipped": len(df)}
-    finally:
-        con.close()
 
 
 # ---------------------------------------------------------------------------

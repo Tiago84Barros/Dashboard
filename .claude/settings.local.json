@@ -23,7 +23,18 @@
       "Bash(.venv/Scripts/python.exe -m pipeline_local.run_pipeline --stage extract --source DFP --year-start 2023 --year-end 2023)",
       "Bash(tasklist)",
       "Bash(taskkill /PID 21508 /F)",
-      "PowerShell(Stop-Process -Id 21508 -Force)"
+      "PowerShell(Stop-Process -Id 21508 -Force)",
+      "PowerShell(Get-Process python | Where-Object { $_.WorkingSet64 -gt 100MB } | Select-Object Id, WorkingSet64 | ForEach-Object { \"$\\($_.Id\\) \\($\\([math]::Round\\($_.WorkingSet64/1MB\\)\\)MB\\)\" })",
+      "PowerShell(Stop-Process -Id 29668 -Force)",
+      "Bash(python -m pip show duckdb)",
+      "Bash(python -c \"import sys; print\\(sys.executable\\)\")",
+      "Bash(\"C:/Users/Tiago Barros/AppData/Local/Programs/Python/Python313/python.exe\" -m pip show duckdb)",
+      "Read(//c/Users/Tiago Barros/AppData/Local/Programs/Python//**)",
+      "Read(//c/Users/Tiago Barros/AppData/Roaming/**)",
+      "Bash(\"/c/Users/Tiago Barros/.venv/Scripts/python.exe\" -m pip show duckdb)",
+      "Bash(\"/c/Users/Tiago Barros/AppData/Local/Programs/Python/Python313/Scripts/pip.exe\" list)",
+      "Bash(\"/c/Users/Tiago Barros/AppData/Local/Programs/Python/Python39/Scripts/pip.exe\" list)",
+      "Bash('/c/Users/Tiago Barros/OneDrive/Área de Trabalho/Meus Arquivos/Projetos/Clone-GitHub/Dashboard/.venv/Scripts/python.exe' -c ' *)"
     ]
   }
 }
