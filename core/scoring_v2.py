@@ -511,7 +511,35 @@ def calcular_score_acumulado_v2(
         df_ano["Penalty_Crowd_Capped"] = crowd_list
         df_ano["Score_Ajustado"] = final_scores
 
-        resultados.append(df_ano[["Ano", "ticker", "Score_Ajustado"]])
+        # ─────────────────────────────────────────────────────────────
+        # Contexto relativo dentro do grupo efetivo
+        # ─────────────────────────────────────────────────────────────
+        # O score v2 já usa percentis intra-grupo, mas estas colunas tornam
+        # explícita a posição relativa anual. Elas são úteis para seleção de
+        # portfólio e auditoria: evitam que uma empresa com bom histórico
+        # absoluto pareça forte quando está fraca perante seus pares atuais.
+        try:
+            df_ano["Rank_Relativo_Grupo"] = df_ano.groupby(group_col_eff, dropna=False)["Score_Ajustado"].rank(
+                ascending=False, method="min"
+            )
+            df_ano["Percentil_Relativo_Grupo"] = df_ano.groupby(group_col_eff, dropna=False)["Score_Ajustado"].transform(
+                lambda s: pd.to_numeric(s, errors="coerce").rank(pct=True, method="average").fillna(0.5)
+            )
+            # Pequeno reforço relativo: mantém o score original como base,
+            # mas reduz a chance de empresas medianas do grupo parecerem
+            # candidatas fortes apenas por histórico absoluto.
+            rel_factor = 0.85 + 0.15 * pd.to_numeric(df_ano["Percentil_Relativo_Grupo"], errors="coerce").fillna(0.5)
+            df_ano["Score_Ajustado"] = pd.to_numeric(df_ano["Score_Ajustado"], errors="coerce").fillna(0.0) * rel_factor
+        except Exception:
+            df_ano["Rank_Relativo_Grupo"] = np.nan
+            df_ano["Percentil_Relativo_Grupo"] = np.nan
+
+        resultados.append(df_ano[[
+            "Ano", "ticker", "Score_Ajustado",
+            "SEGMENTO", "SUBSETOR", "SETOR",
+            "Rank_Relativo_Grupo", "Percentil_Relativo_Grupo",
+            "Penalty_Decay", "Penalty_Crowd_Capped", "InstabilityPenalty", "Instability_CV",
+        ]])
 
     if resultados:
         return pd.concat(resultados, ignore_index=True)

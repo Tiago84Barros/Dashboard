@@ -271,6 +271,190 @@ def _safe_num(value, default=None):
         return default
 
 
+
+def _safe_round(value, ndigits: int = 2):
+    try:
+        if value is None or pd.isna(value):
+            return None
+        return round(float(value), ndigits)
+    except Exception:
+        return None
+
+
+
+def _resolve_price_col(precos: pd.DataFrame, ticker: str) -> Optional[str]:
+    if precos is None or precos.empty:
+        return None
+    tk = str(ticker or "").strip().upper()
+    if not tk:
+        return None
+    candidates = [tk, tk.replace(".SA", "") if tk.endswith(".SA") else f"{tk}.SA"]
+    for c in candidates:
+        if c in precos.columns:
+            return c
+    colmap = {str(c).strip().upper(): c for c in precos.columns}
+    for c in candidates:
+        if c in colmap:
+            return colmap[c]
+    return None
+
+def _resolve_div_key_local(dividendos: Dict, ticker_col: str) -> Optional[str]:
+    if not dividendos:
+        return None
+    tk = str(ticker_col or "").strip().upper()
+    candidates = [tk, tk.replace(".SA", "") if tk.endswith(".SA") else f"{tk}.SA"]
+    keymap = {str(k).strip().upper(): k for k in dividendos.keys()}
+    for c in candidates:
+        if c in keymap:
+            return keymap[c]
+    return None
+
+def _as_div_series_local(div) -> pd.Series:
+    if div is None:
+        return pd.Series(dtype="float64")
+    try:
+        s = div.iloc[:, 0] if isinstance(div, pd.DataFrame) else div
+        s = pd.to_numeric(s, errors="coerce")
+        s.index = pd.to_datetime(s.index, errors="coerce")
+        return s.dropna().astype(float)
+    except Exception:
+        return pd.Series(dtype="float64")
+
+def _div_mes_local(s: pd.Series, data: pd.Timestamp, px_ref: Optional[float] = None) -> float:
+    if s is None or s.empty:
+        return 0.0
+    try:
+        d = pd.Timestamp(data)
+        val = float(s[(s.index.year == d.year) & (s.index.month == d.month)].sum())
+        if not pd.notna(val) or val <= 0 or val > 20.0:
+            return 0.0
+        if px_ref is not None and pd.notna(px_ref) and px_ref > 0 and val > 0.5 * float(px_ref):
+            return 0.0
+        return val
+    except Exception:
+        return 0.0
+
+def _calcular_equal_weight_segmento_local(precos: pd.DataFrame, tickers: Sequence[str], datas_aportes: Sequence[pd.Timestamp], dividendos: Dict, aporte_mensal: float = 1000.0) -> pd.Series:
+    if precos is None or precos.empty or not tickers or not datas_aportes:
+        return pd.Series(dtype="float64")
+    px = precos.copy()
+    px.index = pd.to_datetime(px.index, errors="coerce")
+    px = px[~px.index.isna()].sort_index()
+    if px.empty:
+        return pd.Series(dtype="float64")
+    tickers_exec: List[str] = []
+    for tk in tickers:
+        col = _resolve_price_col(px, tk)
+        if col is not None and col not in tickers_exec:
+            tickers_exec.append(col)
+    if not tickers_exec:
+        return pd.Series(dtype="float64")
+    divs: Dict[str, pd.Series] = {}
+    for col in tickers_exec:
+        key = _resolve_div_key_local(dividendos, col)
+        divs[col] = _as_div_series_local(dividendos.get(key)) if key is not None else pd.Series(dtype="float64")
+    carteira = {t: 0.0 for t in tickers_exec}
+    hist: Dict[pd.Timestamp, float] = {}
+    for data0 in datas_aportes:
+        data_aporte = encontrar_proxima_data_valida(pd.Timestamp(data0), px)
+        if data_aporte is None:
+            continue
+        ativos_validos = []
+        for t in tickers_exec:
+            try:
+                val = float(px.loc[data_aporte, t])
+                if pd.notna(val) and val > 0:
+                    ativos_validos.append(t)
+            except Exception:
+                continue
+        if not ativos_validos:
+            continue
+        aporte_por_ticker = float(aporte_mensal) / len(ativos_validos)
+        for t in ativos_validos:
+            try:
+                preco_t = float(px.loc[data_aporte, t])
+            except Exception:
+                continue
+            if not pd.notna(preco_t) or preco_t <= 0:
+                continue
+            div_mes = _div_mes_local(divs.get(t), data_aporte, px_ref=preco_t)
+            reinvest = div_mes * carteira.get(t, 0.0)
+            carteira[t] = carteira.get(t, 0.0) + ((aporte_por_ticker + reinvest) / preco_t)
+        total = 0.0
+        for t, qtd in carteira.items():
+            try:
+                preco_t = float(px.loc[data_aporte, t])
+            except Exception:
+                continue
+            if pd.notna(preco_t) and preco_t > 0:
+                total += float(qtd) * preco_t
+        if total > 0:
+            hist[pd.Timestamp(data_aporte)] = total
+    return pd.Series(hist, dtype="float64").sort_index().ffill()
+
+
+def _anos_lider_por_ticker(lideres: pd.DataFrame, ticker: str) -> List[int]:
+    """Retorna anos em que o ticker foi líder, normalizado sem .SA."""
+    if lideres is None or lideres.empty or "ticker" not in lideres.columns or "Ano" not in lideres.columns:
+        return []
+    tk = _strip_sa(str(ticker))
+    try:
+        mask = lideres["ticker"].astype(str).apply(_strip_sa) == tk
+        anos = pd.to_numeric(lideres.loc[mask, "Ano"], errors="coerce").dropna().astype(int).tolist()
+        return sorted(set(int(a) for a in anos))
+    except Exception:
+        return []
+
+
+def _ultimo_ano_lider(lideres: pd.DataFrame, ticker: str) -> Optional[int]:
+    anos = _anos_lider_por_ticker(lideres, ticker)
+    return max(anos) if anos else None
+
+
+def _rank_ultimo_ano(score: pd.DataFrame, ticker: str, ultimo_ano: int) -> Optional[int]:
+    """Rank do ticker no último ano de score, menor é melhor."""
+    if score is None or score.empty or "ticker" not in score.columns or "Score_Ajustado" not in score.columns:
+        return None
+    try:
+        df = score.copy()
+        df["Ano"] = pd.to_numeric(df.get("Ano"), errors="coerce")
+        df = df[df["Ano"] == int(ultimo_ano)].copy()
+        if df.empty:
+            return None
+        df["ticker_norm"] = df["ticker"].astype(str).apply(_strip_sa)
+        df["Score_Ajustado"] = pd.to_numeric(df["Score_Ajustado"], errors="coerce")
+        df = df.dropna(subset=["Score_Ajustado"]).sort_values("Score_Ajustado", ascending=False).reset_index(drop=True)
+        pos = df.index[df["ticker_norm"] == _strip_sa(str(ticker))]
+        if len(pos) == 0:
+            return None
+        return int(pos[0]) + 1
+    except Exception:
+        return None
+
+
+def _pode_incluir_maior_participacao(
+    lideres: pd.DataFrame,
+    score: pd.DataFrame,
+    ticker: str,
+    ultimo_ano: int,
+    max_anos_desde_lider: int = 5,
+    max_rank_ultimo_ano: int = 3,
+) -> Tuple[bool, str, Optional[int], Optional[int]]:
+    """
+    Evita que uma empresa vencedora apenas no passado distante entre na carteira
+    por ter carregado a maior participação do backtest.
+    """
+    ultimo_lider = _ultimo_ano_lider(lideres, ticker)
+    rank_atual = _rank_ultimo_ano(score, ticker, ultimo_ano)
+
+    if ultimo_lider is not None and (int(ultimo_ano) - int(ultimo_lider)) <= int(max_anos_desde_lider):
+        return True, "Maior participação com liderança recente", ultimo_lider, rank_atual
+
+    if rank_atual is not None and int(rank_atual) <= int(max_rank_ultimo_ano):
+        return True, "Maior participação ainda bem ranqueada no score atual", ultimo_lider, rank_atual
+
+    return False, "Maior participação descartada por liderança antiga/baixo rank atual", ultimo_lider, rank_atual
+
 def _first_existing(row: pd.Series, candidates: list[str], default=None):
     for col in candidates:
         if col in row.index:
@@ -447,7 +631,7 @@ def render():
     # CONTROLES DE EXECUÇÃO (não roda sozinho)
     # ─────────────────────────────────────────────────────────────
     if "cp_last_params" not in st.session_state:
-        st.session_state["cp_last_params"] = {"margem_superior": 10.0}
+        st.session_state["cp_last_params"] = {"margem_superior": 10.0, "margem_equal_weight": 0.0, "modo_equal_weight": "diagnostico", "mostrar_reprovados": True, "max_anos_desde_lider": 5}
     if "cp_should_run" not in st.session_state:
         st.session_state["cp_should_run"] = False
 
@@ -462,12 +646,57 @@ def render():
                 value=float(st.session_state["cp_last_params"].get("margem_superior", 10.0)),
                 step=0.1,
                 format="%.2f",
-                help="Digite a % e clique em RODAR. Ex.: 7.5, 12, 33.33",
+                help="Filtro absoluto: quanto a estratégia do segmento precisa superar o Tesouro Selic.",
+            )
+            margem_equal_weight = st.number_input(
+                "Margem mínima vs Equal-Weight do segmento (%)",
+                min_value=-1000.0,
+                max_value=10000.0,
+                value=float(st.session_state["cp_last_params"].get("margem_equal_weight", 0.0)),
+                step=0.1,
+                format="%.2f",
+                help=(
+                    "Filtro relativo: quanto a estratégia precisa superar uma carteira passiva "
+                    "equal-weight do próprio segmento. Use 0 para exigir apenas superar o segmento; "
+                    "use valor negativo para flexibilizar."
+                ),
+            )
+            modo_equal_weight_label = st.selectbox(
+                "Uso do Equal-Weight na seleção",
+                options=["Apenas diagnóstico", "Filtro obrigatório"],
+                index=0 if st.session_state["cp_last_params"].get("modo_equal_weight", "diagnostico") != "filtro" else 1,
+                help=(
+                    "Apenas diagnóstico: calcula e mostra o alpha vs Equal-Weight, mas não bloqueia o segmento. "
+                    "Filtro obrigatório: o segmento só entra se também superar o Equal-Weight pela margem configurada."
+                ),
+            )
+            modo_equal_weight = "filtro" if modo_equal_weight_label == "Filtro obrigatório" else "diagnostico"
+
+            mostrar_reprovados = st.checkbox(
+                "Mostrar auditoria dos segmentos",
+                value=bool(st.session_state["cp_last_params"].get("mostrar_reprovados", True)),
+            )
+            max_anos_desde_lider = st.number_input(
+                "Máx. anos desde última liderança",
+                min_value=1,
+                max_value=15,
+                value=int(st.session_state["cp_last_params"].get("max_anos_desde_lider", 5)),
+                step=1,
+                help=(
+                    "Controle de recência: uma empresa de maior participação só entra junto do líder atual "
+                    "se foi líder recentemente ou ainda está bem ranqueada no score atual."
+                ),
             )
             gerar = st.form_submit_button("🚀 Rodar Criação de Portfólio")
 
         if gerar:
-            st.session_state["cp_last_params"] = {"margem_superior": float(margem_superior)}
+            st.session_state["cp_last_params"] = {
+                "margem_superior": float(margem_superior),
+                "margem_equal_weight": float(margem_equal_weight),
+                "modo_equal_weight": str(modo_equal_weight),
+                "mostrar_reprovados": bool(mostrar_reprovados),
+                "max_anos_desde_lider": int(max_anos_desde_lider),
+            }
             st.session_state["cp_should_run"] = True
 
     if not st.session_state["cp_should_run"]:
@@ -475,6 +704,15 @@ def render():
         return
 
     margem_superior = float(st.session_state["cp_last_params"]["margem_superior"])
+    margem_equal_weight = float(st.session_state["cp_last_params"].get("margem_equal_weight", 0.0))
+    modo_equal_weight = str(st.session_state["cp_last_params"].get("modo_equal_weight", "diagnostico"))
+    mostrar_reprovados = bool(st.session_state["cp_last_params"].get("mostrar_reprovados", True))
+    max_anos_desde_lider = int(st.session_state["cp_last_params"].get("max_anos_desde_lider", 5))
+
+    if modo_equal_weight == "diagnostico":
+        st.info("Equal-Weight em modo diagnóstico: ele será calculado e exibido, mas não bloqueará a seleção do segmento.")
+    else:
+        st.warning("Equal-Weight em modo filtro obrigatório: segmentos que perderem para o benchmark interno serão excluídos.")
 
     # Score V2: AUTOMÁTICO (se disponível)
     use_score_v2 = calcular_score_acumulado_v2 is not None
@@ -517,6 +755,7 @@ def render():
     )
 
     empresas_final_map: Dict[str, dict] = {}
+    segmentos_reprovados: List[dict] = []
 
     score_global_parts: List[pd.DataFrame] = []
     lideres_global_parts: List[pd.DataFrame] = []
@@ -663,14 +902,87 @@ def render():
             continue
 
         diff = ((final_empresas / final_selic) - 1) * 100.0
+
+        # ─────────────────────────────────────────────
+        # Filtro duplo de entrada do segmento
+        # 1) Estratégia precisa superar a Selic pela margem configurada
+        # 2) Estratégia precisa superar o benchmark investível equal-weight do próprio segmento
+        #
+        # Observação: o equal-weight aqui usa R$ 1.000/mês TOTAL dividido entre todas
+        # as empresas elegíveis do segmento, sem ranking.
+        # ─────────────────────────────────────────────
+        patrimonio_equal_weight = _calcular_equal_weight_segmento_local(
+            precos=precos,
+            tickers=tickers_score_yf,
+            datas_aportes=datas_aportes,
+            dividendos=dividendos,
+        )
+
+        final_equal_weight = None
+        diff_vs_equal_weight = None
+        equal_weight_disponivel = False
+        motivo_equal_weight = "OK"
+
+        if patrimonio_equal_weight is None or patrimonio_equal_weight.empty:
+            motivo_equal_weight = "Equal-Weight indisponível"
+        else:
+            equal_clean = pd.to_numeric(patrimonio_equal_weight, errors="coerce").dropna()
+            if equal_clean.empty:
+                motivo_equal_weight = "Equal-Weight sem valores válidos"
+            else:
+                final_equal_weight = float(equal_clean.iloc[-1])
+                if final_equal_weight <= 0:
+                    motivo_equal_weight = "Equal-Weight <= 0"
+                else:
+                    equal_weight_disponivel = True
+                    diff_vs_equal_weight = ((final_empresas / final_equal_weight) - 1) * 100.0
+
+        if not equal_weight_disponivel:
+            segmentos_reprovados.append({
+                "setor": setor, "subsetor": subsetor, "segmento": segmento,
+                "motivo": motivo_equal_weight if modo_equal_weight == "filtro" else f"Diagnóstico: {motivo_equal_weight}",
+                "modo_equal_weight": modo_equal_weight,
+                "alpha_selic_pct": _safe_round(diff, 2), "alpha_equal_weight_pct": None,
+                "valor_estrategia": _safe_round(final_empresas, 2), "valor_selic": _safe_round(final_selic, 2),
+                "valor_equal_weight": None if final_equal_weight is None else _safe_round(final_equal_weight, 2),
+            })
+            if modo_equal_weight == "filtro":
+                continue
+
+        # Filtro 1: alfa absoluto vs Selic
         if diff < margem_superior:
+            segmentos_reprovados.append({
+                "setor": setor, "subsetor": subsetor, "segmento": segmento,
+                "motivo": "Falhou vs Selic",
+                "alpha_selic_pct": _safe_round(diff, 2), "alpha_equal_weight_pct": _safe_round(diff_vs_equal_weight, 2),
+                "valor_estrategia": _safe_round(final_empresas, 2), "valor_selic": _safe_round(final_selic, 2),
+                "valor_equal_weight": _safe_round(final_equal_weight, 2),
+            })
             continue
+
+        # Filtro 2: alfa relativo vs carteira equal-weight do segmento
+        if equal_weight_disponivel and diff_vs_equal_weight is not None:
+            falhou_equal = diff_vs_equal_weight < margem_equal_weight
+            if falhou_equal:
+                segmentos_reprovados.append({
+                    "setor": setor, "subsetor": subsetor, "segmento": segmento,
+                    "motivo": "Falhou vs Equal-Weight" if modo_equal_weight == "filtro" else "Diagnóstico: falharia vs Equal-Weight",
+                    "modo_equal_weight": modo_equal_weight,
+                    "alpha_selic_pct": _safe_round(diff, 2), "alpha_equal_weight_pct": _safe_round(diff_vs_equal_weight, 2),
+                    "valor_estrategia": _safe_round(final_empresas, 2), "valor_selic": _safe_round(final_selic, 2),
+                    "valor_equal_weight": _safe_round(final_equal_weight, 2),
+                })
+                if modo_equal_weight == "filtro":
+                    continue
 
         # Exibição do segmento destacado
         st.markdown(f"### {setor} > {subsetor} > {segmento}")
+        equal_txt = "Equal-Weight indisponível"
+        if equal_weight_disponivel and diff_vs_equal_weight is not None:
+            equal_txt = f"{diff_vs_equal_weight:.1f}% acima do Equal-Weight do segmento"
         st.markdown(
             f"**Valor final da estratégia:** R$ {final_empresas:,.2f} "
-            f"({diff:.1f}% acima do Tesouro Selic)"
+            f"({diff:.1f}% acima do Tesouro Selic; {equal_txt})"
         )
 
         empresas_estrategia = cols_empresas
@@ -727,9 +1039,37 @@ def render():
         ticker_lider_ultimo = _strip_sa(str(lideres_ano.iloc[0]["ticker"]))
 
         # Selecionados do segmento
+        # O líder do score mais recente sempre é considerado.
+        # A empresa de maior participação só entra se também tiver recência
+        # ou ainda estiver bem posicionada no score atual.
         selecionados = [ticker_lider_ultimo]
         if ticker_maior_part and (ticker_maior_part != ticker_lider_ultimo):
-            selecionados.append(ticker_maior_part)
+            incluir_maior, motivo_maior, ultimo_lider_maior, rank_atual_maior = _pode_incluir_maior_participacao(
+                lideres=lideres,
+                score=score,
+                ticker=ticker_maior_part,
+                ultimo_ano=ultimo_ano,
+                max_anos_desde_lider=max_anos_desde_lider,
+                max_rank_ultimo_ano=3,
+            )
+            if incluir_maior:
+                selecionados.append(ticker_maior_part)
+            else:
+                segmentos_reprovados.append({
+                    "setor": setor,
+                    "subsetor": subsetor,
+                    "segmento": segmento,
+                    "ticker": ticker_maior_part,
+                    "motivo": motivo_maior,
+                    "ultimo_ano_lider": ultimo_lider_maior,
+                    "rank_ultimo_ano": rank_atual_maior,
+                    "ano_referencia": ultimo_ano,
+                    "alpha_selic_pct": _safe_round(diff, 2),
+                    "alpha_equal_weight_pct": _safe_round(diff_vs_equal_weight, 2),
+                    "valor_estrategia": _safe_round(final_empresas, 2),
+                    "valor_selic": _safe_round(final_selic, 2),
+                    "valor_equal_weight": _safe_round(final_equal_weight, 2),
+                })
 
         for tk in selecionados:
             tk = _strip_sa(tk)
@@ -759,11 +1099,29 @@ def render():
                     "is_lider_ultimo": is_lider_ultimo,
                     "is_maior_part": is_maior_part,
                     "motivos": motivos,
+                    "alpha_selic": float(diff),
+                    "alpha_equal_weight": (None if diff_vs_equal_weight is None else float(diff_vs_equal_weight)),
                 },
             )
 
     # transforma map em lista final
     empresas_lideres_finais: List[dict] = list(empresas_final_map.values())
+
+    if mostrar_reprovados and segmentos_reprovados:
+        st.markdown("## 🧪 Segmentos reprovados pelo filtro duplo")
+        st.caption(
+            "A tabela abaixo explica por que segmentos não entraram. "
+            "Com margem Selic = 0%, um segmento ainda pode ser reprovado se a estratégia perder para o Equal-Weight."
+        )
+        df_reprovados = pd.DataFrame(segmentos_reprovados)
+        st.dataframe(df_reprovados, use_container_width=True)
+
+    if not empresas_lideres_finais:
+        st.warning(
+            "Nenhum segmento passou no filtro configurado. "
+            "Verifique a tabela de reprovados acima. Para testar somente o filtro Selic, "
+            "defina a margem vs Equal-Weight como um valor negativo, por exemplo -1000."
+        )
 
     # ─────────────────────────────────────────────────────────
     # Bloco final: empresas para o próximo ano + distribuição
@@ -992,6 +1350,16 @@ def render():
                 "tipo_empresa": "ESTABELECIDA_10A",
                 "min_anos_dre": 10,
                 "margem_superior_percent": float(margem_superior),
+                "max_anos_desde_lider": int(max_anos_desde_lider),
+                "selection_recency_rule": "maior_participacao_requer_lideranca_recente_ou_top3_score_atual",
+                "equal_weight_mode": str(modo_equal_weight),
+                "filtro_duplo_ativo": bool(modo_equal_weight == "filtro"),
+                "benchmark_relativo": "equal_weight_segmento",
+                "criterio_segmento": (
+                    "estrategia >= selic + margem AND estrategia >= equal_weight_segmento + margem" 
+                    if modo_equal_weight == "filtro" else 
+                    "estrategia >= selic + margem; equal_weight apenas diagnostico"
+                ),
                 "segmentos": segmentos_cobertos,
                 "selic_source": "macro_db_load_macro_summary",
                 "macro_last_date": str(dados_macro["Data"].max().date()) if "Data" in dados_macro.columns else None,
@@ -1002,6 +1370,8 @@ def render():
                 "items": items,
                 "tipo_empresa": "ESTABELECIDA_10A",
                 "margem_superior_percent": float(margem_superior),
+                "margem_equal_weight_percent": float(margem_equal_weight),
+                "equal_weight_mode": str(modo_equal_weight),
                 "filters_json": filters_json,
                 "status": "active",
             }

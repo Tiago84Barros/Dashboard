@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -1259,6 +1259,36 @@ def gerir_carteira_modulada(
     return df_patrimonio, datas_aportes
 
 
+def gerir_carteira_equal_weight_segmento(
+    precos: pd.DataFrame,
+    tickers: Sequence[str],
+    datas_aportes: Sequence[pd.Timestamp],
+    dividendos_dict: Optional[Dict[str, Union[pd.Series, pd.DataFrame]]] = None,
+    aporte_mensal: float = 1000.0,
+    fee_bps: float = 0.0,
+    slippage_bps: float = 0.0,
+) -> pd.Series:
+    """
+    Benchmark equal-weight do segmento.
+
+    Regras:
+    - Usa o aporte mensal TOTAL do segmento, não por empresa.
+    - Divide o aporte igualmente entre todos os tickers elegíveis.
+    - Não usa score, liderança, pesos calibrados nem seleção dinâmica.
+    - Reaproveita o motor gerir_carteira_simples para manter a mesma lógica
+      de preço, dividendos por ação, custos e sanitização.
+    """
+    return gerir_carteira_simples(
+        precos=precos,
+        tickers=tickers,
+        datas_aportes=datas_aportes,
+        dividendos_dict=dividendos_dict or {},
+        aporte_mensal=aporte_mensal,
+        fee_bps=fee_bps,
+        slippage_bps=slippage_bps,
+    )
+
+
 __all__ = [
     "encontrar_proxima_data_valida",
     "gerir_carteira_simples",
@@ -1266,4 +1296,5 @@ __all__ = [
     "calcular_patrimonio_selic_macro",
     "gerir_carteira",
     "gerir_carteira_modulada",
+    "gerir_carteira_equal_weight_segmento",
 ]

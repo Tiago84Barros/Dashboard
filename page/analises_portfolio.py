@@ -287,6 +287,87 @@ def _summarize_health_df(df: pd.DataFrame) -> Dict[str, Any]:
     }
 
 
+def _diagnostico_segmento_snapshot(items: List[Dict[str, Any]], weight_map: Dict[str, float]) -> pd.DataFrame:
+    """
+    Auditoria não destrutiva do snapshot salvo.
+
+    Observação: esta função NÃO altera a carteira. Ela apenas mostra se o
+    snapshot já contém metadados suficientes para auditar o filtro duplo
+    (Selic + Equal-Weight) e mede concentração por segmento.
+    """
+    if not items:
+        return pd.DataFrame()
+
+    rows: List[Dict[str, Any]] = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        tk = _safe_upper(it.get("ticker"))
+        if not tk:
+            continue
+
+        segmento = (
+            it.get("segmento")
+            or it.get("segment")
+            or it.get("setor")
+            or it.get("sector")
+            or "Sem segmento"
+        )
+        segmento = str(segmento).strip() or "Sem segmento"
+
+        def _first_num(*keys: str):
+            for k in keys:
+                if k in it and it.get(k) is not None:
+                    try:
+                        return float(it.get(k))
+                    except Exception:
+                        continue
+            return None
+
+        rows.append({
+            "Segmento": segmento,
+            "Ticker": tk,
+            "Peso": float(weight_map.get(tk, 0.0) or 0.0),
+            "Alpha vs Selic": _first_num("alpha_selic", "excesso_selic", "margem_sobre_selic", "margem_sobre_benchmark"),
+            "Alpha vs Equal-Weight": _first_num("alpha_equal_weight", "alpha_equal", "excesso_equal_weight", "margem_sobre_equal_weight"),
+        })
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+
+    def _agg_alpha(s: pd.Series):
+        s = pd.to_numeric(s, errors="coerce").dropna()
+        if s.empty:
+            return None
+        return float(s.mean())
+
+    out = df.groupby("Segmento", dropna=False).agg(
+        empresas=("Ticker", "nunique"),
+        peso_total=("Peso", "sum"),
+        alpha_selic_medio=("Alpha vs Selic", _agg_alpha),
+        alpha_equal_weight_medio=("Alpha vs Equal-Weight", _agg_alpha),
+    ).reset_index()
+
+    out["passa_selic"] = out["alpha_selic_medio"].apply(lambda x: bool(pd.notna(x) and float(x) > 0))
+    out["passa_equal_weight"] = out["alpha_equal_weight_medio"].apply(lambda x: bool(pd.notna(x) and float(x) > 0))
+    out["aprovado_filtro_duplo"] = out["passa_selic"] & out["passa_equal_weight"]
+
+    def _status(row: pd.Series) -> str:
+        if pd.isna(row.get("alpha_selic_medio")) or pd.isna(row.get("alpha_equal_weight_medio")):
+            return "Sem metadados completos no snapshot"
+        if bool(row.get("aprovado_filtro_duplo")):
+            return "Aprovado"
+        if bool(row.get("passa_selic")) and not bool(row.get("passa_equal_weight")):
+            return "Passa Selic, falha Equal-Weight"
+        if not bool(row.get("passa_selic")) and bool(row.get("passa_equal_weight")):
+            return "Falha Selic, passa Equal-Weight"
+        return "Reprovado nos dois filtros"
+
+    out["diagnostico"] = out.apply(_status, axis=1)
+    return out
+
+
 def _render_saved_data_header_html(selic: Any, n_acoes: int, margem: Any, n_segmentos: int) -> str:
     return f'''
     <div class="p6-saved">
@@ -851,6 +932,23 @@ def render() -> None:
     unsafe_allow_html=True,
 )
     st.markdown(_render_ticker_chips_html(tickers), unsafe_allow_html=True)
+
+    # Auditoria estrutural do snapshot: não altera a carteira, apenas mostra
+    # se há metadados suficientes para validar Selic + Equal-Weight por segmento.
+    diag_segmentos = _diagnostico_segmento_snapshot(items, weight_map)
+    if diag_segmentos is not None and not diag_segmentos.empty:
+        with st.expander("🧪 Auditoria do filtro duplo por segmento", expanded=False):
+            st.caption(
+                "Esta auditoria não muda o portfólio salvo. Ela verifica, quando disponíveis no snapshot, "
+                "os metadados de alpha vs Selic e alpha vs Equal-Weight. Para aplicar o filtro na decisão, "
+                "o mesmo critério precisa entrar no módulo que cria o snapshot."
+            )
+            df_diag = diag_segmentos.copy()
+            for col in ["peso_total", "alpha_selic_medio", "alpha_equal_weight_medio"]:
+                if col in df_diag.columns:
+                    df_diag[col] = pd.to_numeric(df_diag[col], errors="coerce")
+            st.dataframe(df_diag, use_container_width=True)
+
 
     st.divider()
 
