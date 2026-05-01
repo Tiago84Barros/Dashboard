@@ -179,12 +179,17 @@ def render_graficos_demonstracoes_financeiras(df: pd.DataFrame, ticker: str) -> 
         ("Receita_Liquida", "Receita Líquida"),
         ("EBIT", "EBIT"),
         ("Lucro_Liquido", "Lucro Líquido"),
+        ("Lucro_Antes_IR", "Lucro Antes IR"),
+        ("Resultado_Financeiro", "Resultado Financeiro"),
         ("Dividendos", "Dividendos"),
         ("Ativo_Total", "Ativo Total"),
         ("Patrimonio_Liquido", "Patrimônio Líquido"),
         ("Divida_Total", "Dívida Total"),
         ("Divida_Liquida", "Dívida Líquida"),
-        ("Caixa_Liquido", "Caixa Líquido"),
+        ("Caixa_Liquido", "FCO (Caixa Operacional)"),
+        ("FCI", "FCI (Investimento)"),
+        ("FCF", "FCF (Fluxo Livre)"),
+        ("Caixa", "Caixa"),
     ]
     existentes = [(c, lbl) for (c, lbl) in candidatos if c in dff.columns]
     if not existentes:
@@ -743,6 +748,284 @@ def render_grafico_retorno_anual_barras(perf: pd.DataFrame, ticker: str) -> None
 
 
 # ─────────────────────────────────────────────────────────────
+# Fluxo de Caixa (FCO / FCI / FCF)
+# ─────────────────────────────────────────────────────────────
+def render_fluxo_de_caixa(df: pd.DataFrame, ticker: str) -> None:
+    st.markdown("---")
+    st.markdown("### 💰 Fluxo de Caixa")
+
+    df = _normalize_date_col(df)
+    if df is None or df.empty or "Data" not in df.columns:
+        st.info("Sem dados de fluxo de caixa disponíveis.")
+        return
+
+    dff = df.copy()
+    dff["Data"] = pd.to_datetime(dff["Data"], errors="coerce")
+    dff = dff.dropna(subset=["Data"]).sort_values("Data")
+
+    candidatos = [
+        ("Caixa_Liquido", "FCO (Operacional)"),
+        ("FCI", "FCI (Investimento)"),
+        ("FCF", "FCF (Livre)"),
+    ]
+    existentes = [(c, lbl) for c, lbl in candidatos if c in dff.columns]
+    if not existentes:
+        st.info("Colunas FCO/FCI/FCF não disponíveis neste ticker.")
+        return
+
+    last = _latest_financial_row(dff)
+    card_cols = st.columns(len(existentes))
+    for i, (col, lbl) in enumerate(existentes):
+        v = float(last[col]) if last is not None and col in last and pd.notna(last.get(col)) else np.nan
+        v_fin = v if np.isfinite(v) else np.nan
+        if np.isnan(v_fin):
+            cls = "cf-card-ratio"
+        elif v_fin >= 0:
+            cls = "cf-card-balance-positive"
+        else:
+            cls = "cf-card-balance-negative"
+        card_cols[i].markdown(
+            f"""<div class="cf-card {cls}">
+                <div class="cf-card-label">{lbl} (último)</div>
+                <div class="cf-card-value">{format_brl_compacto(v_fin)}</div>
+                <div class="cf-card-extra">Fonte: Demonstrações Financeiras (Supabase)</div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+    cols_plot = [c for c, _ in existentes]
+    plot = dff[["Data"] + cols_plot].copy()
+    for c in cols_plot:
+        plot[c] = pd.to_numeric(plot[c], errors="coerce")
+    lbl_map = {c: lbl for c, lbl in existentes}
+    melt = plot.melt(id_vars=["Data"], value_vars=cols_plot, var_name="Fluxo", value_name="Valor (R$)")
+    melt["Fluxo"] = melt["Fluxo"].map(lbl_map)
+    melt = melt.dropna(subset=["Valor (R$)"])
+
+    if not melt.empty:
+        fig = px.bar(
+            melt, x="Data", y="Valor (R$)", color="Fluxo", barmode="group",
+            color_discrete_map={
+                "FCO (Operacional)": "#22c55e",
+                "FCI (Investimento)": "#f97316",
+                "FCF (Livre)": "#3b82f6",
+            },
+        )
+        fig.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.25)")
+        fig.update_layout(margin=dict(l=10, r=10, t=10, b=10))
+        st.plotly_chart(fig, use_container_width=True)
+    st.caption("FCO = Caixa das operações · FCI = Caixa dos investimentos · FCF = FCO + FCI (fluxo livre de caixa)")
+
+
+# ─────────────────────────────────────────────────────────────
+# Estrutura de Capital (Caixa vs Dívida CP vs LP)
+# ─────────────────────────────────────────────────────────────
+def render_estrutura_capital(df: pd.DataFrame, ticker: str) -> None:
+    st.markdown("---")
+    st.markdown("### 🏛️ Estrutura de Capital e Dívida")
+
+    df = _normalize_date_col(df)
+    if df is None or df.empty or "Data" not in df.columns:
+        st.info("Sem dados de estrutura de capital disponíveis.")
+        return
+
+    dff = df.copy()
+    dff["Data"] = pd.to_datetime(dff["Data"], errors="coerce")
+    dff = dff.dropna(subset=["Data"]).sort_values("Data")
+    last = _latest_financial_row(dff)
+
+    cards_cfg = [
+        ("Caixa",              "Caixa",              "cf-card-balance-positive"),
+        ("Divida_CP",          "Dívida CP",           "cf-card-expense"),
+        ("Divida_LP",          "Dívida LP",           "cf-card-balance-negative"),
+        ("Divida_Total",       "Dívida Total",        "cf-card-balance-negative"),
+        ("Divida_Liquida",     "Dívida Líquida",      "cf-card-ratio"),
+        ("Patrimonio_Liquido", "Patrimônio Líquido",  "cf-card-income"),
+    ]
+    existentes_cards = [(c, lbl, cls) for c, lbl, cls in cards_cfg if c in dff.columns]
+
+    if existentes_cards:
+        card_cols = st.columns(min(len(existentes_cards), 6))
+        for i, (col, lbl, cls) in enumerate(existentes_cards):
+            v = float(last[col]) if last is not None and col in last and pd.notna(last.get(col)) else np.nan
+            card_cols[i % len(card_cols)].markdown(
+                f"""<div class="cf-card {cls}">
+                    <div class="cf-card-label">{lbl}</div>
+                    <div class="cf-card-value">{format_brl_compacto(v)}</div>
+                    <div class="cf-card-extra">Último período disponível</div>
+                </div>""",
+                unsafe_allow_html=True,
+            )
+
+    plot_candidatos = [
+        ("Caixa",    "Caixa"),
+        ("Divida_CP","Dívida CP"),
+        ("Divida_LP","Dívida LP"),
+    ]
+    existentes_plot = [(c, lbl) for c, lbl in plot_candidatos if c in dff.columns]
+    if len(existentes_plot) >= 2:
+        cols_p = [c for c, _ in existentes_plot]
+        plot = dff[["Data"] + cols_p].copy()
+        for c in cols_p:
+            plot[c] = pd.to_numeric(plot[c], errors="coerce")
+        lbl_map = {c: lbl for c, lbl in existentes_plot}
+        melt = plot.melt(id_vars=["Data"], value_vars=cols_p, var_name="Item", value_name="Valor (R$)")
+        melt["Item"] = melt["Item"].map(lbl_map)
+        melt = melt.dropna(subset=["Valor (R$)"])
+        if not melt.empty:
+            fig = px.bar(
+                melt, x="Data", y="Valor (R$)", color="Item", barmode="group",
+                color_discrete_map={"Caixa": "#22c55e", "Dívida CP": "#f97316", "Dívida LP": "#ef4444"},
+            )
+            fig.update_layout(margin=dict(l=10, r=10, t=10, b=10))
+            st.plotly_chart(fig, use_container_width=True)
+    st.caption("CP = Curto Prazo (vence em 12 meses) · LP = Longo Prazo")
+
+
+# ─────────────────────────────────────────────────────────────
+# Liquidez & Eficiência Operacional (novos múltiplos)
+# ─────────────────────────────────────────────────────────────
+def render_liquidez_eficiencia(multiplos_display: pd.DataFrame) -> None:
+    st.markdown("---")
+    st.markdown("### 🔍 Liquidez & Eficiência Operacional")
+
+    descricoes = {
+        "Liquidez_Seca":             "Ativo Circulante sem Estoques ÷ Passivo Circulante — liquidez real sem depender de estoques.",
+        "Liquidez_Imediata":         "Caixa ÷ Passivo Circulante — capacidade de quitar dívidas CP só com caixa disponível.",
+        "Giro_Ativo":                "Receita Líquida ÷ Ativo Total — eficiência no uso de todos os ativos para gerar receita.",
+        "Prazo_Medio_Recebimento":   "Contas a Receber ÷ Receita × 365 — dias médios que a empresa demora a receber das vendas.",
+        "NCG":                       "Contas a Receber + Estoques − Fornecedores — capital preso no ciclo operacional.",
+    }
+
+    valores = [
+        ("Liquidez_Seca",           "Liquidez Seca",              "x"),
+        ("Liquidez_Imediata",       "Liquidez Imediata",          "x"),
+        ("Giro_Ativo",              "Giro do Ativo",              "x"),
+        ("Prazo_Medio_Recebimento", "Prazo Médio Recebimento",    "dias"),
+        ("NCG",                     "Necessidade Capital de Giro", "R$"),
+    ]
+
+    if multiplos_display is None or multiplos_display.empty:
+        st.info("Indicadores de liquidez e eficiência não disponíveis.")
+        return
+
+    existentes = [(c, lbl, fmt) for c, lbl, fmt in valores if c in multiplos_display.columns]
+    if not existentes:
+        st.info("Indicadores de liquidez e eficiência não disponíveis neste ticker.")
+        return
+
+    cols = st.columns(min(len(existentes), 5))
+    for i, (col_key, label, fmt) in enumerate(existentes):
+        v = multiplos_display.iloc[0].get(col_key)
+        try:
+            fv_num = float(v) if v is not None and pd.notna(v) else None
+        except Exception:
+            fv_num = None
+        if fv_num is None or not np.isfinite(fv_num):
+            fv = "-"
+        elif fmt == "dias":
+            fv = f"{fv_num:.1f} dias"
+        elif fmt == "R$":
+            fv = format_brl_compacto(fv_num)
+        else:
+            fv = f"{fv_num:.2f}x"
+
+        with cols[i % len(cols)]:
+            with st.expander(label, expanded=False):
+                st.markdown(
+                    f"""<div style="border-radius:14px;padding:10px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12)">
+                        <div style="font-size:22px;font-weight:800">{fv}</div>
+                        <div style="font-size:12px;opacity:.9;margin-top:6px">{descricoes.get(col_key, "")}</div>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+
+
+# ─────────────────────────────────────────────────────────────
+# Qualidade e Geração de Caixa + Valuation Avançado
+# ─────────────────────────────────────────────────────────────
+def render_geracao_caixa_e_valuation(multiplos_display: pd.DataFrame, mult_hist: pd.DataFrame, ticker: str) -> None:
+    st.markdown("---")
+    st.markdown("### 🧾 Qualidade de Caixa & Valuation Avançado")
+
+    if multiplos_display is None or multiplos_display.empty:
+        st.info("Indicadores de geração de caixa não disponíveis.")
+        return
+
+    descricoes = {
+        "Margem_FCO":            "FCO ÷ Receita Líquida — quanto da receita vira caixa operacional real (mais difícil de manipular que o lucro).",
+        "FCO_sobre_Divida":      "FCO ÷ Dívida Bruta — em quantos anos o FCO quita toda a dívida. >0,3 é saudável.",
+        "Cobertura_Investimento":"FCO ÷ |FCI| — FCO cobre quantas vezes os investimentos realizados. >1 é positivo.",
+        "P_FCO":                 "Preço ÷ FCO por ação — versão 'cash' do P/L, mais robusta a accruals contábeis.",
+        "EV_EBIT":               "Valor da Firma ÷ EBIT — valuation operacional, neutro à estrutura de capital.",
+        "P_Receita":             "Preço ÷ Receita por ação — útil para empresas em crescimento sem lucro ainda.",
+    }
+
+    valores = [
+        ("Margem_FCO",            "Margem FCO",           True,  "%"),
+        ("FCO_sobre_Divida",      "FCO / Dívida",         True,  "x"),
+        ("Cobertura_Investimento","Cobertura Investimento",True,  "x"),
+        ("P_FCO",                 "P/FCO",                False, "x"),
+        ("EV_EBIT",               "EV/EBIT",              False, "x"),
+        ("P_Receita",             "P/Receita",            False, "x"),
+    ]
+
+    existentes = [(c, lbl, bom_alto, fmt) for c, lbl, bom_alto, fmt in valores if c in multiplos_display.columns]
+
+    if not existentes:
+        st.info("Indicadores de geração de caixa não disponíveis neste ticker.")
+    else:
+        cols = st.columns(min(len(existentes), 3))
+        for i, (col_key, label, bom_alto, fmt) in enumerate(existentes):
+            v = multiplos_display.iloc[0].get(col_key)
+            try:
+                fv_num = float(v) if v is not None and pd.notna(v) else None
+            except Exception:
+                fv_num = None
+            if fv_num is None or not np.isfinite(fv_num):
+                fv = "-"
+            elif fmt == "%":
+                fv = f"{fv_num:.2f}%"
+            else:
+                fv = f"{fv_num:.2f}x"
+
+            with cols[i % len(cols)]:
+                with st.expander(label, expanded=False):
+                    st.markdown(
+                        f"""<div style="border-radius:14px;padding:10px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12)">
+                            <div style="font-size:22px;font-weight:800">{fv}</div>
+                            <div style="font-size:12px;opacity:.9;margin-top:6px">{descricoes.get(col_key, "")}</div>
+                        </div>""",
+                        unsafe_allow_html=True,
+                    )
+
+    # Comparação histórica: Margem FCO vs Margem Líquida
+    if mult_hist is not None and not mult_hist.empty:
+        cols_cmp = [c for c in ["Margem_FCO", "Margem_Liquida", "Data"] if c in mult_hist.columns]
+        if "Data" in cols_cmp and ("Margem_FCO" in cols_cmp or "Margem_Liquida" in cols_cmp):
+            dfc = mult_hist[cols_cmp].copy()
+            dfc["Data"] = pd.to_datetime(dfc["Data"], errors="coerce")
+            dfc = dfc.dropna(subset=["Data"]).sort_values("Data")
+            melt_cols = [c for c in ["Margem_FCO", "Margem_Liquida"] if c in dfc.columns]
+            if melt_cols:
+                melt = dfc.melt(id_vars=["Data"], value_vars=melt_cols, var_name="Indicador", value_name="Margem (%)")
+                lbl_map = {"Margem_FCO": "Margem FCO (caixa)", "Margem_Liquida": "Margem Líquida (contábil)"}
+                melt["Indicador"] = melt["Indicador"].map(lbl_map)
+                melt = melt.dropna(subset=["Margem (%)"])
+                if not melt.empty:
+                    st.markdown("#### Margem FCO vs Margem Líquida — Caixa vs Contábil")
+                    fig = px.line(melt, x="Data", y="Margem (%)", color="Indicador", markers=True,
+                                  color_discrete_map={
+                                      "Margem FCO (caixa)": "#22c55e",
+                                      "Margem Líquida (contábil)": "#3b82f6",
+                                  })
+                    fig.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.25)")
+                    fig.update_layout(margin=dict(l=10, r=10, t=10, b=10))
+                    st.plotly_chart(fig, use_container_width=True)
+                    st.caption("💡 Quando a Margem FCO acompanha (ou supera) a Margem Líquida, os lucros estão se convertendo em caixa real — sinal de alta qualidade dos resultados.")
+
+
+# ─────────────────────────────────────────────────────────────
 # View principal
 # ─────────────────────────────────────────────────────────────
 def render_empresa_view(ticker: str) -> None:
@@ -792,31 +1075,33 @@ def render_empresa_view(ticker: str) -> None:
     multiplos_display = _merge_display_multiplos_db_primary(mult_db_latest, mult_yf_latest)
 
     descricoes = {
-        "Margem Líquida": "Lucro Líquido ÷ Receita Líquida — quanto sobra do faturamento como lucro final.",
-        "Margem Operacional": "EBIT ÷ Receita Líquida — eficiência operacional antes de juros e impostos.",
-        "ROE": "Lucro Líquido ÷ Patrimônio Líquido — rentabilidade ao acionista.",
-        "ROIC": "NOPAT ÷ Capital Investido — eficiência do capital operacional.",
-        "Dividend Yield": "Dividendos por ação ÷ Preço da ação — rentabilidade via proventos.",
-        "P/VP": "Preço ÷ Valor patrimonial por ação — quanto se paga pelo patrimônio.",
-        "Payout": "Dividendos ÷ Lucro Líquido — parcela do lucro distribuída.",
-        "P/L": "Preço ÷ Lucro por ação — quantos anos o lucro ‘paga’ o preço.",
-        "Endividamento Total": "Dívida Total ÷ Patrimônio — grau de alavancagem financeira.",
-        "Alavancagem Financeira": "Indicador de endividamento (depende da fonte).",
-        "Liquidez Corrente": "Ativo Circulante ÷ Passivo Circulante — fôlego de curto prazo.",
+        "Margem Líquida":        "Lucro Líquido ÷ Receita Líquida — quanto sobra do faturamento como lucro final.",
+        "Margem Operacional":    "EBIT ÷ Receita Líquida — eficiência operacional antes de juros e impostos.",
+        "ROE":                   "Lucro Líquido ÷ Patrimônio Líquido — rentabilidade ao acionista.",
+        "ROA":                   "Lucro Líquido ÷ Ativo Total — eficiência no uso de todos os ativos.",
+        "ROIC":                  "NOPAT ÷ Capital Investido — eficiência do capital operacional.",
+        "Dividend Yield":        "Dividendos por ação ÷ Preço da ação — rentabilidade via proventos.",
+        "P/VP":                  "Preço ÷ Valor patrimonial por ação — quanto se paga pelo patrimônio.",
+        "Payout":                "Dividendos ÷ Lucro Líquido — parcela do lucro distribuída.",
+        "P/L":                   "Preço ÷ Lucro por ação — quantos anos o lucro ‘paga’ o preço.",
+        "Endividamento Total":   "Dívida Total ÷ Patrimônio — grau de alavancagem financeira.",
+        "Alavancagem Financeira":"Dívida Líquida ÷ EBITDA — anos de geração operacional para quitar dívida.",
+        "Liquidez Corrente":     "Ativo Circulante ÷ Passivo Circulante — fôlego de curto prazo.",
     }
 
     valores = [
-        ("Margem_Liquida", "Margem Líquida"),
-        ("Margem_Operacional", "Margem Operacional"),
-        ("ROE", "ROE"),
-        ("ROIC", "ROIC"),
-        ("DY", "Dividend Yield"),
-        ("P/VP", "P/VP"),
-        ("Payout", "Payout"),
-        ("P/L", "P/L"),
-        ("Endividamento_Total", "Endividamento Total"),
-        ("Alavancagem_Financeira", "Alavancagem Financeira"),
-        ("Liquidez_Corrente", "Liquidez Corrente"),
+        ("Margem_Liquida",       "Margem Líquida"),
+        ("Margem_Operacional",   "Margem Operacional"),
+        ("ROE",                  "ROE"),
+        ("ROA",                  "ROA"),
+        ("ROIC",                 "ROIC"),
+        ("DY",                   "Dividend Yield"),
+        ("P/VP",                 "P/VP"),
+        ("Payout",               "Payout"),
+        ("P/L",                  "P/L"),
+        ("Endividamento_Total",  "Endividamento Total"),
+        ("Alavancagem_Financeira","Alavancagem Financeira"),
+        ("Liquidez_Corrente",    "Liquidez Corrente"),
     ]
 
     c1, c2, c3 = st.columns(3)
@@ -836,6 +1121,12 @@ def render_empresa_view(ticker: str) -> None:
                     """,
                     unsafe_allow_html=True,
                 )
+
+    # ── Novas secções com dados já no banco ──────────────────────
+    render_liquidez_eficiencia(multiplos_display)
+    render_geracao_caixa_e_valuation(multiplos_display, load_multiplos_from_db(ticker), ticker)
+    render_fluxo_de_caixa(df, ticker)
+    render_estrutura_capital(df, ticker)
 
     st.markdown("---")
     st.markdown("### Gráfico de Múltiplos (Histórico do Banco)")
