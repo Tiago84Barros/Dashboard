@@ -1408,6 +1408,137 @@ def render() -> None:
         return sections, fonte_36 or fonte_24 or fonte_recent, audit
 
     
+    def _build_quant_context(ticker: str) -> str:
+        """
+        Monta um bloco de texto com múltiplos e DRE do Supabase para o ticker.
+        Retorna string vazia se não houver dados.
+        """
+        try:
+            from core.db_loader import load_multiplos_from_db, load_data_from_db
+
+            linhas: List[str] = []
+
+            # ── Múltiplos (último disponível + média 5a) ──────────────────────
+            df_mult = load_multiplos_from_db(ticker)
+            if df_mult is not None and not df_mult.empty:
+                df_mult = df_mult.copy()
+                # normaliza coluna de data
+                data_col = next((c for c in df_mult.columns if str(c).lower() == "data"), None)
+                if data_col:
+                    df_mult[data_col] = pd.to_datetime(df_mult[data_col], errors="coerce")
+                    df_mult = df_mult.dropna(subset=[data_col]).sort_values(data_col)
+
+                ultimo = df_mult.iloc[-1]
+
+                def _fval(col, decimals=2, pct=False, suffix="x"):
+                    v = pd.to_numeric(ultimo.get(col, None), errors="coerce")
+                    if pd.isna(v):
+                        return None
+                    if pct:
+                        # normaliza percentual armazenado como decimal ou inteiro
+                        if abs(v) > 1:
+                            v = v / 100
+                        return f"{v*100:.{decimals}f}%"
+                    return f"{v:.{decimals}f}{suffix}"
+
+                def _mean5(col, pct=False):
+                    if col not in df_mult.columns:
+                        return None
+                    s = pd.to_numeric(df_mult[col], errors="coerce").dropna()
+                    if s.empty:
+                        return None
+                    # pega últimos 5 anos agrupados
+                    if data_col and data_col in df_mult.columns:
+                        tmp = df_mult[[data_col, col]].copy()
+                        tmp["Ano"] = tmp[data_col].dt.year
+                        s5 = tmp.groupby("Ano")[col].mean().dropna().tail(5)
+                    else:
+                        s5 = s.tail(5)
+                    v = float(s5.mean())
+                    if pct:
+                        if abs(v) > 1:
+                            v = v / 100
+                        return f"{v*100:.2f}%"
+                    return f"{v:.2f}x"
+
+                indicadores = [
+                    ("P/L",                  _fval("P_L")),
+                    ("EV/EBIT",              _fval("EV_EBIT")),
+                    ("EV/EBITDA",            _fval("EV_EBITDA")),
+                    ("P/FCO",                _fval("P_FCO")),
+                    ("P/Receita",            _fval("P_Receita")),
+                    ("ROIC",                 _fval("ROIC", pct=True, suffix="")),
+                    ("ROE",                  _fval("ROE",  pct=True, suffix="")),
+                    ("ROA",                  _fval("ROA",  pct=True, suffix="")),
+                    ("DY",                   _fval("DY",   pct=True, suffix="")),
+                    ("Margem Líquida",       _fval("Margem_Liquida",    pct=True, suffix="")),
+                    ("Margem Operacional",   _fval("Margem_Operacional", pct=True, suffix="")),
+                    ("Margem FCO",           _fval("Margem_FCO",         pct=True, suffix="")),
+                    ("Liquidez Corrente",    _fval("Liquidez_Corrente")),
+                    ("Liquidez Seca",        _fval("Liquidez_Seca")),
+                    ("Giro do Ativo",        _fval("Giro_Ativo")),
+                    ("FCO/Dívida",           _fval("FCO_sobre_Divida")),
+                    ("ROIC médio 5a",        _mean5("ROIC", pct=True)),
+                    ("DY médio 5a",          _mean5("DY",   pct=True)),
+                    ("Margem Liq. média 5a", _mean5("Margem_Liquida", pct=True)),
+                ]
+
+                linhas.append("INDICADORES QUANTITATIVOS (múltiplos — último disponível / média 5 anos):")
+                for nome, val in indicadores:
+                    if val:
+                        linhas.append(f"  {nome}: {val}")
+
+            # ── DRE anual (últimos 3 anos) ────────────────────────────────────
+            df_dre = load_data_from_db(ticker)
+            if df_dre is not None and not df_dre.empty:
+                df_dre = df_dre.copy()
+                data_col_d = next((c for c in df_dre.columns if str(c).lower() == "data"), None)
+                if data_col_d:
+                    df_dre[data_col_d] = pd.to_datetime(df_dre[data_col_d], errors="coerce")
+                    df_dre = df_dre.dropna(subset=[data_col_d]).sort_values(data_col_d)
+                    df_dre["Ano"] = df_dre[data_col_d].dt.year
+
+                    def _dre_anual(col):
+                        if col not in df_dre.columns:
+                            return {}
+                        tmp = df_dre.groupby("Ano")[col].sum()
+                        return tmp.dropna().tail(3).to_dict()
+
+                    def _fmt_bilhoes(v):
+                        if pd.isna(v):
+                            return "—"
+                        v = float(v)
+                        if abs(v) >= 1e9:
+                            return f"R$ {v/1e9:.2f}B"
+                        if abs(v) >= 1e6:
+                            return f"R$ {v/1e6:.1f}M"
+                        return f"R$ {v:,.0f}"
+
+                    dre_cols = [
+                        ("Receita Líquida",   "Receita_Liquida"),
+                        ("EBIT",              "EBIT"),
+                        ("Lucro Líquido",     "Lucro_Liquido"),
+                        ("FCO",               "Caixa_Liquido_Operacional"),
+                        ("Dívida Líquida",    "Divida_Liquida"),
+                    ]
+
+                    dre_linhas: List[str] = []
+                    for nome_dre, col_dre in dre_cols:
+                        serie = _dre_anual(col_dre)
+                        if serie:
+                            partes = "  |  ".join(f"{ano}: {_fmt_bilhoes(v)}" for ano, v in sorted(serie.items()))
+                            dre_linhas.append(f"  {nome_dre}: {partes}")
+
+                    if dre_linhas:
+                        linhas.append("\nDEMONSTRATIVO FINANCEIRO (últimos 3 anos disponíveis):")
+                        linhas.extend(dre_linhas)
+
+            return "\n".join(linhas) if linhas else ""
+
+        except Exception:
+            return ""
+
+
     def _build_prompt(
         contexto: str,
         *,
@@ -1415,9 +1546,12 @@ def render() -> None:
         ticker: str,
         macro_context: Optional[Dict[str, Any]] = None,
         market_context: Optional[Dict[str, Any]] = None,
+        quant_context: str = "",
     ) -> str:
         macro_context = macro_context or {}
         market_context = market_context or {}
+
+        quant_block = f"\nINDICADORES E DEMONSTRATIVOS FINANCEIROS (Supabase):\n{quant_context}\n" if quant_context.strip() else ""
 
         contexto_macro = f"""
 MACRO_CONTEXT:
@@ -1425,30 +1559,32 @@ MACRO_CONTEXT:
 
 MARKET_CONTEXT:
 {json.dumps(market_context, ensure_ascii=False, indent=2)}
-"""
+{quant_block}"""
 
         if analysis_mode == "rigid":
             return f"""
 Você é um analista fundamentalista institucional especializado em trajetória estratégica, execução, alocação de capital e consistência de discurso corporativo.
 
-Use SOMENTE o CONTEXTO abaixo, organizado por janelas temporais e com metadados de data/tipo documental/tema.
-Use também o MACRO_CONTEXT apenas como referência complementar objetiva.
+Use o CONTEXTO TEMPORAL abaixo (organizado por janelas) como base documental principal.
+Use o MACRO_CONTEXT e os INDICADORES QUANTITATIVOS como referência complementar objetiva.
 Não extrapole além do que foi fornecido.
 
 Objetivo:
 1. comparar as janelas temporais;
 2. identificar mudanças reais de estratégia;
 3. classificar a execução como forte, moderada, fraca ou inconsistente;
-4. separar riscos estruturais de ruídos pontuais;
-5. listar evidências documentais concretas;
-6. produzir um JSON rico, auditável e específico.
+4. cruzar os dados qualitativos (documentos) com os dados quantitativos (múltiplos e DRE);
+5. separar riscos estruturais de ruídos pontuais;
+6. listar evidências documentais concretas;
+7. produzir um JSON rico, auditável e específico.
 
 Regras:
 - não faça resumo genérico
 - não invente fatos
-- quando houver pouca base, diga isso explicitamente
+- use os INDICADORES QUANTITATIVOS para fundamentar a sugestão de alocação e o racional
+- quando um indicador vier de ano em curso, interprete como acumulado até o mês de referência
+- quando houver pouca base documental, diga explicitamente
 - use entre 8 e 12 evidências quando o contexto trouxer material suficiente
-- quando um indicador anual vier de ano ainda em curso, interprete esse valor como acumulado até o mês de referência, e não como fechamento do ano
 - não use repertório externo para preencher lacunas
 - retorne apenas JSON válido
 
@@ -1507,24 +1643,26 @@ Você é um analista institucional com repertório amplo em empresas, setores, c
 
 O ticker analisado é: {ticker}
 
-Use o CONTEXTO TEMPORAL fornecido como base factual principal.
-Use também o MACRO_CONTEXT e o MARKET_CONTEXT como âncoras.
-Mas NÃO se limite aos inputs: use seu conhecimento econômico, setorial e de mercado para ampliar a análise.
+Use o CONTEXTO TEMPORAL (documentos) como base factual principal.
+Use os INDICADORES QUANTITATIVOS como âncora numérica — eles vêm diretamente do banco de dados e devem ser mencionados e interpretados na análise.
+Use o MACRO_CONTEXT e MARKET_CONTEXT como referência de cenário.
+Você pode ampliar a análise com seu conhecimento econômico e setorial.
 
 Objetivo:
 1. interpretar a empresa além do que está explícito no material;
-2. identificar como ela tende a reagir ao regime atual de juros, inflação, câmbio e atividade;
-3. inferir seu papel estratégico dentro de uma carteira;
-4. apontar dependências implícitas de cenário;
-5. sugerir uma faixa de alocação coerente com risco, qualidade e função estratégica.
+2. cruzar o discurso dos documentos com os números reais (múltiplos, margens, crescimento);
+3. identificar como ela tende a reagir ao regime atual de juros, inflação, câmbio e atividade;
+4. inferir seu papel estratégico dentro de uma carteira;
+5. apontar dependências implícitas de cenário;
+6. sugerir uma faixa de alocação fundamentada nos dados quantitativos e qualitativos.
 
 Regras:
-- use o contexto do sistema como base, mas nunca como limite máximo
-- você pode usar inferência econômica, setorial e internacional
-- não invente fatos corporativos específicos não suportados, mas pode inferir comportamento provável da empresa e do setor
-- quando um indicador anual vier de ano ainda em curso, interprete esse valor como acumulado até o mês de referência, e não como fechamento do ano
+- use os INDICADORES QUANTITATIVOS para embasar concretamente a sugestão de alocação e o racional
+- mencione valuation (P/L, EV/EBIT), retorno (ROIC, ROE), qualidade (margens, FCO) e endividamento quando disponíveis
+- você pode usar inferência econômica, setorial e internacional para complementar
+- não invente fatos corporativos específicos não suportados pelos inputs
+- quando um indicador vier de ano em curso, interprete como acumulado até o mês de referência
 - explique como o ambiente atual pode ajudar ou prejudicar a empresa
-- seja mais profundo que um simples resumo documental
 - retorne apenas JSON válido
 
 Responda APENAS em JSON válido neste formato:
@@ -1645,6 +1783,10 @@ CONTEXTO TEMPORAL:
 
                 contexto = _build_temporal_context(temporal_sections, per_chunk_chars=1100, total_chars=20000)
                 context_preview = contexto[:4000]
+
+                # ── dados quantitativos do Supabase ───────────────────────────
+                quant_ctx = _build_quant_context(t)
+
                 try:
                     raw = _call_llm(
                         client,
@@ -1654,6 +1796,7 @@ CONTEXTO TEMPORAL:
                             ticker=t,
                             macro_context=macro_context_run,
                             market_context=market_context_run,
+                            quant_context=quant_ctx,
                         ),
                     )
                 except Exception as e_call:
@@ -1664,15 +1807,16 @@ CONTEXTO TEMPORAL:
                             flat_chunks.extend(_bucket or [])
                         contexto = _build_context_limited(flat_chunks, per_chunk_chars=800, total_chars=8000)
                         raw = _call_llm(
-                        client,
-                        _build_prompt(
-                            contexto,
-                            analysis_mode=analysis_mode,
-                            ticker=t,
-                            macro_context=macro_context_run,
-                            market_context=market_context_run,
-                        ),
-                    )
+                            client,
+                            _build_prompt(
+                                contexto,
+                                analysis_mode=analysis_mode,
+                                ticker=t,
+                                macro_context=macro_context_run,
+                                market_context=market_context_run,
+                                quant_context=quant_ctx,
+                            ),
+                        )
                     else:
                         raise
 
