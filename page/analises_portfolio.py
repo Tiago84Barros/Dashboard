@@ -973,199 +973,58 @@ def render() -> None:
     # Ingest + Chunking com logs por ticker
     # ------------------------------------------------------------------
     def _render_update_evidencias_panel():
-        st.subheader("📦 Atualizar evidências")
+        st.subheader("📄 Documentos indexados")
 
-        col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
-        with col1:
-            st.markdown(
-                f"""
-                <div class="p6-mcard">
-                  <div class="p6-mlabel">Janela de evidências</div>
-                  <div class="p6-mvalue">{analysis_window_months} meses</div>
-                  <div class="p6-mextra">Sincronizada automaticamente com o modo de análise qualitativa.</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        with col2:
-            max_docs = st.number_input("Máx docs/ticker", min_value=5, max_value=300, value=80, step=5)
-        with col3:
-            max_pdfs = st.number_input("Máx PDFs/ticker", min_value=0, max_value=80, value=20, step=1)
-        with col4:
-            max_runtime_s = st.number_input("Tempo máx total (s)", min_value=5, max_value=180, value=60, step=5)
+        st.caption(
+            "A ingestão de documentos é feita localmente via "
+            "`python pickup/ingest_pdfs_all.py`. "
+            "Clique abaixo para consultar o status atual no banco."
+        )
 
-        st.caption(f"Atualizar documentos usará automaticamente 36 meses de histórico, que também serão usados na análise qualitativa.")
-
-        only_missing_docs = False
-        force_reingest = False
-        show_traceback = False
-
-        # Diagnóstico sob demanda (não altera pipeline; apenas inspeciona presença de docs/chunks)
-
-        btn = st.button("Atualizar documentos", type="primary")
-
-        log_panel = st.empty()
-        table_panel = st.empty()
-        err_panel = st.empty()
-
-        if btn:
-            # carrega ingest uma vez
+        if st.button("🔍 Ver documentos salvos", type="primary"):
             try:
-                ingest_fn = _import_ingest()
+                from core.db_loader import get_supabase_engine
+                from sqlalchemy import text as _text
+
+                engine = get_supabase_engine()
+                with engine.connect() as conn:
+                    df_status = pd.read_sql_query(
+                        _text(
+                            """
+                            SELECT
+                                upper(d.ticker)                          AS "Ticker",
+                                count(DISTINCT d.id)                     AS "Documentos",
+                                count(c.id)                              AS "Chunks",
+                                max(coalesce(d.data, d.created_at))::date AS "Último documento"
+                            FROM public.docs_corporativos d
+                            LEFT JOIN public.docs_corporativos_chunks c
+                                   ON c.doc_id = d.id
+                            GROUP BY upper(d.ticker)
+                            ORDER BY "Documentos" DESC, upper(d.ticker)
+                            """
+                        ),
+                        conn,
+                    )
+
+                if df_status.empty:
+                    st.warning(
+                        "Nenhum documento encontrado no banco. "
+                        "Rode `python pickup/ingest_pdfs_all.py` localmente para indexar."
+                    )
+                else:
+                    total_docs   = int(df_status["Documentos"].sum())
+                    total_chunks = int(df_status["Chunks"].sum())
+                    total_tickers = len(df_status)
+
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Empresas indexadas", total_tickers)
+                    c2.metric("Total de documentos", f"{total_docs:,}")
+                    c3.metric("Total de chunks",     f"{total_chunks:,}")
+
+                    st.dataframe(df_status, use_container_width=True, hide_index=True)
+
             except Exception as e:
-                st.error("Não consegui importar o módulo de ingest do CVM/IPE no deploy.")
-                st.code(str(e))
-                st.stop()
-
-            t0 = _now_ms()
-            results: List[Dict[str, Any]] = []
-            errors: Dict[str, str] = {}
-
-            progress = st.progress(0, text="Iniciando...")
-
-            for i, tk in enumerate(tickers, start=1):
-                start = _now_ms()
-                before_docs = count_docs(tk)
-                before_chunks = count_chunks(tk)
-
-                progress.progress(int((i - 1) / max(1, len(tickers)) * 100), text=f"Processando {i}/{len(tickers)} — {tk}")
-
-                with log_panel.container():
-                    st.info(f"🔎 {tk} — início | docs={before_docs} | chunks={before_chunks}")
-
-                ingest_report: Optional[Dict[str, Any]] = None
-                ingest_ran = False
-
-                # ---- Ingest
-                # ---- Ingest
-                try:
-                    ingest_ran = True
-                    r = _safe_call(
-                        ingest_fn,
-                        tickers=[tk],
-                        window_months=int(analysis_window_months),
-                        max_docs_per_ticker=int(max_docs),
-                        max_runtime_s=float(max_runtime_s),
-                        max_pdfs_per_ticker=int(max_pdfs),
-                    )
-                    if isinstance(r, dict):
-                        ingest_report = r
-                    else:
-                        ingest_report = {"result": str(r)}
-                except Exception as e:
-                    tb = traceback.format_exc()
-                    msg = f"Ingest {type(e).__name__}: {e}"
-                    errors[f"{tk}::ingest"] = tb if show_traceback else msg
-                    ingest_report = {"error": msg}
-                    with log_panel.container():
-                        st.error(f"❌ {tk} — ingest falhou | {msg}")
-
-                mid_docs = count_docs(tk)
-                mid_chunks = count_chunks(tk)
-
-                with log_panel.container():
-                    st.write(f"📥 {tk} — ingest concluído | docs agora={mid_docs} | chunks={mid_chunks}")
-                    if ingest_report:
-                        st.caption("Relatório ingest (resumo):")
-                        st.json({
-                            k: ingest_report[k]
-                            for k in ingest_report.keys()
-                            if k in {
-                                "matched",
-                                "inserted",
-                                "skipped",
-                                "pdf_fetched",
-                                "pdf_text_ok",
-                                "error",
-                                "result",
-                                "reason",
-                                "stats",
-                                "errors"
-                            }
-                        })
-
-                # Se ainda não tem docs, explique claramente e pule chunking
-                if mid_docs == 0:
-                    results.append({
-                        "ticker": tk,
-                        "status": "SEM_DOCS",
-                        "docs_before": before_docs,
-                        "chunks_before": before_chunks,
-                        "docs_after_ingest": mid_docs,
-                        "chunks_after_ingest": mid_chunks,
-                        "chunks_inseridos": 0,
-                        "chunks_after": mid_chunks,
-                        "tempo": _fmt_s(_now_ms() - start),
-                        "motivo": (ingest_report.get("reason") if isinstance(ingest_report, dict) else "") or "Sem documentos retornados para a janela/fonte atual.",
-                    })
-                    with log_panel.container():
-                        st.warning(
-                            f"⚠️ {tk} — sem docs após ingest. "
-                            f"Isso explica a execução rápida e ausência de chunks. "
-                            f"Verifique janela (meses), filtros do ingest e disponibilidade de documentos no CVM/IPE."
-                        )
-                    table_panel.dataframe(_make_ingest_results_df(results), use_container_width=True)
-                    continue
-
-                # ---- Chunking
-                try:
-                    chunk_report = process_missing_chunks_for_ticker(
-                        tk,
-                        limit_docs=int(max_docs),
-                        chunk_size=1500,
-                    )
-                    inserted = int(chunk_report.get("chunks_inserted", 0))
-                    after_docs = count_docs(tk)
-                    after_chunks = count_chunks(tk)
-
-                    results.append({
-                        "ticker": tk,
-                        "status": "OK",
-                        "docs_before": before_docs,
-                        "chunks_before": before_chunks,
-                        "docs_after_ingest": mid_docs,
-                        "chunks_after_ingest": mid_chunks,
-                        "chunks_inseridos": int(inserted),
-                        "chunks_after": after_chunks,
-                        "tempo": _fmt_s(_now_ms() - start),
-                        "motivo": "",
-                    })
-
-                    with log_panel.container():
-                        st.success(f"✅ {tk} — chunking ok | +{inserted} chunks | chunks={after_chunks} | {_fmt_s(_now_ms()-start)}")
-
-                except Exception as e:
-                    tb = traceback.format_exc()
-                    msg = f"Chunking {type(e).__name__}: {e}"
-                    errors[f"{tk}::chunking"] = tb if show_traceback else msg
-
-                    results.append({
-                        "ticker": tk,
-                        "status": "FALHA_CHUNK",
-                        "docs_before": before_docs,
-                        "chunks_before": before_chunks,
-                        "docs_after_ingest": mid_docs,
-                        "chunks_after_ingest": mid_chunks,
-                        "chunks_inseridos": 0,
-                        "chunks_after": None,
-                        "tempo": _fmt_s(_now_ms() - start),
-                        "motivo": msg,
-                    })
-
-                    with log_panel.container():
-                        st.error(f"❌ {tk} — chunking falhou | {msg} | {_fmt_s(_now_ms()-start)}")
-
-                table_panel.dataframe(_make_ingest_results_df(results), use_container_width=True)
-
-            progress.progress(100, text="Concluído")
-            st.success(f"Fim. Tempo total: {_fmt_s(_now_ms() - t0)}")
-
-            if errors:
-                with err_panel.container():
-                    st.subheader("🧾 Logs de erro (por etapa)")
-                    for key, tb in errors.items():
-                        with st.expander(key):
-                            st.code(tb)
+                st.error(f"Erro ao consultar banco: {e}")
 
 
         st.divider()
