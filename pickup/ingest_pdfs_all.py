@@ -170,7 +170,7 @@ def _get_doc_status(tickers: Sequence[str]) -> Dict[str, Dict[str, Any]]:
                     """
                     SELECT upper(ticker) as ticker,
                            count(*) as qtd,
-                           max(coalesce(data, created_at, updated_at)) as last_date
+                           max(coalesce(data, created_at)) as last_date
                     FROM public.docs_corporativos
                     WHERE upper(ticker) = ANY(:tks)
                     GROUP BY upper(ticker)
