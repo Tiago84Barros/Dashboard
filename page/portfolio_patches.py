@@ -1739,22 +1739,28 @@ def render_patch5_desempenho_empresas(
             s = s.dropna().sort_index()
             return s
 
-        # 2) fallback: yfinance
+        # 2) fallback: yfinance — passa também com sufixo .SA pois _norm() dentro de baixar_precos já trata
         if baixar_precos is None:
             return pd.Series(dtype="float64")
-        try:
-            dfp = baixar_precos(tk, start="2010-01-01")
-            if dfp is None or dfp.empty:
-                return pd.Series(dtype="float64")
-            col = tk
-            if col not in dfp.columns:
-                col = dfp.columns[0]
-            s = pd.to_numeric(dfp[col], errors="coerce").dropna()
-            s.index = pd.to_datetime(s.index, errors="coerce")
-            s = s.dropna().sort_index()
-            return s
-        except Exception:
-            return pd.Series(dtype="float64")
+        for tk_try in [tk, f"{tk}.SA"]:
+            try:
+                dfp = baixar_precos(tk_try, start="2010-01-01")
+                if dfp is None or dfp.empty:
+                    continue
+                # colunas vêm sem .SA de _download_prices
+                col = tk
+                if col not in dfp.columns:
+                    col = dfp.columns[0] if not dfp.empty else None
+                if col is None:
+                    continue
+                s = pd.to_numeric(dfp[col], errors="coerce").dropna()
+                s.index = pd.to_datetime(s.index, errors="coerce")
+                s = s.dropna().sort_index()
+                if not s.empty:
+                    return s
+            except Exception:
+                continue
+        return pd.Series(dtype="float64")
 
     def _retorno_12m(price: pd.Series) -> float:
         s = pd.to_numeric(price, errors="coerce").dropna()
@@ -1875,13 +1881,13 @@ def render_patch5_desempenho_empresas(
             return np.nan
     
         vals = d[col].copy()
-    
-        # Normalização somente para ROIC
-        if col.upper() == "ROIC":
+
+        # Normalização: ROIC e DY são às vezes armazenados como percentual (ex: 6.5 em vez de 0.065)
+        if col.upper() in ("ROIC", "DY"):
             med = float(vals.abs().median()) if not vals.empty else np.nan
             if np.isfinite(med) and med > 1.0:
                 vals = vals / 100.0
-    
+
         d[col] = vals
     
         if "Ano" in d.columns:
@@ -1892,34 +1898,50 @@ def render_patch5_desempenho_empresas(
         else:
             v = float(d[col].tail(5).mean())
     
-        # sanity check apenas para ROIC
+        # sanity checks
         if col.upper() == "ROIC":
             if not np.isfinite(v):
                 return np.nan
             if v < -1.0 or v > 3.0:
                 return np.nan
-    
+        if col.upper() == "DY":
+            if not np.isfinite(v):
+                return np.nan
+            if v < 0 or v > 0.50:   # > 50% DY é quase certamente erro de escala
+                return np.nan
+
         return v
 
-    def _latest_ratio_dl_ebitda(df_fin: pd.DataFrame) -> float:
-        # usa últimos valores disponíveis de Divida_Liquida e EBITDA
+    def _latest_ratio_dl_ebitda(df_fin: pd.DataFrame) -> tuple:
+        """Retorna (ratio: float, label: str). Usa EBITDA; se ausente, faz fallback para EBIT."""
         df_fin = _normalize_df_date_cols(df_fin)
         if df_fin is None or df_fin.empty:
-            return np.nan
-        if "Divida_Liquida" not in df_fin.columns or "EBITDA" not in df_fin.columns or "Data" not in df_fin.columns:
-            return np.nan
-        d = df_fin[["Data", "Divida_Liquida", "EBITDA"]].copy()
+            return np.nan, "Dívida Líq./EBITDA"
+        if "Divida_Liquida" not in df_fin.columns or "Data" not in df_fin.columns:
+            return np.nan, "Dívida Líq./EBITDA"
+
+        # Prioridade: EBITDA → EBIT (proxy)
+        if "EBITDA" in df_fin.columns:
+            ebit_col = "EBITDA"
+            label = "Dívida Líq./EBITDA"
+        elif "EBIT" in df_fin.columns:
+            ebit_col = "EBIT"
+            label = "Dívida Líq./EBIT ▸"
+        else:
+            return np.nan, "Dívida Líq./EBITDA"
+
+        d = df_fin[["Data", "Divida_Liquida", ebit_col]].copy()
         d["Data"] = pd.to_datetime(d["Data"], errors="coerce")
         d["Divida_Liquida"] = pd.to_numeric(d["Divida_Liquida"], errors="coerce")
-        d["EBITDA"] = pd.to_numeric(d["EBITDA"], errors="coerce")
-        d = d.dropna(subset=["Data", "Divida_Liquida", "EBITDA"]).sort_values("Data")
+        d[ebit_col] = pd.to_numeric(d[ebit_col], errors="coerce")
+        d = d.dropna(subset=["Data", "Divida_Liquida", ebit_col]).sort_values("Data")
         if d.empty:
-            return np.nan
+            return np.nan, label
         dl = float(d["Divida_Liquida"].iloc[-1])
-        eb = float(d["EBITDA"].iloc[-1])
+        eb = float(d[ebit_col].iloc[-1])
         if eb == 0:
-            return np.nan
-        return float(dl / eb)
+            return np.nan, label
+        return float(dl / eb), label
 
     # ------------------------- build tickers list -------------------------
     tickers = []
@@ -1963,6 +1985,7 @@ def render_patch5_desempenho_empresas(
         slope_lucro_5a = np.nan
         slope_dividendos_5a = np.nan
         dl_ebitda = np.nan
+        dl_ebitda_label = "Dívida Líq./EBITDA"
 
         if not df_fin.empty:
             s_rev = _annual_series(df_fin, "Receita_Liquida", how="sum")
@@ -1972,10 +1995,10 @@ def render_patch5_desempenho_empresas(
             slope_receita_5a = _slope_5y_from_annual(s_rev)
             slope_lucro_5a = _slope_5y_from_annual(s_luc)
             slope_dividendos_5a = _slope_5y_from_annual(s_div)
-            dl_ebitda = _latest_ratio_dl_ebitda(df_fin)
+            dl_ebitda, dl_ebitda_label = _latest_ratio_dl_ebitda(df_fin)
 
-        # fallback de fundamentos / dividendos (quando Supabase estiver vazio ou incompleto)
-        if (_is_nan(roic_5a) or _is_invalid_dy(dy_5a) or _is_nan(slope_dividendos_5a)) or (df_fin.empty):
+        # fallback de fundamentos / DY (quando Supabase estiver vazio ou incompleto)
+        if (_is_nan(roic_5a) or _is_invalid_dy(dy_5a)) or (df_fin.empty):
             try:
                 yf = get_fundamentals_yf(tk)
                 if isinstance(yf, pd.DataFrame) and not yf.empty:
@@ -1984,29 +2007,33 @@ def render_patch5_desempenho_empresas(
                     row_yf = yf
                 else:
                     row_yf = {}
-        
+
                 if _is_nan(roic_5a):
                     v = row_yf.get("ROIC") or row_yf.get("roic")
                     if isinstance(v, (int, float)):
                         roic_5a = float(v) / 100.0 if abs(float(v)) > 1 else float(v)
-        
+
                 if _is_invalid_dy(dy_5a):
                     v = row_yf.get("DY") or row_yf.get("dividendYield") or row_yf.get("dividend_yield")
                     if isinstance(v, (int, float)):
                         dy_5a = float(v) / 100.0 if abs(float(v)) > 1 else float(v)
-        
+
                 if _is_invalid_dy(dy_5a):
                     v = _get_dy_from_sources(tk, score_global if isinstance(score_global, pd.DataFrame) else None)
                     if v is not None and v > 0:
                         dy_5a = float(v)
-        
+
                 if _is_invalid_dy(dy_5a):
                     dy_5a = np.nan
-        
-                if _is_nan(slope_dividendos_5a):
-                    v = _get_dividend_slope_from_yf(tk)
-                    if v is not None:
-                        slope_dividendos_5a = float(v)
+            except Exception:
+                pass
+
+        # fallback de dividendos via yfinance — sempre tenta quando Supabase não tem dados
+        if _is_nan(slope_dividendos_5a):
+            try:
+                v = _get_dividend_slope_from_yf(tk)
+                if v is not None:
+                    slope_dividendos_5a = float(v)
             except Exception:
                 pass
         # preços
@@ -2036,6 +2063,7 @@ def render_patch5_desempenho_empresas(
                 crescimento_dividendos_5a=crescimento_dividendos_5a,
                 dy_5a=dy_5a,
                 dl_ebitda=dl_ebitda,
+                dl_ebitda_label=dl_ebitda_label,
                 ret_12m=ret_12m,
                 slope_preco_5a=slope_preco_5a,
                 crescimento_preco_5a=crescimento_preco_5a,
@@ -2134,9 +2162,9 @@ def render_patch5_desempenho_empresas(
         c4.markdown(
             f"""
             <div class="cf-card cf-card-ratio">
-                <div class="cf-card-label">Dívida Líq./EBITDA</div>
+                <div class="cf-card-label">{r['dl_ebitda_label']}</div>
                 <div class="cf-card-value">{_fmt_short(r['dl_ebitda'])}</div>
-                <div class="cf-card-extra">Último disponível no Supabase.</div>
+                <div class="cf-card-extra">Último disponível no Supabase{'  (proxy: EBIT)' if '▸' in str(r['dl_ebitda_label']) else ''}.</div>
             </div>
             """,
             unsafe_allow_html=True,
