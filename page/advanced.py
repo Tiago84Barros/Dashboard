@@ -567,29 +567,54 @@ def render() -> None:
     st.markdown("### Comparação de Indicadores (Múltiplos) entre Empresas")
 
     indicadores_disponiveis = [
-        "Margem Líquida",
-        "Margem Operacional",
-        "ROE",
-        "ROIC",
-        "P/L",
-        "P/VP",
-        "DY",
-        "Liquidez Corrente",
-        "Alavancagem Financeira",
-        "Endividamento Total",
+        # Rentabilidade
+        "Margem Líquida", "Margem Operacional", "ROE", "ROA", "ROIC",
+        # Valuation
+        "P/L", "P/VP", "DY", "P/FCO", "EV/EBIT", "P/Receita",
+        # Liquidez
+        "Liquidez Corrente", "Liquidez Seca", "Liquidez Imediata",
+        # Eficiência
+        "Giro do Ativo", "Prazo Médio Recebimento",
+        # Geração de caixa
+        "Margem FCO", "FCO sobre Dívida", "Cobertura Investimento",
+        # Endividamento
+        "Alavancagem Financeira", "Endividamento Total",
     ]
 
     nomes_to_col = {
-        "Margem Líquida": "Margem_Liquida",
-        "Margem Operacional": "Margem_Operacional",
-        "ROE": "ROE",
-        "ROIC": "ROIC",
-        "P/L": "P/L",
-        "P/VP": "P/VP",
-        "DY": "DY",
-        "Liquidez Corrente": "Liquidez_Corrente",
-        "Alavancagem Financeira": "Alavancagem_Financeira",
-        "Endividamento Total": "Endividamento_Total",
+        "Margem Líquida":        "Margem_Liquida",
+        "Margem Operacional":    "Margem_Operacional",
+        "ROE":                   "ROE",
+        "ROA":                   "ROA",
+        "ROIC":                  "ROIC",
+        "P/L":                   "P/L",
+        "P/VP":                  "P/VP",
+        "DY":                    "DY",
+        "P/FCO":                 "P_FCO",
+        "EV/EBIT":               "EV_EBIT",
+        "P/Receita":             "P_Receita",
+        "Liquidez Corrente":     "Liquidez_Corrente",
+        "Liquidez Seca":         "Liquidez_Seca",
+        "Liquidez Imediata":     "Liquidez_Imediata",
+        "Giro do Ativo":         "Giro_Ativo",
+        "Prazo Médio Recebimento":"Prazo_Medio_Recebimento",
+        "Margem FCO":            "Margem_FCO",
+        "FCO sobre Dívida":      "FCO_sobre_Divida",
+        "Cobertura Investimento":"Cobertura_Investimento",
+        "Alavancagem Financeira":"Alavancagem_Financeira",
+        "Endividamento Total":   "Endividamento_Total",
+    }
+
+    # direção: True = maior é melhor (para colorir quadro comparativo)
+    _indicador_melhor_alto = {
+        "Margem Líquida": True, "Margem Operacional": True,
+        "ROE": True, "ROA": True, "ROIC": True,
+        "P/L": False, "P/VP": False, "DY": True,
+        "P/FCO": False, "EV/EBIT": False, "P/Receita": False,
+        "Liquidez Corrente": True, "Liquidez Seca": True, "Liquidez Imediata": True,
+        "Giro do Ativo": True, "Prazo Médio Recebimento": False,
+        "Margem FCO": True, "FCO sobre Dívida": True, "Cobertura Investimento": True,
+        "Alavancagem Financeira": False, "Endividamento Total": False,
     }
 
     lista_nomes = [e.nome for e in empresas]
@@ -648,12 +673,23 @@ def render() -> None:
     st.markdown("### Comparação de Demonstrações Financeiras entre Empresas")
 
     indicadores_dre = {
-        "Receita Líquida": "Receita_Liquida",
-        "EBIT": "EBIT",
-        "Lucro Líquido": "Lucro_Liquido",
-        "Patrimônio Líquido": "Patrimonio_Liquido",
-        "Dívida Líquida": "Divida_Liquida",
-        "Caixa Líquido": "Caixa_Liquido",
+        "Receita Líquida":      "Receita_Liquida",
+        "EBIT":                 "EBIT",
+        "Lucro Líquido":        "Lucro_Liquido",
+        "Lucro Antes IR":       "Lucro_Antes_IR",
+        "Resultado Financeiro": "Resultado_Financeiro",
+        "Patrimônio Líquido":   "Patrimonio_Liquido",
+        "Ativo Total":          "Ativo_Total",
+        "Dívida Total":         "Divida_Total",
+        "Dívida Líquida":       "Divida_Liquida",
+        "Dívida CP":            "Divida_CP",
+        "Dívida LP":            "Divida_LP",
+        "FCO (Caixa Operacional)": "Caixa_Liquido",
+        "FCI (Investimento)":   "FCI",
+        "FCF (Fluxo Livre)":    "FCF",
+        "Caixa":                "Caixa",
+        "Contas a Receber":     "Contas_Receber",
+        "Estoques":             "Estoques",
     }
 
     indicador_display = st.selectbox("Selecione o item da DRE:", list(indicadores_dre.keys()), index=0)
@@ -693,6 +729,222 @@ def render() -> None:
             title=f"{indicador_display} — comparação por ano",
         )
         fig.update_layout(xaxis=dict(type="category"))
+        fig.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.25)")
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.warning("Não há dados suficientes para o indicador selecionado entre as empresas escolhidas.")
+
+    st.markdown("---")
+
+    # ─────────────────────────────────────────────────────────
+    # 8) Quadro Comparativo — tabela colorida por quartil
+    # ─────────────────────────────────────────────────────────
+    st.markdown("### 📊 Quadro Comparativo (último ano disponível)")
+    st.caption("Verde = melhor quartil no segmento · Vermelho = pior quartil · Cinza = sem dado")
+
+    _cols_quadro = [
+        ("Margem Líquida",     "Margem_Liquida",     True),
+        ("Margem Operacional", "Margem_Operacional",  True),
+        ("ROE",                "ROE",                 True),
+        ("ROIC",               "ROIC",                True),
+        ("Margem FCO",         "Margem_FCO",          True),
+        ("FCO/Dívida",         "FCO_sobre_Divida",    True),
+        ("DY",                 "DY",                  True),
+        ("P/VP",               "P/VP",                False),
+        ("P/L",                "P/L",                 False),
+        ("Liq. Corrente",      "Liquidez_Corrente",   True),
+        ("Liq. Seca",          "Liquidez_Seca",       True),
+        ("Giro Ativo",         "Giro_Ativo",          True),
+        ("Endividamento",      "Endividamento_Total",  False),
+    ]
+
+    quadro_rows: List[dict] = []
+    for e in empresas:
+        if e.nome not in empresas_selecionadas:
+            continue
+        dfm = e.mult.copy()
+        if dfm is None or dfm.empty:
+            continue
+        if "Data" in dfm.columns:
+            dfm["Data"] = pd.to_datetime(dfm["Data"], errors="coerce")
+            dfm = dfm.dropna(subset=["Data"]).sort_values("Data")
+            last_row = dfm.iloc[-1]
+        else:
+            last_row = dfm.iloc[-1]
+
+        row = {"Empresa": e.nome}
+        for lbl, col, _ in _cols_quadro:
+            v = last_row.get(col) if col in dfm.columns else None
+            try:
+                row[lbl] = float(v) if v is not None and pd.notna(v) else np.nan
+            except Exception:
+                row[lbl] = np.nan
+        quadro_rows.append(row)
+
+    if quadro_rows:
+        df_quadro = pd.DataFrame(quadro_rows).set_index("Empresa")
+
+        def _color_quartile(col_series: pd.Series, melhor_alto: bool) -> List[str]:
+            vals = pd.to_numeric(col_series, errors="coerce")
+            colors = []
+            for v in vals:
+                if pd.isna(v):
+                    colors.append("background-color: rgba(128,128,128,0.15); color: #888")
+                    continue
+                finite = vals.dropna()
+                if finite.empty or finite.nunique() < 2:
+                    colors.append("")
+                    continue
+                pct = float((finite < v).sum()) / len(finite)
+                if melhor_alto:
+                    if pct >= 0.75:
+                        colors.append("background-color: rgba(34,197,94,0.25); color: #16a34a; font-weight:700")
+                    elif pct <= 0.25:
+                        colors.append("background-color: rgba(239,68,68,0.20); color: #dc2626; font-weight:700")
+                    else:
+                        colors.append("")
+                else:
+                    if pct <= 0.25:
+                        colors.append("background-color: rgba(34,197,94,0.25); color: #16a34a; font-weight:700")
+                    elif pct >= 0.75:
+                        colors.append("background-color: rgba(239,68,68,0.20); color: #dc2626; font-weight:700")
+                    else:
+                        colors.append("")
+            return colors
+
+        melhor_alto_map = {lbl: ma for lbl, _, ma in _cols_quadro}
+
+        def _style_df(df: pd.DataFrame):
+            styled = pd.DataFrame("", index=df.index, columns=df.columns)
+            for col in df.columns:
+                ma = melhor_alto_map.get(col, True)
+                styled[col] = _color_quartile(df[col], ma)
+            return styled
+
+        df_fmt = df_quadro.copy()
+        for lbl, _, _ in _cols_quadro:
+            if lbl in df_fmt.columns:
+                df_fmt[lbl] = df_fmt[lbl].apply(
+                    lambda v: f"{v:.1f}" if pd.notna(v) and np.isfinite(v) else "-"
+                )
+
+        st.dataframe(
+            df_quadro.style.apply(_style_df, axis=None).format(
+                {lbl: lambda v: f"{v:.1f}" if pd.notna(v) and np.isfinite(v) else "-"
+                 for lbl, _, _ in _cols_quadro if lbl in df_quadro.columns}
+            ),
+            use_container_width=True,
+        )
+    else:
+        st.info("Sem dados para o quadro comparativo.")
+
+    st.markdown("---")
+
+    # ─────────────────────────────────────────────────────────
+    # 9) Scatter Plot — cruzamento de 2 indicadores
+    # ─────────────────────────────────────────────────────────
+    st.markdown("### 🔀 Cruzamento de Indicadores (Scatter)")
+    st.caption("Identifica empresas com combinações raras: ex. ROE alto + P/VP baixo (valor com qualidade).")
+
+    _ind_scatter = [n for n in indicadores_disponiveis if n not in ("Prazo Médio Recebimento",)]
+    col_x_lbl, col_y_lbl = st.columns(2)
+    with col_x_lbl:
+        eixo_x = st.selectbox("Eixo X:", _ind_scatter, index=_ind_scatter.index("P/VP") if "P/VP" in _ind_scatter else 0, key="scatter_x")
+    with col_y_lbl:
+        eixo_y = st.selectbox("Eixo Y:", _ind_scatter, index=_ind_scatter.index("ROE") if "ROE" in _ind_scatter else 1, key="scatter_y")
+
+    scatter_rows: List[dict] = []
+    for e in empresas:
+        if e.nome not in empresas_selecionadas:
+            continue
+        dfm = e.mult.copy()
+        if dfm is None or dfm.empty:
+            continue
+        if "Data" in dfm.columns:
+            dfm = dfm.dropna(subset=["Data"]).sort_values("Data")
+            last_row = dfm.iloc[-1]
+        else:
+            last_row = dfm.iloc[-1]
+
+        col_x = nomes_to_col.get(eixo_x)
+        col_y = nomes_to_col.get(eixo_y)
+        vx = float(last_row[col_x]) if col_x and col_x in dfm.columns and pd.notna(last_row.get(col_x)) else np.nan
+        vy = float(last_row[col_y]) if col_y and col_y in dfm.columns and pd.notna(last_row.get(col_y)) else np.nan
+        if np.isfinite(vx) and np.isfinite(vy):
+            scatter_rows.append({"Empresa": e.nome, eixo_x: vx, eixo_y: vy})
+
+    if len(scatter_rows) >= 2:
+        df_sc = pd.DataFrame(scatter_rows)
+        # winsorize para não deixar outliers extremos distorcer o gráfico
+        for col in [eixo_x, eixo_y]:
+            s = pd.to_numeric(df_sc[col], errors="coerce")
+            lo, hi = s.quantile(0.05), s.quantile(0.95)
+            if lo < hi:
+                df_sc[col] = s.clip(lower=lo, upper=hi)
+
+        fig = px.scatter(
+            df_sc, x=eixo_x, y=eixo_y, text="Empresa",
+            title=f"{eixo_x} × {eixo_y} — último valor disponível",
+            color="Empresa",
+        )
+        fig.update_traces(textposition="top center", marker_size=12)
+        fig.add_vline(x=float(df_sc[eixo_x].median()), line_dash="dash", line_color="rgba(255,255,255,0.3)", annotation_text="mediana X")
+        fig.add_hline(y=float(df_sc[eixo_y].median()), line_dash="dash", line_color="rgba(255,255,255,0.3)", annotation_text="mediana Y")
+        fig.update_layout(margin=dict(l=10, r=10, t=40, b=10), showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption("Linhas tracejadas = mediana do grupo. Empresas no quadrante superior/esquerdo (eixo Y alto + eixo X baixo) tendem a ser as mais atrativas quando Y = qualidade e X = preço.")
+    else:
+        st.info("Dados insuficientes para o scatter plot (mínimo 2 empresas com ambos os indicadores).")
+
+    st.markdown("---")
+
+    # ─────────────────────────────────────────────────────────
+    # 10) Qualidade dos Resultados — FCO vs Lucro Líquido
+    # ─────────────────────────────────────────────────────────
+    st.markdown("### 🧾 Qualidade dos Resultados — FCO vs Lucro Líquido")
+    st.caption("Razão FCO/Lucro > 1 indica que o caixa supera o lucro contábil — sinal de alta qualidade. Valores persistentemente < 1 podem indicar accruals elevados.")
+
+    fco_rows: List[dict] = []
+    for e in empresas:
+        if e.nome not in empresas_selecionadas:
+            continue
+        dfd = e.dre.copy()
+        if dfd is None or dfd.empty:
+            continue
+        if "Ano" not in dfd.columns and "Data" in dfd.columns:
+            dfd["Ano"] = pd.to_datetime(dfd["Data"], errors="coerce").dt.year
+        if "Ano" not in dfd.columns:
+            continue
+        cols_ok = [c for c in ["Caixa_Liquido", "Lucro_Liquido"] if c in dfd.columns]
+        if len(cols_ok) < 2:
+            continue
+
+        tmp = dfd[["Ano", "Caixa_Liquido", "Lucro_Liquido"]].copy()
+        tmp["Ano"] = pd.to_numeric(tmp["Ano"], errors="coerce")
+        tmp["Caixa_Liquido"] = pd.to_numeric(tmp["Caixa_Liquido"], errors="coerce")
+        tmp["Lucro_Liquido"] = pd.to_numeric(tmp["Lucro_Liquido"], errors="coerce")
+        tmp = tmp.dropna(subset=["Ano", "Caixa_Liquido", "Lucro_Liquido"])
+        tmp = tmp[tmp["Lucro_Liquido"].abs() > 1e3]  # evita divisão por quase-zero
+        if tmp.empty:
+            continue
+
+        tmp = tmp.groupby("Ano", as_index=False)[["Caixa_Liquido", "Lucro_Liquido"]].sum()
+        tmp["FCO/Lucro"] = tmp["Caixa_Liquido"] / tmp["Lucro_Liquido"]
+        # clip extremos para legibilidade
+        tmp["FCO/Lucro"] = tmp["FCO/Lucro"].clip(-5, 10)
+        for _, rr in tmp.iterrows():
+            if pd.notna(rr["FCO/Lucro"]) and np.isfinite(rr["FCO/Lucro"]):
+                fco_rows.append({"Ano": int(rr["Ano"]), "Empresa": e.nome, "FCO/Lucro": float(rr["FCO/Lucro"])})
+
+    if fco_rows:
+        df_fco = pd.DataFrame(fco_rows).sort_values(["Ano", "Empresa"])
+        fig = px.line(
+            df_fco, x="Ano", y="FCO/Lucro", color="Empresa", markers=True,
+            title="Razão FCO / Lucro Líquido por ano",
+        )
+        fig.add_hline(y=1.0, line_dash="dash", line_color="#22c55e", annotation_text="FCO = Lucro (ideal)")
+        fig.add_hline(y=0.0, line_dash="dot",  line_color="rgba(255,255,255,0.3)")
+        fig.update_layout(xaxis=dict(type="category"), margin=dict(l=10, r=10, t=40, b=10))
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Dados de FCO e Lucro insuficientes para as empresas selecionadas.")
