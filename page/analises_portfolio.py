@@ -985,43 +985,50 @@ def render() -> None:
             try:
                 from core.db_loader import get_supabase_engine
                 from sqlalchemy import text as _text
+                from core.ticker_utils import normalize_ticker
 
-                engine = get_supabase_engine()
-                with engine.connect() as conn:
-                    df_status = pd.read_sql_query(
-                        _text(
-                            """
-                            SELECT
-                                upper(d.ticker)                          AS "Ticker",
-                                count(DISTINCT d.id)                     AS "Documentos",
-                                count(c.id)                              AS "Chunks",
-                                max(coalesce(d.data, d.created_at))::date AS "Último documento"
-                            FROM public.docs_corporativos d
-                            LEFT JOIN public.docs_corporativos_chunks c
-                                   ON c.doc_id = d.id
-                            GROUP BY upper(d.ticker)
-                            ORDER BY "Documentos" DESC, upper(d.ticker)
-                            """
-                        ),
-                        conn,
-                    )
-
-                if df_status.empty:
-                    st.warning(
-                        "Nenhum documento encontrado no banco. "
-                        "Rode `python pickup/ingest_pdfs_all.py` localmente para indexar."
-                    )
+                tickers_norm = [normalize_ticker(t) for t in tickers if t]
+                if not tickers_norm:
+                    st.warning("Nenhum ticker selecionado na análise.")
                 else:
-                    total_docs   = int(df_status["Documentos"].sum())
-                    total_chunks = int(df_status["Chunks"].sum())
-                    total_tickers = len(df_status)
+                    engine = get_supabase_engine()
+                    with engine.connect() as conn:
+                        df_status = pd.read_sql_query(
+                            _text(
+                                """
+                                SELECT
+                                    upper(d.ticker)                           AS "Ticker",
+                                    count(DISTINCT d.id)                      AS "Documentos",
+                                    count(c.id)                               AS "Chunks",
+                                    max(coalesce(d.data, d.created_at))::date AS "Último documento"
+                                FROM public.docs_corporativos d
+                                LEFT JOIN public.docs_corporativos_chunks c
+                                       ON c.doc_id = d.id
+                                WHERE upper(d.ticker) = ANY(:tks)
+                                GROUP BY upper(d.ticker)
+                                ORDER BY "Documentos" DESC, upper(d.ticker)
+                                """
+                            ),
+                            conn,
+                            params={"tks": tickers_norm},
+                        )
 
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("Empresas indexadas", total_tickers)
-                    c2.metric("Total de documentos", f"{total_docs:,}")
-                    c3.metric("Total de chunks",     f"{total_chunks:,}")
+                    if df_status.empty:
+                        st.warning(
+                            "Nenhum documento encontrado para as empresas selecionadas. "
+                            "Rode `python pickup/ingest_pdfs_all.py` localmente para indexar."
+                        )
+                    else:
+                        total_docs    = int(df_status["Documentos"].sum())
+                        total_chunks  = int(df_status["Chunks"].sum())
+                        total_tickers = len(df_status)
 
-                    st.dataframe(df_status, use_container_width=True, hide_index=True)
+                        c1, c2, c3 = st.columns(3)
+                        c1.metric("Empresas com docs", f"{total_tickers}/{len(tickers_norm)}")
+                        c2.metric("Total de documentos", f"{total_docs:,}")
+                        c3.metric("Total de chunks",     f"{total_chunks:,}")
+
+                        st.dataframe(df_status, use_container_width=True, hide_index=True)
 
             except Exception as e:
                 st.error(f"Erro ao consultar banco: {e}")
