@@ -393,16 +393,28 @@ def _render_simulador(tickers: List[str]) -> None:
 
     rows = []
     for tk in tickers:
+        # Preço: tenta com e sem .SA
         price = _get_price(tk)
+        if price is None or price <= 0:
+            price = _get_price(f"{tk}.SA")
+
+        # DY: usa média dos últimos 4 registros não-nulos/não-zero para suavizar
         df_m = _get_mult_hist(tk)
         dy_pct = None
         if not df_m.empty and "DY" in df_m.columns:
             dy_raw = pd.to_numeric(df_m["DY"], errors="coerce").dropna()
+            dy_raw = dy_raw[dy_raw > 0]  # Remove zeros (dado ausente)
             if not dy_raw.empty:
-                v = float(dy_raw.iloc[-1])
-                if abs(v) > 1.0:
-                    v /= 100.0
-                dy_pct = v if 0 < v <= 0.5 else None
+                # Normaliza: se armazenado como 6.5 (%) converte para 0.065
+                dy_med = float(dy_raw.abs().median())
+                if dy_med > 1.0:
+                    dy_raw = dy_raw / 100.0
+                # Usa a mediana dos últimos 4 para ser mais robusto que só o último valor
+                dy_pct = float(dy_raw.iloc[-4:].median())
+                # Sanity: rejeita apenas DY absurdo (> 200%)
+                if dy_pct <= 0 or dy_pct > 2.0:
+                    dy_pct = None
+
         rows.append({"Ticker": tk, "Preço (R$)": price, "DY atual": dy_pct})
 
     if not rows:
@@ -410,6 +422,17 @@ def _render_simulador(tickers: List[str]) -> None:
         return
 
     df_sim = pd.DataFrame(rows)
+
+    # ── Diagnóstico: mostra o que foi encontrado ──────────────
+    with st.expander("🔍 Dados carregados para simulação", expanded=False):
+        diag = df_sim.copy()
+        diag["Preço (R$)"] = diag["Preço (R$)"].apply(
+            lambda v: f"R$ {v:.2f}" if v is not None and v > 0 else "⚠️ não encontrado"
+        )
+        diag["DY atual"] = diag["DY atual"].apply(
+            lambda v: f"{v*100:.2f}%" if v is not None else "⚠️ não encontrado"
+        )
+        st.dataframe(diag, use_container_width=True, hide_index=True)
 
     st.markdown("#### Defina suas posições")
     qtd_dict: Dict[str, int] = {}
@@ -430,7 +453,8 @@ def _render_simulador(tickers: List[str]) -> None:
         price = row["Preço (R$)"]
         dy = row["DY atual"]
         qtd = qtd_dict.get(tk, 0)
-        if qtd > 0 and price and dy:
+        # Checar explicitamente None — não usar truthiness (price=0.0 seria falso)
+        if qtd > 0 and price is not None and price > 0 and dy is not None and dy > 0:
             valor_pos = qtd * price
             renda_anual = valor_pos * dy
             detail_rows.append({
@@ -475,6 +499,18 @@ def _render_simulador(tickers: List[str]) -> None:
             f'<div class="div-card-sub">renda total ÷ posição total</div></div>',
             unsafe_allow_html=True,
         )
+
+    if not detail_rows:
+        sem_dados = [
+            tk for tk in tickers
+            if df_sim[df_sim["Ticker"] == tk][["Preço (R$)", "DY atual"]].isnull().any(axis=1).all()
+        ]
+        st.warning(
+            "Nenhuma renda calculada. Verifique em **🔍 Dados carregados** acima se preço e DY "
+            "foram encontrados para os tickers selecionados. "
+            + (f"Dados ausentes: {', '.join(sem_dados)}" if sem_dados else "")
+        )
+        return
 
     if detail_rows:
         st.markdown("#### Detalhamento por empresa")
