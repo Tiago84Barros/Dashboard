@@ -1099,6 +1099,17 @@ def render_valuation_historico(ticker: str, mult_hist: pd.DataFrame) -> None:
         if serie.empty:
             continue
 
+        # Múltiplos de preço (P/L, EV/EBIT, P/VP) não podem ser zero —
+        # zeros indicam dado ausente no banco. Filtra antes de calcular bandas.
+        if fmt == "x":
+            serie = serie[serie > 0]
+        # DY e ROIC também não fazem sentido negativos
+        if col_key in ("DY", "ROIC", "Margem_Liquida"):
+            serie = serie[serie >= 0]
+
+        if serie.empty:
+            continue
+
         # Normalizar percentuais armazenados como > 1 (ex: 6.5 → 0.065)
         if fmt == "%" and serie.abs().median() > 1.0:
             serie = serie / 100.0
@@ -1109,22 +1120,33 @@ def render_valuation_historico(ticker: str, mult_hist: pd.DataFrame) -> None:
         p75    = float(serie.quantile(0.75))
         p_max  = float(serie.max())
 
+        # Banda completamente colapsada em zero → dado inútil, pular
+        if p_max < 1e-6:
+            continue
+
         v_raw = latest.get(col_key)
         try:
             v_atual = float(v_raw) if v_raw is not None and pd.notna(v_raw) else None
+            # Tratar zero como ausente para múltiplos de preço
+            if v_atual is not None and fmt == "x" and v_atual <= 0:
+                v_atual = None
             if v_atual is not None and fmt == "%" and abs(v_atual) > 1.0:
                 v_atual = v_atual / 100.0
         except Exception:
             v_atual = None
 
-        if v_atual is not None and np.isfinite(v_atual):
+        if v_atual is not None and np.isfinite(v_atual) and median > 1e-9:
             atrativo = (v_atual < median) if bom_baixo else (v_atual > median)
             bar_color = "#22c55e" if atrativo else "#f97316"
             signal    = "🟢 Atrativo" if atrativo else "🔴 Esticado"
+        elif v_atual is not None and np.isfinite(v_atual):
+            atrativo  = None
+            bar_color = "#94a3b8"
+            signal    = "⚪ Histórico insuficiente"
         else:
             atrativo  = None
             bar_color = "#94a3b8"
-            signal    = "⚪ Sem dado"
+            signal    = "⚪ Sem dado atual"
 
         atual_str = _fmt_band_val(v_atual, fmt)
         span = max(p_max - p_min, 1e-9)
@@ -1198,12 +1220,18 @@ def render_valuation_historico(ticker: str, mult_hist: pd.DataFrame) -> None:
     )
     if sel_ts:
         df_ts = hist_5y[["Data"] + sel_ts].copy()
-        # Normalizar percentuais
-        for c, _, _, fmt_c in metricas_disp:
-            if c in sel_ts and fmt_c == "%":
-                col_vals = pd.to_numeric(df_ts[c], errors="coerce")
-                if col_vals.abs().median() > 1.0:
-                    df_ts[c] = col_vals / 100.0
+        # Normalizar e limpar cada coluna
+        fmt_map = {c: fmt_c for c, _, _, fmt_c in metricas_disp}
+        for c in sel_ts:
+            col_vals = pd.to_numeric(df_ts[c], errors="coerce")
+            fmt_c = fmt_map.get(c, "x")
+            # Remover zeros de múltiplos de preço (dado ausente)
+            if fmt_c == "x":
+                col_vals = col_vals.where(col_vals > 0)
+            # Normalizar percentuais armazenados como >1
+            if fmt_c == "%" and col_vals.abs().median() > 1.0:
+                col_vals = col_vals / 100.0
+            df_ts[c] = col_vals
         df_melt = df_ts.melt(id_vars=["Data"], value_vars=sel_ts,
                               var_name="Múltiplo", value_name="Valor")
         df_melt = df_melt.dropna(subset=["Valor"])
