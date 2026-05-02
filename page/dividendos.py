@@ -36,6 +36,11 @@ try:
 except Exception:
     load_setores_from_db = None  # type: ignore
 
+try:
+    from core.portfolio_snapshot_store import get_latest_snapshot
+except Exception:
+    get_latest_snapshot = None  # type: ignore
+
 
 # ── CSS local ────────────────────────────────────────────────
 _DIV_CSS = """
@@ -144,6 +149,30 @@ def _all_tickers_from_db() -> List[str]:
         for col in ("Ticker", "ticker", "TICKER"):
             if col in df.columns:
                 return sorted(df[col].dropna().unique().tolist())
+    return []
+
+
+def _load_portfolio_tickers() -> List[str]:
+    """Lê tickers do portfólio mais recente salvo no banco."""
+    if get_latest_snapshot is None:
+        return []
+    try:
+        snapshot = get_latest_snapshot()
+        if not snapshot:
+            return []
+        raw = snapshot.get("items") or snapshot.get("tickers") or []
+        if raw and isinstance(raw, list):
+            # Normaliza: pode ser lista de strings ou lista de dicts
+            if isinstance(raw[0], str):
+                return sorted(set(t.strip().upper() for t in raw if t))
+            if isinstance(raw[0], dict):
+                return sorted(set(
+                    str(it.get("ticker", "")).strip().upper()
+                    for it in raw
+                    if it.get("ticker")
+                ))
+    except Exception:
+        pass
     return []
 
 
@@ -549,14 +578,8 @@ def render() -> None:
     # ── Seleção de tickers ────────────────────────────────────
     all_tickers = _all_tickers_from_db()
 
-    # Tenta pre-popular com o portfólio da sessão
-    portfolio_default: List[str] = []
-    for key in ("portfolio_tickers", "tickers_selecionados", "portfolio"):
-        if key in st.session_state:
-            v = st.session_state[key]
-            if isinstance(v, (list, tuple)):
-                portfolio_default = [str(t) for t in v]
-                break
+    # Carrega portfólio do banco (mesmo mecanismo do analises_portfolio)
+    portfolio_default: List[str] = _load_portfolio_tickers()
 
     with st.sidebar:
         st.markdown("---")
@@ -564,12 +587,12 @@ def render() -> None:
 
         input_mode = st.radio(
             "Fonte dos tickers:",
-            ["Portfólio da sessão", "Seleção manual"],
+            ["Portfólio salvo", "Seleção manual"],
             index=0,
             key="div_input_mode",
         )
 
-        if input_mode == "Portfólio da sessão":
+        if input_mode == "Portfólio salvo":
             tickers_sel = portfolio_default
             if tickers_sel:
                 st.markdown(
@@ -578,7 +601,7 @@ def render() -> None:
                     unsafe_allow_html=True,
                 )
             else:
-                st.info("Nenhum portfólio carregado na sessão. Use a página Criação de Portfólio primeiro.")
+                st.info("Nenhum portfólio encontrado. Execute primeiro a **Criação de Portfólio**.")
         else:
             tickers_sel = st.multiselect(
                 "Selecione os tickers:",
