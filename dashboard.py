@@ -127,6 +127,7 @@ def _load_page_renderer(page_key: str) -> Callable[[], None]:
         "Criação de Portfólio": ("page.criacao_portfolio", "criacao_portfolio"),
         "Análises de Portfólio": ("page.analises_portfolio", "analises_portfolio"),
         #"Análises de Portfólio V2": ("page.analises_portfolio_v2", "analises_portfolio_v2"),
+        "Dividendos": ("page.dividendos", "dividendos"),
         "Configurações": ("page.configuracoes", "configuracoes"),
     }
     paths = mapping.get(page_key)
@@ -166,6 +167,7 @@ with st.sidebar:
             "Criação de Portfólio",
             "Análises de Portfólio",
             #"Análises de Portfólio V2",
+            "Dividendos",
             "Configurações",
         ],
         index=0,

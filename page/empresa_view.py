@@ -1026,6 +1026,205 @@ def render_geracao_caixa_e_valuation(multiplos_display: pd.DataFrame, mult_hist:
 
 
 # ─────────────────────────────────────────────────────────────
+# Valuation Histórico — Bandas dos múltiplos-chave
+# ─────────────────────────────────────────────────────────────
+def _fmt_band_val(v: float | None, fmt: str) -> str:
+    """Formata valor de múltiplo para exibição em bandas."""
+    if v is None or not np.isfinite(v):
+        return "-"
+    if fmt == "%":
+        return f"{v * 100:.1f}%"
+    return f"{v:.1f}x"
+
+
+def render_valuation_historico(ticker: str, mult_hist: pd.DataFrame) -> None:
+    """Exibe P/L, EV/EBIT, ROIC e DY atuais vs. bandas históricas de 5 anos."""
+    import plotly.graph_objects as go
+
+    st.markdown("---")
+    st.markdown("### 🎯 Valuation Histórico — Onde o múltiplo está agora vs. o passado")
+
+    if mult_hist is None or mult_hist.empty:
+        st.info("Histórico de múltiplos insuficiente para análise de bandas.")
+        return
+
+    mult_hist = _normalize_date_col(mult_hist.copy())
+    if "Data" not in mult_hist.columns:
+        st.info("Coluna de data ausente no histórico de múltiplos.")
+        return
+
+    mult_hist["Data"] = pd.to_datetime(mult_hist["Data"], errors="coerce")
+    mult_hist = mult_hist.dropna(subset=["Data"]).sort_values("Data")
+
+    cutoff_5y = pd.Timestamp.today() - pd.DateOffset(years=5)
+    hist_5y = mult_hist[mult_hist["Data"] >= cutoff_5y].copy()
+
+    if hist_5y.empty:
+        st.info("Histórico de 5 anos ainda não disponível para este ticker.")
+        return
+
+    latest = mult_hist.iloc[-1]
+
+    # (coluna_db, label_exibição, bom_baixo?, fmt)
+    metricas_cfg = [
+        ("P/L",    "P/L",       True,  "x"),
+        ("EV_EBIT","EV/EBIT",   True,  "x"),
+        ("ROIC",   "ROIC",      False, "%"),
+        ("DY",     "DY",        False, "%"),
+        ("P/VP",   "P/VP",      True,  "x"),
+        ("Margem_Liquida", "Margem Líq.", False, "%"),
+    ]
+    metricas_disp = [
+        (c, lbl, bl, fmt)
+        for c, lbl, bl, fmt in metricas_cfg
+        if c in hist_5y.columns
+    ]
+
+    if not metricas_disp:
+        st.info("Colunas de múltiplos (P/L, EV/EBIT, ROIC, DY…) não encontradas no histórico.")
+        return
+
+    st.caption(
+        "💡 **Bandas históricas (5 anos):** cinza claro = mín-máx · cinza médio = P25-P75 (intervalo interquartil) · "
+        "tracejado branco = mediana · ◆ colorido = valor atual. "
+        "🟢 Atrativo indica múltiplo abaixo da mediana para indicadores de preço (P/L, EV/EBIT…) "
+        "ou acima dela para rentabilidade (ROIC, DY, Margem)."
+    )
+
+    n_cols = min(len(metricas_disp), 3)
+    cols = st.columns(n_cols)
+
+    for idx, (col_key, label, bom_baixo, fmt) in enumerate(metricas_disp):
+        serie = pd.to_numeric(hist_5y[col_key], errors="coerce").dropna()
+        if serie.empty:
+            continue
+
+        # Normalizar percentuais armazenados como > 1 (ex: 6.5 → 0.065)
+        if fmt == "%" and serie.abs().median() > 1.0:
+            serie = serie / 100.0
+
+        p_min  = float(serie.min())
+        p25    = float(serie.quantile(0.25))
+        median = float(serie.median())
+        p75    = float(serie.quantile(0.75))
+        p_max  = float(serie.max())
+
+        v_raw = latest.get(col_key)
+        try:
+            v_atual = float(v_raw) if v_raw is not None and pd.notna(v_raw) else None
+            if v_atual is not None and fmt == "%" and abs(v_atual) > 1.0:
+                v_atual = v_atual / 100.0
+        except Exception:
+            v_atual = None
+
+        if v_atual is not None and np.isfinite(v_atual):
+            atrativo = (v_atual < median) if bom_baixo else (v_atual > median)
+            bar_color = "#22c55e" if atrativo else "#f97316"
+            signal    = "🟢 Atrativo" if atrativo else "🔴 Esticado"
+        else:
+            atrativo  = None
+            bar_color = "#94a3b8"
+            signal    = "⚪ Sem dado"
+
+        atual_str = _fmt_band_val(v_atual, fmt)
+        span = max(p_max - p_min, 1e-9)
+        pad  = span * 0.12
+
+        fig = go.Figure()
+
+        # Banda total (mín–máx)
+        fig.add_shape(type="rect", x0=p_min, x1=p_max, y0=0.1, y1=0.9,
+                      fillcolor="rgba(148,163,184,0.15)", line_width=0)
+        # IQR (P25–P75)
+        fig.add_shape(type="rect", x0=p25, x1=p75, y0=0.1, y1=0.9,
+                      fillcolor="rgba(148,163,184,0.35)", line_width=0)
+        # Mediana
+        fig.add_shape(type="line", x0=median, x1=median, y0=0.05, y1=0.95,
+                      line=dict(color="rgba(255,255,255,0.55)", dash="dot", width=1.5))
+
+        # Valor atual
+        if v_atual is not None and np.isfinite(v_atual):
+            fig.add_shape(type="line", x0=v_atual, x1=v_atual, y0=0.0, y1=1.0,
+                          line=dict(color=bar_color, width=2.5))
+            fig.add_trace(go.Scatter(
+                x=[v_atual], y=[0.5],
+                mode="markers",
+                marker=dict(color=bar_color, size=13, symbol="diamond",
+                            line=dict(color="white", width=1.5)),
+                showlegend=False,
+                hovertemplate=f"Atual: {atual_str}<extra></extra>",
+            ))
+
+        # Anotações mín / med / máx
+        for val, anchor, txt in [
+            (p_min,  "left",   f"Mín<br>{_fmt_band_val(p_min,  fmt)}"),
+            (median, "center", f"Med<br>{_fmt_band_val(median, fmt)}"),
+            (p_max,  "right",  f"Máx<br>{_fmt_band_val(p_max,  fmt)}"),
+        ]:
+            fig.add_annotation(x=val, y=1.25, text=txt, showarrow=False,
+                                font=dict(size=8, color="rgba(255,255,255,0.55)"),
+                                xanchor=anchor, align=anchor)
+
+        fig.update_layout(
+            height=120,
+            margin=dict(l=5, r=5, t=35, b=5),
+            xaxis=dict(visible=False, range=[p_min - pad, p_max + pad]),
+            yaxis=dict(visible=False, range=[-0.2, 1.6]),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+        )
+
+        with cols[idx % n_cols]:
+            st.markdown(
+                f"""<div style="background:rgba(255,255,255,.04);border-radius:12px;
+                    padding:10px 14px 4px;border:1px solid rgba(255,255,255,.1);margin-bottom:4px">
+                    <div style="font-size:12px;opacity:.65;font-weight:600;letter-spacing:.5px">{label}</div>
+                    <div style="font-size:26px;font-weight:800;color:{bar_color};line-height:1.1">{atual_str}</div>
+                    <div style="font-size:11px;opacity:.55;margin-top:2px">{signal}</div>
+                </div>""",
+                unsafe_allow_html=True,
+            )
+            st.plotly_chart(fig, use_container_width=True, key=f"vh_{ticker}_{col_key}_{idx}")
+
+    # ── Série temporal dos múltiplos selecionados ──────────────
+    st.markdown("#### 📈 Evolução histórica dos múltiplos")
+    col_opts = [c for c, _, _, _ in metricas_disp if c in hist_5y.columns]
+    default_ts = col_opts[:2]
+    sel_ts = st.multiselect(
+        "Indicadores para o gráfico de série temporal:",
+        options=col_opts,
+        default=default_ts,
+        key=f"vh_ts_{ticker}",
+    )
+    if sel_ts:
+        df_ts = hist_5y[["Data"] + sel_ts].copy()
+        # Normalizar percentuais
+        for c, _, _, fmt_c in metricas_disp:
+            if c in sel_ts and fmt_c == "%":
+                col_vals = pd.to_numeric(df_ts[c], errors="coerce")
+                if col_vals.abs().median() > 1.0:
+                    df_ts[c] = col_vals / 100.0
+        df_melt = df_ts.melt(id_vars=["Data"], value_vars=sel_ts,
+                              var_name="Múltiplo", value_name="Valor")
+        df_melt = df_melt.dropna(subset=["Valor"])
+        if not df_melt.empty:
+            fig_ts = px.line(df_melt, x="Data", y="Valor", color="Múltiplo",
+                             markers=True,
+                             color_discrete_sequence=px.colors.qualitative.Pastel)
+            fig_ts.update_layout(
+                margin=dict(l=10, r=10, t=10, b=10),
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02),
+            )
+            fig_ts.update_xaxes(showgrid=False)
+            fig_ts.update_yaxes(showgrid=True, gridcolor="rgba(255,255,255,0.07)")
+            st.plotly_chart(fig_ts, use_container_width=True)
+        else:
+            st.info("Dados insuficientes para o gráfico temporal.")
+
+
+# ─────────────────────────────────────────────────────────────
 # View principal
 # ─────────────────────────────────────────────────────────────
 def render_empresa_view(ticker: str) -> None:
@@ -1124,14 +1323,17 @@ def render_empresa_view(ticker: str) -> None:
 
     # ── Novas secções com dados já no banco ──────────────────────
     render_liquidez_eficiencia(multiplos_display)
-    render_geracao_caixa_e_valuation(multiplos_display, load_multiplos_from_db(ticker), ticker)
+
+    mult_hist = load_multiplos_from_db(ticker)
+    render_geracao_caixa_e_valuation(multiplos_display, mult_hist, ticker)
     render_fluxo_de_caixa(df, ticker)
     render_estrutura_capital(df, ticker)
 
+    # ── Valuation Histórico (bandas de 5 anos) ────────────────
+    render_valuation_historico(ticker, mult_hist)
+
     st.markdown("---")
     st.markdown("### Gráfico de Múltiplos (Histórico do Banco)")
-
-    mult_hist = load_multiplos_from_db(ticker)
     if mult_hist is None or mult_hist.empty:
         st.info("Histórico de múltiplos não encontrado no banco.")
     else:
