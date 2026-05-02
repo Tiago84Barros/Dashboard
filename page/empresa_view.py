@@ -1053,7 +1053,7 @@ def render_valuation_historico(ticker: str, mult_hist: pd.DataFrame) -> None:
         st.info("Coluna de data ausente no histórico de múltiplos.")
         return
 
-    mult_hist["Data"] = pd.to_datetime(mult_hist["Data"], errors="coerce")
+    mult_hist["Data"] = pd.to_datetime(mult_hist["Data"], errors="coerce", utc=True).dt.tz_localize(None)
     mult_hist = mult_hist.dropna(subset=["Data"]).sort_values("Data")
 
     cutoff_5y = pd.Timestamp.today() - pd.DateOffset(years=5)
