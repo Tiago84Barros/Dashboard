@@ -798,63 +798,6 @@ def render() -> None:
           .p6-deepnote{margin-top:8px;border:1px dashed rgba(255,255,255,.12);border-radius:14px;padding:10px 12px;font-size:12px;opacity:.8}
           @media (max-width: 900px){.p6-focus-grid{grid-template-columns:1fr 1fr}.p6-signal-grid{grid-template-columns:1fr}}
           @media (max-width: 640px){.p6-focus-grid{grid-template-columns:1fr}.p6-signal-grid{grid-template-columns:1fr}}
-
-          /* ── Portfolio Summary ───────────────────────────────────────────── */
-          .ps-wrap{margin:0 0 18px 0}
-          .ps-title{font-size:22px;font-weight:900;margin:0 0 4px 0;letter-spacing:.2px}
-          .ps-sub{font-size:13px;opacity:.78;margin-bottom:14px}
-
-          /* gauge bar */
-          .ps-gauge{border-radius:12px;overflow:hidden;height:14px;display:flex;gap:2px;margin:8px 0 4px 0}
-          .ps-gauge-forte{background:rgba(34,197,94,.80);border-radius:10px 0 0 10px}
-          .ps-gauge-mod{background:rgba(234,179,8,.80)}
-          .ps-gauge-fraca{background:rgba(239,68,68,.80);border-radius:0 10px 10px 0}
-
-          /* summary metric cards */
-          .ps-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:12px}
-          .ps-card{border-radius:18px;padding:14px 16px;border:1px solid rgba(255,255,255,.12);box-shadow:0 8px 20px rgba(0,0,0,.22)}
-          .ps-card-label{font-size:11px;letter-spacing:.12em;text-transform:uppercase;opacity:.80;margin-bottom:6px}
-          .ps-card-value{font-size:28px;font-weight:900;line-height:1.05;margin-bottom:4px}
-          .ps-card-sub{font-size:12px;opacity:.76;line-height:1.3}
-          .ps-green{background:linear-gradient(160deg,rgba(34,197,94,.18),rgba(34,197,94,.06));border-color:rgba(34,197,94,.36)}
-          .ps-yellow{background:linear-gradient(160deg,rgba(234,179,8,.18),rgba(234,179,8,.06));border-color:rgba(234,179,8,.36)}
-          .ps-red{background:linear-gradient(160deg,rgba(239,68,68,.18),rgba(239,68,68,.06));border-color:rgba(239,68,68,.36)}
-          .ps-blue{background:linear-gradient(160deg,rgba(59,130,246,.18),rgba(59,130,246,.06));border-color:rgba(59,130,246,.36)}
-          .ps-grey{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.12)}
-
-          /* list cards (opportunities / risks / monitor) */
-          .ps-list-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px}
-          .ps-list-card{border-radius:16px;padding:14px 16px;border:1px solid rgba(255,255,255,.12);box-shadow:0 8px 20px rgba(0,0,0,.18)}
-          .ps-list-title{font-size:13px;font-weight:800;letter-spacing:.08em;margin-bottom:10px;text-transform:uppercase}
-          .ps-list-item{display:flex;align-items:flex-start;gap:8px;margin-bottom:6px;font-size:13px;line-height:1.4}
-          .ps-list-item .ps-dot{width:7px;height:7px;border-radius:50%;margin-top:5px;flex-shrink:0}
-          .ps-dot-green{background:rgba(34,197,94,.90)}
-          .ps-dot-red{background:rgba(239,68,68,.90)}
-          .ps-dot-yellow{background:rgba(234,179,8,.90)}
-
-          /* company row in summary */
-          .ps-company-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:12px}
-          .ps-company-card{border-radius:16px;padding:12px 14px;border:1px solid rgba(255,255,255,.10);box-shadow:0 6px 16px rgba(0,0,0,.18)}
-          .ps-company-ticker{font-size:16px;font-weight:900;margin-bottom:4px}
-          .ps-company-persp{font-size:11px;padding:3px 8px;border-radius:999px;display:inline-block;margin-bottom:6px;font-weight:700}
-          .ps-company-forte{background:rgba(34,197,94,.20);color:rgba(34,197,94,1.0);border:1px solid rgba(34,197,94,.40)}
-          .ps-company-moderada{background:rgba(234,179,8,.20);color:rgba(234,179,8,1.0);border:1px solid rgba(234,179,8,.40)}
-          .ps-company-fraca{background:rgba(239,68,68,.20);color:rgba(239,68,68,1.0);border:1px solid rgba(239,68,68,.40)}
-          .ps-company-alloc{font-size:20px;font-weight:900;margin-bottom:2px}
-          .ps-company-resumo{font-size:12px;opacity:.78;line-height:1.3;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-          .ps-company-card-forte{background:linear-gradient(160deg,rgba(34,197,94,.10),rgba(34,197,94,.03));border-color:rgba(34,197,94,.24)}
-          .ps-company-card-moderada{background:linear-gradient(160deg,rgba(234,179,8,.10),rgba(234,179,8,.03));border-color:rgba(234,179,8,.24)}
-          .ps-company-card-fraca{background:linear-gradient(160deg,rgba(239,68,68,.10),rgba(239,68,68,.03));border-color:rgba(239,68,68,.24)}
-
-          /* quant block inside existing card */
-          .ps-quant{margin-top:10px;padding:10px 12px;border-radius:12px;background:rgba(59,130,246,.07);border:1px solid rgba(59,130,246,.18)}
-          .ps-quant-title{font-size:11px;font-weight:800;letter-spacing:.10em;text-transform:uppercase;opacity:.85;margin-bottom:6px}
-          .ps-quant-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px 12px}
-          .ps-quant-item{font-size:12px;opacity:.88}
-          .ps-quant-label{opacity:.65;font-size:11px}
-
-          @media(max-width:900px){.ps-row{grid-template-columns:1fr 1fr}.ps-list-row{grid-template-columns:1fr 1fr}.ps-company-row{grid-template-columns:1fr 1fr}}
-          @media(max-width:640px){.ps-row{grid-template-columns:1fr}.ps-list-row{grid-template-columns:1fr}.ps-company-row{grid-template-columns:1fr}.ps-quant-grid{grid-template-columns:1fr 1fr}}
         </style>
         """,
         unsafe_allow_html=True,
@@ -1232,12 +1175,6 @@ def render() -> None:
                   for i, e in enumerate(evid[:15], start=1):
                       st.markdown(f"**{i}.** {html.escape(str(e))}")
 
-          # ── dados quantitativos utilizados no prompt ───────────────────
-          quant_txt = _build_quant_context(ticker)
-          if quant_txt.strip():
-              with st.expander(f"📐 Dados quantitativos enviados ao LLM — {ticker}", expanded=False):
-                  st.code(quant_txt, language="text")
-
 
     # Defaults fixos (sem UI)
     run_llm_all = True
@@ -1249,258 +1186,6 @@ def render() -> None:
     TOP_K_CAP = 120
     st.caption("A análise qualitativa usa automaticamente a máxima quantidade possível de evidências por ticker, respeitando os limites técnicos do retrieval e a janela fixa de 36 meses.")
 
-    # ── helpers para o resumo do portfólio ────────────────────────────────────
-    def _load_portfolio_runs(period_ref: str) -> List[Dict[str, Any]]:
-        """Carrega os resultados LLM salvos para o period_ref atual."""
-        try:
-            from core.db import get_engine as _eng
-            import json as _json
-            engine = _eng()
-            with engine.connect() as conn:
-                rows = conn.execute(
-                    text(
-                        """
-                        SELECT ticker, perspectiva_compra, result_json
-                        FROM public.patch6_runs
-                        WHERE snapshot_id = :sid
-                          AND period_ref  = :pr
-                        ORDER BY ticker
-                        """
-                    ),
-                    {"sid": str(snapshot_id), "pr": period_ref},
-                ).fetchall()
-            out = []
-            for r in rows:
-                try:
-                    result = _json.loads(r[2] or "{}")
-                except Exception:
-                    result = {}
-                result["_ticker"] = str(r[0]).upper()
-                result["perspectiva_compra"] = result.get("perspectiva_compra") or str(r[1] or "")
-                out.append(result)
-            return out
-        except Exception:
-            return []
-
-    def _render_portfolio_summary(period_ref: str) -> None:
-        runs = _load_portfolio_runs(period_ref)
-        if not runs:
-            st.info("Clique em **'Atualizar relatório com LLM agora'** para gerar a análise do portfólio.")
-            return
-
-        # ── métricas agregadas ─────────────────────────────────────────────
-        total = len(runs)
-        forte_lst    = [r for r in runs if str(r.get("perspectiva_compra","")).lower() == "forte"]
-        moderada_lst = [r for r in runs if str(r.get("perspectiva_compra","")).lower() == "moderada"]
-        fraca_lst    = [r for r in runs if str(r.get("perspectiva_compra","")).lower() == "fraca"]
-
-        n_forte    = len(forte_lst)
-        n_moderada = len(moderada_lst)
-        n_fraca    = len(fraca_lst)
-        cobertura  = int(total / max(len(tickers), 1) * 100)
-
-        pct_f = n_forte    / total * 100
-        pct_m = n_moderada / total * 100
-        pct_r = n_fraca    / total * 100
-
-        # alocações sugeridas
-        allocs: List[str] = []
-        for r in runs:
-            a = str(r.get("alocacao_sugerida_faixa") or "").strip()
-            if a:
-                allocs.append(f"{r['_ticker']}: {a}")
-
-        # riscos + catalisadores + macro mais citados
-        from collections import Counter
-        risk_counter: Counter = Counter()
-        cat_counter:  Counter = Counter()
-        macro_counter: Counter = Counter()
-        monitor_counter: Counter = Counter()
-
-        for r in runs:
-            for item in (r.get("riscos") or []):
-                s = str(item).strip()
-                if len(s) > 8:
-                    risk_counter[s[:80]] += 1
-            for item in (r.get("catalisadores") or []):
-                s = str(item).strip()
-                if len(s) > 8:
-                    cat_counter[s[:80]] += 1
-            for item in (r.get("sensibilidades_macro") or []):
-                s = str(item).strip().lower()
-                if s:
-                    macro_counter[s] += 1
-            for item in (r.get("o_que_monitorar") or []):
-                s = str(item).strip()
-                if len(s) > 8:
-                    monitor_counter[s[:80]] += 1
-
-        top_risks   = [x for x, _ in risk_counter.most_common(5)]
-        top_cats    = [x for x, _ in cat_counter.most_common(5)]
-        top_macros  = [x for x, _ in macro_counter.most_common(6)]
-        top_monitor = [x for x, _ in monitor_counter.most_common(5)]
-
-        # ── visual ────────────────────────────────────────────────────────
-        st.markdown(
-            """
-            <div class="ps-wrap">
-              <div class="ps-title">📊 Resumo Geral do Portfólio</div>
-              <div class="ps-sub">Agregação das análises qualitativas e quantitativas por empresa. Atualizado a cada execução do LLM.</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        # barra de gauge
-        st.markdown(
-            f"""
-            <div style="margin-bottom:4px;font-size:12px;opacity:.75">Distribuição de perspectivas ({total} empresas analisadas)</div>
-            <div class="ps-gauge">
-              <div class="ps-gauge-forte"  style="flex:{pct_f}"></div>
-              <div class="ps-gauge-mod"    style="flex:{pct_m}"></div>
-              <div class="ps-gauge-fraca"  style="flex:{pct_r}"></div>
-            </div>
-            <div style="display:flex;gap:18px;font-size:12px;opacity:.78;margin-bottom:14px">
-              <span>🟢 Forte: {n_forte}</span>
-              <span>🟡 Moderada: {n_moderada}</span>
-              <span>🔴 Fraca: {n_fraca}</span>
-              <span style="margin-left:auto">Cobertura: {cobertura}%</span>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        # ── row de métricas ───────────────────────────────────────────────
-        c1, c2, c3, c4 = st.columns(4)
-        cor_dom = "ps-green" if n_forte >= n_moderada and n_forte >= n_fraca else ("ps-yellow" if n_moderada >= n_fraca else "ps-red")
-        label_dom = "Perspectiva dominante"
-        val_dom = "FORTE" if n_forte >= n_moderada and n_forte >= n_fraca else ("MODERADA" if n_moderada >= n_fraca else "FRACA")
-        sub_dom  = f"{max(n_forte, n_moderada, n_fraca)} de {total} empresas"
-
-        c1.markdown(f"""
-        <div class="ps-card {cor_dom}">
-          <div class="ps-card-label">{label_dom}</div>
-          <div class="ps-card-value">{val_dom}</div>
-          <div class="ps-card-sub">{sub_dom}</div>
-        </div>""", unsafe_allow_html=True)
-
-        c2.markdown(f"""
-        <div class="ps-card ps-green">
-          <div class="ps-card-label">Oportunidades</div>
-          <div class="ps-card-value">{n_forte}</div>
-          <div class="ps-card-sub">Perspectiva forte — prioridade de alocação</div>
-        </div>""", unsafe_allow_html=True)
-
-        c3.markdown(f"""
-        <div class="ps-card ps-yellow">
-          <div class="ps-card-label">Atenção</div>
-          <div class="ps-card-value">{n_moderada}</div>
-          <div class="ps-card-sub">Perspectiva moderada — monitorar</div>
-        </div>""", unsafe_allow_html=True)
-
-        c4.markdown(f"""
-        <div class="ps-card ps-red">
-          <div class="ps-card-label">Risco / Evitar</div>
-          <div class="ps-card-value">{n_fraca}</div>
-          <div class="ps-card-sub">Perspectiva fraca — reduzir ou aguardar</div>
-        </div>""", unsafe_allow_html=True)
-
-        st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
-
-        # ── row de listas: oportunidades / riscos / monitorar ─────────────
-        def _li(items: List[str], dot_cls: str) -> str:
-            if not items:
-                return '<div class="ps-list-item" style="opacity:.5">Sem dados suficientes</div>'
-            return "".join(
-                f'<div class="ps-list-item"><div class="ps-dot {dot_cls}"></div><div>{html.escape(i)}</div></div>'
-                for i in items
-            )
-
-        st.markdown(
-            f"""
-            <div class="ps-list-row">
-              <div class="ps-list-card" style="background:linear-gradient(160deg,rgba(34,197,94,.10),rgba(34,197,94,.03));border-color:rgba(34,197,94,.26)">
-                <div class="ps-list-title" style="color:rgba(34,197,94,.95)">🚀 Principais catalisadores</div>
-                {_li(top_cats, "ps-dot-green")}
-              </div>
-              <div class="ps-list-card" style="background:linear-gradient(160deg,rgba(239,68,68,.10),rgba(239,68,68,.03));border-color:rgba(239,68,68,.26)">
-                <div class="ps-list-title" style="color:rgba(239,68,68,.95)">⚠️ Principais riscos</div>
-                {_li(top_risks, "ps-dot-red")}
-              </div>
-              <div class="ps-list-card" style="background:linear-gradient(160deg,rgba(59,130,246,.10),rgba(59,130,246,.03));border-color:rgba(59,130,246,.26)">
-                <div class="ps-list-title" style="color:rgba(59,130,246,.95)">🔭 O que monitorar</div>
-                {_li(top_monitor, "ps-dot-yellow")}
-              </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        # ── macro sensitividades ──────────────────────────────────────────
-        if top_macros:
-            macro_chips = "".join(
-                f'<span style="display:inline-block;padding:4px 10px;border-radius:999px;'
-                f'background:rgba(148,163,184,.12);border:1px solid rgba(148,163,184,.22);'
-                f'font-size:12px;margin:3px 4px 3px 0">{html.escape(m)}</span>'
-                for m in top_macros
-            )
-            st.markdown(
-                f"""
-                <div style="margin-bottom:14px">
-                  <div style="font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;opacity:.75;margin-bottom:6px">
-                    📡 Sensibilidades macro mais citadas no portfólio
-                  </div>
-                  {macro_chips}
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-        # ── cards por empresa ─────────────────────────────────────────────
-        st.markdown(
-            '<div style="font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;opacity:.75;margin:10px 0 8px 0">Visão por empresa</div>',
-            unsafe_allow_html=True,
-        )
-
-        # ordena: forte → moderada → fraca
-        order = {"forte": 0, "moderada": 1, "fraca": 2}
-        runs_sorted = sorted(runs, key=lambda r: order.get(str(r.get("perspectiva_compra","")).lower(), 3))
-
-        # 3 por linha
-        for i in range(0, len(runs_sorted), 3):
-            chunk = runs_sorted[i:i+3]
-            cols = st.columns(3)
-            for col, r in zip(cols, chunk):
-                tk   = r["_ticker"]
-                persp = str(r.get("perspectiva_compra","")).lower()
-                alloc = str(r.get("alocacao_sugerida_faixa") or "—")
-                resumo_txt = str(r.get("resumo") or "—")
-                persp_label = persp.upper() if persp else "—"
-                card_cls  = f"ps-company-card-{persp}" if persp in ("forte","moderada","fraca") else ""
-                persp_cls = f"ps-company-{persp}" if persp in ("forte","moderada","fraca") else ""
-                col.markdown(
-                    f"""
-                    <div class="ps-company-card {card_cls}">
-                      <div class="ps-company-ticker">{html.escape(tk)}</div>
-                      <div class="ps-company-persp {persp_cls}">{persp_label}</div>
-                      <div class="ps-company-alloc">{html.escape(alloc)}</div>
-                      <div class="ps-company-resumo">{html.escape(resumo_txt)}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
-
-        # alocações completas num expander
-        if allocs:
-            with st.expander("💰 Alocações sugeridas (todas as empresas)", expanded=False):
-                for a in allocs:
-                    st.markdown(f"• {a}")
-
-        st.divider()
-
-    # ── renderiza o resumo e o relatório consolidado ───────────────────────────
     st.markdown("## 📘 Relatório consolidado do portfólio")
     st.markdown(
         """
@@ -1511,12 +1196,9 @@ def render() -> None:
         """,
         unsafe_allow_html=True,
     )
-
-    period_ref_current = st.session_state.get("patch6_period_ref") or analysis_period_ref
-    _render_portfolio_summary(period_ref_current)
-
+        
     report_box = st.empty()
-
+    
     def _render_saved_report():
         with report_box.container():
             try:
@@ -1528,12 +1210,12 @@ def render() -> None:
                     llm_factory=llm_factory,
                     show_company_details=True,
                     analysis_mode=analysis_mode,
-                    snapshot_id=str(snapshot_id),
+                    snapshot_id=str(snapshot_id),  # v6: quantitative integration
                 )
             except Exception as e:
                 st.error("Relatório indisponível.")
                 st.exception(e)
-
+    
     _render_saved_report()
 
 
