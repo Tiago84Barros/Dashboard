@@ -561,6 +561,9 @@ def render() -> None:
 
     st.markdown("---")
 
+    # Colunas cujo valor zero indica dado ausente (dependem de preço)
+    _PRICE_COLS = {"P/L", "P/VP", "EV_EBIT", "P_FCO", "P_Receita", "DY"}
+
     # ─────────────────────────────────────────────────────────
     # 6) Comparação de múltiplos
     # ─────────────────────────────────────────────────────────
@@ -643,6 +646,9 @@ def render() -> None:
         tmp["Ano"] = pd.to_numeric(tmp["Ano"], errors="coerce")
         tmp[col_db] = pd.to_numeric(tmp[col_db], errors="coerce")
         tmp = tmp.dropna(subset=["Ano", col_db])
+        # Múltiplos de preço: remover zeros (dado ausente na ingestão)
+        if col_db in _PRICE_COLS:
+            tmp = tmp[tmp[col_db] != 0]
         if tmp.empty:
             continue
 
@@ -853,6 +859,18 @@ def render() -> None:
     with col_y_lbl:
         eixo_y = st.selectbox("Eixo Y:", _ind_scatter, index=_ind_scatter.index("ROE") if "ROE" in _ind_scatter else 1, key="scatter_y")
 
+    def _last_nonzero(dfm: pd.DataFrame, col: str) -> float:
+        """Retorna o último valor não-nulo e não-zero de uma coluna (busca retroativa)."""
+        if col not in dfm.columns:
+            return np.nan
+        s = pd.to_numeric(dfm[col], errors="coerce").dropna()
+        # Para múltiplos de preço, zero é equivalente a ausente
+        if col in _PRICE_COLS:
+            s = s[s != 0]
+        if s.empty:
+            return np.nan
+        return float(s.iloc[-1])
+
     scatter_rows: List[dict] = []
     for e in empresas:
         if e.nome not in empresas_selecionadas:
@@ -862,14 +880,11 @@ def render() -> None:
             continue
         if "Data" in dfm.columns:
             dfm = dfm.dropna(subset=["Data"]).sort_values("Data")
-            last_row = dfm.iloc[-1]
-        else:
-            last_row = dfm.iloc[-1]
 
         col_x = nomes_to_col.get(eixo_x)
         col_y = nomes_to_col.get(eixo_y)
-        vx = float(last_row[col_x]) if col_x and col_x in dfm.columns and pd.notna(last_row.get(col_x)) else np.nan
-        vy = float(last_row[col_y]) if col_y and col_y in dfm.columns and pd.notna(last_row.get(col_y)) else np.nan
+        vx = _last_nonzero(dfm, col_x) if col_x else np.nan
+        vy = _last_nonzero(dfm, col_y) if col_y else np.nan
         if np.isfinite(vx) and np.isfinite(vy):
             scatter_rows.append({"Empresa": e.nome, eixo_x: vx, eixo_y: vy})
 
