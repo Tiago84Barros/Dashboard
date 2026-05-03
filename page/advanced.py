@@ -149,15 +149,14 @@ def _safe_macro() -> Optional[pd.DataFrame]:
 def render() -> None:
     st.markdown("<h1 style='text-align:center'>Análise Avançada de Ações</h1>", unsafe_allow_html=True)
 
-    # ── setores em sessão
-    setores = st.session_state.get("setores_df")
-    if setores is None or getattr(setores, "empty", True):
-        setores = load_setores_from_db()
-        if setores is None or setores.empty:
-            st.error("Não foi possível carregar a base de setores do banco.")
-            return
-        setores = _clean_df_cols(setores)
-        st.session_state["setores_df"] = setores
+    # ── setores — sempre via @st.cache_data (sem session_state para evitar dados velhos)
+    setores = load_setores_from_db()
+    if setores is None or setores.empty:
+        st.error("Não foi possível carregar a base de setores do banco.")
+        return
+    setores = _clean_df_cols(setores)
+    # mantém session_state atualizado (usado por outras páginas)
+    st.session_state["setores_df"] = setores
 
     # validação mínima de schema (case-sensitive conforme Postgres com colunas entre aspas)
     needed = {"SETOR", "SUBSETOR", "SEGMENTO", "ticker"}
@@ -248,10 +247,11 @@ def render() -> None:
                 "Subsetor": subsetor,
                 "Segmento": segmento,
                 "Empresas no segmento (bruto)": int(len(seg_df)),
-                "Linhas setores_df": int(len(setores)),
+                "Linhas setores_df (total)": int(len(setores)),
                 "Macro (linhas)": int(len(dados_macro)),
                 "Macro (data mínima)": str(pd.to_datetime(dados_macro["Data"]).min()) if "Data" in dados_macro.columns else "n/a",
                 "Macro (data máxima)": str(pd.to_datetime(dados_macro["Data"]).max()) if "Data" in dados_macro.columns else "n/a",
+                "Tickers no segmento": seg_df["ticker"].tolist(),
             }
         )
 
@@ -269,7 +269,7 @@ def render() -> None:
             return tk, 0
 
     years_map: Dict[str, int] = {}
-    max_workers = min(12, max(2, len(tickers)))
+    max_workers = min(6, max(2, len(tickers)))  # limita a 6 para não sobrecarregar pool Supabase
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futs = [ex.submit(_year_check, tk) for tk in tickers]
         for fut in as_completed(futs):
@@ -282,10 +282,25 @@ def render() -> None:
             return n < 10 and n > 0
         if tipo == "Estabelecida (≥10 anos)":
             return n >= 10
-        return n > 0
+        return True  # "Todas" → mostra todas as empresas do segmento
 
     seg_df = seg_df[seg_df["ticker"].apply(_pass_tipo)]
     n_total_segmento = int(seg_df["ticker"].nunique())  # OPÇÃO 2: tamanho do segmento condicionado ao filtro de histórico (tipo)
+
+    # ── Diagnóstico de anos de DRE (exibido antes do retorno de erro)
+    with st.expander("📊 Histórico DRE por empresa (diagnóstico)", expanded=False):
+        st.caption("Anos de DRE encontrados no Supabase para cada empresa do segmento.")
+        diag_rows = []
+        all_tickers_segmento = tickers  # antes do filtro _pass_tipo
+        for tk in sorted(all_tickers_segmento):
+            n = years_map.get(tk, 0)
+            nome_emp = seg_df[seg_df["ticker"] == tk]["nome_empresa"].values
+            nome_str = nome_emp[0] if len(nome_emp) > 0 else setores.loc[setores["ticker"].str.upper().str.replace(".SA","") == tk, "nome_empresa"]
+            nome_str = nome_str.values[0] if hasattr(nome_str, "values") else nome_str
+            passou = _pass_tipo(tk)
+            diag_rows.append({"Ticker": tk, "Nome": str(nome_str), "Anos DRE": n, "Passa filtro": "✅" if passou else "❌"})
+        st.dataframe(pd.DataFrame(diag_rows), use_container_width=True)
+
     if seg_df.empty:
         st.warning("Nenhuma empresa atende ao filtro de histórico escolhido.")
         return

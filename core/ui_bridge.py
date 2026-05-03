@@ -36,7 +36,7 @@ def get_supabase_engine():
 # Setores
 # ────────────────────────────────────────────────────────────────────────────────
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=3600)  # recarrega setores a cada hora
 def load_setores_from_db() -> pd.DataFrame | None:
     try:
         return _db.load_setores_from_db()
@@ -55,7 +55,7 @@ def load_setores_from_supabase() -> pd.DataFrame | None:
 # Demonstrações financeiras
 # ────────────────────────────────────────────────────────────────────────────────
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=3600)  # recarrega DRE a cada hora
 def load_data_from_db(ticker: str) -> pd.DataFrame | None:
     try:
         return _db.load_data_from_db(ticker)
@@ -77,7 +77,7 @@ def load_data_tri_from_db(ticker: str) -> pd.DataFrame | None:
 # Múltiplos
 # ────────────────────────────────────────────────────────────────────────────────
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=3600)  # recarrega múltiplos a cada hora
 def load_multiplos_from_db(ticker: str) -> pd.DataFrame | None:
     try:
         return _db.load_multiplos_from_db(ticker)
